@@ -22,6 +22,12 @@ pipeline.
 - `src/main.rs` — argument parsing only; it must stay a thin shell over the lib.
 - `tests/cli.rs` — end-to-end tests that run the built binary.
 
+## Design source
+
+[GUIDANCE.md](GUIDANCE.md) is the design this project is built from. Every work
+order should trace back to a line in it. If the guidance and the code disagree,
+change the guidance first. Decisions D1-D5 in its section 7 gate the large work.
+
 ## Rules of the floor
 
 1. **Acceptance checks are the definition of done.** A work order states its
