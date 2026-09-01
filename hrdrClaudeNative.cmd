@@ -34,7 +34,8 @@ REM  are installed, running each install unless status confirms it already is.
 REM
 REM  WHERE IT RUNS THE REPO FROM
 REM  ---------------------------
-REM  * Launched from inside an existing checkout  -> uses that checkout as-is.
+REM  * Launched from inside ANY git checkout -> uses that checkout as-is, whatever
+REM    repository it belongs to. No path in this file is hard-coded.
 REM  * Launched from anywhere else (e.g. Downloads) -> clones a fresh copy into
 REM    %USERPROFILE%\RepoSphereExplorer.
 REM
@@ -67,12 +68,12 @@ set "DEFAULT_REPO_DIR=%USERPROFILE%\RepoSphereExplorer"
 
 REM  Decide which checkout to use. %~dp0 is the folder this script lives in (with a
 REM  trailing backslash, which we strip so the path quotes cleanly later). If that
-REM  folder is itself a checkout of this repo we use it in place; otherwise we fall
-REM  back to the default clone location and clone into it in step 5.
+REM  folder is any git checkout we use it in place -- nothing here is tied to one
+REM  project -- otherwise we fall back to the clone location and clone in step 5.
 set "SELF_DIR=%~dp0"
 if "%SELF_DIR:~-1%"=="\" set "SELF_DIR=%SELF_DIR:~0,-1%"
 set "REPO_DIR=%DEFAULT_REPO_DIR%"
-if exist "%SELF_DIR%\.git" if exist "%SELF_DIR%\Cargo.toml" set "REPO_DIR=%SELF_DIR%"
+if exist "%SELF_DIR%\.git" set "REPO_DIR=%SELF_DIR%"
 
 REM  winget is our fallback installer for git and Node.js. Locate it once; a blank
 REM  WINGET means "not available", which is only fatal if a tool actually needs it.
