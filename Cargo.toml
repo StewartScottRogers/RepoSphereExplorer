@@ -1,0 +1,28 @@
+[package]
+name = "repo_sphere_explorer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Explores a sphere of GitHub repositories."
+license = "MIT"
+repository = "https://github.com/StewartScottRogers/RepoSphereExplorer"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

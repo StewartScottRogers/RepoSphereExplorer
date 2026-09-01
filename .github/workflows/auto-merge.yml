@@ -1,0 +1,25 @@
+name: Auto-merge
+
+# Lights-out merging: enable auto-merge on PRs the factory is allowed to land
+# on its own. GitHub still waits for the required checks defined in branch
+# protection before merging.
+
+on:
+  pull_request:
+    types: [opened, labeled, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    if: >-
+      github.actor == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'auto-merge')
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr merge --squash --auto "$PR_URL"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}

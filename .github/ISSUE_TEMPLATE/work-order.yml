@@ -1,0 +1,27 @@
+name: Work order
+description: A unit of work for the factory to build autonomously.
+title: "[work-order] "
+labels: [work-order]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What must be true when this is done? Write it as an observable result.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance checks
+      description: Commands or tests that prove the outcome. These become the definition of done.
+      placeholder: |
+        - cargo test --all-features passes
+        - `repo_sphere_explorer explore acme/widgets` prints the star count
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Anything out of bounds — files not to touch, dependencies not to add, APIs to preserve.
