@@ -34,7 +34,7 @@ jobs:
           else
             cp target/${{ matrix.target }}/release/repo_sphere_explorer                dist/repo_sphere_explorer-${{ matrix.target }}
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: dist/*
