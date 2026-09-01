@@ -4,8 +4,11 @@ name: Auto-merge
 # on its own. GitHub still waits for the required checks defined in branch
 # protection before merging.
 
+# pull_request_target, not pull_request: workflows triggered by Dependabot's
+# pull_request event get a read-only token, which cannot enable auto-merge.
+# Nothing from the PR branch is checked out or executed here.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, labeled, ready_for_review]
 
 permissions:

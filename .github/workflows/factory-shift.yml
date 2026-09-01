@@ -1,0 +1,52 @@
+name: Factory shift
+
+# The factory starts itself. Every night Claude picks the oldest open work
+# order that has no pull request yet, builds it, and opens one.
+# Requires ANTHROPIC_API_KEY (or the Claude GitHub App) to do anything.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to build (blank = pick the oldest open work order)
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  shift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: |
+            --max-turns 40
+          prompt: |
+            You are the night shift of an unattended software factory.
+
+            Target issue: "${{ inputs.issue }}" (empty means: choose one yourself).
+
+            1. If a target issue was given, use it. Otherwise run
+               `gh issue list --label work-order --state open --json number,title,createdAt`
+               and take the oldest one that has no linked pull request. If there
+               is none, comment nothing and stop — an idle shift is a fine shift.
+            2. Read the issue. If the outcome or the acceptance checks are
+               ambiguous, comment on the issue asking the single question that
+               would unblock it, then stop. Do not guess.
+            3. Implement it on a new branch, following CLAUDE.md. New behaviour
+               lands with a test.
+            4. Run `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`
+               and `cargo test --all-features`. All three must pass, plus the
+               acceptance checks named in the issue.
+            5. Open a pull request that says `Closes #<issue>` and lists the
+               acceptance checks you ran with their results. Do not merge it.

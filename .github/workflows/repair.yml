@@ -1,0 +1,49 @@
+name: Repair
+
+# Self-healing: when CI fails on main, Claude reads the failing run and opens a
+# fix PR. Never touches main directly.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+jobs:
+  repair:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --max-turns 30
+          prompt: |
+            CI run ${{ github.event.workflow_run.id }} failed on main.
+
+            1. Read the failing logs:
+               `gh run view ${{ github.event.workflow_run.id }} --log-failed`.
+            2. Diagnose the actual cause. If the failure is a flake, an expired
+               token, or anything outside this repository, open an issue
+               describing it and stop — do not paper over it with a retry.
+            3. Otherwise fix it on a branch, with the smallest change that makes
+               the failing check pass. Add a regression test when the failure was
+               a defect in our code.
+            4. Verify locally with `cargo fmt --all -- --check`,
+               `cargo clippy --all-targets -- -D warnings` and
+               `cargo test --all-features`.
+            5. Open a pull request titled `fix: <what broke>` that quotes the
+               failing output and explains the cause in two sentences.

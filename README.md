@@ -21,6 +21,8 @@ cargo run -- explore acme/widgets
 | Assembly | [`claude.yml`](.github/workflows/claude.yml) | issue labelled `work-order`, or `@claude` in a comment |
 | Restocking | [`dependabot.yml`](.github/dependabot.yml) | weekly cargo + actions updates |
 | Dispatch | [`auto-merge.yml`](.github/workflows/auto-merge.yml) | PRs from Dependabot or labelled `auto-merge` |
+| Night shift | [`factory-shift.yml`](.github/workflows/factory-shift.yml) | nightly 03:00 UTC: builds the oldest open work order and opens a PR |
+| Repair | [`repair.yml`](.github/workflows/repair.yml) | CI failed on `main`: diagnoses the run and opens a fix PR |
 | Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux/Windows/macOS binaries attached to a GitHub release |
 
 A work order ([template](.github/ISSUE_TEMPLATE/work-order.yml)) must state an
@@ -32,14 +34,21 @@ not a reviewer's opinion.
 
 One-time setup on GitHub, all of it required before the floor runs itself:
 
-1. Add the repository secret `ANTHROPIC_API_KEY` (or use
-   `/install-github-app` from Claude Code, which sets it up for you).
-2. Protect `main`: require the `fmt / clippy / test` check, and allow
-   auto-merge in repository settings.
-3. Create the labels `work-order`, `defect`, and `auto-merge`.
+1. Run `/install-github-app` from Claude Code in this repository. It installs
+   the Claude GitHub App and sets `ANTHROPIC_API_KEY`. Prefer this over setting
+   the secret by hand: pull requests opened with the default `GITHUB_TOKEN` do
+   **not** trigger workflows, so a hand-configured factory opens PRs that never
+   run CI and therefore never satisfy auto-merge.
+2. In Settings, Actions, General: allow GitHub Actions to create and approve
+   pull requests.
 
-Until step 1 is done, `claude.yml` is inert and the repo behaves as an ordinary
-CI-checked Rust project.
+Already configured on this repository: `main` requires the
+`fmt / clippy / test` check with no human review, auto-merge is on, head
+branches are deleted after merge, and the `work-order`, `defect` and
+`auto-merge` labels exist.
+
+Until step 1 is done the Claude stations are inert and the repo behaves as an
+ordinary CI-checked Rust project.
 
 ## Local commands
 
