@@ -15,7 +15,7 @@ REM  WHAT THIS IS
 REM  ------------
 REM  A single, self-contained batch file. Email it to yourself, run it on a bare
 REM  Windows machine, and in one execution it stands up a working dev environment
-REM  for the cross-platform-explorer project -- no other files required.
+REM  for the RepoSphereExplorer project -- no other files required.
 REM
 REM  It performs these steps, each a no-op if already satisfied:
 REM
@@ -23,7 +23,7 @@ REM      [1/7] Ensure git            (installs via winget if missing)
 REM      [2/7] Ensure Node.js / npm  (installs via winget if missing)
 REM      [3/7] Ensure Claude Code    (installs/updates via npm)
 REM      [4/7] Ensure herdr          (installs/updates the terminal multiplexer)
-REM      [5/7] Clone / update repo   (into %USERPROFILE%\cross-platform-explorer)
+REM      [5/7] Clone / update repo   (into %USERPROFILE%\RepoSphereExplorer)
 REM      [6/7] Ensure herdr server   (starts a compatible one if needed)
 REM      [7/7] Launch Claude         (as a tracked pane anchored to the repo)
 REM
@@ -36,7 +36,7 @@ REM  WHERE IT RUNS THE REPO FROM
 REM  ---------------------------
 REM  * Launched from inside an existing checkout  -> uses that checkout as-is.
 REM  * Launched from anywhere else (e.g. Downloads) -> clones a fresh copy into
-REM    %USERPROFILE%\cross-platform-explorer.
+REM    %USERPROFILE%\RepoSphereExplorer.
 REM
 REM  REQUIREMENTS ON A BARE MACHINE
 REM  ------------------------------
@@ -62,8 +62,8 @@ REM ----------------------------------------------------------------------------
 REM  Configuration
 REM -----------------------------------------------------------------------------
 if not defined CLAUDE_MODEL set "CLAUDE_MODEL=claude-opus-5"
-set "REPO_URL=https://github.com/StewartScottRogers/cross-platform-explorer.git"
-set "DEFAULT_REPO_DIR=%USERPROFILE%\cross-platform-explorer"
+set "REPO_URL=https://github.com/StewartScottRogers/RepoSphereExplorer.git"
+set "DEFAULT_REPO_DIR=%USERPROFILE%\RepoSphereExplorer"
 
 REM  Decide which checkout to use. %~dp0 is the folder this script lives in (with a
 REM  trailing backslash, which we strip so the path quotes cleanly later). If that
@@ -72,7 +72,7 @@ REM  back to the default clone location and clone into it in step 5.
 set "SELF_DIR=%~dp0"
 if "%SELF_DIR:~-1%"=="\" set "SELF_DIR=%SELF_DIR:~0,-1%"
 set "REPO_DIR=%DEFAULT_REPO_DIR%"
-if exist "%SELF_DIR%\.git" if exist "%SELF_DIR%\src-tauri\tauri.conf.json" set "REPO_DIR=%SELF_DIR%"
+if exist "%SELF_DIR%\.git" if exist "%SELF_DIR%\Cargo.toml" set "REPO_DIR=%SELF_DIR%"
 
 REM  winget is our fallback installer for git and Node.js. Locate it once; a blank
 REM  WINGET means "not available", which is only fatal if a tool actually needs it.
