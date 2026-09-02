@@ -12,6 +12,7 @@ interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
 plugin-text = { path = "../plugins/text" }
 protocol = { path = "../protocol" }
+updater = { path = "../updater" }
 
 [lints]
 workspace = true

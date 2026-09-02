@@ -17,6 +17,10 @@ const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(2);
 const SERVICE_START_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if env::args().any(|arg| arg == "--self-update") {
+        return self_update();
+    }
+
     let root = env::args()
         .nth(1)
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
@@ -49,6 +53,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.run()?;
     Ok(())
+}
+
+/// Checks for and applies an update to this binary, per §4.2 of
+/// GUIDANCE.md.
+fn self_update() -> Result<(), Box<dyn std::error::Error>> {
+    match updater::self_update("gui") {
+        Ok(updater::Outcome::UpToDate { version }) => {
+            println!("gui is up to date (v{version})");
+            Ok(())
+        }
+        Ok(updater::Outcome::Updated { from, to }) => {
+            println!("gui updated: v{from} -> v{to}");
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {

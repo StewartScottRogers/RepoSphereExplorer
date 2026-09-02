@@ -12,6 +12,7 @@ members = [
     "crates/plugins/archive",
     "crates/plugins/pdf",
     "crates/plugins/directory",
+    "crates/updater",
 ]
 
 [workspace.package]
