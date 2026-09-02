@@ -10,6 +10,7 @@ members = [
     "crates/plugins/text",
     "crates/plugins/python",
     "crates/plugins/javascript",
+    "crates/plugins/typescript",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",
