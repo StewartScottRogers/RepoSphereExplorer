@@ -62,8 +62,9 @@ export component MainWindow inherits Window {
     callback content-row-double-clicked(int);
     callback cancel-requested();
     callback delete-requested();
-    callback confirm-yes();
-    callback confirm-no();
+    callback return-pressed();
+    callback backspace-pressed();
+    callback key-text(string);
 
     forward-focus: key-scope;
 
@@ -73,10 +74,12 @@ export component MainWindow inherits Window {
                 cancel-requested();
             } else if (event.text == Key.Delete) {
                 delete-requested();
-            } else if (event.text == "y" || event.text == "Y") {
-                confirm-yes();
-            } else if (event.text == "n" || event.text == "N") {
-                confirm-no();
+            } else if (event.text == Key.Return) {
+                return-pressed();
+            } else if (event.text == Key.Backspace) {
+                backspace-pressed();
+            } else {
+                key-text(event.text);
             }
             accept
         }

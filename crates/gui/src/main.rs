@@ -109,8 +109,18 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
 
     on_event!(on_cancel_requested, cancel_pending);
     on_event!(on_delete_requested, request_delete);
-    on_event!(on_confirm_yes, confirm_delete);
-    on_event!(on_confirm_no, decline_delete);
+    on_event!(on_return_pressed, handle_return);
+    on_event!(on_backspace_pressed, backspace);
+
+    let text_app = app.clone();
+    let text_ui = ui.as_weak();
+    ui.on_key_text(move |text| {
+        let mut app = text_app.borrow_mut();
+        app.handle_key_text(&text);
+        if let Some(ui) = text_ui.upgrade() {
+            sync_ui(&ui, &app);
+        }
+    });
 }
 
 /// Connects to the service's local socket, spawning the service as a

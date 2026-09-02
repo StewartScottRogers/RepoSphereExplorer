@@ -144,11 +144,15 @@ pub enum Pane {
     File,
 }
 
-/// Whether the app is idling or waiting on a delete confirmation.
+/// Whether the app is idling, waiting on a delete confirmation, or editing
+/// a name for a rename/copy/extract operation.
 #[derive(Debug)]
 enum Mode {
     Normal,
     ConfirmDelete { path: PathBuf, name: String },
+    RenameInput { path: PathBuf, input: String },
+    CopyInput { path: PathBuf, input: String },
+    ExtractInput { path: PathBuf, input: String },
 }
 
 fn send_request(request: &Request) -> io::Result<Response> {
@@ -166,6 +170,15 @@ fn spawn_request(request: Request) -> Receiver<io::Result<Response>> {
     rx
 }
 
+/// Resolves `name` against `path`'s parent directory, as a string suitable
+/// for a request's `to`/`destination` field.
+fn sibling_path(path: &std::path::Path, name: &str) -> String {
+    path.parent()
+        .map_or_else(|| PathBuf::from(name), |parent| parent.join(name))
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
@@ -178,7 +191,7 @@ pub struct App {
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
     pending_file: Option<Receiver<io::Result<Response>>>,
     mode: Mode,
-    pending_delete: Option<Receiver<io::Result<Response>>>,
+    pending_operation: Option<Receiver<io::Result<Response>>>,
 }
 
 impl App {
@@ -197,7 +210,7 @@ impl App {
             pending_contents: None,
             pending_file: None,
             mode: Mode::Normal,
-            pending_delete: None,
+            pending_operation: None,
         };
         app.load_contents_for_selected();
         app
@@ -257,11 +270,11 @@ impl App {
                 message: err.to_string(),
             }));
         }
-        if let Some(rx) = &self.pending_delete
+        if let Some(rx) = &self.pending_operation
             && let Ok(result) = rx.try_recv()
         {
-            self.pending_delete = None;
-            self.apply_delete_result(result);
+            self.pending_operation = None;
+            self.apply_operation_result(result);
         }
     }
 
@@ -284,28 +297,31 @@ impl App {
         }
     }
 
-    fn apply_delete_result(&mut self, result: io::Result<Response>) {
+    fn apply_operation_result(&mut self, result: io::Result<Response>) {
         match result {
             Ok(Response::Done) => {
                 self.status = None;
                 self.load_contents_for_selected();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
-            Ok(_) => self.status = Some("unexpected response to delete".to_owned()),
+            Ok(_) => self.status = Some("unexpected response to operation".to_owned()),
             Err(err) => self.status = Some(err.to_string()),
         }
     }
 
+    fn selected_entry_path(&self) -> Option<(PathBuf, String)> {
+        let entry = self.contents.get(self.content_selected)?;
+        Some((
+            self.selected_dir_path().join(&entry.name),
+            entry.name.clone(),
+        ))
+    }
+
     /// Asks for confirmation before deleting the selected contents row.
     pub fn request_delete(&mut self) {
-        let Some(entry) = self.contents.get(self.content_selected) else {
-            return;
-        };
-        let path = self.selected_dir_path().join(&entry.name);
-        self.mode = Mode::ConfirmDelete {
-            path,
-            name: entry.name.clone(),
-        };
+        if let Some((path, name)) = self.selected_entry_path() {
+            self.mode = Mode::ConfirmDelete { path, name };
+        }
     }
 
     /// Confirms a pending delete confirmation, sending the delete request.
@@ -317,7 +333,7 @@ impl App {
         let request = Request::Delete {
             paths: vec![path.to_string_lossy().into_owned()],
         };
-        self.pending_delete = Some(spawn_request(request));
+        self.pending_operation = Some(spawn_request(request));
         self.status = Some("deleting...".to_owned());
     }
 
@@ -326,12 +342,127 @@ impl App {
         self.mode = Mode::Normal;
     }
 
+    /// Starts editing a new name to rename the selected contents row to.
+    pub fn request_rename(&mut self) {
+        if let Some((path, name)) = self.selected_entry_path() {
+            self.mode = Mode::RenameInput { path, input: name };
+        }
+    }
+
+    /// Starts editing a destination name to copy the selected contents row
+    /// to.
+    pub fn request_copy(&mut self) {
+        if let Some((path, name)) = self.selected_entry_path() {
+            self.mode = Mode::CopyInput { path, input: name };
+        }
+    }
+
+    /// Starts editing a destination directory name to extract the selected
+    /// contents row (an archive) into.
+    pub fn request_extract(&mut self) {
+        if let Some((path, name)) = self.selected_entry_path() {
+            let suggested = std::path::Path::new(&name)
+                .file_stem()
+                .map_or_else(|| name.clone(), |stem| stem.to_string_lossy().into_owned());
+            self.mode = Mode::ExtractInput {
+                path,
+                input: suggested,
+            };
+        }
+    }
+
+    fn input_mut(&mut self) -> Option<&mut String> {
+        match &mut self.mode {
+            Mode::RenameInput { input, .. }
+            | Mode::CopyInput { input, .. }
+            | Mode::ExtractInput { input, .. } => Some(input),
+            Mode::Normal | Mode::ConfirmDelete { .. } => None,
+        }
+    }
+
+    /// Confirms a pending rename/copy/extract input, sending its request.
+    pub fn confirm_text_input(&mut self) {
+        let mode = std::mem::replace(&mut self.mode, Mode::Normal);
+        let request = match mode {
+            Mode::RenameInput { path, input } if !input.is_empty() => Some(Request::Rename {
+                from: path.to_string_lossy().into_owned(),
+                to: sibling_path(&path, &input),
+            }),
+            Mode::CopyInput { path, input } if !input.is_empty() => Some(Request::Copy {
+                from: path.to_string_lossy().into_owned(),
+                to: sibling_path(&path, &input),
+            }),
+            Mode::ExtractInput { path, input } if !input.is_empty() => Some(Request::Extract {
+                archive: path.to_string_lossy().into_owned(),
+                destination: sibling_path(&path, &input),
+            }),
+            _ => None,
+        };
+        if let Some(request) = request {
+            self.pending_operation = Some(spawn_request(request));
+            self.status = Some("working...".to_owned());
+        }
+    }
+
+    /// Handles a single character typed while a rename/copy/extract input
+    /// is active; a no-op otherwise.
+    pub fn type_char(&mut self, text: &str) {
+        let Some(c) = text.chars().next() else {
+            return;
+        };
+        if let Some(input) = self.input_mut() {
+            input.push(c);
+        }
+    }
+
+    /// Removes the last character of a pending rename/copy/extract input;
+    /// a no-op otherwise.
+    pub fn backspace(&mut self) {
+        if let Some(input) = self.input_mut() {
+            input.pop();
+        }
+    }
+
+    /// Confirms a pending rename/copy/extract input on Return; a no-op in
+    /// any other mode (a delete confirmation uses y/n instead, via
+    /// [`Self::handle_key_text`]).
+    pub fn handle_return(&mut self) {
+        if matches!(
+            self.mode,
+            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. }
+        ) {
+            self.confirm_text_input();
+        }
+    }
+
+    /// Dispatches one typed character by the current mode: a hotkey in
+    /// normal mode (`r`/`c`/`x`), y/n during a delete confirmation, or an
+    /// appended character during a rename/copy/extract input.
+    pub fn handle_key_text(&mut self, text: &str) {
+        match &self.mode {
+            Mode::ConfirmDelete { .. } => match text {
+                "y" | "Y" => self.confirm_delete(),
+                "n" | "N" => self.decline_delete(),
+                _ => {}
+            },
+            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
+                self.type_char(text);
+            }
+            Mode::Normal => match text {
+                "r" => self.request_rename(),
+                "c" => self.request_copy(),
+                "x" => self.request_extract(),
+                _ => {}
+            },
+        }
+    }
+
     /// Cancels any pending request; a late result is simply discarded when
     /// it arrives, since its receiver is dropped.
     pub fn cancel_pending(&mut self) {
         let cancelled = self.pending_contents.take().is_some()
             | self.pending_file.take().is_some()
-            | self.pending_delete.take().is_some();
+            | self.pending_operation.take().is_some();
         self.mode = Mode::Normal;
         if cancelled {
             self.status = Some("cancelled".to_owned());
@@ -466,12 +597,17 @@ impl App {
     /// Display text for the status bar.
     #[must_use]
     pub fn status_text(&self) -> String {
-        if let Mode::ConfirmDelete { name, .. } = &self.mode {
-            return format!("Delete {name}? y/n");
+        match &self.mode {
+            Mode::ConfirmDelete { name, .. } => format!("Delete {name}? y/n"),
+            Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
+            Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
+            Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
+            Mode::Normal => self.status.clone().unwrap_or_else(|| {
+                "Click a folder or file. Double-click to open. Delete/r/c/x on a file. \
+                 Esc cancels."
+                    .to_owned()
+            }),
         }
-        self.status.clone().unwrap_or_else(|| {
-            "Click a folder or file. Double-click to open. Esc cancels a pending load.".to_owned()
-        })
     }
 
     /// Which pane is currently focused, as an index (0/1/2) matching the
@@ -608,7 +744,7 @@ mod tests {
         let mut app = app_with_one_content_entry();
         app.request_delete();
         app.decline_delete();
-        assert!(app.pending_delete.is_none());
+        assert!(app.pending_operation.is_none());
         assert_ne!(app.status_text(), "Delete doomed.txt? y/n");
     }
 
@@ -625,14 +761,14 @@ mod tests {
         let mut app = app_with_one_content_entry();
         app.request_delete();
         app.confirm_delete();
-        assert!(app.pending_delete.is_some());
+        assert!(app.pending_operation.is_some());
         assert_eq!(app.status_text(), "deleting...");
     }
 
     #[test]
     fn a_successful_delete_result_reloads_contents() {
         let mut app = app_with_one_content_entry();
-        app.apply_delete_result(Ok(Response::Done));
+        app.apply_operation_result(Ok(Response::Done));
         assert!(app.pending_contents.is_some());
         assert_ne!(app.status_text(), "deleting...");
     }
@@ -640,9 +776,119 @@ mod tests {
     #[test]
     fn a_failed_delete_result_surfaces_the_error() {
         let mut app = app_with_one_content_entry();
-        app.apply_delete_result(Ok(Response::Error {
+        app.apply_operation_result(Ok(Response::Error {
             message: "permission denied".to_owned(),
         }));
         assert_eq!(app.status_text(), "permission denied");
+    }
+
+    #[test]
+    fn r_key_prefills_the_rename_input_with_the_current_name() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+        assert_eq!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn editing_the_rename_input_appends_and_backspaces() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+
+        app.backspace();
+        app.handle_key_text("!");
+
+        assert_eq!(app.status_text(), "Rename to: doomed.tx!_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn returning_confirms_a_rename_and_sends_a_request() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+
+        app.handle_return();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "working...");
+    }
+
+    #[test]
+    fn escaping_a_rename_input_cancels_without_a_request() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+
+        app.cancel_pending();
+
+        assert!(app.pending_operation.is_none());
+        assert_ne!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn c_key_prefills_the_copy_input_with_the_current_name() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("c");
+        assert_eq!(app.status_text(), "Copy to: doomed.txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn returning_confirms_a_copy_and_sends_a_request() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("c");
+
+        app.handle_return();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "working...");
+    }
+
+    fn app_with_one_archive_entry() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("bundle.zip", false)]),
+            }),
+        );
+        app
+    }
+
+    #[test]
+    fn x_key_prefills_the_extract_input_with_the_archive_stem() {
+        let mut app = app_with_one_archive_entry();
+        app.handle_key_text("x");
+        assert_eq!(app.status_text(), "Extract to: bundle_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn returning_confirms_an_extract_and_sends_a_request() {
+        let mut app = app_with_one_archive_entry();
+        app.handle_key_text("x");
+
+        app.handle_return();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "working...");
+    }
+
+    #[test]
+    fn returning_with_an_emptied_rename_input_does_not_send_a_request() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+        for _ in 0.."doomed.txt".len() {
+            app.backspace();
+        }
+
+        app.handle_return();
+
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn typed_letters_that_are_also_hotkeys_are_appended_during_text_input() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+
+        app.handle_key_text("x");
+
+        assert_eq!(app.status_text(), "Rename to: doomed.txtx_  (Enter/Esc)");
     }
 }
