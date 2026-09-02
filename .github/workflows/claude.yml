@@ -2,6 +2,8 @@ name: Claude
 
 # The machine floor: Claude picks up work orders and answers @claude mentions.
 # Requires the repository secret ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN).
+# If that key is identity-linked rather than workspace-scoped, the API
+# rejects it without a workspace id - also set ANTHROPIC_WORKSPACE_ID.
 
 on:
   issues:
@@ -38,6 +40,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
           label_trigger: work-order
           claude_args: |
             --max-turns 30
