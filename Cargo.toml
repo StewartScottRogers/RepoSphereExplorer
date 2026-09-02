@@ -13,6 +13,7 @@ members = [
     "crates/plugins/typescript",
     "crates/plugins/rust",
     "crates/plugins/go",
+    "crates/plugins/cpp",
     "crates/plugins/c",
     "crates/plugins/image",
     "crates/plugins/archive",
