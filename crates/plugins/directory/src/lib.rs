@@ -40,7 +40,13 @@ impl PluginCore for DirectoryCore {
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             entry_count += 1;
-            if let Ok(metadata) = entry.metadata() {
+            // Only files, not subdirectories: a directory's own metadata
+            // size is a filesystem-block-size artifact (e.g. ~4096 bytes on
+            // Linux ext4, but 0 on Windows NTFS), not meaningful content
+            // size, and summing it would make this platform-dependent.
+            if entry.file_type().is_ok_and(|file_type| file_type.is_file())
+                && let Ok(metadata) = entry.metadata()
+            {
                 total_size += metadata.len();
             }
         }
