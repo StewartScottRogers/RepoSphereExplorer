@@ -23,6 +23,7 @@ plugin-javascript = { path = "../plugins/javascript" }
 plugin-pdf = { path = "../plugins/pdf" }
 plugin-python = { path = "../plugins/python" }
 plugin-rust = { path = "../plugins/rust" }
+plugin-swift = { path = "../plugins/swift" }
 plugin-text = { path = "../plugins/text" }
 plugin-typescript = { path = "../plugins/typescript" }
 protocol = { path = "../protocol" }
