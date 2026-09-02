@@ -14,6 +14,10 @@ on:
       issue:
         description: Issue number to build (blank = pick the oldest open work order)
         required: false
+      max_turns:
+        description: Turn budget for unusually large work orders (default 40)
+        required: false
+        default: "40"
 
 # Shares its group with claude.yml: only one floor build runs at a time,
 # whether it was triggered by a label or by tonight's shift, so concurrent
@@ -40,7 +44,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           show_full_output: true
           claude_args: |
-            --max-turns 40
+            --max-turns ${{ inputs.max_turns || '40' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
             --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"
           prompt: |
