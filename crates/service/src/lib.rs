@@ -21,6 +21,7 @@ const SNIFF_PREFIX_LEN: u64 = 512;
 /// caller to justify it while twelve entries can still be read at a glance
 /// (see `plugin-api`'s crate docs).
 const CORE_PLUGINS: &[&dyn PluginCore] = &[
+    &plugin_ruby::RubyCore,
     &plugin_python::PythonCore,
     &plugin_typescript::TypeScriptCore,
     &plugin_javascript::JavaScriptCore,

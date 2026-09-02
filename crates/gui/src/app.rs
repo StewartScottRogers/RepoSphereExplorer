@@ -19,6 +19,7 @@ use std::sync::mpsc::{self, Receiver};
 const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_text::TextPresentation,
     &plugin_python::PythonPresentation,
+    &plugin_ruby::RubyPresentation,
     &plugin_javascript::JavaScriptPresentation,
     &plugin_typescript::TypeScriptPresentation,
     &plugin_rust::RustPresentation,
