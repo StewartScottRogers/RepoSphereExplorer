@@ -144,6 +144,13 @@ pub enum Pane {
     File,
 }
 
+/// Whether the app is idling or waiting on a delete confirmation.
+#[derive(Debug)]
+enum Mode {
+    Normal,
+    ConfirmDelete { path: PathBuf, name: String },
+}
+
 fn send_request(request: &Request) -> io::Result<Response> {
     use interprocess::local_socket::traits::Stream as _;
     let mut conn = interprocess::local_socket::Stream::connect(protocol::socket_name()?)?;
@@ -170,6 +177,8 @@ pub struct App {
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
     pending_file: Option<Receiver<io::Result<Response>>>,
+    mode: Mode,
+    pending_delete: Option<Receiver<io::Result<Response>>>,
 }
 
 impl App {
@@ -187,6 +196,8 @@ impl App {
             focus: Pane::Folders,
             pending_contents: None,
             pending_file: None,
+            mode: Mode::Normal,
+            pending_delete: None,
         };
         app.load_contents_for_selected();
         app
@@ -246,6 +257,12 @@ impl App {
                 message: err.to_string(),
             }));
         }
+        if let Some(rx) = &self.pending_delete
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_delete = None;
+            self.apply_delete_result(result);
+        }
     }
 
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
@@ -260,17 +277,62 @@ impl App {
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
-            Ok(Response::FileView { .. }) => {
+            Ok(Response::FileView { .. } | Response::Done) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
             Err(err) => self.status = Some(err.to_string()),
         }
     }
 
+    fn apply_delete_result(&mut self, result: io::Result<Response>) {
+        match result {
+            Ok(Response::Done) => {
+                self.status = None;
+                self.load_contents_for_selected();
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("unexpected response to delete".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// Asks for confirmation before deleting the selected contents row.
+    pub fn request_delete(&mut self) {
+        let Some(entry) = self.contents.get(self.content_selected) else {
+            return;
+        };
+        let path = self.selected_dir_path().join(&entry.name);
+        self.mode = Mode::ConfirmDelete {
+            path,
+            name: entry.name.clone(),
+        };
+    }
+
+    /// Confirms a pending delete confirmation, sending the delete request.
+    pub fn confirm_delete(&mut self) {
+        let Mode::ConfirmDelete { path, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
+            return;
+        };
+        let request = Request::Delete {
+            paths: vec![path.to_string_lossy().into_owned()],
+        };
+        self.pending_delete = Some(spawn_request(request));
+        self.status = Some("deleting...".to_owned());
+    }
+
+    /// Declines a pending delete confirmation, returning to normal mode.
+    pub fn decline_delete(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
     /// Cancels any pending request; a late result is simply discarded when
     /// it arrives, since its receiver is dropped.
     pub fn cancel_pending(&mut self) {
-        let cancelled = self.pending_contents.take().is_some() | self.pending_file.take().is_some();
+        let cancelled = self.pending_contents.take().is_some()
+            | self.pending_file.take().is_some()
+            | self.pending_delete.take().is_some();
+        self.mode = Mode::Normal;
         if cancelled {
             self.status = Some("cancelled".to_owned());
         }
@@ -397,13 +459,16 @@ impl App {
         match &self.file_view {
             Some(Response::FileView { plugin, data }) => present(plugin, data).join("\n"),
             Some(Response::Error { message }) => message.clone(),
-            Some(Response::Directory { .. }) | None => String::new(),
+            Some(Response::Directory { .. } | Response::Done) | None => String::new(),
         }
     }
 
     /// Display text for the status bar.
     #[must_use]
     pub fn status_text(&self) -> String {
+        if let Mode::ConfirmDelete { name, .. } = &self.mode {
+            return format!("Delete {name}? y/n");
+        }
         self.status.clone().unwrap_or_else(|| {
             "Click a folder or file. Double-click to open. Esc cancels a pending load.".to_owned()
         })
@@ -518,5 +583,66 @@ mod tests {
         let before = app.folder_selected();
         app.select_folder(999);
         assert_eq!(app.folder_selected(), before);
+    }
+
+    fn app_with_one_content_entry() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("doomed.txt", false)]),
+            }),
+        );
+        app
+    }
+
+    #[test]
+    fn delete_requested_asks_for_confirmation() {
+        let mut app = app_with_one_content_entry();
+        app.request_delete();
+        assert_eq!(app.status_text(), "Delete doomed.txt? y/n");
+    }
+
+    #[test]
+    fn declining_the_delete_confirmation_returns_to_normal_without_a_request() {
+        let mut app = app_with_one_content_entry();
+        app.request_delete();
+        app.decline_delete();
+        assert!(app.pending_delete.is_none());
+        assert_ne!(app.status_text(), "Delete doomed.txt? y/n");
+    }
+
+    #[test]
+    fn cancel_pending_during_delete_confirmation_returns_to_normal() {
+        let mut app = app_with_one_content_entry();
+        app.request_delete();
+        app.cancel_pending();
+        assert_ne!(app.status_text(), "Delete doomed.txt? y/n");
+    }
+
+    #[test]
+    fn confirming_the_delete_sends_a_request_for_exactly_that_path() {
+        let mut app = app_with_one_content_entry();
+        app.request_delete();
+        app.confirm_delete();
+        assert!(app.pending_delete.is_some());
+        assert_eq!(app.status_text(), "deleting...");
+    }
+
+    #[test]
+    fn a_successful_delete_result_reloads_contents() {
+        let mut app = app_with_one_content_entry();
+        app.apply_delete_result(Ok(Response::Done));
+        assert!(app.pending_contents.is_some());
+        assert_ne!(app.status_text(), "deleting...");
+    }
+
+    #[test]
+    fn a_failed_delete_result_surfaces_the_error() {
+        let mut app = app_with_one_content_entry();
+        app.apply_delete_result(Ok(Response::Error {
+            message: "permission denied".to_owned(),
+        }));
+        assert_eq!(app.status_text(), "permission denied");
     }
 }

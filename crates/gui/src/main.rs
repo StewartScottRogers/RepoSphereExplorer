@@ -93,15 +93,24 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_row_event!(on_content_row_clicked, select_content);
     on_row_event!(on_content_row_double_clicked, open_content);
 
-    let cancel_app = app.clone();
-    let cancel_ui = ui.as_weak();
-    ui.on_cancel_requested(move || {
-        let mut app = cancel_app.borrow_mut();
-        app.cancel_pending();
-        if let Some(ui) = cancel_ui.upgrade() {
-            sync_ui(&ui, &app);
-        }
-    });
+    macro_rules! on_event {
+        ($setter:ident, $method:ident) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.$method();
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+
+    on_event!(on_cancel_requested, cancel_pending);
+    on_event!(on_delete_requested, request_delete);
+    on_event!(on_confirm_yes, confirm_delete);
+    on_event!(on_confirm_no, decline_delete);
 }
 
 /// Connects to the service's local socket, spawning the service as a

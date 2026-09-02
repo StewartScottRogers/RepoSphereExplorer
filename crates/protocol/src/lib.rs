@@ -32,6 +32,34 @@ pub enum Request {
         /// Path to open, as given by the caller.
         path: String,
     },
+    /// Renames (or moves) `from` to `to`. Journaled.
+    Rename {
+        /// The existing path.
+        from: String,
+        /// The path it should have afterwards.
+        to: String,
+    },
+    /// Copies the file at `from` to `to`. Journaled.
+    Copy {
+        /// The source file.
+        from: String,
+        /// The destination path.
+        to: String,
+    },
+    /// Deletes every path in `paths`: the exact, confirmed target set (per
+    /// GUIDANCE.md §2.1.5, not a pattern the service resolves itself).
+    /// Journaled.
+    Delete {
+        /// The exact paths to delete.
+        paths: Vec<String>,
+    },
+    /// Extracts the archive at `archive` into `destination`. Journaled.
+    Extract {
+        /// The archive to extract.
+        archive: String,
+        /// The directory to extract into.
+        destination: String,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -63,6 +91,8 @@ pub enum Response {
         /// A human-readable description of the failure.
         message: String,
     },
+    /// An operation (rename, copy, delete, extract) completed successfully.
+    Done,
 }
 
 /// Resolves [`SOCKET_NAME`] to a platform-appropriate local socket name,

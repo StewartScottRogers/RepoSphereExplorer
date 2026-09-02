@@ -65,6 +65,23 @@ impl PluginCore for ArchiveCore {
     }
 }
 
+/// Extracts every entry in the archive at `archive_path` into
+/// `destination`, creating it if needed. The operation this plugin offers,
+/// per GUIDANCE.md §3.
+///
+/// # Errors
+/// Returns an error if the archive cannot be read or an entry cannot be
+/// written under `destination`.
+pub fn extract(archive_path: &Path, destination: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    let file = std::fs::File::open(archive_path)?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    archive
+        .extract(destination)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
 /// The archive plugin's presentation half.
 #[derive(Debug, Default)]
 pub struct ArchivePresentation;
@@ -158,5 +175,26 @@ mod tests {
         let lines = ArchivePresentation.present(&data);
 
         assert_eq!(lines, vec!["1 entries", "a.txt (5 bytes)"]);
+    }
+
+    #[test]
+    fn extracts_a_real_zip_archive_to_a_destination() {
+        let archive_path = unique_temp_file("extract-source.zip");
+        write_test_zip(&archive_path);
+        let destination = unique_temp_file("extract-destination");
+
+        super::extract(&archive_path, &destination).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(destination.join("hello.txt")).unwrap(),
+            "hello, archive"
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.join("nested").join("world.txt")).unwrap(),
+            "world"
+        );
+
+        std::fs::remove_file(&archive_path).unwrap();
+        std::fs::remove_dir_all(&destination).unwrap();
     }
 }

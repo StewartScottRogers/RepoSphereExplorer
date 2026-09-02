@@ -1504,6 +1504,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2318,7 +2339,7 @@ checksum = "b40ca9252762c466af32d0b1002e91e4e1bc5398f77455e55474deb466355ff5"
 
 [[package]]
 name = "gui"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "interprocess",
  "plugin-api",
@@ -4228,6 +4249,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "option-ext"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
 name = "orbclient"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4590,14 +4617,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plugin-api"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "plugin-archive"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "plugin-api",
  "serde",
@@ -4607,7 +4634,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-directory"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "plugin-api",
  "serde",
@@ -4616,7 +4643,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-image"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "image",
  "plugin-api",
@@ -4626,7 +4653,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-pdf"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "lopdf",
  "plugin-api",
@@ -4636,7 +4663,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-text"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "plugin-api",
  "serde",
@@ -4793,7 +4820,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "interprocess",
  "serde",
@@ -5219,6 +5246,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
+dependencies = [
+ "getrandom 0.2.17",
+ "libredox",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5249,7 +5287,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "repo_sphere_explorer"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -5554,8 +5592,9 @@ dependencies = [
 
 [[package]]
 name = "service"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
+ "dirs",
  "interprocess",
  "plugin-api",
  "plugin-archive",
@@ -5564,7 +5603,10 @@ dependencies = [
  "plugin-pdf",
  "plugin-text",
  "protocol",
+ "serde",
+ "serde_json",
  "updater",
+ "zip",
 ]
 
 [[package]]
@@ -6491,7 +6533,7 @@ dependencies = [
 
 [[package]]
 name = "tui"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "interprocess",
  "plugin-api",
@@ -6663,7 +6705,7 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
 name = "updater"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "rand 0.10.2",

@@ -4,10 +4,11 @@ use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream};
 use plugin_api::PluginCore;
 use protocol::{DirectoryEntry, Request, Response};
+use serde::Serialize;
 use std::fs;
 use std::io;
-use std::io::Read;
-use std::path::Path;
+use std::io::{Read, Write as _};
+use std::path::{Path, PathBuf};
 
 /// Number of bytes read from the start of a file when sniffing its type.
 const SNIFF_PREFIX_LEN: u64 = 512;
@@ -102,6 +103,141 @@ fn open(path: &Path) -> Response {
     })
 }
 
+/// Where operations are journaled by default:
+/// `<data-local-dir>/RepoSphereExplorer/journal.jsonl`.
+fn default_journal_path() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|dir| dir.join("RepoSphereExplorer").join("journal.jsonl"))
+}
+
+/// One line of the operations journal: GUIDANCE.md §2.1.5 requires
+/// destructive operations to be "journaled so the action can be described
+/// after the fact".
+#[derive(Debug, Serialize)]
+struct JournalEntry<'a> {
+    at_unix_secs: u64,
+    operation: &'a str,
+    targets: &'a [String],
+    outcome: &'a str,
+}
+
+/// Appends one line describing `operation` on `targets` to the journal at
+/// `path`. Best-effort: a journaling failure is reported to stderr and
+/// never propagated, so it can't block the operation it's recording.
+fn journal_to(path: &Path, operation: &str, targets: &[String], outcome: &io::Result<()>) {
+    let entry = JournalEntry {
+        at_unix_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs()),
+        operation,
+        targets,
+        outcome: &match outcome {
+            Ok(()) => "ok".to_owned(),
+            Err(err) => err.to_string(),
+        },
+    };
+    let Ok(line) = serde_json::to_string(&entry) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    match fs::OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut file) => {
+            if let Err(err) = writeln!(file, "{line}") {
+                eprintln!("could not write journal entry: {err}");
+            }
+        }
+        Err(err) => eprintln!("could not open journal at {}: {err}", path.display()),
+    }
+}
+
+/// Appends one line to the default journal, if one is resolvable. See
+/// [`journal_to`].
+fn journal(operation: &str, targets: &[String], outcome: &io::Result<()>) {
+    if let Some(path) = default_journal_path() {
+        journal_to(&path, operation, targets, outcome);
+    }
+}
+
+/// Renames (moves) `from` to `to`, journaling the attempt.
+///
+/// # Errors
+/// Returns an error if the rename fails.
+pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    let result = fs::rename(from, to);
+    journal(
+        "rename",
+        &[from.display().to_string(), to.display().to_string()],
+        &result,
+    );
+    result
+}
+
+/// Copies the file at `from` to `to`, journaling the attempt.
+///
+/// # Errors
+/// Returns an error if the copy fails.
+pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
+    let result = fs::copy(from, to).map(|_| ());
+    journal(
+        "copy",
+        &[from.display().to_string(), to.display().to_string()],
+        &result,
+    );
+    result
+}
+
+/// Deletes every path in `paths` - the exact, confirmed target set per
+/// GUIDANCE.md §2.1.5, never a pattern the service resolves itself -
+/// journaling the attempt.
+///
+/// # Errors
+/// Returns an error if any path cannot be deleted; earlier paths in the
+/// list may already have been removed.
+pub fn delete(paths: &[String]) -> io::Result<()> {
+    let result = (|| {
+        for path in paths {
+            let path = Path::new(path);
+            if fs::metadata(path)?.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+        }
+        Ok(())
+    })();
+    journal("delete", paths, &result);
+    result
+}
+
+/// Extracts the archive at `archive` into `destination`, journaling the
+/// attempt.
+///
+/// # Errors
+/// Returns an error if the archive cannot be extracted.
+pub fn extract(archive: &Path, destination: &Path) -> io::Result<()> {
+    let result = plugin_archive::extract(archive, destination);
+    journal(
+        "extract",
+        &[
+            archive.display().to_string(),
+            destination.display().to_string(),
+        ],
+        &result,
+    );
+    result
+}
+
+/// Runs `operation` and turns its result into a [`Response`].
+fn respond_to_operation(operation: io::Result<()>) -> Response {
+    match operation {
+        Ok(()) => Response::Done,
+        Err(err) => Response::Error {
+            message: err.to_string(),
+        },
+    }
+}
+
 /// Computes the response for one request.
 #[must_use]
 pub fn handle_request(request: &Request) -> Response {
@@ -118,6 +254,15 @@ pub fn handle_request(request: &Request) -> Response {
             })
         }
         Request::Open { path } => open(Path::new(path)),
+        Request::Rename { from, to } => {
+            respond_to_operation(rename(Path::new(from), Path::new(to)))
+        }
+        Request::Copy { from, to } => respond_to_operation(copy(Path::new(from), Path::new(to))),
+        Request::Delete { paths } => respond_to_operation(delete(paths)),
+        Request::Extract {
+            archive,
+            destination,
+        } => respond_to_operation(extract(Path::new(archive), Path::new(destination))),
     }
 }
 
@@ -157,11 +302,15 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bind, handle_request, list_directory, open, serve_one, view_file};
+    use super::{
+        bind, copy, delete, extract, handle_request, journal_to, list_directory, open, rename,
+        serve_one, view_file,
+    };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
     use protocol::{Request, Response};
     use std::fs;
+    use std::io;
 
     fn unique_socket_name() -> String {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -237,6 +386,119 @@ mod tests {
 
         assert!(matches!(open(&dir), Response::Directory { .. }));
         assert!(matches!(open(&file), Response::FileView { .. }));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renames_a_real_file() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("old.txt");
+        let to = dir.join("new.txt");
+        fs::write(&from, "content").unwrap();
+
+        rename(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(&to).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copies_a_real_file_leaving_the_source_in_place() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("source.txt");
+        let to = dir.join("copy.txt");
+        fs::write(&from, "content").unwrap();
+
+        copy(&from, &to).unwrap();
+
+        assert_eq!(fs::read_to_string(&from).unwrap(), "content");
+        assert_eq!(fs::read_to_string(&to).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deletes_exactly_the_given_files_and_directories() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        let file = dir.join("a.txt");
+        let kept = dir.join("b.txt");
+        fs::write(&file, "a").unwrap();
+        fs::write(&kept, "b").unwrap();
+
+        delete(&[
+            file.to_string_lossy().into_owned(),
+            dir.join("sub").to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+
+        assert!(!file.exists());
+        assert!(!dir.join("sub").exists());
+        assert!(kept.exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn extracts_an_archive_via_the_archive_plugins_operation() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let archive_path = dir.join("test.zip");
+        let file = fs::File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file("inside.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut writer, b"payload").unwrap();
+        writer.finish().unwrap();
+        let destination = dir.join("out");
+
+        extract(&archive_path, &destination).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("inside.txt")).unwrap(),
+            "payload"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn journal_to_appends_a_line_describing_the_outcome() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let journal_path = dir.join("journal.jsonl");
+
+        journal_to(
+            &journal_path,
+            "rename",
+            &["a.txt".to_owned(), "b.txt".to_owned()],
+            &Ok(()),
+        );
+        journal_to(
+            &journal_path,
+            "delete",
+            &["c.txt".to_owned()],
+            &Err(io::Error::other("boom")),
+        );
+
+        let contents = fs::read_to_string(&journal_path).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
+
+        let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(first["operation"], "rename");
+        assert_eq!(first["outcome"], "ok");
+        assert_eq!(first["targets"], serde_json::json!(["a.txt", "b.txt"]));
+
+        let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(second["operation"], "delete");
+        assert_eq!(second["outcome"], "boom");
 
         fs::remove_dir_all(&dir).unwrap();
     }

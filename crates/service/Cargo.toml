@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+dirs = "6"
 interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
 plugin-archive = { path = "../plugins/archive" }
@@ -16,7 +17,12 @@ plugin-image = { path = "../plugins/image" }
 plugin-pdf = { path = "../plugins/pdf" }
 plugin-text = { path = "../plugins/text" }
 protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 updater = { path = "../updater" }
+
+[dev-dependencies]
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

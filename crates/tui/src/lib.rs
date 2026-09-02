@@ -77,6 +77,9 @@ pub(crate) fn render_with_block(
         Response::Error { message } => {
             frame.render_widget(Paragraph::new(message.as_str()).block(block), area);
         }
+        Response::Done => {
+            frame.render_widget(Paragraph::new("done").block(block), area);
+        }
     }
 }
 

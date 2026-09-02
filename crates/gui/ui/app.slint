@@ -61,6 +61,9 @@ export component MainWindow inherits Window {
     callback content-row-clicked(int);
     callback content-row-double-clicked(int);
     callback cancel-requested();
+    callback delete-requested();
+    callback confirm-yes();
+    callback confirm-no();
 
     forward-focus: key-scope;
 
@@ -68,6 +71,12 @@ export component MainWindow inherits Window {
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 cancel-requested();
+            } else if (event.text == Key.Delete) {
+                delete-requested();
+            } else if (event.text == "y" || event.text == "Y") {
+                confirm-yes();
+            } else if (event.text == "n" || event.text == "N") {
+                confirm-no();
             }
             accept
         }

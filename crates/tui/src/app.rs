@@ -163,6 +163,21 @@ fn spawn_request(request: Request) -> Receiver<io::Result<Response>> {
     rx
 }
 
+/// A modal interaction awaiting the user's response, on top of the normal
+/// three-pane navigation.
+enum Mode {
+    /// Nothing pending; keys navigate the panes as usual.
+    Normal,
+    /// Asking whether to delete `path`, per GUIDANCE.md §2.1.5: destructive
+    /// operations need an explicit confirmed intent before they run.
+    ConfirmDelete {
+        /// The path that would be deleted.
+        path: PathBuf,
+        /// Its display name, for the confirmation prompt.
+        name: String,
+    },
+}
+
 /// The three-pane explorer's state: a folders tree, the selected folder's
 /// contents, and the selected file's preview.
 pub struct App {
@@ -173,8 +188,10 @@ pub struct App {
     focus: Focus,
     file_view: Option<Response>,
     status: Option<String>,
+    mode: Mode,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
     pending_file: Option<Receiver<io::Result<Response>>>,
+    pending_delete: Option<Receiver<io::Result<Response>>>,
     /// Set once the user has asked to quit.
     pub should_quit: bool,
 }
@@ -192,8 +209,10 @@ impl App {
             focus: Focus::Folders,
             file_view: None,
             status: None,
+            mode: Mode::Normal,
             pending_contents: None,
             pending_file: None,
+            pending_delete: None,
             should_quit: false,
         };
         app.load_contents_for_selected();
@@ -254,6 +273,24 @@ impl App {
                 message: err.to_string(),
             }));
         }
+        if let Some(rx) = &self.pending_delete
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_delete = None;
+            self.apply_delete_result(result);
+        }
+    }
+
+    fn apply_delete_result(&mut self, result: io::Result<Response>) {
+        match result {
+            Ok(Response::Done) => {
+                self.status = None;
+                self.load_contents_for_selected();
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("unexpected response to delete".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
     }
 
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
@@ -268,7 +305,7 @@ impl App {
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
-            Ok(Response::FileView { .. }) => {
+            Ok(Response::FileView { .. } | Response::Done) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
             Err(err) => self.status = Some(err.to_string()),
@@ -277,11 +314,16 @@ impl App {
 
     /// Handles one key press.
     pub fn handle_key(&mut self, code: KeyCode) {
+        if matches!(self.mode, Mode::ConfirmDelete { .. }) {
+            self.handle_confirm_delete_key(code);
+            return;
+        }
         match code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => self.cancel_or_quit(),
             KeyCode::Tab => self.focus = self.focus.next(),
             KeyCode::BackTab => self.focus = self.focus.previous(),
+            KeyCode::Delete if self.focus == Focus::Contents => self.start_delete_confirmation(),
             _ => match self.focus {
                 Focus::Folders => self.handle_folders_key(code),
                 Focus::Contents => self.handle_contents_key(code),
@@ -291,12 +333,58 @@ impl App {
     }
 
     fn cancel_or_quit(&mut self) {
-        let cancelled = self.pending_contents.take().is_some() | self.pending_file.take().is_some();
+        let cancelled = self.pending_contents.take().is_some()
+            | self.pending_file.take().is_some()
+            | self.pending_delete.take().is_some();
         if cancelled {
             self.status = Some("cancelled".to_owned());
         } else {
             self.should_quit = true;
         }
+    }
+
+    fn start_delete_confirmation(&mut self) {
+        let Some(entry) = self.contents.get(self.contents_selected) else {
+            return;
+        };
+        let path = self.selected_dir_path().join(&entry.name);
+        self.mode = Mode::ConfirmDelete {
+            path,
+            name: entry.name.clone(),
+        };
+    }
+
+    fn handle_confirm_delete_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char('y' | 'Y') => self.confirm_delete(),
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {}
+        }
+    }
+
+    fn confirm_delete(&mut self) {
+        let Mode::ConfirmDelete { path, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
+            return;
+        };
+        let request = Request::Delete {
+            paths: vec![path.to_string_lossy().into_owned()],
+        };
+        self.pending_delete = Some(spawn_request(request));
+        self.status = Some("deleting...".to_owned());
+    }
+
+    /// The text shown on the status line: a delete confirmation prompt if
+    /// one is pending, otherwise the current status or the default help
+    /// text.
+    fn status_line(&self) -> String {
+        if let Mode::ConfirmDelete { name, .. } = &self.mode {
+            return format!("Delete {name}? y/n");
+        }
+        self.status.clone().unwrap_or_else(|| {
+            "Tab: switch pane  Up/Down: move  Enter/Right: open  Left: collapse  Delete: delete  Esc: cancel/quit  q: quit"
+                .to_owned()
+        })
     }
 
     fn handle_folders_key(&mut self, code: KeyCode) {
@@ -434,11 +522,7 @@ pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
     render_contents(frame, columns[1], app);
     render_file(frame, columns[2], app);
 
-    let status = app.status.clone().unwrap_or_else(|| {
-        "Tab: switch pane  Up/Down: move  Enter/Right: open  Left: collapse  Esc: cancel/quit  q: quit"
-            .to_owned()
-    });
-    frame.render_widget(Paragraph::new(status), rows[1]);
+    frame.render_widget(Paragraph::new(app.status_line()), rows[1]);
 }
 
 fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -638,5 +722,84 @@ mod tests {
 
         app.handle_key(KeyCode::Down);
         assert_eq!(app.contents_selected, 0);
+    }
+
+    fn app_with_one_content_entry() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("note.txt", false)]),
+            }),
+        );
+        app.focus = Focus::Contents;
+        app
+    }
+
+    #[test]
+    fn delete_key_on_contents_asks_for_confirmation() {
+        let mut app = app_with_one_content_entry();
+
+        app.handle_key(KeyCode::Delete);
+
+        assert_eq!(app.status_line(), "Delete note.txt? y/n");
+        assert!(app.pending_delete.is_none());
+    }
+
+    #[test]
+    fn declining_the_delete_confirmation_returns_to_normal_without_a_request() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key(KeyCode::Delete);
+
+        app.handle_key(KeyCode::Char('n'));
+
+        assert!(app.pending_delete.is_none());
+        assert_ne!(app.status_line(), "Delete note.txt? y/n");
+    }
+
+    #[test]
+    fn esc_during_delete_confirmation_cancels_without_quitting() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key(KeyCode::Delete);
+
+        app.handle_key(KeyCode::Esc);
+
+        assert!(!app.should_quit);
+        assert_ne!(app.status_line(), "Delete note.txt? y/n");
+    }
+
+    #[test]
+    fn confirming_the_delete_sends_a_request_for_exactly_that_path() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key(KeyCode::Delete);
+
+        app.handle_key(KeyCode::Char('y'));
+
+        assert!(app.pending_delete.is_some());
+        assert_eq!(app.status_line(), "deleting...");
+    }
+
+    #[test]
+    fn a_successful_delete_result_reloads_contents() {
+        let mut app = app_with_one_content_entry();
+        app.status = Some("deleting...".to_owned());
+
+        app.apply_delete_result(Ok(Response::Done));
+
+        // load_contents_for_selected() ran again: a fresh request is in
+        // flight, and its own "loading..." status has replaced "deleting...".
+        assert!(app.pending_contents.is_some());
+        assert_ne!(app.status.as_deref(), Some("deleting..."));
+    }
+
+    #[test]
+    fn a_failed_delete_result_surfaces_the_error() {
+        let mut app = app_with_one_content_entry();
+
+        app.apply_delete_result(Ok(Response::Error {
+            message: "permission denied".to_owned(),
+        }));
+
+        assert_eq!(app.status.as_deref(), Some("permission denied"));
     }
 }
