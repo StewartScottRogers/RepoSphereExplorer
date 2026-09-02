@@ -23,6 +23,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_typescript::TypeScriptPresentation,
     &plugin_rust::RustPresentation,
     &plugin_go::GoPresentation,
+    &plugin_c::CPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,

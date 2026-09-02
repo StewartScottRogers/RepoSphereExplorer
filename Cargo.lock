@@ -2344,6 +2344,7 @@ dependencies = [
  "interprocess",
  "plugin-api",
  "plugin-archive",
+ "plugin-c",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
@@ -4638,6 +4639,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-c"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-directory"
 version = "0.6.0"
 dependencies = [
@@ -5648,6 +5658,7 @@ dependencies = [
  "interprocess",
  "plugin-api",
  "plugin-archive",
+ "plugin-c",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
@@ -6593,6 +6604,7 @@ dependencies = [
  "interprocess",
  "plugin-api",
  "plugin-archive",
+ "plugin-c",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
