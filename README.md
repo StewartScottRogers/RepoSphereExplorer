@@ -4,29 +4,37 @@ A Rust application, built and maintained as a **dark factory**: work enters as a
 GitHub issue, machines do the rest, and a release comes out the other end. No
 step of the pipeline assumes a human is watching.
 
-Current state: a cargo workspace implementing build order steps 1-4 of
-[GUIDANCE.md](GUIDANCE.md) — a three-pane terminal explorer (`tui`: folders,
-contents, file preview) backed by a local file-serving process (`service`),
-with a text-file preview plugin. The `explore` CLI
-(`repo_sphere_explorer`) is an earlier placeholder, kept for its own tests
-but superseded by the explorer below. No GUI yet (build order step 5).
+Current state: a cargo workspace implementing build order steps 1-5 of
+[GUIDANCE.md](GUIDANCE.md) — a three-pane explorer (folders, contents, file
+preview) as both a terminal app (`tui`) and a native Slint GUI (`gui`), backed
+by a local file-serving process (`service`), with a text-file preview plugin.
+The `explore` CLI (`repo_sphere_explorer`) is an earlier placeholder, kept for
+its own tests but superseded by the explorer below.
 
 ## Run it
 
-Download `tui` and `service` for your platform from the
-[latest release](https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest).
-Rename off the target-triple suffix (e.g. `service-x86_64-pc-windows-msvc.exe`
-to `service.exe`) so both binaries sit side by side, then run:
+**[stewartscottrogers.github.io/RepoSphereExplorer](https://stewartscottrogers.github.io/RepoSphereExplorer/)**
+has OS-detected download links. Or grab binaries for your platform from the
+[latest release](https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest):
+`tui` and `service` for the terminal app, or `gui` and `service` for the
+native app. Rename off the target-triple suffix (e.g.
+`service-x86_64-pc-windows-msvc.exe` to `service.exe`) so the pair sits side
+by side, then run:
 
 ```bash
-./tui [path]   # defaults to the current directory
+./tui [path]   # or ./gui [path] - defaults to the current directory
 ```
 
-`tui` starts `service` automatically if it isn't already running, and the
-service keeps running afterwards so later launches reconnect instantly.
-Only text files preview today; other types report that no plugin recognises
-them. Binaries are unsigned (see [GUIDANCE.md §7 D3](GUIDANCE.md#7-open-decisions)),
-so Windows SmartScreen and macOS Gatekeeper will warn on first run.
+Either front end starts `service` automatically if it isn't already running,
+and the service keeps running afterwards so later launches reconnect
+instantly. Only text files preview today; other types report that no plugin
+recognises them. Binaries are unsigned (see
+[GUIDANCE.md §7 D3](GUIDANCE.md#7-open-decisions)), so Windows SmartScreen and
+macOS Gatekeeper will warn on first run.
+
+Every binary takes a `--self-update` flag (`repo_sphere_explorer self-update`
+for the CLI) that checks the signed manifest published alongside the Pages
+site and, if newer, downloads, verifies, and replaces itself in place.
 
 ## The floor
 
@@ -39,6 +47,7 @@ so Windows SmartScreen and macOS Gatekeeper will warn on first run.
 | Night shift | [`factory-shift.yml`](.github/workflows/factory-shift.yml) | nightly 03:00 UTC: builds the oldest open work order and opens a PR |
 | Repair | [`repair.yml`](.github/workflows/repair.yml) | CI failed on `main`: diagnoses the run and opens a fix PR |
 | Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux/Windows/macOS binaries attached to a GitHub release |
+| Storefront | [`pages.yml`](.github/workflows/pages.yml) | after `release.yml` finishes: signs the release, publishes `latest.json`, renders the history film, regenerates stats, and deploys the Pages site |
 
 A work order ([template](.github/ISSUE_TEMPLATE/work-order.yml)) must state an
 observable outcome and the acceptance checks that prove it. That contract is
