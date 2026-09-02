@@ -43,3 +43,5 @@ jobs:
           label_trigger: work-order
           claude_args: |
             --max-turns 30
+            --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
+            --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"

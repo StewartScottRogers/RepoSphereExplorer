@@ -40,6 +40,8 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
             --max-turns 40
+            --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
+            --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"
           prompt: |
             You are the night shift of an unattended software factory.
 
