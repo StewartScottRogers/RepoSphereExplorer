@@ -1,0 +1,39 @@
+name: Day shift
+
+# Chains Factory shift runs back-to-back while the plugin backlog lasts,
+# instead of waiting on the once-nightly cron. Re-dispatches only after a
+# run that finished cleanly (conclusion: success) and only while open
+# work-order issues remain, so a genuine failure halts the chain for a
+# human to look at, and an empty backlog lets it go quiet instead of
+# spinning empty runs. workflow_dispatch lets a human bootstrap the chain
+# the first time, or resume it manually after a halt.
+
+on:
+  workflow_run:
+    workflows: ["Factory shift"]
+    types: [completed]
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  issues: read
+
+jobs:
+  continue:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch the next factory shift if backlog remains
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          remaining=$(gh issue list --repo "$REPO" --label work-order --state open --json number --jq 'length')
+          echo "Open work-order issues remaining: $remaining"
+          if [ "$remaining" -gt 0 ]; then
+            gh workflow run factory-shift.yml --repo "$REPO"
+          else
+            echo "Backlog empty; day shift going quiet."
+          fi

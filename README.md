@@ -53,7 +53,8 @@ site and, if newer, downloads, verifies, and replaces itself in place.
 | Assembly | [`claude.yml`](.github/workflows/claude.yml) | issue labelled `work-order`, or `@claude` in a comment |
 | Restocking | [`dependabot.yml`](.github/dependabot.yml) | weekly cargo + actions updates |
 | Dispatch | [`auto-merge.yml`](.github/workflows/auto-merge.yml) | PRs from Dependabot or labelled `auto-merge` |
-| Night shift | [`factory-shift.yml`](.github/workflows/factory-shift.yml) | nightly 03:00 UTC: builds the oldest open work order and opens a PR |
+| Night shift | [`factory-shift.yml`](.github/workflows/factory-shift.yml) | nightly 03:00 UTC, or dispatched directly: builds the oldest open work order and opens a PR |
+| Day shift | [`day-shift.yml`](.github/workflows/day-shift.yml) | a Night shift run finishes cleanly: re-dispatches the next one while open work orders remain |
 | Repair | [`repair.yml`](.github/workflows/repair.yml) | CI failed on `main`: diagnoses the run and opens a fix PR |
 | Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux/Windows/macOS binaries attached to a GitHub release |
 | Storefront | [`pages.yml`](.github/workflows/pages.yml) | after `release.yml` finishes: signs the release, publishes `latest.json`, renders the history film, regenerates stats, and deploys the Pages site |
