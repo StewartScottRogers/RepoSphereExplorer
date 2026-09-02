@@ -2346,6 +2346,7 @@ dependencies = [
  "plugin-archive",
  "plugin-c",
  "plugin-cpp",
+ "plugin-csharp",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
@@ -4658,6 +4659,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-csharp"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-directory"
 version = "0.6.0"
 dependencies = [
@@ -5670,6 +5680,7 @@ dependencies = [
  "plugin-archive",
  "plugin-c",
  "plugin-cpp",
+ "plugin-csharp",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
@@ -6617,6 +6628,7 @@ dependencies = [
  "plugin-archive",
  "plugin-c",
  "plugin-cpp",
+ "plugin-csharp",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
