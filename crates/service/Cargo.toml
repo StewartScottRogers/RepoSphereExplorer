@@ -13,6 +13,7 @@ interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
 plugin-archive = { path = "../plugins/archive" }
 plugin-directory = { path = "../plugins/directory" }
+plugin-go = { path = "../plugins/go" }
 plugin-image = { path = "../plugins/image" }
 plugin-javascript = { path = "../plugins/javascript" }
 plugin-pdf = { path = "../plugins/pdf" }

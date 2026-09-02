@@ -2345,6 +2345,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-directory",
+ "plugin-go",
  "plugin-image",
  "plugin-javascript",
  "plugin-pdf",
@@ -4646,6 +4647,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-go"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-image"
 version = "0.6.0"
 dependencies = [
@@ -5639,6 +5649,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-directory",
+ "plugin-go",
  "plugin-image",
  "plugin-javascript",
  "plugin-pdf",
@@ -6583,6 +6594,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-directory",
+ "plugin-go",
  "plugin-image",
  "plugin-javascript",
  "plugin-pdf",

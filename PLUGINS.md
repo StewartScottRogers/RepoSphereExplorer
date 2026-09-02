@@ -19,6 +19,7 @@ that already exists or retries a format already ruled out.
 | JavaScript source | `crates/plugins/javascript` | #8 | Sniffs by `node` shebang, top-level `function`/`class`, or CommonJS/ES-module/arrow-function markers, ahead of `text` in `CORE_PLUGINS` |
 | TypeScript source | `crates/plugins/typescript` | #9 | Sniffs by TypeScript-only markers (`interface`/`enum`/type-alias declarations, type annotations, visibility modifiers, `implements`, `import type`), ahead of `javascript` in `CORE_PLUGINS` so it claims TS-specific syntax first |
 | Rust source | `crates/plugins/rust` | #10 | Sniffs by `fn`/`struct`/`enum`/`trait`/`impl` declarations and markers (`let mut`, `println!(`, `#[derive(`, `use std::`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS` |
+| Go source | `crates/plugins/go` | #11 | Sniffs by `package`/`func`/`import (` declarations and markers (`:=`, `fmt.Println(`, `fmt.Printf(`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS` |
 
 ## Rejected / infeasible
 
