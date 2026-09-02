@@ -4,14 +4,29 @@ A Rust application, built and maintained as a **dark factory**: work enters as a
 GitHub issue, machines do the rest, and a release comes out the other end. No
 step of the pipeline assumes a human is watching.
 
-Current state: a working skeleton — a `clap` CLI over a library crate, with the
-full pipeline wired and green. The explorer itself is not implemented yet.
+Current state: a cargo workspace implementing build order steps 1-4 of
+[GUIDANCE.md](GUIDANCE.md) — a three-pane terminal explorer (`tui`: folders,
+contents, file preview) backed by a local file-serving process (`service`),
+with a text-file preview plugin. The `explore` CLI
+(`repo_sphere_explorer`) is an earlier placeholder, kept for its own tests
+but superseded by the explorer below. No GUI yet (build order step 5).
 
 ## Run it
 
+Download `tui` and `service` for your platform from the
+[latest release](https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest).
+Rename off the target-triple suffix (e.g. `service-x86_64-pc-windows-msvc.exe`
+to `service.exe`) so both binaries sit side by side, then run:
+
 ```bash
-cargo run -- explore acme/widgets
+./tui [path]   # defaults to the current directory
 ```
+
+`tui` starts `service` automatically if it isn't already running, and the
+service keeps running afterwards so later launches reconnect instantly.
+Only text files preview today; other types report that no plugin recognises
+them. Binaries are unsigned (see [GUIDANCE.md §7 D3](GUIDANCE.md#7-open-decisions)),
+so Windows SmartScreen and macOS Gatekeeper will warn on first run.
 
 ## The floor
 
