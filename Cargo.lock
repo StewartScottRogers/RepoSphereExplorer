@@ -2318,7 +2318,7 @@ checksum = "b40ca9252762c466af32d0b1002e91e4e1bc5398f77455e55474deb466355ff5"
 
 [[package]]
 name = "gui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "interprocess",
  "plugin-api",
@@ -4590,14 +4590,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plugin-api"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "plugin-archive"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "plugin-api",
  "serde",
@@ -4607,7 +4607,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-directory"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "plugin-api",
  "serde",
@@ -4616,7 +4616,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-image"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "image",
  "plugin-api",
@@ -4626,7 +4626,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-pdf"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lopdf",
  "plugin-api",
@@ -4636,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-text"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "plugin-api",
  "serde",
@@ -4793,7 +4793,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "interprocess",
  "serde",
@@ -5249,7 +5249,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "repo_sphere_explorer"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -5554,7 +5554,7 @@ dependencies = [
 
 [[package]]
 name = "service"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "interprocess",
  "plugin-api",
@@ -6491,7 +6491,7 @@ dependencies = [
 
 [[package]]
 name = "tui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "interprocess",
  "plugin-api",
@@ -6663,7 +6663,7 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
 name = "updater"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ed25519-dalek",
  "rand 0.10.2",
