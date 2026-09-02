@@ -13,6 +13,13 @@ on:
         description: Issue number to build (blank = pick the oldest open work order)
         required: false
 
+# Shares its group with claude.yml: only one floor build runs at a time,
+# whether it was triggered by a label or by tonight's shift, so concurrent
+# work orders never race each other's edits to the same root Cargo.toml.
+concurrency:
+  group: dark-factory-floor
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write

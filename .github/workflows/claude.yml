@@ -13,6 +13,15 @@ on:
   pull_request_review:
     types: [submitted]
 
+# One build at a time across the whole floor (this workflow and
+# factory-shift.yml share the group): several work orders landing close
+# together would otherwise run concurrently and repeatedly conflict on the
+# same root Cargo.toml. Queue instead of cancelling, so no triggering issue
+# or comment is silently dropped.
+concurrency:
+  group: dark-factory-floor
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write
