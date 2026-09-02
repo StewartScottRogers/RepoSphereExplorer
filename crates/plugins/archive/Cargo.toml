@@ -1,0 +1,11 @@
+[package]
+name = "plugin-archive"
+description = "Archive file type plugin: core and presentation halves."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true

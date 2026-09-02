@@ -155,6 +155,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "gui"
+version = "0.1.0"
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -200,6 +204,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "plugin-api"
+version = "0.1.0"
+
+[[package]]
+name = "plugin-archive"
+version = "0.1.0"
+
+[[package]]
+name = "plugin-directory"
+version = "0.1.0"
+
+[[package]]
+name = "plugin-image"
+version = "0.1.0"
+
+[[package]]
+name = "plugin-pdf"
+version = "0.1.0"
+
+[[package]]
+name = "plugin-text"
+version = "0.1.0"
+
+[[package]]
 name = "predicates"
 version = "3.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -237,6 +265,10 @@ checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "protocol"
+version = "0.1.0"
 
 [[package]]
 name = "quote"
@@ -306,6 +338,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "service"
+version = "0.1.0"
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -327,6 +363,10 @@ name = "termtree"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
+
+[[package]]
+name = "tui"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"
