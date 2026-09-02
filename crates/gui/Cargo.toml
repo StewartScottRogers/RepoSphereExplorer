@@ -6,6 +6,29 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+build = "build.rs"
 
-[lints]
-workspace = true
+[dependencies]
+interprocess = "2.4"
+plugin-api = { path = "../plugin-api" }
+plugin-text = { path = "../plugins/text" }
+protocol = { path = "../protocol" }
+serde_json = "1"
+slint = "1.17"
+
+[build-dependencies]
+slint-build = "1.17"
+
+# Not `[lints] workspace = true`: Slint's generated component code (from
+# build.rs, included into this crate) contains its own #[allow(unsafe_code)]
+# for FFI vtable plumbing. A crate-level `forbid` rejects that even though
+# we never write unsafe code ourselves here, so this crate alone runs with
+# `deny` instead - still blocking any unsafe code *we* add, just not
+# Slint's own internal allow.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
