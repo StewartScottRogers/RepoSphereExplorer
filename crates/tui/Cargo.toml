@@ -19,6 +19,7 @@ plugin-go = { path = "../plugins/go" }
 plugin-image = { path = "../plugins/image" }
 plugin-java = { path = "../plugins/java" }
 plugin-javascript = { path = "../plugins/javascript" }
+plugin-kotlin = { path = "../plugins/kotlin" }
 plugin-pdf = { path = "../plugins/pdf" }
 plugin-python = { path = "../plugins/python" }
 plugin-rust = { path = "../plugins/rust" }
