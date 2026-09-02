@@ -1,18 +1,31 @@
 name: Day shift
 
 # Chains Factory shift runs back-to-back while the plugin backlog lasts,
-# instead of waiting on the once-nightly cron. Re-dispatches only after a
-# run that finished cleanly (conclusion: success) and only while open
-# work-order issues remain, so a genuine failure halts the chain for a
-# human to look at, and an empty backlog lets it go quiet instead of
-# spinning empty runs. workflow_dispatch lets a human bootstrap the chain
-# the first time, or resume it manually after a halt.
+# instead of waiting on the once-nightly cron. Every trigger below funnels
+# into the same check: look at the most recent Factory shift run's own
+# conclusion (not just the event that woke this workflow up - the cron
+# fallback has no conclusion of its own to inspect), and only dispatch
+# another one when that last run finished cleanly and open work-order
+# issues remain. A genuine failure halts the chain for a human to look
+# at - every trigger respects that, not just the one that happened to fire
+# right after the failing run - and an empty backlog lets it go quiet
+# instead of spinning empty runs.
+#
+# workflow_run is the fast path (fires right after a run completes) but
+# isn't reliable here: GitHub doesn't consistently fire workflow_run for a
+# run that was itself started via the default GITHUB_TOKEN, which is
+# exactly how this workflow's own `gh workflow run` call starts Factory
+# shift. The schedule trigger is the fallback that keeps the chain moving
+# even when that event never arrives. workflow_dispatch bootstraps the
+# chain the first time, or resumes it manually after a halt.
 
 on:
   workflow_run:
     workflows: ["Factory shift"]
     types: [completed]
   workflow_dispatch: {}
+  schedule:
+    - cron: "*/10 * * * *"
 
 permissions:
   actions: write
@@ -20,16 +33,20 @@ permissions:
 
 jobs:
   continue:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch the next factory shift if backlog remains
+      - name: Dispatch the next factory shift if the floor is healthy and backlog remains
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
+          last_conclusion=$(gh run list --repo "$REPO" --workflow factory-shift.yml --limit 1 --json conclusion --jq '.[0].conclusion // "none"')
+          echo "Last Factory shift conclusion: $last_conclusion"
+          if [ "$last_conclusion" = "failure" ]; then
+            echo "Last run failed; halting the chain for a human to look at."
+            exit 0
+          fi
+
           remaining=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq 'length')
           echo "Open work-order issues remaining: $remaining"
           if [ "$remaining" -gt 0 ]; then

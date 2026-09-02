@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # "Closes #N" auto-closing the linked issue on merge needs this - work-
+  # order issues were staying open after their PR merged without it.
+  issues: write
 
 jobs:
   enable:
