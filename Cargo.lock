@@ -2349,6 +2349,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-pdf",
  "plugin-python",
+ "plugin-rust",
  "plugin-text",
  "plugin-typescript",
  "protocol",
@@ -4683,6 +4684,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-rust"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-text"
 version = "0.6.0"
 dependencies = [
@@ -5633,6 +5643,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-pdf",
  "plugin-python",
+ "plugin-rust",
  "plugin-text",
  "plugin-typescript",
  "protocol",
@@ -6576,6 +6587,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-pdf",
  "plugin-python",
+ "plugin-rust",
  "plugin-text",
  "plugin-typescript",
  "protocol",
