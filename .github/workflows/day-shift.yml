@@ -30,7 +30,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          remaining=$(gh issue list --repo "$REPO" --label work-order --state open --json number --jq 'length')
+          remaining=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq 'length')
           echo "Open work-order issues remaining: $remaining"
           if [ "$remaining" -gt 0 ]; then
             gh workflow run factory-shift.yml --repo "$REPO"

@@ -52,7 +52,11 @@ jobs:
             Target issue: "${{ inputs.issue }}" (empty means: choose one yourself).
 
             1. If a target issue was given, use it. Otherwise run
-               `gh issue list --label work-order --state open --json number,title,createdAt`
+               `gh issue list --label work-order --state open --limit 1000 --json number,title,createdAt`
+               (the `--limit` matters: this repo can have dozens of open
+               work orders at once, well past `gh`'s default page of 30,
+               and skipping it would silently pick from the newest 30
+               instead of the true oldest)
                and take the oldest one that has no linked pull request. If there
                is none, comment nothing and stop — an idle shift is a fine shift.
             2. Read the issue. If the outcome or the acceptance checks are
