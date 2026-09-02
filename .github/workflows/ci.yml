@@ -36,6 +36,9 @@ jobs:
   audit:
     name: dependency audit
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
