@@ -2355,6 +2355,7 @@ dependencies = [
  "plugin-kotlin",
  "plugin-pdf",
  "plugin-python",
+ "plugin-ruby",
  "plugin-rust",
  "plugin-text",
  "plugin-typescript",
@@ -4744,6 +4745,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-ruby"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-rust"
 version = "0.6.0"
 dependencies = [
@@ -5709,6 +5719,7 @@ dependencies = [
  "plugin-kotlin",
  "plugin-pdf",
  "plugin-python",
+ "plugin-ruby",
  "plugin-rust",
  "plugin-text",
  "plugin-typescript",
@@ -6659,6 +6670,7 @@ dependencies = [
  "plugin-kotlin",
  "plugin-pdf",
  "plugin-python",
+ "plugin-ruby",
  "plugin-rust",
  "plugin-text",
  "plugin-typescript",
