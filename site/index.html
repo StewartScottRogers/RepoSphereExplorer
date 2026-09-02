@@ -146,9 +146,9 @@
 (function () {
   var RELEASE_BASE = "https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest/download/";
   var TARGETS = {
-    windows: { suffix: "x86_64-pc-windows-msvc.exe", binaries: ["tui", "gui", "service", "repo_sphere_explorer"] },
-    macos: { suffix: "aarch64-apple-darwin", binaries: ["tui", "gui", "service", "repo_sphere_explorer"] },
-    linux: { suffix: "x86_64-unknown-linux-gnu", binaries: ["tui", "gui", "service", "repo_sphere_explorer"] }
+    windows: { suffix: "x86_64-pc-windows-msvc.exe", binaries: ["RepoSphereExplorerTui", "RepoSphereExplorerGui", "service", "repo_sphere_explorer"] },
+    macos: { suffix: "aarch64-apple-darwin", binaries: ["RepoSphereExplorerTui", "RepoSphereExplorerGui", "service", "repo_sphere_explorer"] },
+    linux: { suffix: "x86_64-unknown-linux-gnu", binaries: ["RepoSphereExplorerTui", "RepoSphereExplorerGui", "service", "repo_sphere_explorer"] }
   };
 
   Object.keys(TARGETS).forEach(function (os) {

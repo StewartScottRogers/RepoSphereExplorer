@@ -6,7 +6,8 @@ step of the pipeline assumes a human is watching.
 
 Current state: a cargo workspace implementing build order steps 1-5 of
 [GUIDANCE.md](GUIDANCE.md) — a three-pane explorer (folders, contents, file
-preview) as both a terminal app (`tui`) and a native Slint GUI (`gui`), backed
+preview) as both a terminal app (`RepoSphereExplorerTui`) and a native Slint
+GUI (`RepoSphereExplorerGui`), backed
 by a local file-serving process (`service`). Per [D4](GUIDANCE.md#7-open-decisions),
 editing in v1 means rename, copy, delete, and extract (archives), each
 confirmed before it runs and journaled afterwards; per
@@ -29,13 +30,13 @@ what shipped in the last release. Direct link to the current video:
 **[stewartscottrogers.github.io/RepoSphereExplorer](https://stewartscottrogers.github.io/RepoSphereExplorer/)**
 has OS-detected download links. Or grab binaries for your platform from the
 [latest release](https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest):
-`tui` and `service` for the terminal app, or `gui` and `service` for the
-native app. Rename off the target-triple suffix (e.g.
-`service-x86_64-pc-windows-msvc.exe` to `service.exe`) so the pair sits side
-by side, then run:
+`RepoSphereExplorerTui` and `service` for the terminal app, or
+`RepoSphereExplorerGui` and `service` for the native app. Rename off the
+target-triple suffix (e.g. `service-x86_64-pc-windows-msvc.exe` to
+`service.exe`) so the pair sits side by side, then run:
 
 ```bash
-./tui [path]   # or ./gui [path] - defaults to the current directory
+./RepoSphereExplorerTui [path]   # or ./RepoSphereExplorerGui [path] - defaults to the current directory
 ```
 
 Either front end starts `service` automatically if it isn't already running,

@@ -28,6 +28,10 @@ updater = { path = "../updater" }
 [build-dependencies]
 slint-build = "1.17"
 
+[[bin]]
+name = "RepoSphereExplorerGui"
+path = "src/main.rs"
+
 # Not `[lints] workspace = true`: Slint's generated component code (from
 # build.rs, included into this crate) contains its own #[allow(unsafe_code)]
 # for FFI vtable plumbing. A crate-level `forbid` rejects that even though

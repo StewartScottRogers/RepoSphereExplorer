@@ -58,13 +58,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Checks for and applies an update to this binary, per §4.2 of
 /// GUIDANCE.md.
 fn self_update() -> Result<(), Box<dyn std::error::Error>> {
-    match updater::self_update("gui") {
+    match updater::self_update("RepoSphereExplorerGui") {
         Ok(updater::Outcome::UpToDate { version }) => {
-            println!("gui is up to date (v{version})");
+            println!("RepoSphereExplorerGui is up to date (v{version})");
             Ok(())
         }
         Ok(updater::Outcome::Updated { from, to }) => {
-            println!("gui updated: v{from} -> v{to}");
+            println!("RepoSphereExplorerGui updated: v{from} -> v{to}");
             Ok(())
         }
         Err(err) => Err(err.into()),
