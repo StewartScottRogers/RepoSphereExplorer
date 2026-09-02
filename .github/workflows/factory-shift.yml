@@ -58,10 +58,18 @@ jobs:
             2. Read the issue. If the outcome or the acceptance checks are
                ambiguous, comment on the issue asking the single question that
                would unblock it, then stop. Do not guess.
-            3. Implement it on a new branch, following CLAUDE.md. New behaviour
-               lands with a test.
-            4. Run `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`
+            3. If this is a file-type plugin work order, check PLUGINS.md
+               first. If the format is already in the Built table, or in
+               Rejected without this issue explicitly asking to retry it,
+               comment why and close the issue without implementing anything.
+            4. Implement it on a new branch, following CLAUDE.md. New behaviour
+               lands with a test. For a plugin work order that succeeds, add
+               a row to PLUGINS.md's Built table in the same branch/PR. If you
+               instead conclude the format can't reasonably become a plugin,
+               add a row to Rejected with a one-line reason, push nothing, and
+               close the issue with that explanation instead of opening a PR.
+            5. Run `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`
                and `cargo test --all-features`. All three must pass, plus the
                acceptance checks named in the issue.
-            5. Open a pull request that says `Closes #<issue>` and lists the
+            6. Open a pull request that says `Closes #<issue>` and lists the
                acceptance checks you ran with their results. Do not merge it.

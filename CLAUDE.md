@@ -31,7 +31,8 @@ A cargo workspace, per [GUIDANCE.md §5](GUIDANCE.md#5-proposed-workspace-layout
   cores.
 - `crates/tui/`, `crates/gui/` — the Ratatui and Slint front ends.
 - `crates/plugins/{text,image,archive,pdf,directory}/` — one crate per file
-  type, each with a core half and a presentation half.
+  type, each with a core half and a presentation half. See
+  [PLUGINS.md](PLUGINS.md) for the full built/rejected registry.
 
 Shared lints and the release profile live once in the workspace root
 `Cargo.toml`; member crates opt in with `[lints] workspace = true`.
@@ -58,3 +59,10 @@ change the guidance first. Decisions D1-D5 in its section 7 gate the large work.
    configurability nobody asked for, no error handling for impossible states.
 6. **Stop and ask in the issue** when the work order is ambiguous, rather than
    guessing. An unattended wrong build costs more than a blocked one.
+7. **Track plugins in [PLUGINS.md](PLUGINS.md).** Before proposing or building
+   a file-type plugin, check its Built and Rejected sections, plus
+   `gh issue list --label work-order --state all`, for that format. When a
+   plugin's PR merges, add it to Built. When a work order concludes a format
+   can't reasonably become a plugin, add it to Rejected with a one-line
+   reason and close the issue without a PR — do not retry a rejected format
+   unless explicitly asked to.
