@@ -15,6 +15,7 @@ that already exists or retries a format already ruled out.
 | Archive (zip) | `crates/plugins/archive` | — | Also provides `extract` for the D4 operations |
 | PDF | `crates/plugins/pdf` | — | |
 | Directory-as-file | `crates/plugins/directory` | — | |
+| Python source | `crates/plugins/python` | #7 | Sniffs by shebang or top-level `def`/`class`, ahead of `text` in `CORE_PLUGINS` |
 
 ## Rejected / infeasible
 

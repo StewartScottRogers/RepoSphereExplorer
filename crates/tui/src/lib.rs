@@ -29,6 +29,7 @@ pub fn send_request(socket_name: Name<'_>, request: &Request) -> io::Result<Resp
 /// (see `plugin-api`'s crate docs).
 const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_text::TextPresentation,
+    &plugin_python::PythonPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
