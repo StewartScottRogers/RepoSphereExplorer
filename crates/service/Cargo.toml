@@ -18,6 +18,7 @@ plugin-csharp = { path = "../plugins/csharp" }
 plugin-directory = { path = "../plugins/directory" }
 plugin-go = { path = "../plugins/go" }
 plugin-image = { path = "../plugins/image" }
+plugin-java = { path = "../plugins/java" }
 plugin-javascript = { path = "../plugins/javascript" }
 plugin-pdf = { path = "../plugins/pdf" }
 plugin-python = { path = "../plugins/python" }

@@ -26,6 +26,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_javascript::JavaScriptCore,
     &plugin_rust::RustCore,
     &plugin_go::GoCore,
+    &plugin_java::JavaCore,
     &plugin_csharp::CSharpCore,
     &plugin_cpp::CppCore,
     &plugin_c::CCore,
