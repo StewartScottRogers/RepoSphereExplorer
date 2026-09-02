@@ -1,5 +1,7 @@
 //! Ratatui front end: renders state and sends intents to the service.
 
+pub mod app;
+
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
 use plugin_api::PluginPresentation;
@@ -40,9 +42,13 @@ fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
 }
 
 /// Renders a directory listing, a file view, or an error, into `area` of
-/// `frame`.
-pub fn render(frame: &mut Frame<'_>, area: Rect, response: &Response) {
-    let block = Block::bordered().title("RepoSphereExplorer");
+/// `frame`, inside `block`.
+pub(crate) fn render_with_block(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    response: &Response,
+    block: Block<'_>,
+) {
     match response {
         Response::Directory { entries } => {
             let items: Vec<ListItem<'_>> = entries
@@ -66,6 +72,17 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, response: &Response) {
             frame.render_widget(Paragraph::new(message.as_str()).block(block), area);
         }
     }
+}
+
+/// Renders a directory listing, a file view, or an error, into `area` of
+/// `frame`.
+pub fn render(frame: &mut Frame<'_>, area: Rect, response: &Response) {
+    render_with_block(
+        frame,
+        area,
+        response,
+        Block::bordered().title("RepoSphereExplorer"),
+    );
 }
 
 #[cfg(test)]

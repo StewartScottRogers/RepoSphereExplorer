@@ -1,37 +1,27 @@
-//! Command line entry point for the Ratatui front end.
+//! Command line entry point for the Ratatui front end: the three-pane
+//! explorer, rooted at an optional path argument (default `.`).
 
-use protocol::{Request, Response};
-use ratatui::crossterm::event::{self, Event, KeyCode};
+use interprocess::local_socket::Stream;
+use interprocess::local_socket::traits::Stream as _;
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use std::env;
 use std::io;
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
+use tui::app::{App, render_app};
 
 fn main() -> ExitCode {
-    let path = env::args().nth(1).unwrap_or_else(|| ".".to_owned());
+    let root = env::args()
+        .nth(1)
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
 
-    let socket_name = match protocol::socket_name() {
-        Ok(name) => name,
-        Err(err) => {
-            eprintln!("could not resolve the service's socket name: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let request = Request::Open { path };
-    let response = match tui::send_request(socket_name, &request) {
-        Ok(response) => response,
-        Err(err) => {
-            eprintln!("could not reach the service (start it with `cargo run -p service`): {err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if let Response::Error { message } = &response {
-        eprintln!("service reported an error: {message}");
+    if let Err(err) = check_service_reachable() {
+        eprintln!("could not reach the service (start it with `cargo run -p service`): {err}");
         return ExitCode::FAILURE;
     }
 
-    if let Err(err) = show(&response) {
+    if let Err(err) = run(root) {
         eprintln!("terminal error: {err}");
         return ExitCode::FAILURE;
     }
@@ -39,19 +29,29 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Renders `response` in the alternate screen until the user presses `q` or
-/// Esc.
-fn show(response: &Response) -> io::Result<()> {
+/// Confirms the service's socket accepts a connection before the terminal
+/// is taken over, so a dead service fails with a plain message instead of
+/// an alternate-screen app that can never load anything.
+fn check_service_reachable() -> io::Result<()> {
+    let name = protocol::socket_name()?;
+    Stream::connect(name)?;
+    Ok(())
+}
+
+/// Runs the three-pane explorer's event loop until the user quits.
+fn run(root: PathBuf) -> io::Result<()> {
+    let mut app = App::new(root);
     let mut terminal = ratatui::init();
-    let result = loop {
-        terminal.draw(|frame| tui::render(frame, frame.area(), response))?;
-        match event::read()? {
-            Event::Key(key) if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) => {
-                break Ok(());
-            }
-            _ => {}
+    while !app.should_quit {
+        terminal.draw(|frame| render_app(frame, frame.area(), &app))?;
+        app.tick();
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            app.handle_key(key.code);
         }
-    };
+    }
     ratatui::restore();
-    result
+    Ok(())
 }
