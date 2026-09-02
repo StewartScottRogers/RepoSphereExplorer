@@ -13,10 +13,16 @@ use std::sync::mpsc::{self, Receiver};
 
 /// Every presentation plugin linked into this front end.
 ///
-/// Hand-registered: with a single plugin, a registration macro would be
-/// structure with no second caller to justify it (see `plugin-api`'s crate
-/// docs).
-const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[&plugin_text::TextPresentation];
+/// Hand-registered: a registration macro would be structure with no second
+/// caller to justify it while five entries can still be read at a glance
+/// (see `plugin-api`'s crate docs).
+const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
+    &plugin_text::TextPresentation,
+    &plugin_image::ImagePresentation,
+    &plugin_archive::ArchivePresentation,
+    &plugin_pdf::PdfPresentation,
+    &plugin_directory::DirectoryPresentation,
+];
 
 /// Turns a plugin's view data into displayable lines, via whichever
 /// registered presentation plugin matches `plugin`.
@@ -215,13 +221,8 @@ impl App {
             self.pending_file = None;
             return;
         };
-        if entry.is_dir {
-            self.file_view = None;
-            self.pending_file = None;
-            return;
-        }
         let path = self.selected_dir_path().join(&entry.name);
-        let request = Request::Open {
+        let request = Request::ViewFile {
             path: path.to_string_lossy().into_owned(),
         };
         self.pending_file = Some(spawn_request(request));

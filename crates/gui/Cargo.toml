@@ -11,6 +11,10 @@ build = "build.rs"
 [dependencies]
 interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
+plugin-archive = { path = "../plugins/archive" }
+plugin-directory = { path = "../plugins/directory" }
+plugin-image = { path = "../plugins/image" }
+plugin-pdf = { path = "../plugins/pdf" }
 plugin-text = { path = "../plugins/text" }
 protocol = { path = "../protocol" }
 serde_json = "1"

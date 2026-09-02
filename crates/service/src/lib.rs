@@ -12,12 +12,23 @@ use std::path::Path;
 /// Number of bytes read from the start of a file when sniffing its type.
 const SNIFF_PREFIX_LEN: u64 = 512;
 
-/// Every core plugin linked into this service, in sniffing priority order.
+/// Every content-sniffed core plugin linked into this service, in sniffing
+/// priority order. The directory plugin is dispatched separately (see
+/// [`view_file`]) since it has no file bytes to sniff.
 ///
-/// Hand-registered: with a single plugin, a registration macro would be
-/// structure with no second caller to justify it (see `plugin-api`'s crate
-/// docs).
-const CORE_PLUGINS: &[&dyn PluginCore] = &[&plugin_text::TextCore];
+/// Hand-registered: a registration macro would be structure with no second
+/// caller to justify it while five entries can still be read at a glance
+/// (see `plugin-api`'s crate docs).
+const CORE_PLUGINS: &[&dyn PluginCore] = &[
+    &plugin_text::TextCore,
+    &plugin_image::ImageCore,
+    &plugin_archive::ArchiveCore,
+    &plugin_pdf::PdfCore,
+];
+
+/// The directory-as-file plugin, dispatched directly by [`view_file`] when
+/// the path is a directory rather than through content sniffing.
+const DIRECTORY_PLUGIN: &dyn PluginCore = &plugin_directory::DirectoryCore;
 
 /// Lists the immediate contents of `path`, sorted by name.
 ///
@@ -52,12 +63,19 @@ fn sniff(path: &Path) -> io::Result<Option<&'static dyn PluginCore>> {
         .copied())
 }
 
-/// Views the file at `path` through whichever registered plugin recognises
-/// it.
+/// Views the path through whichever registered plugin recognises it: the
+/// directory plugin if `path` is a directory, otherwise whichever content
+/// plugin's `sniff` matches.
 ///
 /// # Errors
 /// Returns an error if `path` cannot be read.
 pub fn view_file(path: &Path) -> io::Result<Response> {
+    if fs::metadata(path)?.is_dir() {
+        return Ok(Response::FileView {
+            plugin: DIRECTORY_PLUGIN.name().to_owned(),
+            data: DIRECTORY_PLUGIN.view(path)?,
+        });
+    }
     Ok(match sniff(path)? {
         Some(plugin) => Response::FileView {
             plugin: plugin.name().to_owned(),
@@ -189,6 +207,25 @@ mod tests {
         }
 
         fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn views_a_directory_through_the_directory_plugin() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("note.txt"), b"hi").unwrap();
+
+        let response = view_file(&dir).unwrap();
+
+        match response {
+            Response::FileView { plugin, data } => {
+                assert_eq!(plugin, "directory");
+                assert_eq!(data["entry_count"], 1);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

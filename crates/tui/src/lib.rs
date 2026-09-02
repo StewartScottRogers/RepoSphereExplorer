@@ -24,10 +24,16 @@ pub fn send_request(socket_name: Name<'_>, request: &Request) -> io::Result<Resp
 
 /// Every presentation plugin linked into this front end.
 ///
-/// Hand-registered: with a single plugin, a registration macro would be
-/// structure with no second caller to justify it (see `plugin-api`'s crate
-/// docs).
-const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[&plugin_text::TextPresentation];
+/// Hand-registered: a registration macro would be structure with no second
+/// caller to justify it while five entries can still be read at a glance
+/// (see `plugin-api`'s crate docs).
+const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
+    &plugin_text::TextPresentation,
+    &plugin_image::ImagePresentation,
+    &plugin_archive::ArchivePresentation,
+    &plugin_pdf::PdfPresentation,
+    &plugin_directory::DirectoryPresentation,
+];
 
 /// Turns a plugin's view data into displayable lines, via whichever
 /// registered presentation plugin matches `plugin`.

@@ -229,13 +229,8 @@ impl App {
             self.pending_file = None;
             return;
         };
-        if entry.is_dir {
-            self.file_view = None;
-            self.pending_file = None;
-            return;
-        }
         let path = self.selected_dir_path().join(&entry.name);
-        let request = Request::Open {
+        let request = Request::ViewFile {
             path: path.to_string_lossy().into_owned(),
         };
         self.pending_file = Some(spawn_request(request));
