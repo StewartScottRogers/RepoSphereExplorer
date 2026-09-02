@@ -9,8 +9,11 @@ repository.workspace = true
 
 [dependencies]
 interprocess = "2.4"
+plugin-api = { path = "../plugin-api" }
+plugin-text = { path = "../plugins/text" }
 protocol = { path = "../protocol" }
 ratatui = "0.30"
+serde_json = "1"
 
 [lints]
 workspace = true

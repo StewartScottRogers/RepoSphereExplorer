@@ -21,6 +21,17 @@ pub enum Request {
         /// Path to list, as given by the caller.
         path: String,
     },
+    /// View a single file's content through its recognised plugin.
+    ViewFile {
+        /// Path to view, as given by the caller.
+        path: String,
+    },
+    /// Open `path`: lists it if it is a directory, otherwise views it
+    /// through its recognised plugin.
+    Open {
+        /// Path to open, as given by the caller.
+        path: String,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -33,12 +44,19 @@ pub struct DirectoryEntry {
 }
 
 /// A response sent from the service back to a front end.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Response {
     /// The requested directory's immediate entries.
     Directory {
         /// Entries in the directory, sorted by name.
         entries: Vec<DirectoryEntry>,
+    },
+    /// A file's content, as produced by the plugin that recognised it.
+    FileView {
+        /// Name of the plugin that produced `data`.
+        plugin: String,
+        /// The plugin's view data, ready for its presentation half.
+        data: serde_json::Value,
     },
     /// The request could not be completed.
     Error {
@@ -102,6 +120,20 @@ mod tests {
                 name: "src".to_owned(),
                 is_dir: true,
             }],
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &response).unwrap();
+
+        let decoded: Response = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn round_trips_a_file_view_through_the_wire_format() {
+        let response = Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::json!({ "content": "hello", "truncated": false }),
         };
 
         let mut buf = Vec::new();

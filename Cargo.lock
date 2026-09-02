@@ -1060,6 +1060,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "plugin-api"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "plugin-archive"
@@ -1080,6 +1083,11 @@ version = "0.1.0"
 [[package]]
 name = "plugin-text"
 version = "0.1.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "portable-atomic"
@@ -1425,6 +1433,8 @@ name = "service"
 version = "0.1.0"
 dependencies = [
  "interprocess",
+ "plugin-api",
+ "plugin-text",
  "protocol",
 ]
 
@@ -1702,8 +1712,11 @@ name = "tui"
 version = "0.1.0"
 dependencies = [
  "interprocess",
+ "plugin-api",
+ "plugin-text",
  "protocol",
  "ratatui",
+ "serde_json",
 ]
 
 [[package]]

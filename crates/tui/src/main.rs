@@ -1,6 +1,6 @@
 //! Command line entry point for the Ratatui front end.
 
-use protocol::Response;
+use protocol::{Request, Response};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use std::env;
 use std::io;
@@ -17,7 +17,8 @@ fn main() -> ExitCode {
         }
     };
 
-    let response = match tui::fetch_directory_listing(socket_name, &path) {
+    let request = Request::Open { path };
+    let response = match tui::send_request(socket_name, &request) {
         Ok(response) => response,
         Err(err) => {
             eprintln!("could not reach the service (start it with `cargo run -p service`): {err}");

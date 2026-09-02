@@ -2,10 +2,22 @@
 
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream};
+use plugin_api::PluginCore;
 use protocol::{DirectoryEntry, Request, Response};
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::Path;
+
+/// Number of bytes read from the start of a file when sniffing its type.
+const SNIFF_PREFIX_LEN: u64 = 512;
+
+/// Every core plugin linked into this service, in sniffing priority order.
+///
+/// Hand-registered: with a single plugin, a registration macro would be
+/// structure with no second caller to justify it (see `plugin-api`'s crate
+/// docs).
+const CORE_PLUGINS: &[&dyn PluginCore] = &[&plugin_text::TextCore];
 
 /// Lists the immediate contents of `path`, sorted by name.
 ///
@@ -23,6 +35,55 @@ pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
     Ok(entries)
 }
 
+/// Reads a bounded prefix from the start of the file at `path`.
+fn read_prefix(path: &Path) -> io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut buf = Vec::new();
+    file.take(SNIFF_PREFIX_LEN).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Finds the first registered plugin that recognises `path`'s content.
+fn sniff(path: &Path) -> io::Result<Option<&'static dyn PluginCore>> {
+    let prefix = read_prefix(path)?;
+    Ok(CORE_PLUGINS
+        .iter()
+        .find(|plugin| plugin.sniff(&prefix))
+        .copied())
+}
+
+/// Views the file at `path` through whichever registered plugin recognises
+/// it.
+///
+/// # Errors
+/// Returns an error if `path` cannot be read.
+pub fn view_file(path: &Path) -> io::Result<Response> {
+    Ok(match sniff(path)? {
+        Some(plugin) => Response::FileView {
+            plugin: plugin.name().to_owned(),
+            data: plugin.view(path)?,
+        },
+        None => Response::Error {
+            message: format!("no plugin recognises {}", path.display()),
+        },
+    })
+}
+
+/// Lists `path` if it is a directory, otherwise views it through whichever
+/// registered plugin recognises it.
+fn open(path: &Path) -> Response {
+    let result = match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => {
+            list_directory(path).map(|entries| Response::Directory { entries })
+        }
+        Ok(_) => view_file(path),
+        Err(err) => Err(err),
+    };
+    result.unwrap_or_else(|err| Response::Error {
+        message: err.to_string(),
+    })
+}
+
 /// Computes the response for one request.
 #[must_use]
 pub fn handle_request(request: &Request) -> Response {
@@ -33,6 +94,12 @@ pub fn handle_request(request: &Request) -> Response {
                 message: err.to_string(),
             },
         },
+        Request::ViewFile { path } => {
+            view_file(Path::new(path)).unwrap_or_else(|err| Response::Error {
+                message: err.to_string(),
+            })
+        }
+        Request::Open { path } => open(Path::new(path)),
     }
 }
 
@@ -72,7 +139,7 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bind, handle_request, list_directory, serve_one};
+    use super::{bind, handle_request, list_directory, open, serve_one, view_file};
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
     use protocol::{Request, Response};
@@ -103,6 +170,37 @@ mod tests {
             vec!["a.txt", "b.txt", "sub"]
         );
         assert!(entries.iter().find(|e| e.name == "sub").unwrap().is_dir);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn views_a_text_file_through_the_text_plugin() {
+        let path = std::env::temp_dir().join(unique_socket_name());
+        fs::write(&path, "hello\nworld\n").unwrap();
+
+        let response = view_file(&path).unwrap();
+
+        match response {
+            Response::FileView { plugin, data } => {
+                assert_eq!(plugin, "text");
+                assert_eq!(data["content"], "hello\nworld\n");
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn opens_a_directory_as_a_listing_and_a_file_as_a_view() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.txt");
+        fs::write(&file, "hi").unwrap();
+
+        assert!(matches!(open(&dir), Response::Directory { .. }));
+        assert!(matches!(open(&file), Response::FileView { .. }));
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -154,7 +252,7 @@ mod tests {
                 assert_eq!(entries.len(), 1);
                 assert_eq!(entries[0].name, "file.txt");
             }
-            Response::Error { message } => panic!("unexpected error: {message}"),
+            other => panic!("unexpected response: {other:?}"),
         }
 
         fs::remove_dir_all(&dir).unwrap();

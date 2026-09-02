@@ -2,29 +2,45 @@
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
+use plugin_api::PluginPresentation;
 use protocol::{Request, Response};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
 use std::io;
 
-/// Connects to the service's local socket and asks it to list `path`.
+/// Connects to the service's local socket and sends it `request`.
 ///
 /// # Errors
 /// Returns an error if the service cannot be reached or the round trip
 /// fails.
-pub fn fetch_directory_listing(socket_name: Name<'_>, path: &str) -> io::Result<Response> {
+pub fn send_request(socket_name: Name<'_>, request: &Request) -> io::Result<Response> {
     let mut conn = Stream::connect(socket_name)?;
-    protocol::write_message(
-        &mut conn,
-        &Request::ListDirectory {
-            path: path.to_owned(),
-        },
-    )?;
+    protocol::write_message(&mut conn, request)?;
     protocol::read_message(&mut conn)
 }
 
-/// Renders a directory listing, or an error, into `area` of `frame`.
+/// Every presentation plugin linked into this front end.
+///
+/// Hand-registered: with a single plugin, a registration macro would be
+/// structure with no second caller to justify it (see `plugin-api`'s crate
+/// docs).
+const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[&plugin_text::TextPresentation];
+
+/// Turns a plugin's view data into displayable lines, via whichever
+/// registered presentation plugin matches `plugin`.
+fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
+    match PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+    {
+        Some(candidate) => candidate.present(data),
+        None => vec![format!("no presentation for plugin `{plugin}`")],
+    }
+}
+
+/// Renders a directory listing, a file view, or an error, into `area` of
+/// `frame`.
 pub fn render(frame: &mut Frame<'_>, area: Rect, response: &Response) {
     let block = Block::bordered().title("RepoSphereExplorer");
     match response {
@@ -42,6 +58,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, response: &Response) {
                 .collect();
             frame.render_widget(List::new(items).block(block), area);
         }
+        Response::FileView { plugin, data } => {
+            let lines = present(plugin, data);
+            frame.render_widget(Paragraph::new(lines.join("\n")).block(block), area);
+        }
         Response::Error { message } => {
             frame.render_widget(Paragraph::new(message.as_str()).block(block), area);
         }
@@ -50,7 +70,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, response: &Response) {
 
 #[cfg(test)]
 mod tests {
-    use super::{fetch_directory_listing, render};
+    use super::{render, send_request};
     use interprocess::local_socket::traits::Listener as _;
     use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream, ToNsName};
     use protocol::{DirectoryEntry, Request, Response};
@@ -94,9 +114,11 @@ mod tests {
             protocol::write_message(&mut conn, &response).unwrap();
         });
 
-        let response = fetch_directory_listing(
+        let response = send_request(
             name.as_str().to_ns_name::<GenericNamespaced>().unwrap(),
-            "some/path",
+            &Request::ListDirectory {
+                path: "some/path".to_owned(),
+            },
         )
         .unwrap();
         server.join().unwrap();
@@ -106,8 +128,31 @@ mod tests {
                 assert_eq!(entries.len(), 1);
                 assert_eq!(entries[0].name, "file.txt");
             }
-            Response::Error { message } => panic!("unexpected error: {message}"),
+            other => panic!("unexpected response: {other:?}"),
         }
+    }
+
+    #[test]
+    fn renders_a_file_view_through_its_plugin() {
+        let backend = TestBackend::new(20, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let response = Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::json!({ "content": "hi", "truncated": false }),
+        };
+
+        terminal
+            .draw(|frame| render(frame, frame.area(), &response))
+            .unwrap();
+
+        let contents: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(contents.contains("hi"));
     }
 
     #[test]
