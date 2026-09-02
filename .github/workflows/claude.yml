@@ -42,6 +42,6 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           label_trigger: work-order
           claude_args: |
-            --max-turns 30
+            --max-turns 100
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
             --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"
