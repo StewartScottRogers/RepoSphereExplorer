@@ -2,9 +2,9 @@ name: Factory shift
 
 # The factory starts itself. Every night Claude picks the oldest open work
 # order that has no pull request yet, builds it, and opens one.
-# Requires ANTHROPIC_API_KEY (or the Claude GitHub App) to do anything. If
-# that key is identity-linked rather than workspace-scoped, the API rejects
-# it without a workspace id - also set ANTHROPIC_WORKSPACE_ID.
+# Requires CLAUDE_CODE_OAUTH_TOKEN (generate with `claude setup-token` on a
+# Pro/Max subscription; a Console ANTHROPIC_API_KEY only works for
+# workspace-scoped, non-identity-linked keys).
 
 on:
   schedule:
@@ -37,9 +37,7 @@ jobs:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
-          show_full_output: true
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
             --max-turns 40
           prompt: |
