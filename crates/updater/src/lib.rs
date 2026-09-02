@@ -265,8 +265,36 @@ pub fn apply_atomic(bytes: &[u8], target_path: &Path) -> io::Result<()> {
     ));
     fs::write(&temp_path, bytes)?;
     set_executable(&temp_path)?;
-    fs::rename(&temp_path, target_path)?;
-    Ok(())
+    let result = rename_with_retry(&temp_path, target_path);
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+/// Retries `fs::rename` a few times with a short backoff before giving up.
+///
+/// A freshly-written executable is a common target for antivirus real-time
+/// scanning, which briefly holds an exclusive lock on Windows; renaming
+/// over it right after `fs::write` can hit a transient "Access is denied"
+/// that clears within milliseconds. Observed in practice self-updating a
+/// real install, not a hypothetical.
+fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
+    const ATTEMPTS: u32 = 5;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+    let mut last_err = None;
+    for attempt in 0..ATTEMPTS {
+        match fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                last_err = Some(err);
+                if attempt + 1 < ATTEMPTS {
+                    std::thread::sleep(DELAY);
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| io::Error::other("rename failed with no recorded error")))
 }
 
 #[cfg(unix)]
