@@ -18,10 +18,11 @@ const SNIFF_PREFIX_LEN: u64 = 512;
 /// [`view_file`]) since it has no file bytes to sniff.
 ///
 /// Hand-registered: a registration macro would be structure with no second
-/// caller to justify it while six entries can still be read at a glance
+/// caller to justify it while seven entries can still be read at a glance
 /// (see `plugin-api`'s crate docs).
 const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_python::PythonCore,
+    &plugin_javascript::JavaScriptCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_archive::ArchiveCore,

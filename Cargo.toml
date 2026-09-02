@@ -9,6 +9,7 @@ members = [
     "crates/gui",
     "crates/plugins/text",
     "crates/plugins/python",
+    "crates/plugins/javascript",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",
