@@ -66,3 +66,7 @@ change the guidance first. Decisions D1-D5 in its section 7 gate the large work.
    can't reasonably become a plugin, add it to Rejected with a one-line
    reason and close the issue without a PR — do not retry a rejected format
    unless explicitly asked to.
+8. **Label a work order's PR `auto-merge`.** Once the acceptance checks pass
+   and the PR is open, apply the `auto-merge` label so it lands itself under
+   the same no-human-review policy that already governs `main` — do not wait
+   for manual review, and do not merge it directly yourself.

@@ -72,4 +72,7 @@ jobs:
                and `cargo test --all-features`. All three must pass, plus the
                acceptance checks named in the issue.
             6. Open a pull request that says `Closes #<issue>` and lists the
-               acceptance checks you ran with their results. Do not merge it.
+               acceptance checks you ran with their results, and label it
+               `auto-merge` so it lands itself once the required checks pass
+               (matching this repo's no-human-review policy on main). Do not
+               merge it yourself.
