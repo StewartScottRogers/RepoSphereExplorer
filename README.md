@@ -7,9 +7,13 @@ step of the pipeline assumes a human is watching.
 Current state: a cargo workspace implementing build order steps 1-5 of
 [GUIDANCE.md](GUIDANCE.md) — a three-pane explorer (folders, contents, file
 preview) as both a terminal app (`tui`) and a native Slint GUI (`gui`), backed
-by a local file-serving process (`service`), with a text-file preview plugin.
-The `explore` CLI (`repo_sphere_explorer`) is an earlier placeholder, kept for
-its own tests but superseded by the explorer below.
+by a local file-serving process (`service`). Per [D4](GUIDANCE.md#7-open-decisions),
+editing in v1 means rename, copy, delete, and extract (archives), each
+confirmed before it runs and journaled afterwards; per
+[D5](GUIDANCE.md#7-open-decisions), five plugins preview text, image, PDF, and
+archive files, and browse directories as a file type in their own right. The
+`explore` CLI (`repo_sphere_explorer`) is an earlier placeholder, kept for its
+own tests but superseded by the explorer below.
 
 ## Run it
 
@@ -27,8 +31,13 @@ by side, then run:
 
 Either front end starts `service` automatically if it isn't already running,
 and the service keeps running afterwards so later launches reconnect
-instantly. Only text files preview today; other types report that no plugin
-recognises them. Binaries are unsigned (see
+instantly. On the contents pane: Delete asks to confirm, then removes the
+file or directory; `r`/`c`/`x` (TUI) or typing after selecting an operation
+(GUI) prompts for a new name to rename, copy, or extract an archive to,
+confirmed with Enter. Every operation is journaled to
+`%LOCALAPPDATA%/RepoSphereExplorer/journal.jsonl` (or the platform
+equivalent) with its exact target set and outcome. File types without a
+plugin report that no plugin recognises them. Binaries are unsigned (see
 [GUIDANCE.md §7 D3](GUIDANCE.md#7-open-decisions)), so Windows SmartScreen and
 macOS Gatekeeper will warn on first run.
 
