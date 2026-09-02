@@ -13,6 +13,7 @@ plugin-api = { path = "../plugin-api" }
 plugin-archive = { path = "../plugins/archive" }
 plugin-directory = { path = "../plugins/directory" }
 plugin-image = { path = "../plugins/image" }
+plugin-javascript = { path = "../plugins/javascript" }
 plugin-pdf = { path = "../plugins/pdf" }
 plugin-python = { path = "../plugins/python" }
 plugin-text = { path = "../plugins/text" }

@@ -16,6 +16,7 @@ that already exists or retries a format already ruled out.
 | PDF | `crates/plugins/pdf` | — | |
 | Directory-as-file | `crates/plugins/directory` | — | |
 | Python source | `crates/plugins/python` | #7 | Sniffs by shebang or top-level `def`/`class`, ahead of `text` in `CORE_PLUGINS` |
+| JavaScript source | `crates/plugins/javascript` | #8 | Sniffs by `node` shebang, top-level `function`/`class`, or CommonJS/ES-module/arrow-function markers, ahead of `text` in `CORE_PLUGINS` |
 
 ## Rejected / infeasible
 

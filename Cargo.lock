@@ -2346,6 +2346,7 @@ dependencies = [
  "plugin-archive",
  "plugin-directory",
  "plugin-image",
+ "plugin-javascript",
  "plugin-pdf",
  "plugin-python",
  "plugin-text",
@@ -4653,6 +4654,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-javascript"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-pdf"
 version = "0.6.0"
 dependencies = [
@@ -5610,6 +5620,7 @@ dependencies = [
  "plugin-archive",
  "plugin-directory",
  "plugin-image",
+ "plugin-javascript",
  "plugin-pdf",
  "plugin-python",
  "plugin-text",
@@ -6551,6 +6562,7 @@ dependencies = [
  "plugin-archive",
  "plugin-directory",
  "plugin-image",
+ "plugin-javascript",
  "plugin-pdf",
  "plugin-python",
  "plugin-text",
