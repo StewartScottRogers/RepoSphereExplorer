@@ -7,5 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[dependencies]
+interprocess = "2.4"
+protocol = { path = "../protocol" }
+ratatui = "0.30"
+
 [lints]
 workspace = true
