@@ -29,11 +29,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          ext=""
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/repo_sphere_explorer.exe                dist/repo_sphere_explorer-${{ matrix.target }}.exe
-          else
-            cp target/${{ matrix.target }}/release/repo_sphere_explorer                dist/repo_sphere_explorer-${{ matrix.target }}
+            ext=".exe"
           fi
+          for bin in repo_sphere_explorer service tui; do
+            cp "target/${{ matrix.target }}/release/${bin}${ext}" \
+               "dist/${bin}-${{ matrix.target }}${ext}"
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
