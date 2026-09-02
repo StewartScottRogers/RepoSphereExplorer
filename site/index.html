@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RepoSphereExplorer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --bg-panel: #171a21;
+    --border: #2a2e38;
+    --text: #e6e8ec;
+    --text-dim: #9aa1ad;
+    --accent: #e5c07b;
+    --accent-2: #3a6ea5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    padding: 4rem 1.5rem 2.5rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0 0 .5rem; font-size: 2.4rem; }
+  header p { margin: 0; color: var(--text-dim); max-width: 40rem; margin-inline: auto; }
+  main { max-width: 60rem; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  section { margin-bottom: 3rem; }
+  h2 { border-bottom: 1px solid var(--border); padding-bottom: .5rem; }
+  .platforms {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1rem;
+  }
+  .platform {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: .5rem;
+    padding: 1.25rem;
+  }
+  .platform.detected { border-color: var(--accent); }
+  .platform h3 { margin: 0 0 .75rem; display: flex; align-items: center; gap: .5rem; }
+  .platform .badge {
+    font-size: .7rem;
+    background: var(--accent);
+    color: #1a1a1a;
+    padding: .1rem .5rem;
+    border-radius: 1rem;
+    font-weight: 600;
+  }
+  .platform ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .4rem; }
+  .platform a {
+    color: var(--text);
+    text-decoration: none;
+    display: block;
+    padding: .4rem .6rem;
+    border-radius: .3rem;
+    background: #1f232c;
+    border: 1px solid var(--border);
+  }
+  .platform a:hover { border-color: var(--accent-2); }
+  .note {
+    font-size: .85rem;
+    color: var(--text-dim);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: .5rem;
+    padding: 1rem;
+  }
+  video { width: 100%; border-radius: .5rem; border: 1px solid var(--border); display: block; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1rem;
+  }
+  .stat {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: .5rem;
+    padding: 1rem;
+    text-align: center;
+  }
+  .stat .value { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+  .stat .label { font-size: .8rem; color: var(--text-dim); }
+  footer { text-align: center; padding: 2rem; color: var(--text-dim); font-size: .85rem; }
+  a.cta { color: var(--accent-2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>RepoSphereExplorer</h1>
+  <p>A dark-factory-built file explorer: a three-pane TUI and native GUI over a local service, one plugin per file type.</p>
+</header>
+<main>
+  <section id="download">
+    <h2>Download</h2>
+    <p class="note">
+      Binaries are unsigned (no code-signing budget yet), so Windows SmartScreen and macOS
+      Gatekeeper will warn on first run. <code>tui</code> and <code>gui</code> each auto-launch
+      <code>service</code> if it isn't already running &mdash; keep the files together in one
+      folder.
+    </p>
+    <div class="platforms" id="platforms">
+      <div class="platform" data-os="windows">
+        <h3>Windows <span class="badge" hidden>Detected</span></h3>
+        <ul id="windows-links"></ul>
+      </div>
+      <div class="platform" data-os="macos">
+        <h3>macOS <span class="badge" hidden>Detected</span></h3>
+        <ul id="macos-links"></ul>
+      </div>
+      <div class="platform" data-os="linux">
+        <h3>Linux <span class="badge" hidden>Detected</span></h3>
+        <ul id="linux-links"></ul>
+      </div>
+    </div>
+    <p><a class="cta" href="https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest">All releases on GitHub &rarr;</a></p>
+  </section>
+
+  <section id="film">
+    <h2>Repository history</h2>
+    <video controls preload="none" poster="" id="gource-video">
+      <source src="gource.mp4" type="video/mp4" />
+    </video>
+    <p class="note" id="film-fallback" hidden>The history film hasn't rendered yet &mdash; check back after the next release.</p>
+  </section>
+
+  <section id="stats">
+    <h2>Project stats</h2>
+    <div class="stats" id="stats-grid">
+      <div class="stat"><div class="value">&hellip;</div><div class="label">loading</div></div>
+    </div>
+    <p class="note" id="stats-updated"></p>
+  </section>
+</main>
+<footer>
+  <a class="cta" href="https://github.com/StewartScottRogers/RepoSphereExplorer">Source on GitHub</a>
+</footer>
+<script>
+(function () {
+  var RELEASE_BASE = "https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest/download/";
+  var TARGETS = {
+    windows: { suffix: "x86_64-pc-windows-msvc.exe", binaries: ["tui", "gui", "service", "repo_sphere_explorer"] },
+    macos: { suffix: "aarch64-apple-darwin", binaries: ["tui", "gui", "service", "repo_sphere_explorer"] },
+    linux: { suffix: "x86_64-unknown-linux-gnu", binaries: ["tui", "gui", "service", "repo_sphere_explorer"] }
+  };
+
+  Object.keys(TARGETS).forEach(function (os) {
+    var t = TARGETS[os];
+    var list = document.getElementById(os + "-links");
+    t.binaries.forEach(function (bin) {
+      var li = document.createElement("li");
+      var a = document.createElement("a");
+      a.href = RELEASE_BASE + bin + "-" + t.suffix;
+      a.textContent = bin + (os === "windows" ? ".exe" : "");
+      li.appendChild(a);
+      list.appendChild(li);
+    });
+  });
+
+  function detectOs() {
+    var ua = navigator.userAgent || "";
+    if (/Windows/i.test(ua)) return "windows";
+    if (/Mac OS X|Macintosh/i.test(ua)) return "macos";
+    if (/Linux/i.test(ua)) return "linux";
+    return null;
+  }
+
+  var detected = detectOs();
+  if (detected) {
+    var panel = document.querySelector('.platform[data-os="' + detected + '"]');
+    if (panel) {
+      panel.classList.add("detected");
+      var badge = panel.querySelector(".badge");
+      if (badge) badge.hidden = false;
+      panel.scrollIntoView && panel.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  var video = document.getElementById("gource-video");
+  var fallback = document.getElementById("film-fallback");
+  if (video) {
+    video.addEventListener("error", function () {
+      video.hidden = true;
+      fallback.hidden = false;
+    }, true);
+  }
+
+  fetch("stats.json", { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("no stats yet"); return r.json(); })
+    .then(function (stats) {
+      var grid = document.getElementById("stats-grid");
+      grid.innerHTML = "";
+      var entries = [
+        ["commits", "Commits"],
+        ["contributors", "Contributors"],
+        ["releases", "Releases"],
+        ["open_issues", "Open issues"],
+        ["closed_issues", "Closed issues"],
+        ["plugin_count", "Plugins"]
+      ];
+      entries.forEach(function (pair) {
+        var key = pair[0], label = pair[1];
+        if (!(key in stats)) return;
+        var cell = document.createElement("div");
+        cell.className = "stat";
+        cell.innerHTML = '<div class="value">' + stats[key] + '</div><div class="label">' + label + "</div>";
+        grid.appendChild(cell);
+      });
+      var updated = document.getElementById("stats-updated");
+      if (stats.generated_at) {
+        updated.textContent = "Updated " + stats.generated_at;
+      }
+    })
+    .catch(function () {
+      document.getElementById("stats-grid").innerHTML =
+        '<p class="note">Stats haven\'t been generated yet &mdash; check back after the next release.</p>';
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+name: Pages
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          TAG=$(git describe --tags --abbrev=0)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" --dir dist --clobber
+
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p updater --bin sign_release
+
+      - name: Sign release and build the update manifest
+        env:
+          UPDATER_SIGNING_KEY: ${{ secrets.UPDATER_SIGNING_KEY }}
+        run: |
+          mkdir -p _site
+          ./target/release/sign_release \
+            "${{ steps.tag.outputs.version }}" "${{ github.repository }}" \
+            "${{ steps.tag.outputs.tag }}" dist _site/latest.json
+
+      - name: Install Gource and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gource ffmpeg xvfb
+
+      - name: Render the repository history film
+        continue-on-error: true
+        run: |
+          xvfb-run -a gource \
+            --seconds-per-day 0.1 \
+            --auto-skip-seconds 0.5 \
+            --max-file-lag 0.5 \
+            --stop-at-end \
+            --hide filenames,mouse,progress \
+            --key \
+            --output-framerate 30 \
+            --output-ppm-stream - \
+            -1280x720 \
+            . | ffmpeg -y -r 30 -f image2pipe -vcodec ppm -i - \
+              -vcodec libx264 -preset veryfast -pix_fmt yuv420p -crf 28 \
+              -movflags +faststart -t 90 _site/gource.mp4
+
+      - name: Generate project stats
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMITS=$(git rev-list --count HEAD)
+          CONTRIBUTORS=$(git shortlog -sn --all | wc -l | tr -d ' ')
+          RELEASES=$(gh release list --repo "${{ github.repository }}" --limit 1000 | wc -l | tr -d ' ')
+          OPEN_ISSUES=$(gh issue list --repo "${{ github.repository }}" --state open --limit 1000 --json number | jq 'length')
+          CLOSED_ISSUES=$(gh issue list --repo "${{ github.repository }}" --state closed --limit 1000 --json number | jq 'length')
+          PLUGIN_COUNT=$(ls -d crates/plugins/*/ | wc -l | tr -d ' ')
+          GENERATED_AT=$(date -u +%Y-%m-%d)
+          jq -n \
+            --argjson commits "$COMMITS" \
+            --argjson contributors "$CONTRIBUTORS" \
+            --argjson releases "$RELEASES" \
+            --argjson open_issues "$OPEN_ISSUES" \
+            --argjson closed_issues "$CLOSED_ISSUES" \
+            --argjson plugin_count "$PLUGIN_COUNT" \
+            --arg generated_at "$GENERATED_AT" \
+            '{commits: $commits, contributors: $contributors, releases: $releases, open_issues: $open_issues, closed_issues: $closed_issues, plugin_count: $plugin_count, generated_at: $generated_at}' \
+            > _site/stats.json
+
+      - name: Assemble the Pages site
+        run: cp site/index.html _site/index.html
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
