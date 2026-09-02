@@ -15,6 +15,15 @@ archive files, and browse directories as a file type in their own right. The
 `explore` CLI (`repo_sphere_explorer`) is an earlier placeholder, kept for its
 own tests but superseded by the explorer below.
 
+## Watch it build
+
+**[Repository history film](https://stewartscottrogers.github.io/RepoSphereExplorer/#film)**
+— a [Gource](https://gource.io/) visualization of every commit, re-rendered
+nightly at 06:00 UTC (see [`pages.yml`](.github/workflows/pages.yml)) so it
+stays current with whatever the factory merged since yesterday, not just
+what shipped in the last release. Direct link to the current video:
+[`gource.mp4`](https://stewartscottrogers.github.io/RepoSphereExplorer/gource.mp4).
+
 ## Run it
 
 **[stewartscottrogers.github.io/RepoSphereExplorer](https://stewartscottrogers.github.io/RepoSphereExplorer/)**
@@ -57,7 +66,7 @@ site and, if newer, downloads, verifies, and replaces itself in place.
 | Day shift | [`day-shift.yml`](.github/workflows/day-shift.yml) | a Night shift run finishes cleanly: re-dispatches the next one while open work orders remain |
 | Repair | [`repair.yml`](.github/workflows/repair.yml) | CI failed on `main`: diagnoses the run and opens a fix PR |
 | Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux/Windows/macOS binaries attached to a GitHub release |
-| Storefront | [`pages.yml`](.github/workflows/pages.yml) | after `release.yml` finishes: signs the release, publishes `latest.json`, renders the history film, regenerates stats, and deploys the Pages site |
+| Storefront | [`pages.yml`](.github/workflows/pages.yml) | after `release.yml` finishes, or nightly at 06:00 UTC: signs the release, publishes `latest.json`, renders the history film, regenerates stats, and deploys the Pages site |
 
 A work order ([template](.github/ISSUE_TEMPLATE/work-order.yml)) must state an
 observable outcome and the acceptance checks that prove it. That contract is

@@ -5,6 +5,12 @@ on:
     workflows: ["Release"]
     types: [completed]
   workflow_dispatch:
+  schedule:
+    # Nightly, independent of releases: re-renders the Gource film and
+    # stats against whatever landed in main since yesterday (the floor
+    # merges work-order PRs all day), reusing the latest existing release
+    # tag rather than requiring a fresh one.
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -17,7 +23,10 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
