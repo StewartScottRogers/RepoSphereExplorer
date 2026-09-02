@@ -42,6 +42,11 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # day-shift.yml dispatches this workflow via `gh workflow run` using
+          # the default GITHUB_TOKEN, so the triggering actor is
+          # github-actions[bot]; the action refuses bot-triggered runs unless
+          # explicitly allowed.
+          allowed_bots: "github-actions[bot]"
           claude_args: |
             --max-turns ${{ inputs.max_turns || '100' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
