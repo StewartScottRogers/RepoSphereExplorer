@@ -24,6 +24,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_rust::RustPresentation,
     &plugin_go::GoPresentation,
     &plugin_java::JavaPresentation,
+    &plugin_kotlin::KotlinPresentation,
     &plugin_csharp::CSharpPresentation,
     &plugin_cpp::CppPresentation,
     &plugin_c::CPresentation,

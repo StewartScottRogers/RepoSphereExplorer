@@ -2352,6 +2352,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-kotlin",
  "plugin-pdf",
  "plugin-python",
  "plugin-rust",
@@ -4715,6 +4716,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-kotlin"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-pdf"
 version = "0.6.0"
 dependencies = [
@@ -5696,6 +5706,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-kotlin",
  "plugin-pdf",
  "plugin-python",
  "plugin-rust",
@@ -6645,6 +6656,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-kotlin",
  "plugin-pdf",
  "plugin-python",
  "plugin-rust",
