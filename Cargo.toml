@@ -15,6 +15,7 @@ members = [
     "crates/plugins/go",
     "crates/plugins/cpp",
     "crates/plugins/c",
+    "crates/plugins/csharp",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",
