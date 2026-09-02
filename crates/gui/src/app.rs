@@ -14,12 +14,13 @@ use std::sync::mpsc::{self, Receiver};
 /// Every presentation plugin linked into this front end.
 ///
 /// Hand-registered: a registration macro would be structure with no second
-/// caller to justify it while six entries can still be read at a glance
+/// caller to justify it while seven entries can still be read at a glance
 /// (see `plugin-api`'s crate docs).
 const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_text::TextPresentation,
     &plugin_python::PythonPresentation,
     &plugin_javascript::JavaScriptPresentation,
+    &plugin_typescript::TypeScriptPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
