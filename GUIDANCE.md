@@ -1,12 +1,12 @@
 # RepoSphereExplorer — Design Guidance
 
-**Status: draft for refinement.** This is the source document the factory builds
-from. Edit it directly; every work order should trace back to a line in here. If
-this document and the code disagree, this document is wrong — fix it here first,
-then let the factory change the code.
+**Status: D1–D5 settled, ready for a build order.** This is the source document
+the factory builds from. Edit it directly; every work order should trace back to
+a line in here. If this document and the code disagree, this document is wrong —
+fix it here first, then let the factory change the code.
 
-Sections are numbered to match the original brief. Open decisions are collected
-in [§7](#7-open-decisions) and are the only thing blocking a build order.
+Sections are numbered to match the original brief. Decisions D1–D5 in [§7](#7-open-decisions)
+are settled below and now gate the build order in [§8](#8-build-order-once-d1d5-are-settled).
 
 ---
 
@@ -225,40 +225,30 @@ package management beyond the updater, no telemetry of any kind.
 
 ## 7. Open decisions
 
-Nothing large should be built until these are settled. Mark a choice and the
-factory can proceed.
+All settled as of 2026-09-01. Nothing here is open any longer; the build order
+in §8 proceeds.
 
 **D1 — Plugin split.** Core-in-service plus presentation-in-front-end, as in §3.1?
 
-- [ ] Yes, as written
-- [ ] No — front ends parse files themselves (this discards most of §2.1)
-- [ ] Other: ______________________
+- [x] Yes, as written
 
 **D2 — Slint licence.** The repository is MIT today; worldwide distribution
 forces the choice.
 
-- [ ] GPLv3 (relicense this repository)
-- [ ] Royalty-free licence, accepting its attribution conditions
-- [ ] Paid commercial licence
-- [ ] Reconsider the toolkit
+- [x] Royalty-free licence, accepting its attribution conditions
 
 **D3 — Signing budget.** Apple Developer Program (~$99/yr) and a Windows
 code-signing certificate?
 
-- [ ] Both — ship without warnings
-- [ ] Neither — ship unsigned, document the warnings
-- [ ] One only: ______________________
+- [x] Neither — ship unsigned, document the warnings
 
 **D4 — Editing scope for v1.**
 
-- [ ] View plus operations only (rename, copy, delete, extract)
-- [ ] Full in-place editing with save — makes data-loss safety, not parsing, the
-      hardest problem in the project
+- [x] View plus operations only (rename, copy, delete, extract)
 
 **D5 — First five formats, to prove the architecture.**
 
-- [ ] text, image, archive, PDF, directory-as-file
-- [ ] Other: ______________________
+- [x] text, image, archive, PDF, directory-as-file
 
 ## 8. Build order once D1–D5 are settled
 
