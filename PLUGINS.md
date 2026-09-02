@@ -21,6 +21,7 @@ that already exists or retries a format already ruled out.
 | Rust source | `crates/plugins/rust` | #10 | Sniffs by `fn`/`struct`/`enum`/`trait`/`impl` declarations and markers (`let mut`, `println!(`, `#[derive(`, `use std::`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS` |
 | Go source | `crates/plugins/go` | #11 | Sniffs by `package`/`func`/`import (` declarations and markers (`:=`, `fmt.Println(`, `fmt.Printf(`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS` |
 | C source | `crates/plugins/c` | #12 | Sniffs by `#include <...>`/`#include "..."` directives and markers (`int main(`, `void main(`, `printf(`, `malloc(`, `NULL`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS`. No path/extension-based dispatch exists in this architecture (sniffing is content-only), so disambiguating `.c`/`.h` from a future C++ plugin will need that plugin's sniff to avoid these same markers, or to be ordered after `c` |
+| C++ source | `crates/plugins/cpp` | #13 | Sniffs by C++-only markers (`#include <iostream>`/`<vector>`/`<string>`, `class `, `namespace `, `std::`, `cout <<`, `cin >>`, `nullptr`, `public:`/`private:`/`protected:`, `template<`) that avoid the C plugin's markers per its note, so a C++ file that also contains C-style constructs (`int main(`, `printf(`) is still claimed correctly; placed just ahead of `c` in `CORE_PLUGINS` |
 
 ## Rejected / infeasible
 

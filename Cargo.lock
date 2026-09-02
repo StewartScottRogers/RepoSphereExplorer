@@ -2345,6 +2345,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-c",
+ "plugin-cpp",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
@@ -4648,6 +4649,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-cpp"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-directory"
 version = "0.6.0"
 dependencies = [
@@ -5659,6 +5669,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-c",
+ "plugin-cpp",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
@@ -6605,6 +6616,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-c",
+ "plugin-cpp",
  "plugin-directory",
  "plugin-go",
  "plugin-image",
