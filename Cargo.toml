@@ -25,6 +25,7 @@ members = [
     "crates/plugins/shell",
     "crates/plugins/powershell",
     "crates/plugins/r",
+    "crates/plugins/haskell",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",

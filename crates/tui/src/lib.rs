@@ -46,6 +46,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_shell::ShellPresentation,
     &plugin_powershell::PowerShellPresentation,
     &plugin_r::RPresentation,
+    &plugin_haskell::HaskellPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
