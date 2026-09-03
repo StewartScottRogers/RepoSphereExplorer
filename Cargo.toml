@@ -21,6 +21,7 @@ members = [
     "crates/plugins/ruby",
     "crates/plugins/php",
     "crates/plugins/perl",
+    "crates/plugins/swift",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",
