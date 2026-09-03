@@ -2349,6 +2349,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-directory",
  "plugin-go",
+ "plugin-haskell",
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
@@ -4695,6 +4696,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-haskell"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-image"
 version = "0.6.0"
 dependencies = [
@@ -5773,6 +5783,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-directory",
  "plugin-go",
+ "plugin-haskell",
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
@@ -6730,6 +6741,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-directory",
  "plugin-go",
+ "plugin-haskell",
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
