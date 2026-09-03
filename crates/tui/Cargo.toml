@@ -25,6 +25,7 @@ plugin-perl = { path = "../plugins/perl" }
 plugin-php = { path = "../plugins/php" }
 plugin-powershell = { path = "../plugins/powershell" }
 plugin-python = { path = "../plugins/python" }
+plugin-r = { path = "../plugins/r" }
 plugin-ruby = { path = "../plugins/ruby" }
 plugin-rust = { path = "../plugins/rust" }
 plugin-shell = { path = "../plugins/shell" }

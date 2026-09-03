@@ -2358,6 +2358,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-python",
+ "plugin-r",
  "plugin-ruby",
  "plugin-rust",
  "plugin-shell",
@@ -4777,6 +4778,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-r"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-ruby"
 version = "0.6.0"
 dependencies = [
@@ -5772,6 +5782,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-python",
+ "plugin-r",
  "plugin-ruby",
  "plugin-rust",
  "plugin-shell",
@@ -6728,6 +6739,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-python",
+ "plugin-r",
  "plugin-ruby",
  "plugin-rust",
  "plugin-shell",
