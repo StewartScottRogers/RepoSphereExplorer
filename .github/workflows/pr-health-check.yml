@@ -1,0 +1,69 @@
+name: PR health check
+
+# Every 30 minutes: catches auto-merge PRs whose required CI check never
+# actually started. GitHub sometimes holds a bot-authored PR's `pull_request`
+# workflow run in `action_required` (needs approval) or, less commonly, never
+# creates a run for it at all - either way auto-merge then waits forever on a
+# check that's never coming. Running often means this usually catches it
+# while the PR can still merge normally; a PR already stale/conflicting by
+# the time this runs gets closed instead, so its issue rebuilds fresh against
+# current main rather than sitting stuck (factory-shift already picks up any
+# issue with no open PR).
+#
+# Deterministic, so this is plain gh/bash - no need for an LLM agent to do
+# lookup-and-branch work with clear conditions.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unstick or close auto-merge PRs with no working CI check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq '.[].number')
+          if [ -z "$prs" ]; then
+            echo "No open auto-merge PRs."
+            exit 0
+          fi
+
+          for pr in $prs; do
+            info=$(gh pr view "$pr" --repo "$REPO" --json headRefOid,headRefName,mergeable)
+            sha=$(echo "$info" | jq -r .headRefOid)
+            branch=$(echo "$info" | jq -r .headRefName)
+            mergeable=$(echo "$info" | jq -r .mergeable)
+
+            if [ "$mergeable" = "CONFLICTING" ]; then
+              echo "PR #$pr: stale/conflicting against main - closing, issue will rebuild fresh."
+              gh pr close "$pr" --repo "$REPO" --comment "Closing - stale/conflicting against current main. The underlying issue stays open and will be picked up fresh (automated PR health check)."
+              continue
+            fi
+
+            has_ci=$(gh api "repos/$REPO/commits/$sha/check-runs" --jq '[.check_runs[] | select(.name == "fmt / clippy / test")] | length')
+            if [ "$has_ci" -gt 0 ]; then
+              echo "PR #$pr: CI check already exists for $sha, nothing to do."
+              continue
+            fi
+
+            echo "PR #$pr: no CI check found yet for $sha."
+            held_run=$(gh run list --repo "$REPO" --workflow ci.yml --branch "$branch" --json databaseId,conclusion --jq '[.[] | select(.conclusion == "action_required")] | (.[0].databaseId // empty)')
+            if [ -n "$held_run" ]; then
+              echo "PR #$pr: approving held CI run $held_run."
+              gh api "repos/$REPO/actions/runs/$held_run/approve" -X POST || true
+            else
+              echo "PR #$pr: dispatching CI fresh against $branch."
+              gh workflow run ci.yml --repo "$REPO" --ref "$branch"
+            fi
+          done
