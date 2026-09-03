@@ -21,6 +21,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_python::PythonPresentation,
     &plugin_ruby::RubyPresentation,
     &plugin_php::PhpPresentation,
+    &plugin_perl::PerlPresentation,
     &plugin_javascript::JavaScriptPresentation,
     &plugin_typescript::TypeScriptPresentation,
     &plugin_rust::RustPresentation,
