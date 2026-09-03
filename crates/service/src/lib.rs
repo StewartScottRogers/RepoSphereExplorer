@@ -40,6 +40,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_r::RCore,
     &plugin_haskell::HaskellCore,
     &plugin_scala::ScalaCore,
+    &plugin_sql::SqlCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_archive::ArchiveCore,
