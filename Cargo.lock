@@ -2354,6 +2354,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-kotlin",
  "plugin-pdf",
+ "plugin-perl",
  "plugin-php",
  "plugin-python",
  "plugin-ruby",
@@ -4737,6 +4738,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-perl"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-php"
 version = "0.6.0"
 dependencies = [
@@ -5728,6 +5738,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-kotlin",
  "plugin-pdf",
+ "plugin-perl",
  "plugin-php",
  "plugin-python",
  "plugin-ruby",
@@ -6680,6 +6691,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-kotlin",
  "plugin-pdf",
+ "plugin-perl",
  "plugin-php",
  "plugin-python",
  "plugin-ruby",
