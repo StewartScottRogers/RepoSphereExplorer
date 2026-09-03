@@ -15,6 +15,7 @@ plugin-c = { path = "../plugins/c" }
 plugin-cpp = { path = "../plugins/cpp" }
 plugin-csharp = { path = "../plugins/csharp" }
 plugin-directory = { path = "../plugins/directory" }
+plugin-elixir = { path = "../plugins/elixir" }
 plugin-go = { path = "../plugins/go" }
 plugin-image = { path = "../plugins/image" }
 plugin-java = { path = "../plugins/java" }

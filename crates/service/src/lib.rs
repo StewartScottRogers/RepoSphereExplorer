@@ -23,6 +23,7 @@ const SNIFF_PREFIX_LEN: u64 = 512;
 const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_perl::PerlCore,
     &plugin_php::PhpCore,
+    &plugin_elixir::ElixirCore,
     &plugin_ruby::RubyCore,
     &plugin_python::PythonCore,
     &plugin_typescript::TypeScriptCore,
