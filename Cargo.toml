@@ -19,6 +19,7 @@ members = [
     "crates/plugins/csharp",
     "crates/plugins/kotlin",
     "crates/plugins/ruby",
+    "crates/plugins/php",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",
