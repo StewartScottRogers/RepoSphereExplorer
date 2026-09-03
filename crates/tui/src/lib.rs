@@ -30,6 +30,7 @@ pub fn send_request(socket_name: Name<'_>, request: &Request) -> io::Result<Resp
 const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_text::TextPresentation,
     &plugin_python::PythonPresentation,
+    &plugin_elixir::ElixirPresentation,
     &plugin_ruby::RubyPresentation,
     &plugin_php::PhpPresentation,
     &plugin_perl::PerlPresentation,

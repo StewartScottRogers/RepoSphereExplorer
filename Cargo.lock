@@ -2348,6 +2348,7 @@ dependencies = [
  "plugin-cpp",
  "plugin-csharp",
  "plugin-directory",
+ "plugin-elixir",
  "plugin-go",
  "plugin-haskell",
  "plugin-image",
@@ -4689,6 +4690,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-elixir"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-go"
 version = "0.6.0"
 dependencies = [
@@ -5802,6 +5812,7 @@ dependencies = [
  "plugin-cpp",
  "plugin-csharp",
  "plugin-directory",
+ "plugin-elixir",
  "plugin-go",
  "plugin-haskell",
  "plugin-image",
@@ -6762,6 +6773,7 @@ dependencies = [
  "plugin-cpp",
  "plugin-csharp",
  "plugin-directory",
+ "plugin-elixir",
  "plugin-go",
  "plugin-haskell",
  "plugin-image",
