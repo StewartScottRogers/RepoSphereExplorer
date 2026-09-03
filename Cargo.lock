@@ -2359,6 +2359,7 @@ dependencies = [
  "plugin-python",
  "plugin-ruby",
  "plugin-rust",
+ "plugin-swift",
  "plugin-text",
  "plugin-typescript",
  "protocol",
@@ -4783,6 +4784,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-swift"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-text"
 version = "0.6.0"
 dependencies = [
@@ -5743,6 +5753,7 @@ dependencies = [
  "plugin-python",
  "plugin-ruby",
  "plugin-rust",
+ "plugin-swift",
  "plugin-text",
  "plugin-typescript",
  "protocol",
@@ -6696,6 +6707,7 @@ dependencies = [
  "plugin-python",
  "plugin-ruby",
  "plugin-rust",
+ "plugin-swift",
  "plugin-text",
  "plugin-typescript",
  "protocol",

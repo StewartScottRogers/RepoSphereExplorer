@@ -26,6 +26,7 @@ plugin-php = { path = "../plugins/php" }
 plugin-python = { path = "../plugins/python" }
 plugin-ruby = { path = "../plugins/ruby" }
 plugin-rust = { path = "../plugins/rust" }
+plugin-swift = { path = "../plugins/swift" }
 plugin-text = { path = "../plugins/text" }
 plugin-typescript = { path = "../plugins/typescript" }
 protocol = { path = "../protocol" }
