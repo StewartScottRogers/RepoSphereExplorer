@@ -37,6 +37,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_swift::SwiftCore,
     &plugin_shell::ShellCore,
     &plugin_powershell::PowerShellCore,
+    &plugin_r::RCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_archive::ArchiveCore,
