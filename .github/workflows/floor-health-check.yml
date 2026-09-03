@@ -1,17 +1,26 @@
-name: PR health check
+name: Floor health check
 
-# Every 30 minutes: catches auto-merge PRs whose required CI check never
-# actually started. GitHub sometimes holds a bot-authored PR's `pull_request`
-# workflow run in `action_required` (needs approval) or, less commonly, never
-# creates a run for it at all - either way auto-merge then waits forever on a
-# check that's never coming. Running often means this usually catches it
-# while the PR can still merge normally; a PR already stale/conflicting by
-# the time this runs gets closed instead, so its issue rebuilds fresh against
-# current main rather than sitting stuck (factory-shift already picks up any
-# issue with no open PR).
+# Every 30 minutes, two cleanup sweeps for the same underlying cause:
+# "Closes #N" auto-close-on-merge doesn't reliably fire for this repo's
+# bot-authored PRs, and neither does the pull_request-triggered CI check
+# always actually start.
 #
-# Deterministic, so this is plain gh/bash - no need for an LLM agent to do
-# lookup-and-branch work with clear conditions.
+# 1. Unstick auto-merge PRs whose required CI check never started. GitHub
+#    sometimes holds the run in `action_required` (needs approval) or,
+#    less commonly, never creates one at all - either way auto-merge waits
+#    forever on a check that's never coming. Running often means this
+#    usually catches it while the PR can still merge normally; a PR
+#    already stale/conflicting by the time this runs gets closed instead,
+#    so its issue rebuilds fresh (factory-shift already picks up any issue
+#    with no open PR).
+# 2. Close any open work-order issue whose linked PR already merged but
+#    left it open. Found by hand once already (7 issues had silently sat
+#    "open" despite being done, inflating the backlog count and risking a
+#    future night shift redoing already-shipped work) - this keeps it from
+#    quietly re-accumulating.
+#
+# Both are deterministic, so this is plain gh/bash - no need for an LLM
+# agent to do lookup-and-branch work with clear conditions.
 
 on:
   schedule:
@@ -22,6 +31,7 @@ permissions:
   actions: write
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   check:
@@ -65,5 +75,20 @@ jobs:
             else
               echo "PR #$pr: dispatching CI fresh against $branch."
               gh workflow run ci.yml --repo "$REPO" --ref "$branch"
+            fi
+          done
+
+      - name: Close work-order issues already resolved by a merged PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          issues=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq '.[].number')
+          for n in $issues; do
+            pr=$(gh issue view "$n" --repo "$REPO" --json closedByPullRequestsReferences --jq '.closedByPullRequestsReferences[0].number // empty')
+            if [ -n "$pr" ]; then
+              echo "Issue #$n: already resolved by merged PR #$pr, closing."
+              gh issue close "$n" --repo "$REPO" --comment "Closed by merged PR #$pr (automated floor health check)."
             fi
           done
