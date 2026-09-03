@@ -23,6 +23,7 @@ members = [
     "crates/plugins/perl",
     "crates/plugins/swift",
     "crates/plugins/shell",
+    "crates/plugins/powershell",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",
