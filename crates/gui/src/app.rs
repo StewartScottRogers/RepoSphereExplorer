@@ -30,6 +30,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_csharp::CSharpPresentation,
     &plugin_cpp::CppPresentation,
     &plugin_c::CPresentation,
+    &plugin_lua::LuaPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
