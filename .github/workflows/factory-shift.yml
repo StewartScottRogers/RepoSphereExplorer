@@ -47,6 +47,7 @@ jobs:
           # github-actions[bot]; the action refuses bot-triggered runs unless
           # explicitly allowed.
           allowed_bots: "github-actions[bot]"
+          show_full_output: true
           claude_args: |
             --max-turns ${{ inputs.max_turns || '100' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
