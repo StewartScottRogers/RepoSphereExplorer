@@ -60,6 +60,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
+    &plugin_parquet::ParquetPresentation,
     &plugin_directory::DirectoryPresentation,
 ];
 

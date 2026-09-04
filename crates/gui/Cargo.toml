@@ -36,6 +36,7 @@ plugin-julia = { path = "../plugins/julia" }
 plugin-kotlin = { path = "../plugins/kotlin" }
 plugin-makefile = { path = "../plugins/makefile" }
 plugin-objective-c = { path = "../plugins/objective-c" }
+plugin-parquet = { path = "../plugins/parquet" }
 plugin-pdf = { path = "../plugins/pdf" }
 plugin-perl = { path = "../plugins/perl" }
 plugin-php = { path = "../plugins/php" }
