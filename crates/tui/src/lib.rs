@@ -57,6 +57,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_julia::JuliaPresentation,
     &plugin_fortran::FortranPresentation,
     &plugin_assembly::AssemblyPresentation,
+    &plugin_vimscript::VimscriptPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,

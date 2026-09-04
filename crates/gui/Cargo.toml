@@ -13,6 +13,7 @@ interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
 plugin-archive = { path = "../plugins/archive" }
 plugin-assembly = { path = "../plugins/assembly" }
+plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }
 plugin-clojure = { path = "../plugins/clojure" }
 plugin-cpp = { path = "../plugins/cpp" }
