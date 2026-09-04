@@ -2365,6 +2365,7 @@ dependencies = [
  "plugin-julia",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-markdown",
  "plugin-objective-c",
  "plugin-pdf",
  "plugin-perl",
@@ -4857,6 +4858,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-markdown"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-objective-c"
 version = "0.6.0"
 dependencies = [
@@ -5959,6 +5969,7 @@ dependencies = [
  "plugin-julia",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-markdown",
  "plugin-objective-c",
  "plugin-pdf",
  "plugin-perl",
@@ -6933,6 +6944,7 @@ dependencies = [
  "plugin-julia",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-markdown",
  "plugin-objective-c",
  "plugin-pdf",
  "plugin-perl",

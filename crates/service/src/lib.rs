@@ -55,6 +55,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_graphql::GraphQlCore,
     &plugin_solidity::SolidityCore,
     &plugin_html::HtmlCore,
+    &plugin_markdown::MarkdownCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_archive::ArchiveCore,
