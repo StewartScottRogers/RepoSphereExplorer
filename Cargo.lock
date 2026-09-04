@@ -2351,6 +2351,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-dart",
  "plugin-directory",
+ "plugin-dockerfile",
  "plugin-elixir",
  "plugin-erlang",
  "plugin-fortran",
@@ -4726,6 +4727,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-dockerfile"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-elixir"
 version = "0.6.0"
 dependencies = [
@@ -5905,6 +5915,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-dart",
  "plugin-directory",
+ "plugin-dockerfile",
  "plugin-elixir",
  "plugin-erlang",
  "plugin-fortran",
@@ -6875,6 +6886,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-dart",
  "plugin-directory",
+ "plugin-dockerfile",
  "plugin-elixir",
  "plugin-erlang",
  "plugin-fortran",

@@ -34,6 +34,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_cpp::CppPresentation,
     &plugin_c::CPresentation,
     &plugin_swift::SwiftPresentation,
+    &plugin_dockerfile::DockerfilePresentation,
     &plugin_shell::ShellPresentation,
     &plugin_powershell::PowerShellPresentation,
     &plugin_r::RPresentation,
