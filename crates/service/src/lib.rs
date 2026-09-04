@@ -67,6 +67,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_pdf::PdfCore,
     &plugin_parquet::ParquetCore,
     &plugin_avro::AvroCore,
+    &plugin_sqlite::SqliteCore,
 ];
 
 /// The directory-as-file plugin, dispatched directly by [`view_file`] when
