@@ -60,6 +60,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_msgpack::MsgpackPresentation,
     &plugin_makefile::MakefilePresentation,
     &plugin_image::ImagePresentation,
+    &plugin_word_document::WordDocumentPresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
     &plugin_parquet::ParquetPresentation,

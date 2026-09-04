@@ -2512,6 +2512,7 @@ dependencies = [
  "plugin-toml",
  "plugin-typescript",
  "plugin-vimscript",
+ "plugin-word-document",
  "plugin-xml",
  "protocol",
  "serde_json",
@@ -5313,6 +5314,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-word-document"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-xml"
 version = "0.6.0"
 dependencies = [
@@ -6378,6 +6389,7 @@ dependencies = [
  "plugin-toml",
  "plugin-typescript",
  "plugin-vimscript",
+ "plugin-word-document",
  "plugin-xml",
  "protocol",
  "serde",
@@ -7377,6 +7389,7 @@ dependencies = [
  "plugin-toml",
  "plugin-typescript",
  "plugin-vimscript",
+ "plugin-word-document",
  "plugin-xml",
  "protocol",
  "ratatui",
