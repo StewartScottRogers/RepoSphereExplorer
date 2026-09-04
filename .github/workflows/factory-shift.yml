@@ -31,6 +31,10 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
+  # Needed for the self-chain step's `gh workflow run` call - without it,
+  # the workflow-dispatch API returns 403 "Resource not accessible by
+  # integration".
+  actions: write
 
 jobs:
   shift:
