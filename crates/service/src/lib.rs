@@ -33,6 +33,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_java::JavaCore,
     &plugin_kotlin::KotlinCore,
     &plugin_csharp::CSharpCore,
+    &plugin_objective_c::ObjectiveCCore,
     &plugin_cpp::CppCore,
     &plugin_c::CCore,
     &plugin_swift::SwiftCore,

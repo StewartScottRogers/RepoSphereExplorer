@@ -2358,6 +2358,7 @@ dependencies = [
  "plugin-java",
  "plugin-javascript",
  "plugin-kotlin",
+ "plugin-objective-c",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
@@ -4784,6 +4785,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-objective-c"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-pdf"
 version = "0.6.0"
 dependencies = [
@@ -5852,6 +5862,7 @@ dependencies = [
  "plugin-java",
  "plugin-javascript",
  "plugin-kotlin",
+ "plugin-objective-c",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
@@ -6816,6 +6827,7 @@ dependencies = [
  "plugin-java",
  "plugin-javascript",
  "plugin-kotlin",
+ "plugin-objective-c",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
