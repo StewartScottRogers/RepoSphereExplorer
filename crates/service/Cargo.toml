@@ -12,6 +12,7 @@ dirs = "6"
 interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
 plugin-archive = { path = "../plugins/archive" }
+plugin-asciidoc = { path = "../plugins/asciidoc" }
 plugin-assembly = { path = "../plugins/assembly" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }

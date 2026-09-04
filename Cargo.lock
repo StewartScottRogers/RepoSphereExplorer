@@ -2344,6 +2344,7 @@ dependencies = [
  "interprocess",
  "plugin-api",
  "plugin-archive",
+ "plugin-asciidoc",
  "plugin-assembly",
  "plugin-c",
  "plugin-clojure",
@@ -4668,6 +4669,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-asciidoc"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-assembly"
 version = "0.6.0"
 dependencies = [
@@ -5948,6 +5958,7 @@ dependencies = [
  "interprocess",
  "plugin-api",
  "plugin-archive",
+ "plugin-asciidoc",
  "plugin-assembly",
  "plugin-c",
  "plugin-clojure",
@@ -6923,6 +6934,7 @@ dependencies = [
  "interprocess",
  "plugin-api",
  "plugin-archive",
+ "plugin-asciidoc",
  "plugin-assembly",
  "plugin-c",
  "plugin-clojure",
