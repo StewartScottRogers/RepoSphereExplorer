@@ -65,6 +65,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_word_document::WordDocumentCore,
+    &plugin_spreadsheet::SpreadsheetCore,
     &plugin_archive::ArchiveCore,
     &plugin_pdf::PdfCore,
     &plugin_parquet::ParquetCore,

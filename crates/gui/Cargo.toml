@@ -53,6 +53,7 @@ plugin-rust = { path = "../plugins/rust" }
 plugin-scala = { path = "../plugins/scala" }
 plugin-shell = { path = "../plugins/shell" }
 plugin-solidity = { path = "../plugins/solidity" }
+plugin-spreadsheet = { path = "../plugins/spreadsheet" }
 plugin-sql = { path = "../plugins/sql" }
 plugin-sqlite = { path = "../plugins/sqlite" }
 plugin-swift = { path = "../plugins/swift" }
