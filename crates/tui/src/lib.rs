@@ -63,6 +63,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_solidity::SolidityPresentation,
     &plugin_html::HtmlPresentation,
     &plugin_xml::XmlPresentation,
+    &plugin_restructuredtext::RestructuredTextPresentation,
     &plugin_makefile::MakefilePresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
