@@ -36,6 +36,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_perl::PerlPresentation,
     &plugin_javascript::JavaScriptPresentation,
     &plugin_typescript::TypeScriptPresentation,
+    &plugin_zig::ZigPresentation,
     &plugin_rust::RustPresentation,
     &plugin_go::GoPresentation,
     &plugin_java::JavaPresentation,

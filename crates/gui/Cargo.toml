@@ -40,6 +40,7 @@ plugin-sql = { path = "../plugins/sql" }
 plugin-swift = { path = "../plugins/swift" }
 plugin-text = { path = "../plugins/text" }
 plugin-typescript = { path = "../plugins/typescript" }
+plugin-zig = { path = "../plugins/zig" }
 protocol = { path = "../protocol" }
 serde_json = "1"
 slint = "1.17"
