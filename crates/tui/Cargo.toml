@@ -52,6 +52,7 @@ plugin-scala = { path = "../plugins/scala" }
 plugin-shell = { path = "../plugins/shell" }
 plugin-solidity = { path = "../plugins/solidity" }
 plugin-sql = { path = "../plugins/sql" }
+plugin-sqlite = { path = "../plugins/sqlite" }
 plugin-swift = { path = "../plugins/swift" }
 plugin-text = { path = "../plugins/text" }
 plugin-toml = { path = "../plugins/toml" }
