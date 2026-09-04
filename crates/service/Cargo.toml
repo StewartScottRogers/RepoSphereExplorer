@@ -44,6 +44,7 @@ plugin-ruby = { path = "../plugins/ruby" }
 plugin-rust = { path = "../plugins/rust" }
 plugin-scala = { path = "../plugins/scala" }
 plugin-shell = { path = "../plugins/shell" }
+plugin-solidity = { path = "../plugins/solidity" }
 plugin-sql = { path = "../plugins/sql" }
 plugin-swift = { path = "../plugins/swift" }
 plugin-text = { path = "../plugins/text" }

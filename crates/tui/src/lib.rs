@@ -60,6 +60,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_assembly::AssemblyPresentation,
     &plugin_vimscript::VimscriptPresentation,
     &plugin_graphql::GraphQlPresentation,
+    &plugin_solidity::SolidityPresentation,
     &plugin_makefile::MakefilePresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
