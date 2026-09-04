@@ -2372,6 +2372,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-python",
  "plugin-r",
+ "plugin-restructuredtext",
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
@@ -4922,6 +4923,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-restructuredtext"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-ruby"
 version = "0.6.0"
 dependencies = [
@@ -5976,6 +5986,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-python",
  "plugin-r",
+ "plugin-restructuredtext",
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
@@ -6951,6 +6962,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-python",
  "plugin-r",
+ "plugin-restructuredtext",
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
