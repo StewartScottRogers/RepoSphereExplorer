@@ -28,6 +28,7 @@ plugin-go = { path = "../plugins/go" }
 plugin-graphql = { path = "../plugins/graphql" }
 plugin-html = { path = "../plugins/html" }
 plugin-image = { path = "../plugins/image" }
+plugin-json = { path = "../plugins/json" }
 plugin-java = { path = "../plugins/java" }
 plugin-javascript = { path = "../plugins/javascript" }
 plugin-julia = { path = "../plugins/julia" }

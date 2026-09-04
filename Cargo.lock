@@ -2362,6 +2362,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-json",
  "plugin-julia",
  "plugin-kotlin",
  "plugin-makefile",
@@ -4832,6 +4833,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-json"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-julia"
 version = "0.6.0"
 dependencies = [
@@ -5976,6 +5986,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-json",
  "plugin-julia",
  "plugin-kotlin",
  "plugin-makefile",
@@ -6952,6 +6963,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-json",
  "plugin-julia",
  "plugin-kotlin",
  "plugin-makefile",
