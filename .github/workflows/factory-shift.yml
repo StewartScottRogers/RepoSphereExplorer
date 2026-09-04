@@ -47,7 +47,6 @@ jobs:
           # github-actions[bot]; the action refuses bot-triggered runs unless
           # explicitly allowed.
           allowed_bots: "github-actions[bot]"
-          show_full_output: true
           claude_args: |
             --max-turns ${{ inputs.max_turns || '100' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
@@ -86,3 +85,25 @@ jobs:
                `auto-merge` so it lands itself once the required checks pass
                (matching this repo's no-human-review policy on main). Do not
                merge it yourself.
+
+      # Self-chains the next build via workflow_dispatch rather than relying
+      # on day-shift.yml's schedule/workflow_run triggers: observed
+      # repeatedly in this repo, GitHub's `schedule` trigger can run hours
+      # behind its configured interval (likely this repo's own high Actions
+      # volume queuing scheduled runs behind everything else), while a
+      # `gh workflow run` dispatch has fired immediately and reliably every
+      # single time it's been used. Only runs if the step above succeeded
+      # (the job's default behavior), so a genuine failure still halts the
+      # chain here instead of retrying a stuck issue forever.
+      - name: Chain the next build if backlog remains
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          remaining=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq 'length')
+          echo "Open work-order issues remaining: $remaining"
+          if [ "$remaining" -gt 0 ]; then
+            gh workflow run factory-shift.yml --repo "$REPO"
+          else
+            echo "Backlog empty; nothing more to chain."
+          fi

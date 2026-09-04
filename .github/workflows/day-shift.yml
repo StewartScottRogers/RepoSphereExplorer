@@ -1,23 +1,31 @@
 name: Day shift
 
-# Chains Factory shift runs back-to-back while the plugin backlog lasts,
-# instead of waiting on the once-nightly cron. Every trigger below funnels
-# into the same check: look at the most recent Factory shift run's own
-# conclusion (not just the event that woke this workflow up - the cron
-# fallback has no conclusion of its own to inspect), and only dispatch
-# another one when that last run finished cleanly and open work-order
-# issues remain. A genuine failure halts the chain for a human to look
-# at - every trigger respects that, not just the one that happened to fire
-# right after the failing run - and an empty backlog lets it go quiet
-# instead of spinning empty runs.
+# Backup layer, not the primary mechanism: factory-shift.yml now chains
+# itself directly (its own final step dispatches the next run via
+# `gh workflow run`), since that has proven reliable every time it's been
+# used, unlike the triggers here. This workflow still exists in case that
+# self-chain ever breaks - every trigger below funnels into the same
+# check: look at the most recent Factory shift run's own conclusion (not
+# just the event that woke this workflow up - the cron fallback has no
+# conclusion of its own to inspect), and only dispatch another one when
+# that last run finished cleanly and open work-order issues remain. A
+# genuine failure halts the chain for a human to look at, and an empty
+# backlog lets it go quiet instead of spinning empty runs.
+#
+# Any redundant dispatch this fires alongside factory-shift's own
+# self-chain is harmless - they share factory-shift's concurrency group,
+# so a duplicate just gets deduped rather than racing.
 #
 # workflow_run is the fast path (fires right after a run completes) but
 # isn't reliable here: GitHub doesn't consistently fire workflow_run for a
 # run that was itself started via the default GITHUB_TOKEN, which is
 # exactly how this workflow's own `gh workflow run` call starts Factory
-# shift. The schedule trigger is the fallback that keeps the chain moving
-# even when that event never arrives. workflow_dispatch bootstraps the
-# chain the first time, or resumes it manually after a halt.
+# shift. The schedule trigger is a further fallback, though observed in
+# this repo to sometimes run hours behind its configured interval rather
+# than every 10 minutes - likely this repo's own high Actions volume
+# queuing scheduled runs behind everything else. workflow_dispatch
+# bootstraps the chain the first time, or resumes it manually after a
+# halt.
 
 on:
   workflow_run:
