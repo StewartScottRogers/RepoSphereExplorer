@@ -17,6 +17,7 @@ plugin-c = { path = "../plugins/c" }
 plugin-clojure = { path = "../plugins/clojure" }
 plugin-cpp = { path = "../plugins/cpp" }
 plugin-csharp = { path = "../plugins/csharp" }
+plugin-css = { path = "../plugins/css" }
 plugin-dart = { path = "../plugins/dart" }
 plugin-directory = { path = "../plugins/directory" }
 plugin-dockerfile = { path = "../plugins/dockerfile" }

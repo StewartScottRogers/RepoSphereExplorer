@@ -54,6 +54,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_vimscript::VimscriptCore,
     &plugin_graphql::GraphQlCore,
     &plugin_solidity::SolidityCore,
+    &plugin_css::CssCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_archive::ArchiveCore,
