@@ -2368,6 +2368,7 @@ dependencies = [
  "plugin-perl",
  "plugin-php",
  "plugin-powershell",
+ "plugin-protobuf",
  "plugin-python",
  "plugin-r",
  "plugin-ruby",
@@ -4882,6 +4883,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-protobuf"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-python"
 version = "0.6.0"
 dependencies = [
@@ -5932,6 +5942,7 @@ dependencies = [
  "plugin-perl",
  "plugin-php",
  "plugin-powershell",
+ "plugin-protobuf",
  "plugin-python",
  "plugin-r",
  "plugin-ruby",
@@ -6903,6 +6914,7 @@ dependencies = [
  "plugin-perl",
  "plugin-php",
  "plugin-powershell",
+ "plugin-protobuf",
  "plugin-python",
  "plugin-r",
  "plugin-ruby",
