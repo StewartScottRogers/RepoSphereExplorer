@@ -24,6 +24,7 @@ plugin-image = { path = "../plugins/image" }
 plugin-java = { path = "../plugins/java" }
 plugin-javascript = { path = "../plugins/javascript" }
 plugin-kotlin = { path = "../plugins/kotlin" }
+plugin-objective-c = { path = "../plugins/objective-c" }
 plugin-pdf = { path = "../plugins/pdf" }
 plugin-perl = { path = "../plugins/perl" }
 plugin-php = { path = "../plugins/php" }

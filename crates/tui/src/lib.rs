@@ -41,6 +41,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_java::JavaPresentation,
     &plugin_kotlin::KotlinPresentation,
     &plugin_csharp::CSharpPresentation,
+    &plugin_objective_c::ObjectiveCPresentation,
     &plugin_cpp::CppPresentation,
     &plugin_c::CPresentation,
     &plugin_swift::SwiftPresentation,
