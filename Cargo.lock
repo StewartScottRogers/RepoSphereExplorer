@@ -2382,6 +2382,7 @@ dependencies = [
  "plugin-text",
  "plugin-typescript",
  "plugin-vimscript",
+ "plugin-xml",
  "protocol",
  "serde_json",
  "slint",
@@ -5011,6 +5012,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-xml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5976,6 +5986,7 @@ dependencies = [
  "plugin-text",
  "plugin-typescript",
  "plugin-vimscript",
+ "plugin-xml",
  "protocol",
  "serde",
  "serde_json",
@@ -6950,6 +6961,7 @@ dependencies = [
  "plugin-text",
  "plugin-typescript",
  "plugin-vimscript",
+ "plugin-xml",
  "protocol",
  "ratatui",
  "serde_json",
