@@ -54,6 +54,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_xml::XmlPresentation,
     &plugin_restructuredtext::RestructuredTextPresentation,
     &plugin_json::JsonPresentation,
+    &plugin_toml::TomlPresentation,
     &plugin_makefile::MakefilePresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
