@@ -2348,6 +2348,7 @@ dependencies = [
  "plugin-clojure",
  "plugin-cpp",
  "plugin-csharp",
+ "plugin-dart",
  "plugin-directory",
  "plugin-elixir",
  "plugin-go",
@@ -4691,6 +4692,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-dart"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-directory"
 version = "0.6.0"
 dependencies = [
@@ -5822,6 +5832,7 @@ dependencies = [
  "plugin-clojure",
  "plugin-cpp",
  "plugin-csharp",
+ "plugin-dart",
  "plugin-directory",
  "plugin-elixir",
  "plugin-go",
@@ -6784,6 +6795,7 @@ dependencies = [
  "plugin-clojure",
  "plugin-cpp",
  "plugin-csharp",
+ "plugin-dart",
  "plugin-directory",
  "plugin-elixir",
  "plugin-go",
