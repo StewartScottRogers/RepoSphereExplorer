@@ -2345,6 +2345,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-c",
+ "plugin-clojure",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-directory",
@@ -4663,6 +4664,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-clojure"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-cpp"
 version = "0.6.0"
 dependencies = [
@@ -5809,6 +5819,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-c",
+ "plugin-clojure",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-directory",
@@ -6770,6 +6781,7 @@ dependencies = [
  "plugin-api",
  "plugin-archive",
  "plugin-c",
+ "plugin-clojure",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-directory",
