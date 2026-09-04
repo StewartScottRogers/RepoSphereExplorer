@@ -2357,6 +2357,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-julia",
  "plugin-kotlin",
  "plugin-objective-c",
  "plugin-pdf",
@@ -4776,6 +4777,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-julia"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-kotlin"
 version = "0.6.0"
 dependencies = [
@@ -5861,6 +5871,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-julia",
  "plugin-kotlin",
  "plugin-objective-c",
  "plugin-pdf",
@@ -6826,6 +6837,7 @@ dependencies = [
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
+ "plugin-julia",
  "plugin-kotlin",
  "plugin-objective-c",
  "plugin-pdf",
