@@ -53,6 +53,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_html::HtmlPresentation,
     &plugin_xml::XmlPresentation,
     &plugin_restructuredtext::RestructuredTextPresentation,
+    &plugin_jupyter_notebook::NotebookPresentation,
     &plugin_json::JsonPresentation,
     &plugin_toml::TomlPresentation,
     &plugin_csv::CsvPresentation,

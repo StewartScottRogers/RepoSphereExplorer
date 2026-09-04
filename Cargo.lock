@@ -2487,6 +2487,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-json",
  "plugin-julia",
+ "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
  "plugin-msgpack",
@@ -5082,6 +5083,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-jupyter-notebook"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-kotlin"
 version = "0.6.0"
 dependencies = [
@@ -6343,6 +6353,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-json",
  "plugin-julia",
+ "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
  "plugin-msgpack",
@@ -7341,6 +7352,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-json",
  "plugin-julia",
+ "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
  "plugin-msgpack",

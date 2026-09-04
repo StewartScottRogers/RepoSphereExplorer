@@ -34,6 +34,7 @@ plugin-json = { path = "../plugins/json" }
 plugin-java = { path = "../plugins/java" }
 plugin-javascript = { path = "../plugins/javascript" }
 plugin-julia = { path = "../plugins/julia" }
+plugin-jupyter-notebook = { path = "../plugins/jupyter-notebook" }
 plugin-kotlin = { path = "../plugins/kotlin" }
 plugin-makefile = { path = "../plugins/makefile" }
 plugin-msgpack = { path = "../plugins/msgpack" }

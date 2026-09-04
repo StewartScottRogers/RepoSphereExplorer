@@ -57,6 +57,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_html::HtmlCore,
     &plugin_xml::XmlCore,
     &plugin_restructuredtext::RestructuredTextCore,
+    &plugin_jupyter_notebook::NotebookCore,
     &plugin_json::JsonCore,
     &plugin_toml::TomlCore,
     &plugin_csv::CsvCore,
