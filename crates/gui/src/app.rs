@@ -47,6 +47,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_fortran::FortranPresentation,
     &plugin_assembly::AssemblyPresentation,
     &plugin_vimscript::VimscriptPresentation,
+    &plugin_graphql::GraphQlPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
