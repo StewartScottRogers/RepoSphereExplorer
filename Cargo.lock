@@ -2375,6 +2375,7 @@ dependencies = [
  "plugin-rust",
  "plugin-scala",
  "plugin-shell",
+ "plugin-solidity",
  "plugin-sql",
  "plugin-swift",
  "plugin-text",
@@ -4946,6 +4947,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-solidity"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-sql"
 version = "0.6.0"
 dependencies = [
@@ -5949,6 +5959,7 @@ dependencies = [
  "plugin-rust",
  "plugin-scala",
  "plugin-shell",
+ "plugin-solidity",
  "plugin-sql",
  "plugin-swift",
  "plugin-text",
@@ -6921,6 +6932,7 @@ dependencies = [
  "plugin-rust",
  "plugin-scala",
  "plugin-shell",
+ "plugin-solidity",
  "plugin-sql",
  "plugin-swift",
  "plugin-text",
