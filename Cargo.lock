@@ -2347,6 +2347,7 @@ dependencies = [
  "plugin-assembly",
  "plugin-c",
  "plugin-clojure",
+ "plugin-config-ini",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-dart",
@@ -4697,6 +4698,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-config-ini"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-cpp"
 version = "0.6.0"
 dependencies = [
@@ -5971,6 +5981,7 @@ dependencies = [
  "plugin-assembly",
  "plugin-c",
  "plugin-clojure",
+ "plugin-config-ini",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-dart",
@@ -6948,6 +6959,7 @@ dependencies = [
  "plugin-assembly",
  "plugin-c",
  "plugin-clojure",
+ "plugin-config-ini",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-dart",
