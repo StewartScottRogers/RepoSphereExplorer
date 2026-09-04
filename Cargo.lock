@@ -2363,6 +2363,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-julia",
  "plugin-kotlin",
+ "plugin-latex",
  "plugin-makefile",
  "plugin-objective-c",
  "plugin-pdf",
@@ -4837,6 +4838,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-latex"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-makefile"
 version = "0.6.0"
 dependencies = [
@@ -5937,6 +5947,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-julia",
  "plugin-kotlin",
+ "plugin-latex",
  "plugin-makefile",
  "plugin-objective-c",
  "plugin-pdf",
@@ -6909,6 +6920,7 @@ dependencies = [
  "plugin-javascript",
  "plugin-julia",
  "plugin-kotlin",
+ "plugin-latex",
  "plugin-makefile",
  "plugin-objective-c",
  "plugin-pdf",
