@@ -13,6 +13,7 @@ interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
 plugin-archive = { path = "../plugins/archive" }
 plugin-c = { path = "../plugins/c" }
+plugin-clojure = { path = "../plugins/clojure" }
 plugin-cpp = { path = "../plugins/cpp" }
 plugin-csharp = { path = "../plugins/csharp" }
 plugin-directory = { path = "../plugins/directory" }
