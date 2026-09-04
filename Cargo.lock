@@ -2355,6 +2355,7 @@ dependencies = [
  "plugin-erlang",
  "plugin-fortran",
  "plugin-go",
+ "plugin-graphql",
  "plugin-haskell",
  "plugin-image",
  "plugin-java",
@@ -4761,6 +4762,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-graphql"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-haskell"
 version = "0.6.0"
 dependencies = [
@@ -5899,6 +5909,7 @@ dependencies = [
  "plugin-erlang",
  "plugin-fortran",
  "plugin-go",
+ "plugin-graphql",
  "plugin-haskell",
  "plugin-image",
  "plugin-java",
@@ -6868,6 +6879,7 @@ dependencies = [
  "plugin-erlang",
  "plugin-fortran",
  "plugin-go",
+ "plugin-graphql",
  "plugin-haskell",
  "plugin-image",
  "plugin-java",
