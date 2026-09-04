@@ -52,6 +52,7 @@ plugin-swift = { path = "../plugins/swift" }
 plugin-text = { path = "../plugins/text" }
 plugin-typescript = { path = "../plugins/typescript" }
 plugin-xml = { path = "../plugins/xml" }
+plugin-yaml = { path = "../plugins/yaml" }
 protocol = { path = "../protocol" }
 serde_json = "1"
 slint = "1.17"

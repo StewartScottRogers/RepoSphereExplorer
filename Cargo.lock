@@ -317,6 +317,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2384,6 +2390,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-vimscript",
  "plugin-xml",
+ "plugin-yaml",
  "protocol",
  "serde_json",
  "slint",
@@ -2440,6 +2447,15 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32069d97bb81e38fa67eab65e3393bf804bb85969f2bc06bf13f64aef5aba248"
+dependencies = [
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -5031,6 +5047,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-yaml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "yaml-rust2",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5998,6 +6024,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-vimscript",
  "plugin-xml",
+ "plugin-yaml",
  "protocol",
  "serde",
  "serde_json",
@@ -6974,6 +7001,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-vimscript",
  "plugin-xml",
+ "plugin-yaml",
  "protocol",
  "ratatui",
  "serde_json",
@@ -8146,6 +8174,17 @@ name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5a4b21e1a62b67a2970e6831bc091d7b87e119e7f9791aef9702e3bef04448"
+
+[[package]]
+name = "yaml-rust2"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6edb26322e610d4f04b7cd34478317685d24d0999437e551fb97c5441151041"
+dependencies = [
+ "arraydeque",
+ "encoding_rs",
+ "hashlink",
+]
 
 [[package]]
 name = "yazi"
