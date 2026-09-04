@@ -99,11 +99,28 @@ jobs:
       # single time it's been used. Only runs if the step above succeeded
       # (the job's default behavior), so a genuine failure still halts the
       # chain here instead of retrying a stuck issue forever.
-      - name: Chain the next build if backlog remains
+      #
+      # Waits for every currently-open auto-merge PR to resolve (merge or
+      # close) before dispatching the next build - dispatching immediately
+      # after opening a PR let several builds pile up faster than they
+      # could land, and they started conflicting with each other on the
+      # shared registry files. Capped at 30 minutes so a genuinely stuck PR
+      # (which floor-health-check.yml will eventually close) doesn't stall
+      # the chain forever.
+      - name: Chain the next build once open PRs resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
+          for i in $(seq 1 60); do
+            open_prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq 'length')
+            if [ "$open_prs" -eq 0 ]; then
+              break
+            fi
+            echo "Waiting on $open_prs open auto-merge PR(s) to resolve (attempt $i/60)..."
+            sleep 30
+          done
+
           remaining=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq 'length')
           echo "Open work-order issues remaining: $remaining"
           if [ "$remaining" -gt 0 ]; then
