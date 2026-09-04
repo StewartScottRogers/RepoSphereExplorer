@@ -2358,6 +2358,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-haskell",
+ "plugin-html",
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
@@ -4792,6 +4793,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-html"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-image"
 version = "0.6.0"
 dependencies = [
@@ -5942,6 +5952,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-haskell",
+ "plugin-html",
  "plugin-image",
  "plugin-java",
  "plugin-javascript",
@@ -6915,6 +6926,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-haskell",
+ "plugin-html",
  "plugin-image",
  "plugin-java",
  "plugin-javascript",

@@ -26,6 +26,7 @@ plugin-erlang = { path = "../plugins/erlang" }
 plugin-fortran = { path = "../plugins/fortran" }
 plugin-go = { path = "../plugins/go" }
 plugin-graphql = { path = "../plugins/graphql" }
+plugin-html = { path = "../plugins/html" }
 plugin-image = { path = "../plugins/image" }
 plugin-java = { path = "../plugins/java" }
 plugin-javascript = { path = "../plugins/javascript" }
