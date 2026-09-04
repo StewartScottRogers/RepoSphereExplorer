@@ -2351,6 +2351,7 @@ dependencies = [
  "plugin-dart",
  "plugin-directory",
  "plugin-elixir",
+ "plugin-erlang",
  "plugin-go",
  "plugin-haskell",
  "plugin-image",
@@ -4719,6 +4720,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-erlang"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-go"
 version = "0.6.0"
 dependencies = [
@@ -5835,6 +5845,7 @@ dependencies = [
  "plugin-dart",
  "plugin-directory",
  "plugin-elixir",
+ "plugin-erlang",
  "plugin-go",
  "plugin-haskell",
  "plugin-image",
@@ -6798,6 +6809,7 @@ dependencies = [
  "plugin-dart",
  "plugin-directory",
  "plugin-elixir",
+ "plugin-erlang",
  "plugin-go",
  "plugin-haskell",
  "plugin-image",

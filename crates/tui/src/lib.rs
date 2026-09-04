@@ -52,6 +52,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_sql::SqlPresentation,
     &plugin_clojure::ClojurePresentation,
     &plugin_dart::DartPresentation,
+    &plugin_erlang::ErlangPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
