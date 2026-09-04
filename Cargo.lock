@@ -2382,6 +2382,7 @@ dependencies = [
  "plugin-sql",
  "plugin-swift",
  "plugin-text",
+ "plugin-toml",
  "plugin-typescript",
  "plugin-vimscript",
  "plugin-xml",
@@ -5014,6 +5015,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-toml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "plugin-typescript"
 version = "0.6.0"
 dependencies = [
@@ -6006,6 +6017,7 @@ dependencies = [
  "plugin-sql",
  "plugin-swift",
  "plugin-text",
+ "plugin-toml",
  "plugin-typescript",
  "plugin-vimscript",
  "plugin-xml",
@@ -6983,6 +6995,7 @@ dependencies = [
  "plugin-sql",
  "plugin-swift",
  "plugin-text",
+ "plugin-toml",
  "plugin-typescript",
  "plugin-vimscript",
  "plugin-xml",
