@@ -44,6 +44,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_dart::DartPresentation,
     &plugin_erlang::ErlangPresentation,
     &plugin_julia::JuliaPresentation,
+    &plugin_fortran::FortranPresentation,
     &plugin_image::ImagePresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,

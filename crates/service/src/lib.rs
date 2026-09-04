@@ -47,6 +47,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_dart::DartCore,
     &plugin_erlang::ErlangCore,
     &plugin_julia::JuliaCore,
+    &plugin_fortran::FortranCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_archive::ArchiveCore,
