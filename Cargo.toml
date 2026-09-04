@@ -29,6 +29,7 @@ members = [
     "crates/plugins/scala",
     "crates/plugins/sql",
     "crates/plugins/elixir",
+    "crates/plugins/erlang",
     "crates/plugins/image",
     "crates/plugins/archive",
     "crates/plugins/pdf",
