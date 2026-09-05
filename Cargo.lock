@@ -2694,6 +2694,7 @@ dependencies = [
  "plugin-disk-image",
  "plugin-dockerfile",
  "plugin-elixir",
+ "plugin-elm",
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
@@ -5540,6 +5541,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-elm"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-epub"
 version = "0.6.0"
 dependencies = [
@@ -7176,6 +7186,7 @@ dependencies = [
  "plugin-disk-image",
  "plugin-dockerfile",
  "plugin-elixir",
+ "plugin-elm",
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
@@ -8238,6 +8249,7 @@ dependencies = [
  "plugin-disk-image",
  "plugin-dockerfile",
  "plugin-elixir",
+ "plugin-elm",
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
