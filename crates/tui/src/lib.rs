@@ -80,6 +80,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_restructuredtext::RestructuredTextPresentation,
     &plugin_jupyter_notebook::NotebookPresentation,
     &plugin_json::JsonPresentation,
+    &plugin_terraform::TerraformPresentation,
     &plugin_toml::TomlPresentation,
     &plugin_csv::CsvPresentation,
     &plugin_msgpack::MsgpackPresentation,

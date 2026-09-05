@@ -2748,6 +2748,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-tcl",
+ "plugin-terraform",
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
@@ -6054,6 +6055,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-terraform"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-text"
 version = "0.6.0"
 dependencies = [
@@ -7320,6 +7330,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-tcl",
+ "plugin-terraform",
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
@@ -8391,6 +8402,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-tcl",
+ "plugin-terraform",
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
