@@ -35,6 +35,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_ruby::RubyPresentation,
     &plugin_php::PhpPresentation,
     &plugin_perl::PerlPresentation,
+    &plugin_prolog::PrologPresentation,
     &plugin_javascript::JavaScriptPresentation,
     &plugin_svelte::SveltePresentation,
     &plugin_typescript::TypeScriptPresentation,
