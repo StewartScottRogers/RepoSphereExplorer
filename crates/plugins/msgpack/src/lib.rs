@@ -59,6 +59,18 @@ fn looks_like_container_marker(first: u8) -> bool {
     matches!(first, 0x80..=0x8f | 0xde | 0xdf | 0x90..=0x9f | 0xdc | 0xdd)
 }
 
+/// PNG's fixed 8-byte magic. Its first byte, `0x89`, is also `MessagePack`'s
+/// format code for "fixmap with 9 entries", so a PNG's leading bytes pass
+/// [`looks_like_container_marker`] and, being far shorter than any real
+/// 9-entry map, run out of input while decoding — which [`is_eof_error`]
+/// otherwise treats as an inconclusive (bounded-prefix) failure rather than
+/// a rejection.
+const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+/// HDF5's fixed 8-byte magic, which collides with `MessagePack` in the same
+/// way as [`PNG_MAGIC`] and for the same reason.
+const HDF5_MAGIC: [u8; 8] = [0x89, b'H', b'D', b'F', 0x0d, 0x0a, 0x1a, 0x0a];
+
 /// Whether `err` is a decode failure caused by running out of bytes, rather
 /// than an invalid one — expected when `sniff` only sees a bounded prefix
 /// of a larger value.
@@ -78,13 +90,18 @@ fn is_eof_error(err: &rmpv::decode::Error) -> bool {
 /// bounded prefix `sniff` sees). Deliberately does not match a prefix that
 /// opens with a `MessagePack` scalar (a bare integer, string, etc.), since
 /// those format bytes overlap too much of arbitrary binary data to be a
-/// useful marker on their own; no sibling plugin's markers overlap with the
-/// map/array format codes this checks.
+/// useful marker on their own. [`PNG_MAGIC`] and [`HDF5_MAGIC`] are excluded
+/// explicitly: both are fixed, short magics that share `MessagePack`'s
+/// fixmap-with-9-entries format code, so without the exclusion they would
+/// otherwise fall into the EOF-as-match branch below.
 fn looks_like_msgpack(prefix: &[u8]) -> bool {
     let Some(&first) = prefix.first() else {
         return false;
     };
     if !looks_like_container_marker(first) {
+        return false;
+    }
+    if prefix.starts_with(&PNG_MAGIC) || prefix.starts_with(&HDF5_MAGIC) {
         return false;
     }
     let mut cursor = prefix;
@@ -307,6 +324,24 @@ mod tests {
 
         assert!(!MsgpackCore.sniff(b"just a regular line of text\n"));
         assert!(!MsgpackCore.sniff(b""));
+    }
+
+    #[test]
+    fn does_not_sniff_a_png_magic_prefix() {
+        let png_prefix: &[u8] = &[
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
+            b'D', b'R',
+        ];
+        assert!(!MsgpackCore.sniff(png_prefix));
+    }
+
+    #[test]
+    fn does_not_sniff_an_hdf5_magic_prefix() {
+        let hdf5_prefix: &[u8] = &[
+            0x89, b'H', b'D', b'F', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        assert!(!MsgpackCore.sniff(hdf5_prefix));
     }
 
     #[test]
