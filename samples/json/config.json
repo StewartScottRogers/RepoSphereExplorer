@@ -1,0 +1,11 @@
+{
+  "name": "sample-app",
+  "version": "1.2.0",
+  "debug": false,
+  "maxConnections": 10,
+  "server": {
+    "host": "localhost",
+    "port": 8080
+  },
+  "tags": ["alpha", "beta", "release"]
+}

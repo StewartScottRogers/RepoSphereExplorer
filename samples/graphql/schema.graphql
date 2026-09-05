@@ -1,0 +1,8 @@
+type Query {
+  greeting(name: String!): String
+}
+
+type Person {
+  name: String!
+  age: Int
+}
