@@ -84,6 +84,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_avro::AvroCore,
     &plugin_sqlite::SqliteCore,
     &plugin_disk_image::DiskImageCore,
+    &plugin_package_archive::PackageArchiveCore,
 ];
 
 /// The directory-as-file plugin, dispatched directly by [`view_file`] when
