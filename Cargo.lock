@@ -2751,6 +2751,7 @@ dependencies = [
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
+ "plugin-vbnet",
  "plugin-video",
  "plugin-vimscript",
  "plugin-vue",
@@ -6081,6 +6082,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-vbnet"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-video"
 version = "0.6.0"
 dependencies = [
@@ -7313,6 +7323,7 @@ dependencies = [
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
+ "plugin-vbnet",
  "plugin-video",
  "plugin-vimscript",
  "plugin-vue",
@@ -8383,6 +8394,7 @@ dependencies = [
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
+ "plugin-vbnet",
  "plugin-video",
  "plugin-vimscript",
  "plugin-vue",

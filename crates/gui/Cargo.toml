@@ -24,6 +24,7 @@ plugin-comic-archive = { path = "../plugins/comic-archive" }
 plugin-cpp = { path = "../plugins/cpp" }
 plugin-crystal = { path = "../plugins/crystal" }
 plugin-csharp = { path = "../plugins/csharp" }
+plugin-vbnet = { path = "../plugins/vbnet" }
 plugin-csv = { path = "../plugins/csv" }
 plugin-dart = { path = "../plugins/dart" }
 plugin-directory = { path = "../plugins/directory" }
