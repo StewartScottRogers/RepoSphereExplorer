@@ -28,6 +28,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_perl::PerlCore,
     &plugin_php::PhpCore,
     &plugin_elixir::ElixirCore,
+    &plugin_crystal::CrystalCore,
     &plugin_ruby::RubyCore,
     &plugin_python::PythonCore,
     &plugin_svelte::SvelteCore,

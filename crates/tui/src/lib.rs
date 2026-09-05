@@ -31,6 +31,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_text::TextPresentation,
     &plugin_python::PythonPresentation,
     &plugin_elixir::ElixirPresentation,
+    &plugin_crystal::CrystalPresentation,
     &plugin_ruby::RubyPresentation,
     &plugin_php::PhpPresentation,
     &plugin_perl::PerlPresentation,
