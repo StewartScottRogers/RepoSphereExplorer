@@ -40,6 +40,7 @@ plugin-julia = { path = "../plugins/julia" }
 plugin-jupyter-notebook = { path = "../plugins/jupyter-notebook" }
 plugin-kotlin = { path = "../plugins/kotlin" }
 plugin-makefile = { path = "../plugins/makefile" }
+plugin-model3d = { path = "../plugins/model3d" }
 plugin-msgpack = { path = "../plugins/msgpack" }
 plugin-objective-c = { path = "../plugins/objective-c" }
 plugin-parquet = { path = "../plugins/parquet" }

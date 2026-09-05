@@ -73,6 +73,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_makefile::MakefilePresentation,
     &plugin_image::ImagePresentation,
     &plugin_font::FontPresentation,
+    &plugin_model3d::Model3dPresentation,
     &plugin_word_document::WordDocumentPresentation,
     &plugin_spreadsheet::SpreadsheetPresentation,
     &plugin_presentation::PresentationPresentation,
