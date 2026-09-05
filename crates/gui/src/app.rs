@@ -65,6 +65,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_executable::ExecutablePresentation,
     &plugin_wasm::WasmPresentation,
     &plugin_model3d::Model3dPresentation,
+    &plugin_geojson::GeoJsonPresentation,
     &plugin_word_document::WordDocumentPresentation,
     &plugin_spreadsheet::SpreadsheetPresentation,
     &plugin_presentation::PresentationPresentation,

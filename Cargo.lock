@@ -2699,6 +2699,7 @@ dependencies = [
  "plugin-executable",
  "plugin-font",
  "plugin-fortran",
+ "plugin-geojson",
  "plugin-go",
  "plugin-graphql",
  "plugin-haskell",
@@ -5583,6 +5584,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-geojson"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-go"
 version = "0.6.0"
 dependencies = [
@@ -7111,6 +7121,7 @@ dependencies = [
  "plugin-executable",
  "plugin-font",
  "plugin-fortran",
+ "plugin-geojson",
  "plugin-go",
  "plugin-graphql",
  "plugin-haskell",
@@ -8167,6 +8178,7 @@ dependencies = [
  "plugin-executable",
  "plugin-font",
  "plugin-fortran",
+ "plugin-geojson",
  "plugin-go",
  "plugin-graphql",
  "plugin-haskell",
