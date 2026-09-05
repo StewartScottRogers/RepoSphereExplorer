@@ -30,6 +30,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_elixir::ElixirCore,
     &plugin_ruby::RubyCore,
     &plugin_python::PythonCore,
+    &plugin_svelte::SvelteCore,
     &plugin_typescript::TypeScriptCore,
     &plugin_javascript::JavaScriptCore,
     &plugin_rust::RustCore,

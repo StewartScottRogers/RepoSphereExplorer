@@ -2740,6 +2740,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
  "plugin-text",
@@ -5975,6 +5976,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-svelte"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-svg"
 version = "0.6.0"
 dependencies = [
@@ -7242,6 +7252,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
  "plugin-text",
@@ -8306,6 +8317,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
  "plugin-text",
