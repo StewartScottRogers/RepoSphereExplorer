@@ -50,6 +50,7 @@ plugin-kotlin = { path = "../plugins/kotlin" }
 plugin-makefile = { path = "../plugins/makefile" }
 plugin-model3d = { path = "../plugins/model3d" }
 plugin-msgpack = { path = "../plugins/msgpack" }
+plugin-nim = { path = "../plugins/nim" }
 plugin-ocaml = { path = "../plugins/ocaml" }
 plugin-objective-c = { path = "../plugins/objective-c" }
 plugin-package-archive = { path = "../plugins/package-archive" }
