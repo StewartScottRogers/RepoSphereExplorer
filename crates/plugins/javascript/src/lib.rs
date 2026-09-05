@@ -53,6 +53,22 @@ fn has_node_shebang(text: &str) -> bool {
         .is_some_and(|line| line.starts_with("#!") && line.contains("node"))
 }
 
+/// Whether `line` is an ES module import: a `from '...'`/`from "..."` clause
+/// (default/named/namespace imports), or a bare side-effect import
+/// terminated with a semicolon (`import './foo';`). Both shapes are absent
+/// from Go's `import "pkg"`/`import (` and Swift's `import Foundation`: those
+/// have no `from` clause, and neither language terminates statements with a
+/// semicolon by convention, so a bare `import <ident-or-string>` line with
+/// no `from` and no trailing `;` does not count.
+fn is_es_import_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.contains(" from '") || trimmed.contains(" from \"") {
+        return true;
+    }
+    (trimmed.starts_with("import '") && trimmed.ends_with("';"))
+        || (trimmed.starts_with("import \"") && trimmed.ends_with("\";"))
+}
+
 /// Whether `text` looks like JavaScript source: a top-level `function` or
 /// `class` declaration, a `CommonJS` `require(`/`module.exports` marker, an
 /// ES module `import`/`export` line, or an arrow function.
@@ -64,7 +80,19 @@ fn has_javascript_syntax(text: &str) -> bool {
         || text.contains("=>")
         || text
             .lines()
-            .any(|line| line.starts_with("import ") || line.starts_with("export "))
+            .any(|line| is_es_import_line(line) || line.starts_with("export "))
+}
+
+/// Whether `text` is a Vue single-file component: a top-level `<template>`
+/// block paired with a top-level `<script>` block. A `.vue` SFC's `<script>`
+/// block is genuinely JavaScript (or TypeScript), so its `export default {`
+/// would otherwise satisfy [`has_javascript_syntax`]'s `export` marker; the
+/// paired `<template>` block is the one piece of that file no standalone
+/// JavaScript file carries, so it is what rules the SFC out here.
+fn looks_like_vue_sfc(text: &str) -> bool {
+    let has_template = text.contains("<template>") || text.contains("<template ");
+    let has_script = text.contains("<script>") || text.contains("<script ");
+    has_template && has_script
 }
 
 /// The JavaScript plugin's core half.
@@ -80,7 +108,7 @@ impl PluginCore for JavaScriptCore {
         let Ok(text) = std::str::from_utf8(prefix) else {
             return false;
         };
-        has_node_shebang(text) || has_javascript_syntax(text)
+        !looks_like_vue_sfc(text) && (has_node_shebang(text) || has_javascript_syntax(text))
     }
 
     fn view(&self, path: &Path) -> io::Result<serde_json::Value> {
@@ -168,6 +196,33 @@ mod tests {
     fn does_not_sniff_plain_text_as_javascript() {
         assert!(!JavaScriptCore.sniff(b"just a regular line of text\n"));
         assert!(!JavaScriptCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn sniffs_a_bare_side_effect_import_terminated_with_a_semicolon() {
+        assert!(JavaScriptCore.sniff(b"import './polyfill';\n"));
+        assert!(JavaScriptCore.sniff(b"import \"./polyfill\";\n"));
+    }
+
+    #[test]
+    fn does_not_sniff_a_go_file_with_an_import_block_as_javascript() {
+        assert!(!JavaScriptCore.sniff(
+            b"package main\n\nimport (\n\t\"fmt\"\n)\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_swift_file_with_a_bare_import_as_javascript() {
+        assert!(!JavaScriptCore.sniff(
+            b"import Foundation\n\nfunc greet(name: String) -> String {\n    return \"Hi, \\(name)\"\n}\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_vue_sfc_as_javascript() {
+        assert!(!JavaScriptCore.sniff(
+            b"<template>\n  <p>{{ greeting }}</p>\n</template>\n\n<script>\nexport default {\n  data() {\n    return { greeting: \"Hello, World\" };\n  },\n};\n</script>\n"
+        ));
     }
 
     #[test]
