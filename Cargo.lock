@@ -2717,6 +2717,7 @@ dependencies = [
  "plugin-makefile",
  "plugin-model3d",
  "plugin-msgpack",
+ "plugin-nim",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-package-archive",
@@ -5753,6 +5754,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-nim"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-objective-c"
 version = "0.6.0"
 dependencies = [
@@ -7189,6 +7199,7 @@ dependencies = [
  "plugin-makefile",
  "plugin-model3d",
  "plugin-msgpack",
+ "plugin-nim",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-package-archive",
@@ -8250,6 +8261,7 @@ dependencies = [
  "plugin-makefile",
  "plugin-model3d",
  "plugin-msgpack",
+ "plugin-nim",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-package-archive",
