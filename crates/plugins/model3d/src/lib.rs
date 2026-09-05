@@ -107,6 +107,16 @@ fn is_stl_ascii(text: &str) -> bool {
 /// at this offset happen to decode to a small plausible count — is
 /// rejected.
 fn is_stl_binary(bytes: &[u8]) -> bool {
+    // Every ZIP-based format (EPUB, comic archives, Office documents, plain
+    // archives, ...) starts with this local-file-header signature. A real
+    // binary STL never does - its own 80-byte header is free-form but isn't
+    // spec-required to avoid this exact 4-byte prefix, and for a large
+    // enough archive the implied-length check below can still pass by
+    // chance (confirmed directly: a real EPUB fixture did). Ruling out the
+    // signature is exact, rather than probabilistic like the length check.
+    if bytes.starts_with(b"PK\x03\x04") {
+        return false;
+    }
     let Some(count_bytes) = bytes.get(80..84) else {
         return false;
     };

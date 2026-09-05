@@ -59,25 +59,67 @@ fn has_node_shebang(text: &str) -> bool {
 /// from Go's `import "pkg"`/`import (` and Swift's `import Foundation`: those
 /// have no `from` clause, and neither language terminates statements with a
 /// semicolon by convention, so a bare `import <ident-or-string>` line with
-/// no `from` and no trailing `;` does not count.
+/// no `from` and no trailing `;` does not count. A scheme-qualified
+/// specifier (Dart's `import 'dart:core';`/`import 'package:foo/bar.dart';`)
+/// is excluded too: genuine ES specifiers are relative paths or bare package
+/// names, never containing a literal colon.
 fn is_es_import_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.contains(" from '") || trimmed.contains(" from \"") {
         return true;
     }
-    (trimmed.starts_with("import '") && trimmed.ends_with("';"))
-        || (trimmed.starts_with("import \"") && trimmed.ends_with("\";"))
+    let is_bare_side_effect_import = (trimmed.starts_with("import '") && trimmed.ends_with("';"))
+        || (trimmed.starts_with("import \"") && trimmed.ends_with("\";"));
+    is_bare_side_effect_import && !trimmed.contains(':')
+}
+
+/// Whether `text` looks like a Dart source file, via the package-URI
+/// imports (`import 'dart:...'`/`import 'package:...'`) that appear in
+/// virtually every real one. Checked once, up front, and excludes Dart
+/// entirely from every check below (its `class Name {` declarations and
+/// `=>` expression-bodied methods would otherwise independently satisfy
+/// the class and arrow-function checks).
+fn looks_like_dart(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("import 'dart:")
+            || line.starts_with("import \"dart:")
+            || line.starts_with("import 'package:")
+            || line.starts_with("import \"package:")
+    })
 }
 
 /// Whether `text` looks like JavaScript source: a top-level `function` or
 /// `class` declaration, a `CommonJS` `require(`/`module.exports` marker, an
 /// ES module `import`/`export` line, or an arrow function.
+///
+/// The `function`/`class` line must also end with `{`, opening a same-line
+/// body: Julia's `function greet(name::String)` uses the same keyword with
+/// no trailing brace (Julia closes blocks with `end`, not `}`). `#include`
+/// (C/C++) and `pragma solidity` (Solidity, which also declares functions
+/// with a same-line brace) are excluded explicitly, since both share this
+/// project's C-like function/class shape otherwise.
+///
+/// The arrow check requires a `)` immediately (or with one space) before
+/// `=>`, matching a JS arrow function's parameter list (`(x) => ...`,
+/// `(x, y) => ...`): a bare `=>` alone also appears in Julia's `Dict`
+/// pair syntax (`"key" => value`) and Solidity's mapping type syntax
+/// (`mapping(address => string)`), neither preceded by `)`. This misses a
+/// single bare-parameter arrow with no parens (`x => x * 2`), an accepted
+/// gap - real JS files almost always carry another marker here too
+/// (`import`/`export`/`require`/a parenthesised arrow elsewhere).
 fn has_javascript_syntax(text: &str) -> bool {
+    if looks_like_dart(text) {
+        return false;
+    }
     text.lines().any(|line| {
-        top_level_name(line, "function").is_some() || top_level_name(line, "class").is_some()
+        line.trim_end().ends_with('{')
+            && ((top_level_name(line, "function").is_some() && !text.contains("pragma solidity"))
+                || (top_level_name(line, "class").is_some() && !text.contains("#include")))
     }) || text.contains("require(")
         || text.contains("module.exports")
-        || text.contains("=>")
+        || text.contains(") =>")
+        || text.contains(")=>")
         || text
             .lines()
             .any(|line| is_es_import_line(line) || line.starts_with("export "))

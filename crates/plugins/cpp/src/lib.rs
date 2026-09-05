@@ -68,6 +68,21 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
     (functions, classes)
 }
 
+/// Whether `text` looks like a Dart source file, via the package-URI
+/// imports (`import 'dart:...'`/`import 'package:...'`) that appear in
+/// virtually every real one. Dart's `class Name {` would otherwise satisfy
+/// the bare `class `/`namespace ` check below - the same shape a C++ class
+/// declaration uses.
+fn looks_like_dart(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("import 'dart:")
+            || line.starts_with("import \"dart:")
+            || line.starts_with("import 'package:")
+            || line.starts_with("import \"package:")
+    })
+}
+
 /// Whether `text` looks like C++ source: markers not used by this project's
 /// other source-language plugins, in particular the C plugin, whose
 /// `int main(`/`printf(`/`malloc(`/`NULL` markers a C++ file may also
@@ -75,6 +90,9 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
 /// ahead of `c`, lets a C++ file that has both kinds of marker still be
 /// claimed by this plugin first.
 fn has_cpp_syntax(text: &str) -> bool {
+    if looks_like_dart(text) {
+        return false;
+    }
     text.lines().any(|line| {
         let line = line.trim_start();
         line.starts_with("#include <iostream>")

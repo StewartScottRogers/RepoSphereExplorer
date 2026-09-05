@@ -84,10 +84,21 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
 /// declarations (plain or with a receiver), and short variable
 /// declarations (`:=`) are markers not used by this project's other
 /// source-language plugins.
+///
+/// `func ` and `package ` alone are too broad: Swift also declares
+/// functions with `func name(...) -> Type {` (excluded by requiring no
+/// `->`, which Go's return-type syntax never uses), and Tcl's
+/// `package require`/`package provide` statements share Go's package
+/// keyword (excluded explicitly, since Go's own package declaration is
+/// always just `package <identifier>`).
 fn has_go_syntax(text: &str) -> bool {
     text.lines().any(|line| {
         let line = line.trim_start();
-        line.starts_with("package ") || line.starts_with("func ") || line.starts_with("import (")
+        (line.starts_with("func ") && !line.contains("->"))
+            || (line.starts_with("package ")
+                && !line.starts_with("package require")
+                && !line.starts_with("package provide"))
+            || line.starts_with("import (")
     }) || text.contains(":=")
         || text.contains("fmt.Println(")
         || text.contains("fmt.Printf(")

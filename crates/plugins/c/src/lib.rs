@@ -92,15 +92,36 @@ fn has_pointer_null_usage(text: &str) -> bool {
         .any(|line| line.contains("NULL") && (has_pointer_star(line) || line.contains("->")))
 }
 
+/// Whether `text` looks like a Dart source file, via the package-URI
+/// imports (`import 'dart:...'`/`import 'package:...'`) that appear in
+/// virtually every real one. Dart's `void main() {` entry point is
+/// textually identical to C's `void main(` idiom.
+fn looks_like_dart(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("import 'dart:")
+            || line.starts_with("import \"dart:")
+            || line.starts_with("import 'package:")
+            || line.starts_with("import \"package:")
+    })
+}
+
 /// Whether `text` looks like C source: preprocessor directives and markers
 /// not used by this project's other source-language plugins.
+///
+/// `printf(` excludes a `@printf(` match: that substring also appears
+/// inside Julia's `@printf(...)` standard-library macro call, which is not
+/// a call to C's `printf` despite the shared substring.
 fn has_c_syntax(text: &str) -> bool {
+    if looks_like_dart(text) {
+        return false;
+    }
     text.lines().any(|line| {
         let line = line.trim_start();
         line.starts_with("#include <") || line.starts_with("#include \"")
     }) || text.contains("int main(")
         || text.contains("void main(")
-        || text.contains("printf(")
+        || (text.contains("printf(") && !text.contains("@printf("))
         || text.contains("malloc(")
         || has_pointer_null_usage(text)
 }
