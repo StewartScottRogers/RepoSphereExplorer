@@ -57,26 +57,46 @@ fn has_ruby_shebang(text: &str) -> bool {
         .is_some_and(|line| line.starts_with("#!") && line.contains("ruby"))
 }
 
+/// Whether `text` contains a top-level `def ` or `class ` line. Used to
+/// gate the bare `end` marker below: Ruby's block-closing `end` convention
+/// is meaningless without a Ruby-style method or class body to close, and
+/// other languages (Julia's `function`/`module` blocks, for instance) close
+/// blocks with a bare `end` too.
+fn has_def_or_class_line(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("def ") || trimmed.starts_with("class ")
+    })
+}
+
+/// Whether a trimmed line is a Ruby-style `module Name` declaration, as
+/// opposed to Haskell's `module Name where` or Elm's `module Name exposing
+/// (...)`, which use the same `module ` prefix but are always followed by
+/// one of those two keywords.
+fn is_ruby_style_module_line(trimmed: &str) -> bool {
+    trimmed.starts_with("module ") && !trimmed.contains("where") && !trimmed.contains("exposing")
+}
+
 /// Whether `text` looks like Ruby source: markers not used by this
 /// project's other source-language plugins. A bare `end` line closes
-/// Ruby's `def`/`class`/`module`/`do` blocks and is not used by any sniffed
-/// language here; `require '`/`require "` (no parenthesis) is Ruby's
-/// require statement, distinct from JavaScript's `require(`; `attr_accessor`
-/// /`attr_reader`/`attr_writer`, a bare `puts` call, `module `, and a
-/// `do |...|` block parameter list are otherwise Ruby-only idioms. These
-/// markers deliberately avoid the Python plugin's bare `def `/`class `
-/// check (which Ruby's own `def`/`class` lines would also match), so this
-/// plugin is placed just ahead of `python` in `CORE_PLUGINS` to claim Ruby
-/// files first.
+/// Ruby's `def`/`class`/`module`/`do` blocks, and is only trusted alongside
+/// a `def `/`class ` line since other languages close blocks with a bare
+/// `end` too; `require '`/`require "` (no parenthesis) is Ruby's require
+/// statement, distinct from JavaScript's `require(`; `attr_accessor`/
+/// `attr_reader`/`attr_writer`, a Ruby-style `module Name` line (not
+/// followed by `where`/`exposing`), and a `do |...|` block parameter list
+/// are otherwise Ruby-only idioms. These markers deliberately avoid the
+/// Python plugin's bare `def `/`class ` check (which Ruby's own
+/// `def`/`class` lines would also match), so this plugin is placed just
+/// ahead of `python` in `CORE_PLUGINS` to claim Ruby files first.
 fn has_ruby_syntax(text: &str) -> bool {
+    let has_def_or_class = has_def_or_class_line(text);
     text.lines().any(|line| {
         let trimmed = line.trim();
-        trimmed == "end"
+        (trimmed == "end" && has_def_or_class)
             || trimmed.starts_with("require '")
             || trimmed.starts_with("require \"")
-            || trimmed.starts_with("puts ")
-            || trimmed.starts_with("puts(")
-            || trimmed.starts_with("module ")
+            || is_ruby_style_module_line(trimmed)
     }) || text.contains("attr_accessor")
         || text.contains("attr_reader")
         || text.contains("attr_writer")
@@ -193,6 +213,33 @@ mod tests {
         assert!(!RubyCore.sniff(b"fun greet() {\n    println(\"hi\")\n}\n"));
         assert!(!RubyCore.sniff(b"just a regular line of text\n"));
         assert!(!RubyCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn does_not_sniff_an_elm_module_as_ruby() {
+        assert!(
+            !RubyCore.sniff(b"module Main exposing (main)\n\nmain =\n    text \"Hello, world!\"\n")
+        );
+    }
+
+    #[test]
+    fn does_not_sniff_a_haskell_module_as_ruby() {
+        assert!(
+            !RubyCore
+                .sniff(b"module Main where\n\nmain :: IO ()\nmain = putStrLn \"Hello, world!\"\n")
+        );
+    }
+
+    #[test]
+    fn does_not_sniff_a_julia_function_as_ruby() {
+        assert!(!RubyCore.sniff(
+            b"function greet(name)\n    println(\"Hello, $name!\")\nend\n\ngreet(\"world\")\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_tcl_puts_call_as_ruby() {
+        assert!(!RubyCore.sniff(b"puts \"Hello, world!\"\n"));
     }
 
     #[test]
