@@ -141,6 +141,7 @@ dependencies = [
  "cipher",
  "cpubits",
  "cpufeatures 0.3.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -1134,6 +1135,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmov"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
 name = "codepage"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1508,6 +1515,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctutils"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+dependencies = [
+ "cmov",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1658,6 +1674,7 @@ dependencies = [
  "block-buffer 0.12.1",
  "const-oid",
  "crypto-common 0.2.2",
+ "ctutils",
 ]
 
 [[package]]
@@ -2396,9 +2413,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2523,6 +2542,7 @@ dependencies = [
  "plugin-avro",
  "plugin-c",
  "plugin-clojure",
+ "plugin-comic-archive",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-csv",
@@ -2659,6 +2679,15 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest 0.11.3",
+]
 
 [[package]]
 name = "htmlparser"
@@ -4977,6 +5006,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-comic-archive"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "rars",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-cpp"
 version = "0.6.0"
 dependencies = [
@@ -5768,6 +5808,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a611d15b50743feb4c76b7d03edcb0e64f399c26961e4efe6975bc398be6aa3d"
 
 [[package]]
+name = "rars"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68ff174e95890b9e1c01601a93f35f60c017162fb1bd723dfef9f684ae2ffdb6"
+dependencies = [
+ "aes",
+ "aho-corasick",
+ "getrandom 0.4.3",
+ "hmac",
+ "rayon",
+ "sha1",
+ "sha2 0.11.0",
+ "zeroize",
+]
+
+[[package]]
 name = "ratatui"
 version = "0.30.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6435,6 +6491,7 @@ dependencies = [
  "plugin-avro",
  "plugin-c",
  "plugin-clojure",
+ "plugin-comic-archive",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-csv",
@@ -6488,6 +6545,17 @@ dependencies = [
  "serde_json",
  "updater",
  "zip",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -7438,6 +7506,7 @@ dependencies = [
  "plugin-avro",
  "plugin-c",
  "plugin-clojure",
+ "plugin-comic-archive",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-csv",
@@ -8875,6 +8944,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"
