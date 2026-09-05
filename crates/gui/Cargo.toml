@@ -33,6 +33,7 @@ plugin-erlang = { path = "../plugins/erlang" }
 plugin-executable = { path = "../plugins/executable" }
 plugin-font = { path = "../plugins/font" }
 plugin-fortran = { path = "../plugins/fortran" }
+plugin-geojson = { path = "../plugins/geojson" }
 plugin-go = { path = "../plugins/go" }
 plugin-graphql = { path = "../plugins/graphql" }
 plugin-hdf5 = { path = "../plugins/hdf5" }
