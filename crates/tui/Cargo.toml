@@ -71,6 +71,7 @@ plugin-text = { path = "../plugins/text" }
 plugin-toml = { path = "../plugins/toml" }
 plugin-typescript = { path = "../plugins/typescript" }
 plugin-video = { path = "../plugins/video" }
+plugin-wasm = { path = "../plugins/wasm" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
 protocol = { path = "../protocol" }

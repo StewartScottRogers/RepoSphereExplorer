@@ -73,6 +73,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_image::ImageCore,
     &plugin_font::FontCore,
     &plugin_executable::ExecutableCore,
+    &plugin_wasm::WasmCore,
     &plugin_word_document::WordDocumentCore,
     &plugin_spreadsheet::SpreadsheetCore,
     &plugin_presentation::PresentationCore,

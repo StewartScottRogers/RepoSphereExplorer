@@ -2724,6 +2724,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-video",
  "plugin-vimscript",
+ "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
  "protocol",
@@ -5837,6 +5838,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-wasm"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "wasmparser",
+]
+
+[[package]]
 name = "plugin-word-document"
 version = "0.6.0"
 dependencies = [
@@ -6994,6 +7005,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-video",
  "plugin-vimscript",
+ "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
  "protocol",
@@ -8048,6 +8060,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-video",
  "plugin-vimscript",
+ "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
  "protocol",
@@ -8473,6 +8486,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.225.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36e5456165f81e64cb9908a0fe9b9d852c2c74582aa3fe2be3c2da57f937d3ae"
+dependencies = [
+ "bitflags 2.13.1",
+ "indexmap",
 ]
 
 [[package]]
