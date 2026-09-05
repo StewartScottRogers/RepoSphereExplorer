@@ -64,6 +64,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_graphql::GraphQlCore,
     &plugin_solidity::SolidityCore,
     &plugin_svg::SvgCore,
+    &plugin_vue::VueCore,
     &plugin_html::HtmlCore,
     &plugin_xml::XmlCore,
     &plugin_restructuredtext::RestructuredTextCore,

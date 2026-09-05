@@ -56,6 +56,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_graphql::GraphQlPresentation,
     &plugin_solidity::SolidityPresentation,
     &plugin_svg::SvgPresentation,
+    &plugin_vue::VuePresentation,
     &plugin_html::HtmlPresentation,
     &plugin_xml::XmlPresentation,
     &plugin_restructuredtext::RestructuredTextPresentation,

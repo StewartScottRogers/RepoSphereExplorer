@@ -2747,6 +2747,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-video",
  "plugin-vimscript",
+ "plugin-vue",
  "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
@@ -6040,6 +6041,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-vue"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-wasm"
 version = "0.6.0"
 dependencies = [
@@ -7239,6 +7249,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-video",
  "plugin-vimscript",
+ "plugin-vue",
  "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
@@ -8302,6 +8313,7 @@ dependencies = [
  "plugin-typescript",
  "plugin-video",
  "plugin-vimscript",
+ "plugin-vue",
  "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
