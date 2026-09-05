@@ -53,11 +53,25 @@ fn has_python_shebang(text: &str) -> bool {
         .is_some_and(|line| line.starts_with("#!") && line.contains("python"))
 }
 
+/// Whether a `def`/`class` header line ends in a bare `:` (after stripping
+/// a trailing `#` comment), Python's block-opening syntax. C++/Dart's
+/// `class Name {`, Groovy's `def name(...) {`, and TypeScript's `class Foo
+/// implements Bar {` share the same leading keyword but open with `{`
+/// instead, so this rules them out.
+fn ends_with_colon_header(line: &str) -> bool {
+    line.split('#')
+        .next()
+        .unwrap_or("")
+        .trim_end()
+        .ends_with(':')
+}
+
 /// Whether any line in `text` opens a top-level `def` or `class`, the
 /// content markers used since Python source carries no magic bytes.
 fn has_python_syntax(text: &str) -> bool {
     text.lines().any(|line| {
-        top_level_name(line, "def").is_some() || top_level_name(line, "class").is_some()
+        (top_level_name(line, "def").is_some() || top_level_name(line, "class").is_some())
+            && ends_with_colon_header(line)
     })
 }
 
@@ -153,6 +167,36 @@ mod tests {
     fn does_not_sniff_plain_text_as_python() {
         assert!(!PythonCore.sniff(b"just a regular line of text\n"));
         assert!(!PythonCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn does_not_sniff_a_cpp_class_as_python() {
+        assert!(!PythonCore.sniff(
+            b"#include <iostream>\n\nclass Greeter {\npublic:\n    void greet() {\n        std::cout << \"Hello, World!\" << std::endl;\n    }\n};\n\nint main() {\n    Greeter().greet();\n    return 0;\n}\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_dart_class_as_python() {
+        assert!(!PythonCore.sniff(
+            b"class Greeter {\n  void greet() {\n    print('Hello, World!');\n  }\n}\n\nvoid main() {\n  Greeter().greet();\n}\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_groovy_def_as_python() {
+        assert!(
+            !PythonCore.sniff(
+                b"def greet(name) {\n    println \"Hello, ${name}!\"\n}\n\ngreet('World')\n"
+            )
+        );
+    }
+
+    #[test]
+    fn does_not_sniff_a_typescript_class_as_python() {
+        assert!(!PythonCore.sniff(
+            b"interface Greetable {\n  greet(): string;\n}\n\nclass Greeter implements Greetable {\n  greet(): string {\n    return \"Hello, World!\";\n  }\n}\n"
+        ));
     }
 
     #[test]
