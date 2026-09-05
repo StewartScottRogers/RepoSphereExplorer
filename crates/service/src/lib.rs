@@ -72,6 +72,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_certificate::CertificateCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
+    &plugin_psd::PsdCore,
     &plugin_font::FontCore,
     &plugin_executable::ExecutableCore,
     &plugin_wasm::WasmCore,

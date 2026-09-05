@@ -2723,6 +2723,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-presentation",
+ "plugin-psd",
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
@@ -5811,6 +5812,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-psd"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "psd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-python"
 version = "0.6.0"
 dependencies = [
@@ -6194,6 +6205,15 @@ dependencies = [
  "interprocess",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "psd"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a25f9b8cfffd65d911baf31a033239f7a0facb755faa2481575b70db5dc9195"
+dependencies = [
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -7145,6 +7165,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-presentation",
+ "plugin-psd",
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
@@ -8202,6 +8223,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-presentation",
+ "plugin-psd",
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
