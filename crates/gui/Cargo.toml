@@ -69,6 +69,7 @@ plugin-restructuredtext = { path = "../plugins/restructuredtext" }
 plugin-ruby = { path = "../plugins/ruby" }
 plugin-rust = { path = "../plugins/rust" }
 plugin-scala = { path = "../plugins/scala" }
+plugin-scheme = { path = "../plugins/scheme" }
 plugin-shell = { path = "../plugins/shell" }
 plugin-solidity = { path = "../plugins/solidity" }
 plugin-spreadsheet = { path = "../plugins/spreadsheet" }

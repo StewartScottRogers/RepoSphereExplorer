@@ -56,6 +56,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_scala::ScalaCore,
     &plugin_sql::SqlCore,
     &plugin_clojure::ClojureCore,
+    &plugin_scheme::SchemeCore,
     &plugin_dart::DartCore,
     &plugin_erlang::ErlangCore,
     &plugin_julia::JuliaCore,
