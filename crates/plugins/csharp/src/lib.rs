@@ -76,6 +76,17 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
     (methods, classes)
 }
 
+/// Whether `line` is a `Console.WriteLine(...)`/`Console.Write(...)` call
+/// written as a C# statement. VB.NET calls the same .NET `Console` methods
+/// with identical syntax, but VB.NET statements are never `;`-terminated,
+/// so requiring the trailing semicolon excludes VB.NET's
+/// `Console.WriteLine("hi")` while still matching C#'s `Console.WriteLine("hi");`.
+fn is_csharp_console_statement(line: &str) -> bool {
+    let trimmed = line.trim_end();
+    (trimmed.contains("Console.WriteLine(") || trimmed.contains("Console.Write("))
+        && trimmed.ends_with(';')
+}
+
 /// Whether `text` looks like C# source: markers not used by this project's
 /// other source-language plugins, in particular the C++ plugin, whose
 /// `class `/`namespace ` markers a C# file may also contain. Checking
@@ -85,8 +96,7 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
 fn has_csharp_syntax(text: &str) -> bool {
     text.lines()
         .any(|line| line.trim_start().starts_with("using System"))
-        || text.contains("Console.WriteLine(")
-        || text.contains("Console.Write(")
+        || text.lines().any(is_csharp_console_statement)
         || text.contains("public class ")
         || text.contains("internal class ")
         || text.contains("public static void Main(")
@@ -201,6 +211,13 @@ mod tests {
         ));
         assert!(!CSharpCore.sniff(b"just a regular line of text\n"));
         assert!(!CSharpCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn does_not_sniff_a_vbnet_console_writeline_as_csharp() {
+        assert!(!CSharpCore.sniff(
+            b"Module Program\n    Sub Main()\n        Console.WriteLine(\"Hello, world!\")\n    End Sub\nEnd Module\n"
+        ));
     }
 
     #[test]
