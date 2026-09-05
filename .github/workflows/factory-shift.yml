@@ -15,9 +15,9 @@ on:
         description: Issue number to build (blank = pick the oldest open work order)
         required: false
       max_turns:
-        description: Turn budget for unusually large work orders (default 100)
+        description: Turn budget for unusually large work orders (default 150)
         required: false
-        default: "100"
+        default: "150"
 
 # Shares its group with claude.yml: only one floor build runs at a time,
 # whether it was triggered by a label or by tonight's shift, so concurrent
@@ -44,6 +44,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
+        id: build
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # day-shift.yml dispatches this workflow via `gh workflow run` using
@@ -52,7 +53,7 @@ jobs:
           # explicitly allowed.
           allowed_bots: "github-actions[bot]"
           claude_args: |
-            --max-turns ${{ inputs.max_turns || '100' }}
+            --max-turns ${{ inputs.max_turns || '150' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
             --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"
           prompt: |
@@ -68,9 +69,18 @@ jobs:
                instead of the true oldest)
                and take the oldest one that has no linked pull request. If there
                is none, comment nothing and stop — an idle shift is a fine shift.
-            2. Read the issue. If the outcome or the acceptance checks are
-               ambiguous, comment on the issue asking the single question that
-               would unblock it, then stop. Do not guess.
+            2. Read the issue, including its existing comments. If you (or an
+               earlier shift) already left an unanswered clarifying-question
+               comment here, do not ask it again - this issue will keep being
+               "oldest with no PR" and get picked again on every future shift
+               until it either gets a PR or gets closed, so re-asking would
+               loop forever. Instead make the most reasonable judgment call
+               and proceed, or if you genuinely cannot proceed, close the
+               issue explaining why a human needs to weigh in, so a future
+               shift doesn't waste a turn budget re-discovering the same
+               block. Only for a genuinely new ambiguity you haven't already
+               raised: comment asking the single question that would unblock
+               it, then stop.
             3. If this is a file-type plugin work order, check PLUGINS.md
                first. If the format is already in the Built table, or in
                Rejected without this issue explicitly asking to retry it,
@@ -96,22 +106,48 @@ jobs:
       # behind its configured interval (likely this repo's own high Actions
       # volume queuing scheduled runs behind everything else), while a
       # `gh workflow run` dispatch has fired immediately and reliably every
-      # single time it's been used. Only runs if the step above succeeded
-      # (the job's default behavior), so a genuine failure still halts the
-      # chain here instead of retrying a stuck issue forever.
+      # single time it's been used.
       #
-      # Waits for every currently-open auto-merge PR to resolve (merge or
-      # close) before dispatching the next build - dispatching immediately
-      # after opening a PR let several builds pile up faster than they
-      # could land, and they started conflicting with each other on the
-      # shared registry files. Capped at 30 minutes so a genuinely stuck PR
-      # (which floor-health-check.yml will eventually close) doesn't stall
-      # the chain forever.
-      - name: Chain the next build once open PRs resolve
+      # Runs on both success and failure (if: always()) - a plain halt on
+      # failure meant nobody knew the chain had stopped until someone
+      # happened to check in hours later, and "reached maximum number of
+      # turns" is a real, recoverable failure mode (a genuinely large work
+      # order needs more budget, not a human). On failure this retries the
+      # same issue with a bigger budget instead, but checks the last 3 runs
+      # first: if all 3 already failed, something is systemically broken
+      # (not just one oversized issue) and this halts for a human rather
+      # than retrying forever.
+      #
+      # On success: waits for every currently-open auto-merge PR to resolve
+      # (merge or close) before dispatching the next build - dispatching
+      # immediately after opening a PR let several builds pile up faster
+      # than they could land, and they started conflicting with each other
+      # on the shared registry files. Capped at 30 minutes so a genuinely
+      # stuck PR (which floor-health-check.yml will eventually close)
+      # doesn't stall the chain forever.
+      - name: Chain the next build, recovering from a turn-budget failure
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
+          if [ "$BUILD_OUTCOME" != "success" ]; then
+            # `gh run list --limit 3` returns this run (still in progress -
+            # its conclusion isn't set yet, so it never matches "failure"
+            # here) plus the 2 runs before it. Two prior failures plus this
+            # one's own (already known via $BUILD_OUTCOME) makes 3
+            # consecutive.
+            prior_failures=$(gh run list --repo "$REPO" --workflow factory-shift.yml --limit 3 --json conclusion --jq '[.[] | select(.conclusion == "failure")] | length')
+            if [ "$prior_failures" -ge 2 ]; then
+              echo "This run plus the 2 before it all failed (3 in a row); halting the chain for a human to look at."
+              exit 0
+            fi
+            echo "Build step failed (outcome: $BUILD_OUTCOME); retrying with a larger turn budget."
+            gh workflow run factory-shift.yml --repo "$REPO" -f max_turns=300
+            exit 0
+          fi
+
           for i in $(seq 1 60); do
             open_prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq 'length')
             if [ "$open_prs" -eq 0 ]; then
