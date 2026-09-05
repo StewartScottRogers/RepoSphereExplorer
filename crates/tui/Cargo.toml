@@ -29,6 +29,7 @@ plugin-dockerfile = { path = "../plugins/dockerfile" }
 plugin-elixir = { path = "../plugins/elixir" }
 plugin-epub = { path = "../plugins/epub" }
 plugin-erlang = { path = "../plugins/erlang" }
+plugin-executable = { path = "../plugins/executable" }
 plugin-font = { path = "../plugins/font" }
 plugin-fortran = { path = "../plugins/fortran" }
 plugin-go = { path = "../plugins/go" }
