@@ -70,3 +70,9 @@ change the guidance first. Decisions D1-D5 in its section 7 gate the large work.
    and the PR is open, apply the `auto-merge` label so it lands itself under
    the same no-human-review policy that already governs `main` — do not wait
    for manual review, and do not merge it directly yourself.
+9. **Keep `samples/` current.** If a `samples/` directory exists at the repo
+   root (one subdirectory per `crates/plugins/*` entry, checked by an
+   integration test), a plugin work order that adds a new plugin crate must
+   also add its `samples/<name>/` entry with a real, valid example file, in
+   the same PR — the fixture set and its regression test only stay useful if
+   every new plugin keeps it complete.
