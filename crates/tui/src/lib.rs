@@ -61,6 +61,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_vimscript::VimscriptPresentation,
     &plugin_graphql::GraphQlPresentation,
     &plugin_solidity::SolidityPresentation,
+    &plugin_svg::SvgPresentation,
     &plugin_html::HtmlPresentation,
     &plugin_xml::XmlPresentation,
     &plugin_restructuredtext::RestructuredTextPresentation,
