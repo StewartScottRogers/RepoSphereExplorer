@@ -68,6 +68,30 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
     (functions, structs)
 }
 
+/// Whether `line` contains a `*` immediately followed by an identifier
+/// character, C's pointer-declaration/dereference idiom (`Type *name`,
+/// `*ptr`). SQL's `SELECT * FROM ...` always separates the `*` from the
+/// next word with whitespace, so it does not match.
+fn has_pointer_star(line: &str) -> bool {
+    line.char_indices().any(|(i, ch)| {
+        ch == '*'
+            && line[i + 1..]
+                .chars()
+                .next()
+                .is_some_and(|next| next.is_alphanumeric() || next == '_')
+    })
+}
+
+/// Whether `text` contains a NULL pointer usage in C's syntax: `NULL`
+/// appearing on a line that also carries a pointer marker (`Type *name`,
+/// `*ptr`, or `->` member access). SQL's `NOT NULL` column constraint
+/// carries neither marker, so this excludes it while still matching C's
+/// `Type *p = NULL;` / `if (p->next == NULL)` idioms.
+fn has_pointer_null_usage(text: &str) -> bool {
+    text.lines()
+        .any(|line| line.contains("NULL") && (has_pointer_star(line) || line.contains("->")))
+}
+
 /// Whether `text` looks like C source: preprocessor directives and markers
 /// not used by this project's other source-language plugins.
 fn has_c_syntax(text: &str) -> bool {
@@ -78,7 +102,7 @@ fn has_c_syntax(text: &str) -> bool {
         || text.contains("void main(")
         || text.contains("printf(")
         || text.contains("malloc(")
-        || text.contains("NULL")
+        || has_pointer_null_usage(text)
 }
 
 /// The C plugin's core half.
@@ -181,6 +205,13 @@ mod tests {
         assert!(!CCore.sniff(b"package main\n\nfunc main() {}\n"));
         assert!(!CCore.sniff(b"just a regular line of text\n"));
         assert!(!CCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn does_not_sniff_a_sql_schema_with_not_null_as_c() {
+        assert!(!CCore.sniff(
+            b"CREATE TABLE users (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    email TEXT NOT NULL\n);\n"
+        ));
     }
 
     #[test]
