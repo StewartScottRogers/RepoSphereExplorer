@@ -2717,6 +2717,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-objective-c",
+ "plugin-ocaml",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
@@ -5751,6 +5752,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-ocaml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-package-archive"
 version = "0.6.0"
 dependencies = [
@@ -7169,6 +7179,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-objective-c",
+ "plugin-ocaml",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
@@ -8228,6 +8239,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-objective-c",
+ "plugin-ocaml",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
