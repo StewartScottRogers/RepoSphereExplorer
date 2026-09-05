@@ -69,6 +69,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_presentation::PresentationCore,
     &plugin_epub::EpubCore,
     &plugin_comic_archive::ComicArchiveCore,
+    &plugin_video::VideoCore,
     &plugin_audio::AudioCore,
     &plugin_archive::ArchiveCore,
     &plugin_pdf::PdfCore,

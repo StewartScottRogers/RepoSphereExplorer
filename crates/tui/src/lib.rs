@@ -76,6 +76,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_presentation::PresentationPresentation,
     &plugin_epub::EpubPresentation,
     &plugin_comic_archive::ComicArchivePresentation,
+    &plugin_video::VideoPresentation,
     &plugin_audio::AudioPresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,

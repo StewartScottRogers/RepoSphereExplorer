@@ -2595,6 +2595,7 @@ dependencies = [
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
+ "plugin-video",
  "plugin-vimscript",
  "plugin-word-document",
  "plugin-xml",
@@ -3848,6 +3849,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "matroska"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d3e606fd165c30a7f5daebca07f9707b2cdca959e0b3dd89538e3e0441b7f52"
+dependencies = [
+ "bitstream-io",
+ "phf 0.13.1",
+]
+
+[[package]]
 name = "maybe-rayon"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3943,6 +3954,20 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "mp4"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9ef834d5ed55e494a2ae350220314dc4aacd1c43a9498b00e320e0ea352a5c3"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "num-rational",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4137,6 +4162,7 @@ dependencies = [
  "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -5485,6 +5511,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-video"
+version = "0.6.0"
+dependencies = [
+ "matroska",
+ "mp4",
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-vimscript"
 version = "0.6.0"
 dependencies = [
@@ -6590,6 +6627,7 @@ dependencies = [
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
+ "plugin-video",
  "plugin-vimscript",
  "plugin-word-document",
  "plugin-xml",
@@ -7606,6 +7644,7 @@ dependencies = [
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
+ "plugin-video",
  "plugin-vimscript",
  "plugin-word-document",
  "plugin-xml",
