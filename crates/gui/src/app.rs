@@ -62,6 +62,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_image::ImagePresentation,
     &plugin_word_document::WordDocumentPresentation,
     &plugin_spreadsheet::SpreadsheetPresentation,
+    &plugin_epub::EpubPresentation,
     &plugin_archive::ArchivePresentation,
     &plugin_pdf::PdfPresentation,
     &plugin_parquet::ParquetPresentation,
