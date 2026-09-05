@@ -54,6 +54,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_erlang::ErlangPresentation,
     &plugin_julia::JuliaPresentation,
     &plugin_fortran::FortranPresentation,
+    &plugin_ada::AdaPresentation,
     &plugin_assembly::AssemblyPresentation,
     &plugin_vimscript::VimscriptPresentation,
     &plugin_graphql::GraphQlPresentation,
