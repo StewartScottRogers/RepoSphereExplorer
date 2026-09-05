@@ -17,6 +17,7 @@ plugin-assembly = { path = "../plugins/assembly" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }
 plugin-clojure = { path = "../plugins/clojure" }
+plugin-comic-archive = { path = "../plugins/comic-archive" }
 plugin-cpp = { path = "../plugins/cpp" }
 plugin-csharp = { path = "../plugins/csharp" }
 plugin-csv = { path = "../plugins/csv" }
