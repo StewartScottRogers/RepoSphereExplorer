@@ -53,20 +53,45 @@ fn has_haskell_shebang(text: &str) -> bool {
     })
 }
 
+/// Whether `line` is a genuine Haskell top-level type signature (`name ::
+/// Type`), as opposed to Fortran's `type-spec[, attr-list] :: name-list`
+/// attribute-declaration form, which also uses a spaced `::` but names a
+/// type-spec on the left rather than a single function name — often
+/// parenthesized, e.g. `character(len=13) :: greeting`, or comma-separated,
+/// e.g. `integer, parameter :: n`.
+fn is_haskell_type_signature(line: &str) -> bool {
+    let Some((name, rest)) = line.trim_start().split_once(" :: ") else {
+        return false;
+    };
+    if name.is_empty() || rest.trim().is_empty() || name.contains(['(', ')', ',']) {
+        return false;
+    }
+    let is_name_char = |ch: char| ch.is_alphanumeric() || ch == '_' || ch == '\'';
+    let starts_ok = name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_lowercase() || ch == '_');
+    starts_ok && name.chars().all(is_name_char)
+}
+
 /// Whether `text` looks like Haskell source: markers not used by this
 /// project's other source-language plugins. A `{-# LANGUAGE` pragma opens a
 /// GHC language extension directive; `import qualified ` is Haskell's
 /// qualified-import syntax, distinct from every sibling plugin's own
-/// `import`/`require` markers; ` :: ` (surrounded by spaces) is a top-level
-/// type signature, distinct from the Rust plugin's `std::` and the C++
-/// plugin's `std::`/`::` scope resolution, neither of which has surrounding
-/// spaces. This project has no path/extension-based dispatch (per the C
+/// `import`/`require` markers; a line matching [`is_haskell_type_signature`]
+/// is a top-level type signature, distinct from the Rust plugin's `std::`
+/// and the C++ plugin's `std::`/`::` scope resolution (neither has
+/// surrounding spaces) and from Fortran's `:: `-based attribute
+/// declarations (whose left side is a type-spec, not a lone function
+/// name). This project has no path/extension-based dispatch (per the C
 /// plugin's note), so this plugin deliberately does not sniff the `<-`
 /// operator that the R plugin already claims for assignment, since Haskell
 /// also uses `<-` for monadic bind in `do` notation (see the R plugin's own
 /// note on that overlap).
 fn has_haskell_syntax(text: &str) -> bool {
-    text.contains("{-# LANGUAGE") || text.contains("import qualified ") || text.contains(" :: ")
+    text.contains("{-# LANGUAGE")
+        || text.contains("import qualified ")
+        || text.lines().any(is_haskell_type_signature)
 }
 
 /// The Haskell plugin's core half.
@@ -178,6 +203,14 @@ mod tests {
         assert!(!HaskellCore.sniff(b"x <- 5\nresult <- data %>% filter(x > 1)\n"));
         assert!(!HaskellCore.sniff(b"just a regular line of text\n"));
         assert!(!HaskellCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn does_not_sniff_fortran_attribute_declarations_as_haskell() {
+        assert!(!HaskellCore.sniff(
+            b"program hello\n    implicit none\n    character(len=13) :: greeting\n\n    greeting = \"Hello, world!\"\n    write(*,*) greeting\nend program hello\n"
+        ));
+        assert!(!HaskellCore.sniff(b"integer, parameter :: n = 10\n"));
     }
 
     #[test]
