@@ -2744,6 +2744,7 @@ dependencies = [
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
+ "plugin-tcl",
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
@@ -6013,6 +6014,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-tcl"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-text"
 version = "0.6.0"
 dependencies = [
@@ -7266,6 +7276,7 @@ dependencies = [
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
+ "plugin-tcl",
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",
@@ -8332,6 +8343,7 @@ dependencies = [
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
+ "plugin-tcl",
  "plugin-text",
  "plugin-toml",
  "plugin-typescript",

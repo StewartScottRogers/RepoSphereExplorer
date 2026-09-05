@@ -50,6 +50,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_dockerfile::DockerfilePresentation,
     &plugin_shell::ShellPresentation,
     &plugin_powershell::PowerShellPresentation,
+    &plugin_tcl::TclPresentation,
     &plugin_r::RPresentation,
     &plugin_haskell::HaskellPresentation,
     &plugin_fsharp::FSharpPresentation,
