@@ -1,0 +1,17 @@
+[package]
+name = "plugin-psd"
+description = "Photoshop document file type plugin: core and presentation halves."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+plugin-api = { path = "../../plugin-api" }
+psd = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true
