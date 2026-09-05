@@ -2703,6 +2703,7 @@ dependencies = [
  "plugin-geojson",
  "plugin-go",
  "plugin-graphql",
+ "plugin-groovy",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-html",
@@ -5623,6 +5624,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-groovy"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-haskell"
 version = "0.6.0"
 dependencies = [
@@ -7165,6 +7175,7 @@ dependencies = [
  "plugin-geojson",
  "plugin-go",
  "plugin-graphql",
+ "plugin-groovy",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-html",
@@ -8225,6 +8236,7 @@ dependencies = [
  "plugin-geojson",
  "plugin-go",
  "plugin-graphql",
+ "plugin-groovy",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-html",

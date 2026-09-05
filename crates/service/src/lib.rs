@@ -37,6 +37,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_go::GoCore,
     &plugin_java::JavaCore,
     &plugin_kotlin::KotlinCore,
+    &plugin_groovy::GroovyCore,
     &plugin_csharp::CSharpCore,
     &plugin_objective_c::ObjectiveCCore,
     &plugin_cpp::CppCore,
