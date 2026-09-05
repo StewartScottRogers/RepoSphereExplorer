@@ -73,19 +73,20 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// Whether `text` looks like Kotlin source: markers not used by this
-/// project's other source-language plugins. `fun `, `data class `, and
-/// `companion object` are Kotlin-only keywords/idioms, `import kotlin.`
-/// mirrors the Java plugin's `import java.` check, and a bare
-/// `println(` call (no `System.out.`/`fmt.` prefix) at the start of a
-/// line distinguishes Kotlin's top-level `println` from Java's
-/// `System.out.println(` and Go's `fmt.Println(`, both of which also
-/// contain the substring `println(` but never at the start of a line.
+/// project's other source-language plugins. A `fun ` declaration at the
+/// start of a line, `data class `, and `companion object` are
+/// Kotlin-only keywords/idioms, and `import kotlin.` mirrors the Java
+/// plugin's `import java.` check. A bare `println(` call at the start of
+/// a line is deliberately *not* checked on its own: Scala's own
+/// top-level `println(...)` calls (inside an `object ... extends App`
+/// body, say) look identical, so that marker alone misclaimed Scala
+/// files. `fun ` is unambiguous instead, since Scala declares functions
+/// with `def `, not `fun `.
 fn has_kotlin_syntax(text: &str) -> bool {
     text.lines().any(|line| {
         let trimmed = line.trim_start();
-        trimmed.starts_with("import kotlin.") || trimmed.starts_with("println(")
-    }) || text.contains("fun main(")
-        || text.contains("data class ")
+        trimmed.starts_with("import kotlin.") || trimmed.starts_with("fun ")
+    }) || text.contains("data class ")
         || text.contains("companion object")
 }
 
@@ -203,6 +204,16 @@ mod tests {
         ));
         assert!(!KotlinCore.sniff(b"just a regular line of text\n"));
         assert!(!KotlinCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn does_not_sniff_a_scala_bare_println_as_kotlin() {
+        assert!(
+            !KotlinCore.sniff(b"object Hello extends App {\n    println(\"Hello, world!\")\n}\n")
+        );
+        assert!(!KotlinCore.sniff(
+            b"object Hello {\n    def main(args: Array[String]): Unit = {\n        println(\"Hello, world!\")\n    }\n}\n"
+        ));
     }
 
     #[test]
