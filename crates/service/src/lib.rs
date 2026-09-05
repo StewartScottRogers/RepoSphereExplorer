@@ -51,6 +51,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_fsharp::FSharpCore,
     &plugin_ocaml::OCamlCore,
     &plugin_nim::NimCore,
+    &plugin_elm::ElmCore,
     &plugin_scala::ScalaCore,
     &plugin_sql::SqlCore,
     &plugin_clojure::ClojureCore,

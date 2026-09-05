@@ -54,6 +54,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_fsharp::FSharpPresentation,
     &plugin_ocaml::OCamlPresentation,
     &plugin_nim::NimPresentation,
+    &plugin_elm::ElmPresentation,
     &plugin_scala::ScalaPresentation,
     &plugin_sql::SqlPresentation,
     &plugin_clojure::ClojurePresentation,
