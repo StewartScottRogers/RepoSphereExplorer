@@ -93,14 +93,29 @@ fn is_stl_ascii(text: &str) -> bool {
 }
 
 /// Detects a binary STL document: 80-byte header, then a triangle count
-/// that isn't implausibly large, with the `solid` keyword check skipped
-/// (`is_stl_ascii` already claims those cases first in [`Container::detect`]).
+/// that isn't implausibly large and whose implied file size (`84 +
+/// count * 50`) can actually accommodate `bytes`, with the `solid` keyword
+/// check skipped (`is_stl_ascii` already claims those cases first in
+/// [`Container::detect`]).
+///
+/// `bytes` may be the whole file (from [`Model3dCore::view`]) or only a
+/// bounded sniffing prefix (from [`Model3dCore::sniff`]), so the implied
+/// size is checked against `bytes.len()` with `>=` rather than `==`: a
+/// genuine large binary STL's prefix is shorter than its implied size and
+/// must still pass, while any file whose *actual* bytes already exceed
+/// what its own header claims — like a PNG or EPUB whose unrelated bytes
+/// at this offset happen to decode to a small plausible count — is
+/// rejected.
 fn is_stl_binary(bytes: &[u8]) -> bool {
     let Some(count_bytes) = bytes.get(80..84) else {
         return false;
     };
     let count = u32::from_le_bytes(count_bytes.try_into().unwrap_or_default());
-    count > 0 && count <= MAX_PLAUSIBLE_STL_TRIANGLES
+    if count == 0 || count > MAX_PLAUSIBLE_STL_TRIANGLES {
+        return false;
+    }
+    let implied_len = 84u64 + u64::from(count) * 50;
+    implied_len >= bytes.len() as u64
 }
 
 /// Detects a Wavefront OBJ document: any line opening with a directive
@@ -352,6 +367,18 @@ endsolid triangle
         let prefix = std::fs::read(&path).unwrap();
         assert!(Model3dCore.sniff(&prefix));
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn does_not_sniff_a_file_whose_size_exceeds_its_stl_header_count() {
+        // Offset 80..84 decodes to a plausible triangle count of 1 (implied
+        // size 134 bytes), but the buffer itself is far larger than that —
+        // the same shape of collision as a real EPUB/ZIP whose unrelated
+        // local-file-header bytes happen to land on a small count here.
+        let mut bytes = vec![0u8; 80];
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 300]);
+        assert!(!Model3dCore.sniff(&bytes));
     }
 
     #[test]
