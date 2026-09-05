@@ -40,6 +40,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_go::GoPresentation,
     &plugin_java::JavaPresentation,
     &plugin_kotlin::KotlinPresentation,
+    &plugin_groovy::GroovyPresentation,
     &plugin_csharp::CSharpPresentation,
     &plugin_objective_c::ObjectiveCPresentation,
     &plugin_cpp::CppPresentation,

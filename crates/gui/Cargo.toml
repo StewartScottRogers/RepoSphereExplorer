@@ -37,6 +37,7 @@ plugin-fsharp = { path = "../plugins/fsharp" }
 plugin-geojson = { path = "../plugins/geojson" }
 plugin-go = { path = "../plugins/go" }
 plugin-graphql = { path = "../plugins/graphql" }
+plugin-groovy = { path = "../plugins/groovy" }
 plugin-hdf5 = { path = "../plugins/hdf5" }
 plugin-html = { path = "../plugins/html" }
 plugin-image = { path = "../plugins/image" }
