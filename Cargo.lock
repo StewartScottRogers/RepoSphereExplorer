@@ -2677,6 +2677,7 @@ name = "gui"
 version = "0.6.0"
 dependencies = [
  "interprocess",
+ "plugin-ada",
  "plugin-api",
  "plugin-archive",
  "plugin-assembly",
@@ -5383,6 +5384,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "plugin-ada"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-api"
 version = "0.6.0"
 dependencies = [
@@ -7209,6 +7219,7 @@ version = "0.6.0"
 dependencies = [
  "dirs",
  "interprocess",
+ "plugin-ada",
  "plugin-api",
  "plugin-archive",
  "plugin-assembly",
@@ -8276,6 +8287,7 @@ name = "tui"
 version = "0.6.0"
 dependencies = [
  "interprocess",
+ "plugin-ada",
  "plugin-api",
  "plugin-archive",
  "plugin-assembly",
