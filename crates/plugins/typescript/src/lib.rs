@@ -51,27 +51,37 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
     (functions, classes, interfaces)
 }
 
+/// TypeScript primitive/utility type names checked by
+/// [`has_typed_declaration`].
+const TS_TYPE_NAMES: [&str; 5] = ["string", "number", "boolean", "void", "unknown"];
+
+/// Whether `text` contains a genuine TypeScript type annotation: a field or
+/// binding declaration terminated with `;` (`name: string;`), or a function
+/// return-type annotation immediately followed by the body's opening brace
+/// (`): void {`). A bare `identifier: Type` substring is not enough on its
+/// own: e.g. Nim's return-type annotations (`proc f(x: string): string =`)
+/// and parameter lists share that shape but end in `=`, not `;` or `{`.
+fn has_typed_declaration(text: &str) -> bool {
+    TS_TYPE_NAMES.iter().any(|ty| {
+        let field = format!(": {ty};");
+        let return_type = format!("): {ty} {{");
+        text.contains(field.as_str()) || text.contains(return_type.as_str())
+    })
+}
+
 /// Whether `text` looks like TypeScript source: markers that do not also
 /// appear in plain JavaScript, so this plugin does not shadow
-/// `plugin-javascript`'s sniff. Type annotations, interfaces, enums,
-/// visibility modifiers, and `import`/`export type` are TypeScript-only;
-/// bare `function`/`class` declarations are left to the JavaScript plugin.
+/// `plugin-javascript`'s sniff. Type annotations, interfaces, enums, and
+/// `import`/`export type` are TypeScript-only; bare `function`/`class`
+/// declarations are left to the JavaScript plugin.
 fn has_typescript_syntax(text: &str) -> bool {
     text.lines().any(|line| {
         top_level_name(line, "interface").is_some() || top_level_name(line, "enum").is_some()
     }) || text
         .lines()
         .any(|line| line.trim_start().starts_with("type ") && line.contains(" = "))
-        || text.contains(": string")
-        || text.contains(": number")
-        || text.contains(": boolean")
-        || text.contains(": void")
-        || text.contains(": unknown")
+        || has_typed_declaration(text)
         || text.contains("implements ")
-        || text.contains("public ")
-        || text.contains("private ")
-        || text.contains("protected ")
-        || text.contains("readonly ")
         || text.contains("import type ")
         || text.contains("export type ")
         || text.contains("as const")
@@ -183,6 +193,34 @@ mod tests {
         assert!(!TypeScriptCore.sniff(b"const add = (a, b) => a + b;\n"));
         assert!(!TypeScriptCore.sniff(b"just a regular line of text\n"));
         assert!(!TypeScriptCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn does_not_sniff_a_csharp_file_with_public_modifiers_as_typescript() {
+        assert!(!TypeScriptCore.sniff(
+            b"using System;\n\nnamespace HelloApp\n{\n    public class Hello\n    {\n        public static void Main(string[] args)\n        {\n            Console.WriteLine(\"Hello, world!\");\n        }\n    }\n}\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_java_file_with_public_and_private_modifiers_as_typescript() {
+        assert!(!TypeScriptCore.sniff(
+            b"import java.util.Objects;\n\npublic class Hello {\n    private final String name;\n\n    public Hello(String name) {\n        this.name = name;\n    }\n\n    public static void main(String[] args) {\n        Hello hello = new Hello(\"World\");\n        System.out.println(\"Hello, \" + hello.name + \"!\");\n    }\n}\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_nim_file_with_a_string_return_type_as_typescript() {
+        assert!(!TypeScriptCore.sniff(
+            b"import std/strformat\n\nproc greet(name: string): string =\n  &\"Hello, {name}\"\n\necho greet(\"World\")\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_solidity_file_with_a_public_state_variable_as_typescript() {
+        assert!(!TypeScriptCore.sniff(
+            b"pragma solidity ^0.8.0;\n\ncontract Greeter {\n    mapping(address => string) public greetings;\n\n    function setGreeting(string memory greeting) public {\n        greetings[msg.sender] = greeting;\n    }\n}\n"
+        ));
     }
 
     #[test]
