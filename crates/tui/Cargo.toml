@@ -82,6 +82,7 @@ plugin-svelte = { path = "../plugins/svelte" }
 plugin-svg = { path = "../plugins/svg" }
 plugin-swift = { path = "../plugins/swift" }
 plugin-tcl = { path = "../plugins/tcl" }
+plugin-terraform = { path = "../plugins/terraform" }
 plugin-text = { path = "../plugins/text" }
 plugin-toml = { path = "../plugins/toml" }
 plugin-typescript = { path = "../plugins/typescript" }

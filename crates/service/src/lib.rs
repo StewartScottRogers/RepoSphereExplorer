@@ -79,6 +79,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_model3d::Model3dCore,
     &plugin_geojson::GeoJsonCore,
     &plugin_json::JsonCore,
+    &plugin_terraform::TerraformCore,
     &plugin_toml::TomlCore,
     &plugin_csv::CsvCore,
     &plugin_msgpack::MsgpackCore,
