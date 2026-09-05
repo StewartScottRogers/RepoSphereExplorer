@@ -2523,6 +2523,7 @@ dependencies = [
  "plugin-avro",
  "plugin-c",
  "plugin-clojure",
+ "plugin-comic-archive",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-csv",
@@ -4977,6 +4978,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-comic-archive"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "unrar",
+ "zip",
+]
+
+[[package]]
 name = "plugin-cpp"
 version = "0.6.0"
 dependencies = [
@@ -6435,6 +6447,7 @@ dependencies = [
  "plugin-avro",
  "plugin-c",
  "plugin-clojure",
+ "plugin-comic-archive",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-csv",
@@ -7438,6 +7451,7 @@ dependencies = [
  "plugin-avro",
  "plugin-c",
  "plugin-clojure",
+ "plugin-comic-archive",
  "plugin-cpp",
  "plugin-csharp",
  "plugin-csv",
@@ -7640,6 +7654,29 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unrar"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ec61343a630d2b50d13216dea5125e157d3fc180a7d3f447d22fe146b648fc"
+dependencies = [
+ "bitflags 2.13.1",
+ "regex",
+ "unrar_sys",
+ "widestring",
+]
+
+[[package]]
+name = "unrar_sys"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b77675b883cfbe6bf41e6b7a5cd6008e0a83ba497de3d96e41a064bbeead765"
+dependencies = [
+ "cc",
+ "libc",
+ "winapi",
+]
 
 [[package]]
 name = "untrusted"
