@@ -73,6 +73,7 @@ plugin-solidity = { path = "../plugins/solidity" }
 plugin-spreadsheet = { path = "../plugins/spreadsheet" }
 plugin-sql = { path = "../plugins/sql" }
 plugin-sqlite = { path = "../plugins/sqlite" }
+plugin-svelte = { path = "../plugins/svelte" }
 plugin-svg = { path = "../plugins/svg" }
 plugin-swift = { path = "../plugins/swift" }
 plugin-text = { path = "../plugins/text" }
