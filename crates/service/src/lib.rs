@@ -26,6 +26,7 @@ const SNIFF_PREFIX_LEN: u64 = 32_774;
 /// (see `plugin-api`'s crate docs).
 const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_perl::PerlCore,
+    &plugin_prolog::PrologCore,
     &plugin_php::PhpCore,
     &plugin_elixir::ElixirCore,
     &plugin_crystal::CrystalCore,
