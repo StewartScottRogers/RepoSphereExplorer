@@ -2591,6 +2591,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-svg",
  "plugin-swift",
  "plugin-text",
  "plugin-toml",
@@ -5474,6 +5475,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-svg"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-swift"
 version = "0.6.0"
 dependencies = [
@@ -6623,6 +6633,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-svg",
  "plugin-swift",
  "plugin-text",
  "plugin-toml",
@@ -7640,6 +7651,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-svg",
  "plugin-swift",
  "plugin-text",
  "plugin-toml",
