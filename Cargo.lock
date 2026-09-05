@@ -2570,6 +2570,7 @@ dependencies = [
  "plugin-csv",
  "plugin-dart",
  "plugin-directory",
+ "plugin-disk-image",
  "plugin-dockerfile",
  "plugin-elixir",
  "plugin-epub",
@@ -5159,6 +5160,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-disk-image"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-dockerfile"
 version = "0.6.0"
 dependencies = [
@@ -6634,6 +6644,7 @@ dependencies = [
  "plugin-csv",
  "plugin-dart",
  "plugin-directory",
+ "plugin-disk-image",
  "plugin-dockerfile",
  "plugin-elixir",
  "plugin-epub",
@@ -7654,6 +7665,7 @@ dependencies = [
  "plugin-csv",
  "plugin-dart",
  "plugin-directory",
+ "plugin-disk-image",
  "plugin-dockerfile",
  "plugin-elixir",
  "plugin-epub",

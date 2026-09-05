@@ -11,7 +11,11 @@ use std::io::{Read, Write as _};
 use std::path::{Path, PathBuf};
 
 /// Number of bytes read from the start of a file when sniffing its type.
-const SNIFF_PREFIX_LEN: u64 = 512;
+///
+/// Large enough to cover ISO 9660's Primary Volume Descriptor, whose
+/// `CD001` standard identifier sits at offset 32769 rather than near the
+/// start of the file like every other sniffed format's magic.
+const SNIFF_PREFIX_LEN: u64 = 32_774;
 
 /// Every content-sniffed core plugin linked into this service, in sniffing
 /// priority order. The directory plugin is dispatched separately (see
@@ -79,6 +83,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_parquet::ParquetCore,
     &plugin_avro::AvroCore,
     &plugin_sqlite::SqliteCore,
+    &plugin_disk_image::DiskImageCore,
 ];
 
 /// The directory-as-file plugin, dispatched directly by [`view_file`] when

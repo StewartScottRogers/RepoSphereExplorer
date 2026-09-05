@@ -23,6 +23,7 @@ plugin-csharp = { path = "../plugins/csharp" }
 plugin-csv = { path = "../plugins/csv" }
 plugin-dart = { path = "../plugins/dart" }
 plugin-directory = { path = "../plugins/directory" }
+plugin-disk-image = { path = "../plugins/disk-image" }
 plugin-dockerfile = { path = "../plugins/dockerfile" }
 plugin-elixir = { path = "../plugins/elixir" }
 plugin-epub = { path = "../plugins/epub" }
