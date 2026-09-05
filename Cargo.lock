@@ -2551,6 +2551,7 @@ dependencies = [
  "plugin-perl",
  "plugin-php",
  "plugin-powershell",
+ "plugin-presentation",
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
@@ -5232,6 +5233,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-presentation"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-python"
 version = "0.6.0"
 dependencies = [
@@ -6441,6 +6452,7 @@ dependencies = [
  "plugin-perl",
  "plugin-php",
  "plugin-powershell",
+ "plugin-presentation",
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
@@ -7442,6 +7454,7 @@ dependencies = [
  "plugin-perl",
  "plugin-php",
  "plugin-powershell",
+ "plugin-presentation",
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",

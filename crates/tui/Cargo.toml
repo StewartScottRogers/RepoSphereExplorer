@@ -43,6 +43,7 @@ plugin-pdf = { path = "../plugins/pdf" }
 plugin-perl = { path = "../plugins/perl" }
 plugin-php = { path = "../plugins/php" }
 plugin-powershell = { path = "../plugins/powershell" }
+plugin-presentation = { path = "../plugins/presentation" }
 plugin-python = { path = "../plugins/python" }
 plugin-r = { path = "../plugins/r" }
 plugin-haskell = { path = "../plugins/haskell" }
