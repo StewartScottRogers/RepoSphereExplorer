@@ -2588,6 +2588,7 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-model3d",
  "plugin-msgpack",
  "plugin-objective-c",
  "plugin-parquet",
@@ -5324,6 +5325,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-model3d"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-msgpack"
 version = "0.6.0"
 dependencies = [
@@ -6642,6 +6652,7 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-model3d",
  "plugin-msgpack",
  "plugin-objective-c",
  "plugin-parquet",
@@ -7661,6 +7672,7 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-model3d",
  "plugin-msgpack",
  "plugin-objective-c",
  "plugin-parquet",
