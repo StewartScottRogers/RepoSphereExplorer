@@ -2530,6 +2530,7 @@ dependencies = [
  "plugin-directory",
  "plugin-dockerfile",
  "plugin-elixir",
+ "plugin-epub",
  "plugin-erlang",
  "plugin-fortran",
  "plugin-go",
@@ -5040,6 +5041,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-epub"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-erlang"
 version = "0.6.0"
 dependencies = [
@@ -6431,6 +6442,7 @@ dependencies = [
  "plugin-directory",
  "plugin-dockerfile",
  "plugin-elixir",
+ "plugin-epub",
  "plugin-erlang",
  "plugin-fortran",
  "plugin-go",
@@ -7433,6 +7445,7 @@ dependencies = [
  "plugin-directory",
  "plugin-dockerfile",
  "plugin-elixir",
+ "plugin-epub",
  "plugin-erlang",
  "plugin-fortran",
  "plugin-go",

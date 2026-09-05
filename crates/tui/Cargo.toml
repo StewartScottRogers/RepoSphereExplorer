@@ -23,6 +23,7 @@ plugin-dart = { path = "../plugins/dart" }
 plugin-directory = { path = "../plugins/directory" }
 plugin-dockerfile = { path = "../plugins/dockerfile" }
 plugin-elixir = { path = "../plugins/elixir" }
+plugin-epub = { path = "../plugins/epub" }
 plugin-erlang = { path = "../plugins/erlang" }
 plugin-fortran = { path = "../plugins/fortran" }
 plugin-go = { path = "../plugins/go" }
