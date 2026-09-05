@@ -88,6 +88,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_parquet::ParquetPresentation,
     &plugin_avro::AvroPresentation,
     &plugin_sqlite::SqlitePresentation,
+    &plugin_hdf5::Hdf5Presentation,
     &plugin_disk_image::DiskImagePresentation,
     &plugin_package_archive::PackageArchivePresentation,
     &plugin_certificate::CertificatePresentation,

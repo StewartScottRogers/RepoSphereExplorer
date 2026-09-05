@@ -34,6 +34,7 @@ plugin-font = { path = "../plugins/font" }
 plugin-fortran = { path = "../plugins/fortran" }
 plugin-go = { path = "../plugins/go" }
 plugin-graphql = { path = "../plugins/graphql" }
+plugin-hdf5 = { path = "../plugins/hdf5" }
 plugin-html = { path = "../plugins/html" }
 plugin-image = { path = "../plugins/image" }
 plugin-json = { path = "../plugins/json" }

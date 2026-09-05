@@ -86,6 +86,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_parquet::ParquetCore,
     &plugin_avro::AvroCore,
     &plugin_sqlite::SqliteCore,
+    &plugin_hdf5::Hdf5Core,
     &plugin_disk_image::DiskImageCore,
     &plugin_package_archive::PackageArchiveCore,
 ];
