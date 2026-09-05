@@ -2735,6 +2735,7 @@ dependencies = [
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
+ "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
  "plugin-spreadsheet",
@@ -5928,6 +5929,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-scheme"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-shell"
 version = "0.6.0"
 dependencies = [
@@ -7247,6 +7257,7 @@ dependencies = [
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
+ "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
  "plugin-spreadsheet",
@@ -8312,6 +8323,7 @@ dependencies = [
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
+ "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
  "plugin-spreadsheet",
