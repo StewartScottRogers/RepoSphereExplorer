@@ -68,6 +68,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_toml::TomlCore,
     &plugin_csv::CsvCore,
     &plugin_msgpack::MsgpackCore,
+    &plugin_certificate::CertificateCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_font::FontCore,

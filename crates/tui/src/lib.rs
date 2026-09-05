@@ -88,6 +88,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_sqlite::SqlitePresentation,
     &plugin_disk_image::DiskImagePresentation,
     &plugin_package_archive::PackageArchivePresentation,
+    &plugin_certificate::CertificatePresentation,
     &plugin_directory::DirectoryPresentation,
 ];
 
