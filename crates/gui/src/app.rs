@@ -100,6 +100,39 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_directory::DirectoryPresentation,
 ];
 
+/// A small, fixed glyph set for the contents pane, keyed only by file
+/// extension (or the folder bucket for directories) - not a
+/// `plugin_api::PluginPresentation` concept, since dozens of plugins each
+/// getting a distinct icon is explicitly out of scope for this glyph set.
+///
+/// Glyphs are drawn from the Geometric Shapes block rather than pictographic
+/// emoji: the latter render as blank boxes without a colour-emoji font,
+/// which most Linux font setups (including CI's) don't install by default.
+fn content_glyph(name: &str, is_dir: bool) -> &'static str {
+    if is_dir {
+        return "\u{25B8}"; // ▸
+    }
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_lowercase);
+    match extension.as_deref() {
+        Some(
+            "rs" | "py" | "js" | "jsx" | "ts" | "tsx" | "java" | "kt" | "go" | "rb" | "php" | "pl"
+            | "c" | "h" | "cpp" | "hpp" | "cs" | "swift" | "scala" | "sh" | "ps1" | "sql" | "html"
+            | "css" | "json" | "yaml" | "yml" | "toml" | "xml" | "md" | "txt",
+        ) => "\u{25AA}", // ▪
+        Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" | "psd") => {
+            "\u{25C6}" // ◆
+        }
+        Some("zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "iso") => "\u{25B2}", // ▲
+        Some("pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "epub" | "odt") => {
+            "\u{25CF}" // ●
+        }
+        _ => "\u{25CB}", // ○
+    }
+}
+
 /// Turns a plugin's view data into displayable lines, via whichever
 /// registered presentation plugin matches `plugin`.
 fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
@@ -692,10 +725,11 @@ impl App {
         self.contents
             .iter()
             .map(|entry| {
+                let glyph = content_glyph(&entry.name, entry.is_dir);
                 if entry.is_dir {
-                    format!("{}/", entry.name)
+                    format!("{glyph} {}/", entry.name)
                 } else {
-                    entry.name.clone()
+                    format!("{glyph} {}", entry.name)
                 }
             })
             .collect()
@@ -770,7 +804,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::App;
+    use super::{App, content_glyph};
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -795,7 +829,10 @@ mod tests {
             }),
         );
 
-        assert_eq!(app.content_labels(), vec!["sub/", "note.txt"]);
+        assert_eq!(
+            app.content_labels(),
+            vec!["\u{25B8} sub/", "\u{25AA} note.txt"]
+        );
         assert_eq!(app.folder_labels().len(), 2); // root + "sub"
     }
 
@@ -883,7 +920,7 @@ mod tests {
         app.tick();
 
         assert!(app.pending_contents.is_none());
-        assert_eq!(app.content_labels(), vec!["only.txt"]);
+        assert_eq!(app.content_labels(), vec!["\u{25AA} only.txt"]);
     }
 
     #[test]
@@ -1269,5 +1306,30 @@ mod tests {
         app.toggle_folder(0);
         assert_eq!(app.folder_labels().len(), 1);
         assert!(app.folder_labels()[0].contains('>'));
+    }
+
+    #[test]
+    fn content_glyph_distinguishes_representative_extensions() {
+        assert_eq!(content_glyph("main.rs", false), "\u{25AA}");
+        assert_eq!(content_glyph("photo.png", false), "\u{25C6}");
+        assert_eq!(content_glyph("bundle.zip", false), "\u{25B2}");
+        assert_eq!(content_glyph("report.pdf", false), "\u{25CF}");
+    }
+
+    #[test]
+    fn content_glyph_falls_back_to_a_default_marker_for_an_unrecognized_extension() {
+        assert_eq!(content_glyph("mystery.xyz123", false), "\u{25CB}");
+        assert_eq!(content_glyph("no_extension_at_all", false), "\u{25CB}");
+    }
+
+    #[test]
+    fn content_glyph_marks_directories_distinctly_from_every_file_glyph() {
+        let folder_glyph = content_glyph("anything", true);
+        assert_eq!(folder_glyph, "\u{25B8}");
+        assert_ne!(folder_glyph, content_glyph("main.rs", false));
+        assert_ne!(folder_glyph, content_glyph("photo.png", false));
+        assert_ne!(folder_glyph, content_glyph("bundle.zip", false));
+        assert_ne!(folder_glyph, content_glyph("report.pdf", false));
+        assert_ne!(folder_glyph, content_glyph("mystery.xyz123", false));
     }
 }
