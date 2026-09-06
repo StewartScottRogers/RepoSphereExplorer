@@ -48,7 +48,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: rustup component add llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo llvm-cov --workspace --all-features --html --output-dir coverage-html
+      - run: cargo llvm-cov --workspace --all-features --no-report
+      - run: cargo llvm-cov report --summary-only
+      - run: cargo llvm-cov report --html --output-dir coverage-html
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-html
