@@ -156,6 +156,25 @@ impl FolderNode {
         }
     }
 
+    /// Finds the index path to the node whose `path` field equals `target`,
+    /// searching the whole tree regardless of which nodes are expanded (a
+    /// history entry may point at a directory since collapsed).
+    fn indices_for(&self, target: &std::path::Path) -> Option<Vec<usize>> {
+        if self.path == target {
+            return Some(Vec::new());
+        }
+        self.children
+            .as_ref()?
+            .iter()
+            .enumerate()
+            .find_map(|(i, child)| {
+                child.indices_for(target).map(|mut rest| {
+                    rest.insert(0, i);
+                    rest
+                })
+            })
+    }
+
     fn set_children_from(&mut self, entries: &[DirectoryEntry]) {
         let mut previous: HashMap<String, FolderNode> = self
             .children
@@ -268,6 +287,8 @@ pub struct App {
     pending_file: Option<Receiver<io::Result<Response>>>,
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
+    back: Vec<PathBuf>,
+    forward: Vec<PathBuf>,
 }
 
 impl App {
@@ -287,6 +308,8 @@ impl App {
             pending_file: None,
             mode: Mode::Normal,
             pending_operation: None,
+            back: Vec::new(),
+            forward: Vec::new(),
         };
         app.load_contents_for_selected();
         app
@@ -545,13 +568,96 @@ impl App {
         }
     }
 
-    /// Selects folder row `index`, loading its contents.
+    /// Selects folder row `index`, recording history, and loading its
+    /// contents.
     pub fn select_folder(&mut self, index: usize) {
         if index < self.root.flatten().len() {
-            self.folder_selected = index;
-            self.focus = Pane::Folders;
-            self.load_contents_for_selected();
+            self.navigate_folder_selected(index);
         }
+    }
+
+    /// Sets the folder selection to row `index` and loads its contents,
+    /// without touching the back/forward history. Shared by
+    /// [`Self::navigate_folder_selected`] and [`Self::navigate_to_path`].
+    fn set_selected_folder(&mut self, index: usize) {
+        self.folder_selected = index;
+        self.focus = Pane::Folders;
+        self.load_contents_for_selected();
+    }
+
+    /// Selects folder row `index` via [`Self::set_selected_folder`],
+    /// pushing the previously selected directory onto the back history
+    /// (and dropping any forward history) when that changes the selected
+    /// directory. Shared by [`Self::select_folder`] and
+    /// [`Self::open_content`].
+    fn navigate_folder_selected(&mut self, index: usize) {
+        let previous = self.selected_dir_path();
+        self.set_selected_folder(index);
+        if self.selected_dir_path() != previous {
+            self.back.push(previous);
+            self.forward.clear();
+        }
+    }
+
+    /// Moves the folder selection to `path` via [`Self::set_selected_folder`],
+    /// without touching the back/forward history, expanding any collapsed
+    /// ancestors so the row exists. Returns whether `path` was found in the
+    /// tree.
+    fn navigate_to_path(&mut self, path: &std::path::Path) -> bool {
+        let Some(indices) = self.root.indices_for(path) else {
+            return false;
+        };
+        for depth in 0..indices.len() {
+            if let Some(node) = self.root.node_at_mut(&indices[..depth]) {
+                node.expanded = true;
+            }
+        }
+        let rows = self.root.flatten();
+        let Some(row) = rows.iter().position(|(_, idx)| idx == &indices) else {
+            return false;
+        };
+        self.set_selected_folder(row);
+        true
+    }
+
+    /// Returns to the directory visited immediately before the current one;
+    /// a no-op when there is no back history.
+    pub fn go_back(&mut self) {
+        let Some(target) = self.back.pop() else {
+            return;
+        };
+        let current = self.selected_dir_path();
+        if self.navigate_to_path(&target) {
+            self.forward.push(current);
+        } else {
+            self.back.push(target);
+        }
+    }
+
+    /// Reverses a prior [`Self::go_back`]; a no-op when there is no forward
+    /// history.
+    pub fn go_forward(&mut self) {
+        let Some(target) = self.forward.pop() else {
+            return;
+        };
+        let current = self.selected_dir_path();
+        if self.navigate_to_path(&target) {
+            self.back.push(current);
+        } else {
+            self.forward.push(target);
+        }
+    }
+
+    /// Whether [`Self::go_back`] currently has somewhere to go.
+    #[must_use]
+    pub fn can_go_back(&self) -> bool {
+        !self.back.is_empty()
+    }
+
+    /// Whether [`Self::go_forward`] currently has somewhere to go.
+    #[must_use]
+    pub fn can_go_forward(&self) -> bool {
+        !self.forward.is_empty()
     }
 
     /// Toggles expand/collapse for folder row `index`.
@@ -604,10 +710,8 @@ impl App {
 
         let new_rows = self.root.flatten();
         if let Some(row) = new_rows.iter().position(|(_, idx)| idx == &child_indices) {
-            self.folder_selected = row;
+            self.navigate_folder_selected(row);
         }
-        self.focus = Pane::Folders;
-        self.load_contents_for_selected();
     }
 
     /// Navigates to the parent of the directory currently shown in the
@@ -1181,5 +1285,69 @@ mod tests {
         app.toggle_folder(0);
         assert_eq!(app.folder_labels().len(), 1);
         assert!(app.folder_labels()[0].contains('>'));
+    }
+
+    fn app_with_two_sibling_folders() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a", true), ("b", true)]),
+            }),
+        );
+        app
+    }
+
+    #[test]
+    fn going_back_after_navigating_through_two_directories_returns_to_the_first() {
+        let mut app = app_with_two_sibling_folders();
+        app.select_folder(1); // into "a"
+        app.select_folder(2); // into "b"
+
+        app.go_back();
+
+        assert_eq!(app.folder_selected(), 1); // back to "a"
+        assert!(app.can_go_forward());
+    }
+
+    #[test]
+    fn going_forward_after_that_back_returns_to_the_second() {
+        let mut app = app_with_two_sibling_folders();
+        app.select_folder(1); // into "a"
+        app.select_folder(2); // into "b"
+        app.go_back(); // back to "a"
+
+        app.go_forward();
+
+        assert_eq!(app.folder_selected(), 2); // forward to "b" again
+        assert!(!app.can_go_forward());
+    }
+
+    #[test]
+    fn back_and_forward_with_empty_history_are_no_ops() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: vec![] }));
+        let selected = app.folder_selected();
+
+        app.go_back();
+        assert_eq!(app.folder_selected(), selected);
+        assert!(app.pending_contents.is_none());
+
+        app.go_forward();
+        assert_eq!(app.folder_selected(), selected);
+        assert!(app.pending_contents.is_none());
+    }
+
+    #[test]
+    fn navigating_to_a_new_directory_after_going_back_drops_the_stale_forward_entry() {
+        let mut app = app_with_two_sibling_folders();
+        app.select_folder(1); // into "a"
+        app.select_folder(2); // into "b"
+        app.go_back(); // back to "a"; forward now holds "b"
+        assert!(app.can_go_forward());
+
+        app.select_folder(2); // navigate to "b" directly, not via go_forward
+
+        assert!(!app.can_go_forward());
     }
 }
