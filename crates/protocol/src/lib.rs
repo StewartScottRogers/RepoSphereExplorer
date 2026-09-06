@@ -60,6 +60,16 @@ pub enum Request {
         /// The directory to extract into.
         destination: String,
     },
+    /// Creates a new, empty directory at `path`. Journaled.
+    CreateDirectory {
+        /// The path of the directory to create.
+        path: String,
+    },
+    /// Creates a new, empty file at `path`. Journaled.
+    CreateFile {
+        /// The path of the file to create.
+        path: String,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -69,6 +79,12 @@ pub struct DirectoryEntry {
     pub name: String,
     /// Whether the entry is itself a directory.
     pub is_dir: bool,
+    /// Size in bytes, from the entry's own metadata. For a directory this
+    /// is the directory metadata's size, not a recursive sum of contents.
+    pub size: u64,
+    /// Last modified time, in seconds since `UNIX_EPOCH`. `None` if the
+    /// platform or filesystem doesn't report one.
+    pub modified: Option<u64>,
 }
 
 /// A response sent from the service back to a front end.
@@ -141,7 +157,7 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectoryEntry, Response, read_message, write_message};
+    use super::{DirectoryEntry, Request, Response, read_message, write_message};
 
     #[test]
     fn round_trips_a_response_through_the_wire_format() {
@@ -149,6 +165,8 @@ mod tests {
             entries: vec![DirectoryEntry {
                 name: "src".to_owned(),
                 is_dir: true,
+                size: 4096,
+                modified: Some(1_700_000_000),
             }],
         };
 
@@ -171,5 +189,31 @@ mod tests {
 
         let decoded: Response = read_message(buf.as_slice()).unwrap();
         assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn round_trips_a_create_directory_request_through_the_wire_format() {
+        let request = Request::CreateDirectory {
+            path: "new_dir".to_owned(),
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+
+        let decoded: Request = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn round_trips_a_create_file_request_through_the_wire_format() {
+        let request = Request::CreateFile {
+            path: "new_file.txt".to_owned(),
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+
+        let decoded: Request = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, request);
     }
 }

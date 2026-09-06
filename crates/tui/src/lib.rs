@@ -210,6 +210,8 @@ mod tests {
                 entries: vec![DirectoryEntry {
                     name: "file.txt".to_owned(),
                     is_dir: false,
+                    size: 0,
+                    modified: None,
                 }],
             };
             protocol::write_message(&mut conn, &response).unwrap();
@@ -264,6 +266,8 @@ mod tests {
             entries: vec![DirectoryEntry {
                 name: "src".to_owned(),
                 is_dir: true,
+                size: 0,
+                modified: None,
             }],
         };
 

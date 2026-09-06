@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, Button } from "std-widgets.slint";
 
 component Pane inherits Rectangle {
     in property <string> title;
@@ -65,6 +65,7 @@ export component MainWindow inherits Window {
     callback return-pressed();
     callback backspace-pressed();
     callback key-text(string);
+    callback parent-requested();
 
     forward-focus: key-scope;
 
@@ -78,6 +79,8 @@ export component MainWindow inherits Window {
                 return-pressed();
             } else if (event.text == Key.Backspace) {
                 backspace-pressed();
+            } else if (event.text == Key.UpArrow && event.modifiers.alt) {
+                parent-requested();
             } else {
                 key-text(event.text);
             }
@@ -85,6 +88,13 @@ export component MainWindow inherits Window {
         }
 
         VerticalLayout {
+            HorizontalLayout {
+                height: 28px;
+                Button {
+                    text: "Up";
+                    clicked => { parent-requested(); }
+                }
+            }
             HorizontalLayout {
                 spacing: 2px;
                 Pane {

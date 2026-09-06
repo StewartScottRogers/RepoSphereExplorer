@@ -610,6 +610,29 @@ impl App {
         self.load_contents_for_selected();
     }
 
+    /// Navigates to the parent of the directory currently shown in the
+    /// contents pane. A no-op if that directory has no parent (the
+    /// filesystem root).
+    pub fn navigate_to_parent(&mut self) {
+        let Some(parent) = self.selected_dir_path().parent().map(PathBuf::from) else {
+            return;
+        };
+        let rows = self.root.flatten();
+        let Some((_, indices)) = rows.get(self.folder_selected).cloned() else {
+            return;
+        };
+        if let Some((_, parent_indices)) = indices.split_last() {
+            let parent_indices = parent_indices.to_vec();
+            if let Some(row) = rows.iter().position(|(_, idx)| idx == &parent_indices) {
+                self.select_folder(row);
+            }
+            return;
+        }
+        self.root = FolderNode::root(parent);
+        self.folder_selected = 0;
+        self.load_contents_for_selected();
+    }
+
     /// Display labels for the folders pane, one per visible tree row.
     #[must_use]
     pub fn folder_labels(&self) -> Vec<String> {
@@ -709,6 +732,8 @@ mod tests {
             .map(|(name, is_dir)| DirectoryEntry {
                 name: (*name).to_owned(),
                 is_dir: *is_dir,
+                size: 0,
+                modified: None,
             })
             .collect()
     }
@@ -795,6 +820,46 @@ mod tests {
         let before = app.folder_selected();
         app.select_folder(999);
         assert_eq!(app.folder_selected(), before);
+    }
+
+    #[test]
+    fn navigating_to_parent_moves_up_from_a_subdirectory() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        app.open_content(0);
+        assert_eq!(app.folder_selected(), 1);
+
+        app.navigate_to_parent();
+
+        assert_eq!(app.folder_selected(), 0);
+        assert!(app.status_text().starts_with("loading"));
+    }
+
+    #[test]
+    fn navigating_to_parent_beyond_the_tree_root_reroots_the_tree() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.navigate_to_parent();
+
+        assert_eq!(app.folder_selected(), 0);
+        assert!(app.status_text().starts_with("loading"));
+    }
+
+    #[test]
+    fn navigating_to_parent_at_the_filesystem_root_is_a_no_op() {
+        let mut app = App::new(std::path::PathBuf::from("/"));
+        app.cancel_pending();
+        let status_before = app.status_text();
+
+        app.navigate_to_parent();
+
+        assert!(app.pending_contents.is_none());
+        assert_eq!(app.status_text(), status_before);
     }
 
     fn app_with_one_content_entry() -> App {
