@@ -228,6 +228,8 @@ export component MainWindow inherits Window {
                 return-pressed();
             } else if (event.text == Key.Backspace) {
                 backspace-pressed();
+            } else if (event.text == Key.F2) {
+                content-rename-requested();
             } else if (event.text == Key.UpArrow && event.modifiers.alt) {
                 parent-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {

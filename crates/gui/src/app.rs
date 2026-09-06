@@ -628,15 +628,23 @@ impl App {
         }
     }
 
-    /// Confirms a pending rename/copy/extract input on Return; a no-op in
-    /// any other mode (a delete confirmation uses y/n instead, via
-    /// [`Self::handle_key_text`]).
+    /// Confirms a pending rename/copy/extract input on Return; on macOS,
+    /// also starts a rename in normal mode, per §2.3's platform table (a
+    /// delete confirmation uses y/n instead, via [`Self::handle_key_text`]).
     pub fn handle_return(&mut self) {
-        if matches!(
-            self.mode,
-            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. }
-        ) {
-            self.confirm_text_input();
+        self.handle_return_for_os(std::env::consts::OS);
+    }
+
+    /// [`Self::handle_return`], parameterized on the OS name so the
+    /// macOS-specific behavior is exercisable from `cargo test` on any
+    /// host, including the Linux CI runner that gates merges.
+    fn handle_return_for_os(&mut self, os: &str) {
+        match self.mode {
+            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
+                self.confirm_text_input();
+            }
+            Mode::Normal if os == "macos" => self.request_rename(),
+            Mode::Normal | Mode::ConfirmDelete { .. } => {}
         }
     }
 
@@ -1145,6 +1153,34 @@ mod tests {
         let mut app = app_with_one_content_entry();
         app.handle_key_text("r");
         assert_eq!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn f2_prefills_the_rename_input_with_the_current_name() {
+        // app.slint's key-scope wires F2 straight to `request_rename`, the
+        // same App method the "r" hotkey calls in Mode::Normal.
+        let mut app = app_with_one_content_entry();
+        app.request_rename();
+        assert_eq!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn macos_return_in_normal_mode_prefills_the_rename_input() {
+        let mut app = app_with_one_content_entry();
+        app.handle_return_for_os("macos");
+        assert_eq!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn non_macos_return_in_normal_mode_is_a_no_op() {
+        let mut app = app_with_one_content_entry();
+        let before = app.status_text();
+
+        app.handle_return_for_os("windows");
+        assert_eq!(app.status_text(), before);
+
+        app.handle_return_for_os("linux");
+        assert_eq!(app.status_text(), before);
     }
 
     #[test]
