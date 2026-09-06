@@ -255,6 +255,30 @@ fn sibling_path(path: &std::path::Path, name: &str) -> String {
         .into_owned()
 }
 
+/// Formats a byte count for the status bar, e.g. `1.2 MB`.
+///
+/// `bytes` comes from summing a folder's own entry count (at most a few
+/// million even for an enormous directory), so the `f64` round trip below
+/// never loses meaningful precision for display purposes.
+#[allow(clippy::cast_precision_loss)]
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = "B";
+    for candidate in UNITS {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = candidate;
+    }
+    if unit == "B" {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {unit}")
+    }
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
@@ -701,11 +725,34 @@ impl App {
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
-            Mode::Normal => self.status.clone().unwrap_or_else(|| {
-                "Click a folder or file. Double-click to open. Delete/r/c/x on a file. \
-                 Esc cancels."
-                    .to_owned()
-            }),
+            Mode::Normal => self
+                .status
+                .clone()
+                .unwrap_or_else(|| self.contents_summary()),
+        }
+    }
+
+    /// Item count, total size, and current selection for the browsed
+    /// folder, e.g. `"42 items, 1.2 MB — selected: notes.txt (3 of 42)"`.
+    /// Falls back to a usage hint when the folder hasn't loaded any
+    /// contents yet.
+    fn contents_summary(&self) -> String {
+        if self.contents.is_empty() {
+            return "Click a folder or file. Double-click to open. Delete/r/c/x on a file. \
+                    Esc cancels."
+                .to_owned();
+        }
+        let count = self.contents.len();
+        let noun = if count == 1 { "item" } else { "items" };
+        let total_size: u64 = self.contents.iter().map(|entry| entry.size).sum();
+        let header = format!("{count} {noun}, {}", format_size(total_size));
+        match self.contents.get(self.content_selected) {
+            Some(entry) => format!(
+                "{header} — selected: {} ({} of {count})",
+                entry.name,
+                self.content_selected + 1
+            ),
+            None => header,
         }
     }
 
@@ -750,6 +797,47 @@ mod tests {
 
         assert_eq!(app.content_labels(), vec!["sub/", "note.txt"]);
         assert_eq!(app.folder_labels().len(), 2); // root + "sub"
+    }
+
+    #[test]
+    fn status_text_reports_the_folder_item_count() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true), ("a.txt", false), ("b.txt", false)]),
+            }),
+        );
+
+        assert!(app.status_text().starts_with("3 items"));
+    }
+
+    #[test]
+    fn status_text_reports_total_size_of_the_folder_contents() {
+        let mut app = App::new(std::env::temp_dir());
+        let mut entries = entries(&[("a.txt", false), ("b.txt", false)]);
+        entries[0].size = 1000;
+        entries[1].size = 500;
+        app.apply_contents_result(&[], Ok(Response::Directory { entries }));
+
+        assert!(app.status_text().contains("1.5 KB"));
+    }
+
+    #[test]
+    fn selecting_a_content_row_updates_the_status_with_selection() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false)]),
+            }),
+        );
+
+        app.select_content(1);
+
+        let status = app.status_text();
+        assert!(status.starts_with("2 items"));
+        assert!(status.contains("selected: b.txt (2 of 2)"));
     }
 
     #[test]
