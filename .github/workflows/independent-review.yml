@@ -1,0 +1,84 @@
+name: Independent review
+
+# A second, separately-invoked agent re-verifies a work-order PR before it's
+# eligible to merge, rather than trusting the building agent's own claims of
+# a passing fmt/clippy/test run. Read-only: never edits code, opens a PR, or
+# pushes a commit - it only inspects the diff and leaves a
+# `gh pr review --approve` or `--request-changes`.
+#
+# This does not yet gate merging: branch protection still only requires
+# `fmt / clippy / test` (see ci.yml). Turning "require approvals" on so this
+# review becomes a hard gate is a deliberate, separate follow-up once this
+# workflow is proven working on real PRs - flipping it on prematurely could
+# block the entire pipeline if this workflow has a bug.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  review:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install gui's native build dependencies (Slint)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libx11-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcursor-dev \
+            libinput-dev libgbm-dev
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Bash(cargo *),Bash(gh *)"
+          prompt: |
+            You are an independent reviewer for pull request #${{ github.event.pull_request.number }}
+            in ${{ github.repository }}. You did not write this PR and have no
+            memory of writing it - treat every claim it makes as unverified
+            until you check it yourself.
+
+            1. Read the PR diff (`gh pr diff ${{ github.event.pull_request.number }}`)
+               and its description (`gh pr view ${{ github.event.pull_request.number }} --json body,title`).
+               Find the `Closes #N` reference in the body and read that issue
+               (`gh issue view N`) to learn what was actually asked for and its
+               stated acceptance checks.
+            2. Independently re-run, in this checked-out branch:
+               - `cargo fmt --all -- --check`
+               - `cargo clippy --all-targets --all-features -- -D warnings`
+               - `cargo test --all-features`
+               Do not trust the PR description's claim that these passed -
+               run them yourself and read the actual output. Also re-check any
+               acceptance checks from the issue that are checkable this way
+               (e.g. a named grep, a specific file existing).
+            3. Check the diff against this repo's CLAUDE.md rules, in
+               particular rule 4 (surgical: does every changed line trace to
+               the issue?) and rule 5 (no speculative structure: no
+               abstraction for a single caller, no unrequested configurability).
+            4. Check that any new behavior has a real, meaningful test - one
+               that actually exercises the claimed behavior, not just a test
+               that happens to exist nearby.
+            5. If everything holds up, approve with a summary of what you
+               independently verified:
+               `gh pr review ${{ github.event.pull_request.number }} --approve --body "..."`
+            6. If something doesn't hold up, name the specific problem and do
+               not approve:
+               `gh pr review ${{ github.event.pull_request.number }} --request-changes --body "..."`
+
+            Make exactly one pass/fail judgment call, the way a human reviewer
+            would - do not build a scoring rubric. Never edit any file, never
+            open a PR, never push a commit; you only have Bash(cargo *) and
+            Bash(gh *) available, no Edit or Write tool and no git access.

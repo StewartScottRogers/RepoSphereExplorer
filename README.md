@@ -65,6 +65,7 @@ site and, if newer, downloads, verifies, and replaces itself in place.
 | Night shift | [`factory-shift.yml`](.github/workflows/factory-shift.yml) | nightly 03:00 UTC, or dispatched directly: builds the oldest open work order and opens a PR |
 | Day shift | [`day-shift.yml`](.github/workflows/day-shift.yml) | a Night shift run finishes cleanly: re-dispatches the next one while open work orders remain |
 | Quality control | [`floor-health-check.yml`](.github/workflows/floor-health-check.yml) | every 30 minutes: unsticks auto-merge PRs whose CI check never ran (or closes them if gone stale), and closes work-order issues already resolved by a merged PR |
+| Independent review | [`independent-review.yml`](.github/workflows/independent-review.yml) | a work-order PR opens or updates: a second, separately-invoked agent independently re-runs fmt/clippy/test and checks the diff against CLAUDE.md before leaving an approve/request-changes review — informational for now, not yet a required check |
 | Repair | [`repair.yml`](.github/workflows/repair.yml) | CI failed on `main`: diagnoses the run and opens a fix PR |
 | Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux/Windows/macOS binaries attached to a GitHub release |
 | Storefront | [`pages.yml`](.github/workflows/pages.yml) | after `release.yml` finishes, or nightly at 06:00 UTC: signs the release, publishes `latest.json`, renders the history film, regenerates stats, and deploys the Pages site |
