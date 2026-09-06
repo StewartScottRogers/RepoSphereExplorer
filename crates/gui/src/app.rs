@@ -253,15 +253,34 @@ pub enum Pane {
     File,
 }
 
-/// Whether the app is idling, waiting on a delete confirmation, or editing
-/// a name for a rename/copy/extract operation.
+/// Whether the app is idling, waiting on a delete confirmation, editing a
+/// name for a rename/copy/extract operation, or showing an entry's
+/// properties.
 #[derive(Debug)]
 enum Mode {
     Normal,
-    ConfirmDelete { path: PathBuf, name: String },
-    RenameInput { path: PathBuf, input: String },
-    CopyInput { path: PathBuf, input: String },
-    ExtractInput { path: PathBuf, input: String },
+    ConfirmDelete {
+        path: PathBuf,
+        name: String,
+    },
+    RenameInput {
+        path: PathBuf,
+        input: String,
+    },
+    CopyInput {
+        path: PathBuf,
+        input: String,
+    },
+    ExtractInput {
+        path: PathBuf,
+        input: String,
+    },
+    Properties {
+        name: String,
+        kind: String,
+        size: u64,
+        modified: Option<u64>,
+    },
 }
 
 /// What to do once a pending operation completes successfully, beyond the
@@ -336,6 +355,51 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{value:.1} {unit}")
     }
+}
+
+/// Formats a UNIX timestamp (seconds since epoch, `DirectoryEntry`'s own
+/// units) as `YYYY-MM-DD HH:MM:SS UTC` for the properties view. Pure `std`
+/// arithmetic rather than a date/time crate dependency, since this is the
+/// only place the GUI needs calendar math.
+fn format_modified(secs: u64) -> String {
+    let days = secs / 86_400;
+    let time_of_day = secs % 86_400;
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+    let second = time_of_day % 60;
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC")
+}
+
+/// Converts a day count since the UNIX epoch (1970-01-01) to a
+/// proleptic-Gregorian `(year, month, day)`, per Howard Hinnant's
+/// public-domain `civil_from_days` algorithm. `DirectoryEntry::modified` is
+/// always on or after the epoch, so this never needs the negative-day case.
+fn civil_from_days(days: u64) -> (u64, u32, u32) {
+    let shifted = days + 719_468;
+    let era = shifted / 146_097;
+    let day_of_era = shifted - era * 146_097; // [0, 146096]
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365; // [0, 399]
+    let year_in_era = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100); // [0, 365]
+    let month_index = (5 * day_of_year + 2) / 153; // [0, 11]
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1; // [1, 31]
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    }; // [1, 12]
+    let year = if month <= 2 {
+        year_in_era + 1
+    } else {
+        year_in_era
+    };
+    (
+        year,
+        u32::try_from(month).unwrap_or_default(),
+        u32::try_from(day).unwrap_or_default(),
+    )
 }
 
 /// The three-pane explorer's state.
@@ -544,6 +608,36 @@ impl App {
         }
     }
 
+    /// Opens the properties view for the selected contents row, capturing
+    /// its name, type, size, and modified time.
+    pub fn request_properties(&mut self) {
+        let Some(entry) = self.contents.get(self.content_selected) else {
+            return;
+        };
+        self.mode = Mode::Properties {
+            name: entry.name.clone(),
+            kind: self.selected_entry_kind(entry),
+            size: entry.size,
+            modified: entry.modified,
+        };
+    }
+
+    /// The selected entry's type: `"Folder"` for a directory, the plugin
+    /// that already recognised it (fetched for the preview pane) if one
+    /// has, otherwise its extension.
+    fn selected_entry_kind(&self, entry: &DirectoryEntry) -> String {
+        if entry.is_dir {
+            return "Folder".to_owned();
+        }
+        if let Some(Response::FileView { plugin, .. }) = &self.file_view {
+            return plugin.clone();
+        }
+        std::path::Path::new(&entry.name)
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .map_or_else(|| "File".to_owned(), str::to_uppercase)
+    }
+
     /// Creates a new, empty subdirectory of the currently-browsed folder
     /// under a de-duplicated default name, then drops into inline rename so
     /// the user can immediately retype it.
@@ -581,7 +675,7 @@ impl App {
             Mode::RenameInput { input, .. }
             | Mode::CopyInput { input, .. }
             | Mode::ExtractInput { input, .. } => Some(input),
-            Mode::Normal | Mode::ConfirmDelete { .. } => None,
+            Mode::Normal | Mode::ConfirmDelete { .. } | Mode::Properties { .. } => None,
         }
     }
 
@@ -641,8 +735,10 @@ impl App {
     }
 
     /// Dispatches one typed character by the current mode: a hotkey in
-    /// normal mode (`r`/`c`/`x`), y/n during a delete confirmation, or an
-    /// appended character during a rename/copy/extract input.
+    /// normal mode (`r`/`c`/`x`/`p`), y/n during a delete confirmation, or
+    /// an appended character during a rename/copy/extract input. A no-op
+    /// while the properties view is open; `Esc` (via
+    /// [`Self::cancel_pending`]) dismisses it.
     pub fn handle_key_text(&mut self, text: &str) {
         match &self.mode {
             Mode::ConfirmDelete { .. } => match text {
@@ -653,10 +749,12 @@ impl App {
             Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
                 self.type_char(text);
             }
+            Mode::Properties { .. } => {}
             Mode::Normal => match text {
                 "r" => self.request_rename(),
                 "c" => self.request_copy(),
                 "x" => self.request_extract(),
+                "p" => self.request_properties(),
                 _ => {}
             },
         }
@@ -831,6 +929,7 @@ impl App {
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
+            Mode::Properties { name, .. } => format!("Properties: {name}  (Esc to close)"),
             Mode::Normal => self
                 .status
                 .clone()
@@ -844,7 +943,7 @@ impl App {
     /// contents yet.
     fn contents_summary(&self) -> String {
         if self.contents.is_empty() {
-            return "Click a folder or file. Double-click to open. Delete/r/c/x on a file. \
+            return "Click a folder or file. Double-click to open. Delete/r/c/x/p on a file. \
                     Esc cancels."
                 .to_owned();
         }
@@ -860,6 +959,32 @@ impl App {
             ),
             None => header,
         }
+    }
+
+    /// Whether the properties view is currently open.
+    #[must_use]
+    pub fn properties_visible(&self) -> bool {
+        matches!(self.mode, Mode::Properties { .. })
+    }
+
+    /// Multi-line `Name`/`Type`/`Size`/`Modified` text for the properties
+    /// panel; empty when the properties view isn't open.
+    #[must_use]
+    pub fn properties_text(&self) -> String {
+        let Mode::Properties {
+            name,
+            kind,
+            size,
+            modified,
+        } = &self.mode
+        else {
+            return String::new();
+        };
+        let modified = modified.map_or_else(|| "unknown".to_owned(), |m| format_modified(m));
+        format!(
+            "Name: {name}\nType: {kind}\nSize: {}\nModified: {modified}",
+            format_size(*size)
+        )
     }
 
     /// Which pane is currently focused, as an index (0/1/2) matching the
@@ -1466,6 +1591,70 @@ mod tests {
         app.apply_operation_result(Ok(Response::Done));
 
         assert_eq!(app.status_text(), "Rename to: New folder (2)_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn opening_properties_populates_name_type_size_and_modified() {
+        let mut app = App::new(std::env::temp_dir());
+        let mut only = entries(&[("note.txt", false)]);
+        only[0].size = 42;
+        only[0].modified = Some(1_700_000_000);
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: only }));
+
+        app.request_properties();
+
+        assert!(app.properties_visible());
+        let text = app.properties_text();
+        assert!(text.contains("Name: note.txt"), "{text}");
+        assert!(text.contains("Size: 42 B"), "{text}");
+        assert!(text.contains("Modified: 2023-11-14 22:13:20 UTC"), "{text}");
+    }
+
+    #[test]
+    fn properties_kind_falls_back_to_extension_when_no_preview_has_loaded() {
+        let mut app = app_with_one_content_entry();
+
+        app.request_properties();
+
+        assert!(app.properties_text().contains("Type: TXT"));
+    }
+
+    #[test]
+    fn properties_kind_is_folder_for_a_directory_entry() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+
+        app.request_properties();
+
+        assert!(app.properties_text().contains("Type: Folder"));
+    }
+
+    #[test]
+    fn p_key_opens_properties_for_the_selected_entry() {
+        let mut app = app_with_one_content_entry();
+
+        app.handle_key_text("p");
+
+        assert!(app.properties_visible());
+        assert_eq!(app.status_text(), "Properties: doomed.txt  (Esc to close)");
+    }
+
+    #[test]
+    fn dismissing_properties_returns_to_normal_without_side_effects() {
+        let mut app = app_with_one_content_entry();
+        app.request_properties();
+        assert!(app.properties_visible());
+
+        app.cancel_pending();
+
+        assert!(!app.properties_visible());
+        assert_eq!(app.properties_text(), "");
+        assert!(app.pending_operation.is_none());
     }
 
     #[test]

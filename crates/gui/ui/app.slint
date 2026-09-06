@@ -55,6 +55,8 @@ export component MainWindow inherits Window {
     in property <string> file-text;
     in property <string> status-text;
     in property <int> focus-pane;
+    in property <bool> properties-visible;
+    in property <string> properties-text;
 
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
@@ -71,6 +73,8 @@ export component MainWindow inherits Window {
     forward-focus: key-scope;
 
     key-scope := FocusScope {
+        width: 100%;
+        height: 100%;
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 cancel-requested();
@@ -145,6 +149,34 @@ export component MainWindow inherits Window {
                 height: 22px;
                 x: 4px;
                 vertical-alignment: center;
+            }
+        }
+
+        if properties-visible: Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: 160px;
+            background: #2c2c2c;
+            border-width: 1px;
+            border-color: #e5c07b;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 4px;
+                Text {
+                    text: "Properties";
+                    font-weight: 700;
+                    color: #e5c07b;
+                }
+                Text {
+                    text: properties-text;
+                    wrap: word-wrap;
+                    color: #dddddd;
+                }
+                Text {
+                    text: "(Esc to close)";
+                    color: #888888;
+                }
             }
         }
     }
