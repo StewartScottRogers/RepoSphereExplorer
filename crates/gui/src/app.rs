@@ -8,7 +8,7 @@ use plugin_api::PluginPresentation;
 use protocol::{DirectoryEntry, Request, Response};
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
 /// Every presentation plugin linked into this front end.
@@ -314,6 +314,19 @@ fn sibling_path(path: &std::path::Path, name: &str) -> String {
         .into_owned()
 }
 
+/// Builds the request for dragging a contents-pane row (`source`, whose
+/// file name is `name`) onto a folders-pane row (`dest_dir`): a move, or a
+/// copy if `is_copy` (a Ctrl-held drag), landing at `dest_dir/name`.
+fn drag_drop_request(source: &Path, name: &str, dest_dir: &Path, is_copy: bool) -> Request {
+    let from = source.to_string_lossy().into_owned();
+    let to = dest_dir.join(name).to_string_lossy().into_owned();
+    if is_copy {
+        Request::Copy { from, to }
+    } else {
+        Request::Rename { from, to }
+    }
+}
+
 /// Formats a byte count for the status bar, e.g. `1.2 MB`.
 ///
 /// `bytes` comes from summing a folder's own entry count (at most a few
@@ -386,10 +399,15 @@ impl App {
     }
 
     fn selected_dir_path(&self) -> PathBuf {
+        self.folder_path_at(self.folder_selected)
+            .unwrap_or_else(|| self.root.path.clone())
+    }
+
+    /// The path of the folders-pane row at `index`, if any.
+    fn folder_path_at(&self, index: usize) -> Option<PathBuf> {
         let rows = self.root.flatten();
-        rows.get(self.folder_selected)
-            .and_then(|(_, indices)| self.root.node_at(indices))
-            .map_or_else(|| self.root.path.clone(), |node| node.path.clone())
+        let (_, indices) = rows.get(index)?;
+        self.root.node_at(indices).map(|node| node.path.clone())
     }
 
     fn load_contents_for_selected(&mut self) {
@@ -573,6 +591,32 @@ impl App {
         };
         self.pending_operation = Some(spawn_request(request));
         self.after_operation = Some(AfterOperation::EnterRename { path, input: name });
+        self.status = Some("working...".to_owned());
+    }
+
+    /// Drops a dragged contents-pane row (`source_index`) onto a
+    /// folders-pane row (`dest_folder_index`): moves it there, matching
+    /// Explorer's own plain-drag gesture, or copies instead if `is_copy`
+    /// (a Ctrl-held drag). A no-op if either index is out of range.
+    ///
+    /// Dropping onto the item's own directory (a no-op move) or onto
+    /// itself is not special-cased here: the request still goes to the
+    /// service, which reports whatever it reports for that case.
+    pub fn drop_content_on_folder(
+        &mut self,
+        source_index: usize,
+        dest_folder_index: usize,
+        is_copy: bool,
+    ) {
+        let Some(entry) = self.contents.get(source_index) else {
+            return;
+        };
+        let source = self.selected_dir_path().join(&entry.name);
+        let Some(dest_dir) = self.folder_path_at(dest_folder_index) else {
+            return;
+        };
+        let request = drag_drop_request(&source, &entry.name, &dest_dir, is_copy);
+        self.pending_operation = Some(spawn_request(request));
         self.status = Some("working...".to_owned());
     }
 
@@ -1466,6 +1510,77 @@ mod tests {
         app.apply_operation_result(Ok(Response::Done));
 
         assert_eq!(app.status_text(), "Rename to: New folder (2)_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn drag_drop_request_moves_by_default() {
+        let source = std::path::Path::new("/a/b/file.txt");
+        let dest_dir = std::path::Path::new("/a/other");
+
+        let request = super::drag_drop_request(source, "file.txt", dest_dir, false);
+
+        assert_eq!(
+            request,
+            protocol::Request::Rename {
+                from: "/a/b/file.txt".to_owned(),
+                to: "/a/other/file.txt".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn drag_drop_request_copies_when_requested() {
+        let source = std::path::Path::new("/a/b/file.txt");
+        let dest_dir = std::path::Path::new("/a/other");
+
+        let request = super::drag_drop_request(source, "file.txt", dest_dir, true);
+
+        assert_eq!(
+            request,
+            protocol::Request::Copy {
+                from: "/a/b/file.txt".to_owned(),
+                to: "/a/other/file.txt".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn dropping_a_content_row_onto_a_folder_row_starts_a_move_operation() {
+        let mut app = app_with_one_content_entry();
+
+        app.drop_content_on_folder(0, 0, false);
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "working...");
+    }
+
+    #[test]
+    fn dropping_a_content_row_onto_its_own_current_parent_does_not_panic() {
+        let mut app = app_with_one_content_entry();
+
+        // Folder row 0 is the very directory `doomed.txt` is already in -
+        // a no-op move that must not panic, per the work order.
+        app.drop_content_on_folder(0, 0, false);
+
+        assert!(app.pending_operation.is_some());
+    }
+
+    #[test]
+    fn dropping_an_out_of_range_content_row_is_a_no_op() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.drop_content_on_folder(0, 0, false);
+
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn dropping_onto_an_out_of_range_folder_row_is_a_no_op() {
+        let mut app = app_with_one_content_entry();
+
+        app.drop_content_on_folder(0, 999, false);
+
+        assert!(app.pending_operation.is_none());
     }
 
     #[test]

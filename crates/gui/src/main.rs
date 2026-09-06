@@ -123,6 +123,18 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             sync_ui(&ui, &app);
         }
     });
+
+    let drop_app = app.clone();
+    let drop_ui = ui.as_weak();
+    ui.on_content_dropped_on_folder(move |source, dest, is_copy| {
+        let mut app = drop_app.borrow_mut();
+        if let Ok(source_index) = source.parse::<usize>() {
+            app.drop_content_on_folder(source_index, index(dest), is_copy);
+        }
+        if let Some(ui) = drop_ui.upgrade() {
+            sync_ui(&ui, &app);
+        }
+    });
 }
 
 /// Connects to the service's local socket, spawning the service as a

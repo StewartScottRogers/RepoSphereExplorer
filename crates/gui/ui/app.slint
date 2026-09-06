@@ -5,8 +5,13 @@ component Pane inherits Rectangle {
     in property <bool> focused;
     in property <[string]> rows;
     in property <int> selected;
+    // Contents-pane rows are drag sources; folders-pane rows are drop
+    // targets. Never both, per the work order's pane-to-pane-only scope.
+    in property <bool> drag-source: false;
+    in property <bool> drop-target: false;
     callback row-clicked(int);
     callback row-double-clicked(int);
+    callback row-dropped(string, int, bool);
 
     border-width: 1px;
     border-color: focused ? #e5c07b : #555555;
@@ -24,6 +29,8 @@ component Pane inherits Rectangle {
                 alignment: start;
                 for row[i] in rows: Rectangle {
                     background: i == selected ? #3a6ea5 : transparent;
+                    border-width: (drop-target && dropArea.has-drag) ? 2px : 0px;
+                    border-color: #e5c07b;
                     height: 20px;
                     Text {
                         text: row;
@@ -36,6 +43,26 @@ component Pane inherits Rectangle {
                         height: 100%;
                         clicked => { row-clicked(i); }
                         double-clicked => { row-double-clicked(i); }
+                    }
+                    DragArea {
+                        width: 100%;
+                        height: 100%;
+                        allow-move: drag-source;
+                        allow-copy: drag-source;
+                        data: "\{i}";
+                    }
+                    dropArea := DropArea {
+                        width: 100%;
+                        height: 100%;
+                        can-drop(event) => {
+                            drop-target ? event.proposed-action : DragAction.none
+                        }
+                        dropped(event) => {
+                            if drop-target {
+                                row-dropped(event.data, i, event.proposed-action == DragAction.copy);
+                            }
+                            drop-target ? event.proposed-action : DragAction.none
+                        }
                     }
                 }
             }
@@ -67,6 +94,7 @@ export component MainWindow inherits Window {
     callback key-text(string);
     callback parent-requested();
     callback new-folder-requested();
+    callback content-dropped-on-folder(string, int, bool);
 
     forward-focus: key-scope;
 
@@ -105,15 +133,18 @@ export component MainWindow inherits Window {
                     focused: focus-pane == 0;
                     rows: folder-rows;
                     selected: folder-selected;
+                    drop-target: true;
                     horizontal-stretch: 25;
                     row-clicked(i) => { folder-row-clicked(i); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
+                    row-dropped(source, dest, is-copy) => { content-dropped-on-folder(source, dest, is-copy); }
                 }
                 Pane {
                     title: "Contents";
                     focused: focus-pane == 1;
                     rows: content-rows;
                     selected: content-selected;
+                    drag-source: true;
                     horizontal-stretch: 35;
                     row-clicked(i) => { content-row-clicked(i); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
