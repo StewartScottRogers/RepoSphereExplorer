@@ -264,6 +264,32 @@ enum Mode {
     ExtractInput { path: PathBuf, input: String },
 }
 
+/// What to do once a pending operation completes successfully, beyond the
+/// reload every operation already triggers.
+#[derive(Debug)]
+enum AfterOperation {
+    /// Drop straight into inline rename for a just-created entry, matching
+    /// Explorer's own "create, then retype the name" flow.
+    EnterRename { path: PathBuf, input: String },
+}
+
+/// Picks a default name for a new entry, de-duplicated against `existing`
+/// (e.g. `"New folder"`, then `"New folder (2)"`, `"New folder (3)"`, ...)
+/// so create never sends a request that is doomed to collide.
+fn dedup_name(existing: &[DirectoryEntry], base: &str) -> String {
+    if !existing.iter().any(|entry| entry.name == base) {
+        return base.to_owned();
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base} ({n})");
+        if !existing.iter().any(|entry| entry.name == candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 fn send_request(request: &Request) -> io::Result<Response> {
     use interprocess::local_socket::traits::Stream as _;
     let mut conn = interprocess::local_socket::Stream::connect(protocol::socket_name()?)?;
@@ -325,6 +351,7 @@ pub struct App {
     pending_file: Option<Receiver<io::Result<Response>>>,
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
+    after_operation: Option<AfterOperation>,
 }
 
 impl App {
@@ -344,6 +371,7 @@ impl App {
             pending_file: None,
             mode: Mode::Normal,
             pending_operation: None,
+            after_operation: None,
         };
         app.load_contents_for_selected();
         app
@@ -431,10 +459,14 @@ impl App {
     }
 
     fn apply_operation_result(&mut self, result: io::Result<Response>) {
+        let after = self.after_operation.take();
         match result {
             Ok(Response::Done) => {
                 self.status = None;
                 self.load_contents_for_selected();
+                if let Some(AfterOperation::EnterRename { path, input }) = after {
+                    self.mode = Mode::RenameInput { path, input };
+                }
             }
             Ok(Response::Error { message }) => self.status = Some(message),
             Ok(_) => self.status = Some("unexpected response to operation".to_owned()),
@@ -502,6 +534,38 @@ impl App {
                 input: suggested,
             };
         }
+    }
+
+    /// Creates a new, empty subdirectory of the currently-browsed folder
+    /// under a de-duplicated default name, then drops into inline rename so
+    /// the user can immediately retype it.
+    pub fn request_new_folder(&mut self) {
+        self.request_create(true);
+    }
+
+    /// Creates a new, empty file in the currently-browsed folder under a
+    /// de-duplicated default name, then drops into inline rename so the
+    /// user can immediately retype it.
+    pub fn request_new_file(&mut self) {
+        self.request_create(false);
+    }
+
+    fn request_create(&mut self, is_dir: bool) {
+        let base = if is_dir { "New folder" } else { "New file" };
+        let name = dedup_name(&self.contents, base);
+        let path = self.selected_dir_path().join(&name);
+        let request = if is_dir {
+            Request::CreateDirectory {
+                path: path.to_string_lossy().into_owned(),
+            }
+        } else {
+            Request::CreateFile {
+                path: path.to_string_lossy().into_owned(),
+            }
+        };
+        self.pending_operation = Some(spawn_request(request));
+        self.after_operation = Some(AfterOperation::EnterRename { path, input: name });
+        self.status = Some("working...".to_owned());
     }
 
     fn input_mut(&mut self) -> Option<&mut String> {
@@ -1320,6 +1384,60 @@ mod tests {
     fn content_glyph_falls_back_to_a_default_marker_for_an_unrecognized_extension() {
         assert_eq!(content_glyph("mystery.xyz123", false), "\u{25CB}");
         assert_eq!(content_glyph("no_extension_at_all", false), "\u{25CB}");
+    }
+
+    #[test]
+    fn requesting_a_new_folder_sends_a_create_directory_request_and_prefills_rename() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.request_new_folder();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "working...");
+
+        app.apply_operation_result(Ok(Response::Done));
+        assert_eq!(app.status_text(), "Rename to: New folder_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn requesting_a_new_file_sends_a_create_file_request_and_prefills_rename() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.request_new_file();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "working...");
+
+        app.apply_operation_result(Ok(Response::Done));
+        assert_eq!(app.status_text(), "Rename to: New file_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn a_failed_create_does_not_enter_rename_mode() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.request_new_folder();
+        app.apply_operation_result(Ok(Response::Error {
+            message: "already exists".to_owned(),
+        }));
+
+        assert_eq!(app.status_text(), "already exists");
+    }
+
+    #[test]
+    fn a_new_folder_default_name_is_deduplicated_against_the_current_listing() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("New folder", true)]),
+            }),
+        );
+
+        app.request_new_folder();
+        app.apply_operation_result(Ok(Response::Done));
+
+        assert_eq!(app.status_text(), "Rename to: New folder (2)_  (Enter/Esc)");
     }
 
     #[test]

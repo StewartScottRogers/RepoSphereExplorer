@@ -66,6 +66,7 @@ export component MainWindow inherits Window {
     callback backspace-pressed();
     callback key-text(string);
     callback parent-requested();
+    callback new-folder-requested();
 
     forward-focus: key-scope;
 
@@ -81,6 +82,8 @@ export component MainWindow inherits Window {
                 backspace-pressed();
             } else if (event.text == Key.UpArrow && event.modifiers.alt) {
                 parent-requested();
+            } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
+                new-folder-requested();
             } else {
                 key-text(event.text);
             }
