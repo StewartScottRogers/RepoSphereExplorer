@@ -735,6 +735,8 @@ mod tests {
             .map(|(name, is_dir)| DirectoryEntry {
                 name: (*name).to_owned(),
                 is_dir: *is_dir,
+                size: 0,
+                modified: None,
             })
             .collect()
     }

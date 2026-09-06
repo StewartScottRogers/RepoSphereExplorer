@@ -69,6 +69,12 @@ pub struct DirectoryEntry {
     pub name: String,
     /// Whether the entry is itself a directory.
     pub is_dir: bool,
+    /// Size in bytes, from the entry's own metadata. For a directory this
+    /// is the directory metadata's size, not a recursive sum of contents.
+    pub size: u64,
+    /// Last modified time, in seconds since `UNIX_EPOCH`. `None` if the
+    /// platform or filesystem doesn't report one.
+    pub modified: Option<u64>,
 }
 
 /// A response sent from the service back to a front end.
@@ -149,6 +155,8 @@ mod tests {
             entries: vec![DirectoryEntry {
                 name: "src".to_owned(),
                 is_dir: true,
+                size: 4096,
+                modified: Some(1_700_000_000),
             }],
         };
 
