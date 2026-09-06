@@ -5,8 +5,10 @@ component Pane inherits Rectangle {
     in property <bool> focused;
     in property <[string]> rows;
     in property <int> selected;
+    in property <[string]> column-headers: [];
     callback row-clicked(int);
     callback row-double-clicked(int);
+    callback header-clicked(int);
 
     border-width: 1px;
     border-color: focused ? #e5c07b : #555555;
@@ -18,6 +20,24 @@ component Pane inherits Rectangle {
             color: focused ? #e5c07b : #cccccc;
             height: 22px;
             horizontal-alignment: center;
+        }
+        if column-headers.length > 0: HorizontalLayout {
+            height: 18px;
+            for header[i] in column-headers: Rectangle {
+                horizontal-stretch: 1;
+                Text {
+                    text: header;
+                    font-size: 11px;
+                    color: #aaaaaa;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { header-clicked(i); }
+                }
+            }
         }
         ScrollView {
             VerticalLayout {
@@ -52,6 +72,7 @@ export component MainWindow inherits Window {
     in property <int> folder-selected;
     in property <[string]> content-rows;
     in property <int> content-selected;
+    in property <[string]> content-column-headers;
     in property <string> file-text;
     in property <string> status-text;
     in property <int> focus-pane;
@@ -60,6 +81,7 @@ export component MainWindow inherits Window {
     callback folder-row-double-clicked(int);
     callback content-row-clicked(int);
     callback content-row-double-clicked(int);
+    callback content-header-clicked(int);
     callback cancel-requested();
     callback delete-requested();
     callback return-pressed();
@@ -111,9 +133,11 @@ export component MainWindow inherits Window {
                     focused: focus-pane == 1;
                     rows: content-rows;
                     selected: content-selected;
+                    column-headers: content-column-headers;
                     horizontal-stretch: 35;
                     row-clicked(i) => { content-row-clicked(i); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
+                    header-clicked(i) => { content-header-clicked(i); }
                 }
                 Rectangle {
                     horizontal-stretch: 40;

@@ -92,6 +92,7 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_row_event!(on_folder_row_double_clicked, toggle_folder);
     on_row_event!(on_content_row_clicked, select_content);
     on_row_event!(on_content_row_double_clicked, open_content);
+    on_row_event!(on_content_header_clicked, sort_contents_by);
 
     macro_rules! on_event {
         ($setter:ident, $method:ident) => {{

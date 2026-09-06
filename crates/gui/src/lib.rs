@@ -20,6 +20,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_selected(row_index(app.folder_selected()));
     ui.set_content_rows(string_model(app.content_labels()));
     ui.set_content_selected(row_index(app.content_selected()));
+    ui.set_content_column_headers(string_model(app.column_headers()));
     ui.set_file_text(app.file_text().into());
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());

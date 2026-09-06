@@ -279,12 +279,40 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Which contents-pane column controls the sort order. Indexes match
+/// [`App::column_headers`] and the `sort_contents_by` UI callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortColumn {
+    Name,
+    Type,
+    Size,
+    Modified,
+}
+
+/// Sort direction for the contents pane's active column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    fn toggled(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
     folder_selected: usize,
     contents: Vec<DirectoryEntry>,
     content_selected: usize,
+    sort_column: SortColumn,
+    sort_direction: SortDirection,
     file_view: Option<Response>,
     status: Option<String>,
     focus: Pane,
@@ -304,6 +332,8 @@ impl App {
             folder_selected: 0,
             contents: Vec::new(),
             content_selected: 0,
+            sort_column: SortColumn::Name,
+            sort_direction: SortDirection::Ascending,
             file_view: None,
             status: None,
             focus: Pane::Folders,
@@ -386,6 +416,7 @@ impl App {
                     node.set_children_from(&entries);
                 }
                 self.contents = entries;
+                self.apply_sort();
                 self.content_selected = 0;
                 self.load_file_view();
             }
@@ -686,6 +717,115 @@ impl App {
         self.folder_selected
     }
 
+    /// Sets the contents pane's active sort column, toggling direction if
+    /// `column` is already the active one. `column` indexes `[name, type,
+    /// size, modified]`, matching [`Self::column_headers`]; out-of-range
+    /// values fall back to `modified`. Sorting happens entirely
+    /// client-side: it does not re-request the directory.
+    pub fn sort_contents_by(&mut self, column: usize) {
+        let column = match column {
+            0 => SortColumn::Name,
+            1 => SortColumn::Type,
+            2 => SortColumn::Size,
+            _ => SortColumn::Modified,
+        };
+        let selected_name = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
+
+        if self.sort_column == column {
+            self.sort_direction = self.sort_direction.toggled();
+        } else {
+            self.sort_column = column;
+            self.sort_direction = SortDirection::Ascending;
+        }
+        self.apply_sort();
+
+        if let Some(name) = selected_name {
+            self.content_selected = self
+                .contents
+                .iter()
+                .position(|entry| entry.name == name)
+                .unwrap_or(0);
+        }
+    }
+
+    /// Reorders `self.contents` by the current sort column and direction.
+    /// Directories and files interleave freely: neither is pinned first,
+    /// each column's own value (with name as a tie-break) decides the
+    /// order.
+    fn apply_sort(&mut self) {
+        let column = self.sort_column;
+        let ascending = self.sort_direction == SortDirection::Ascending;
+        self.contents.sort_by(|a, b| {
+            let ordering = Self::compare_by_column(a, b, column);
+            let ordering = if ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            };
+            ordering.then_with(|| a.name.cmp(&b.name))
+        });
+    }
+
+    fn compare_by_column(
+        a: &DirectoryEntry,
+        b: &DirectoryEntry,
+        column: SortColumn,
+    ) -> std::cmp::Ordering {
+        match column {
+            SortColumn::Name => a.name.cmp(&b.name),
+            SortColumn::Type => Self::type_key(a).cmp(Self::type_key(b)),
+            SortColumn::Size => a.size.cmp(&b.size),
+            SortColumn::Modified => a.modified.cmp(&b.modified),
+        }
+    }
+
+    /// The sort key for the "type" column: empty for directories (there is
+    /// no file-extension concept for them), the lowercase extension
+    /// otherwise, so files group by extension and directories group
+    /// together.
+    fn type_key(entry: &DirectoryEntry) -> String {
+        if entry.is_dir {
+            String::new()
+        } else {
+            entry
+                .name
+                .rsplit_once('.')
+                .map_or_else(String::new, |(_, ext)| ext.to_lowercase())
+        }
+    }
+
+    /// Header labels for the contents pane's sort columns, with an arrow
+    /// on the active column showing its direction.
+    #[must_use]
+    pub fn column_headers(&self) -> Vec<String> {
+        const NAMES: [&str; 4] = ["Name", "Type", "Size", "Modified"];
+        let active = match self.sort_column {
+            SortColumn::Name => 0,
+            SortColumn::Type => 1,
+            SortColumn::Size => 2,
+            SortColumn::Modified => 3,
+        };
+        let arrow = if self.sort_direction == SortDirection::Ascending {
+            '\u{25b2}'
+        } else {
+            '\u{25bc}'
+        };
+        NAMES
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                if i == active {
+                    format!("{name} {arrow}")
+                } else {
+                    (*name).to_owned()
+                }
+            })
+            .collect()
+    }
+
     /// Display labels for the contents pane.
     #[must_use]
     pub fn content_labels(&self) -> Vec<String> {
@@ -797,6 +937,96 @@ mod tests {
 
         assert_eq!(app.content_labels(), vec!["sub/", "note.txt"]);
         assert_eq!(app.folder_labels().len(), 2); // root + "sub"
+    }
+
+    #[test]
+    fn sorting_by_name_toggles_between_ascending_and_descending() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("b.txt", false), ("a.txt", false)]),
+            }),
+        );
+        assert_eq!(app.content_labels(), vec!["a.txt", "b.txt"]);
+
+        app.sort_contents_by(0);
+        assert_eq!(app.content_labels(), vec!["b.txt", "a.txt"]);
+        assert_eq!(app.column_headers()[0], "Name \u{25bc}");
+
+        app.sort_contents_by(0);
+        assert_eq!(app.content_labels(), vec!["a.txt", "b.txt"]);
+        assert_eq!(app.column_headers()[0], "Name \u{25b2}");
+    }
+
+    #[test]
+    fn sorting_by_size_orders_smallest_first_then_largest_first() {
+        let mut app = App::new(std::env::temp_dir());
+        let mut contents = entries(&[("a.txt", false), ("b.txt", false)]);
+        contents[0].size = 500;
+        contents[1].size = 100;
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: contents }));
+
+        app.sort_contents_by(2);
+        assert_eq!(app.content_labels(), vec!["b.txt", "a.txt"]);
+
+        app.sort_contents_by(2);
+        assert_eq!(app.content_labels(), vec!["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn sorting_by_modified_puts_entries_without_a_timestamp_first() {
+        let mut app = App::new(std::env::temp_dir());
+        let mut contents = entries(&[("a.txt", false), ("b.txt", false)]);
+        contents[0].modified = Some(200);
+        contents[1].modified = None;
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: contents }));
+
+        app.sort_contents_by(3);
+        assert_eq!(app.content_labels(), vec!["b.txt", "a.txt"]);
+    }
+
+    #[test]
+    fn sorting_by_type_groups_directories_and_shared_extensions() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[
+                    ("b.txt", false),
+                    ("sub", true),
+                    ("a.md", false),
+                    ("c.txt", false),
+                ]),
+            }),
+        );
+
+        app.sort_contents_by(1);
+        // Directories have no extension, so they sort first ascending;
+        // ".md" then sorts before ".txt", with "b.txt"/"c.txt" tied on
+        // type and broken by name.
+        assert_eq!(app.content_labels(), vec!["sub/", "a.md", "b.txt", "c.txt"]);
+    }
+
+    #[test]
+    fn re_listing_a_directory_keeps_the_active_sort_without_a_new_request() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false)]),
+            }),
+        );
+        app.sort_contents_by(0); // descending by name
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("x.txt", false), ("y.txt", false)]),
+            }),
+        );
+
+        assert_eq!(app.content_labels(), vec!["y.txt", "x.txt"]);
     }
 
     #[test]
