@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { Button, ScrollView } from "std-widgets.slint";
 
 component Pane inherits Rectangle {
     in property <string> title;
@@ -55,11 +55,15 @@ export component MainWindow inherits Window {
     in property <string> file-text;
     in property <string> status-text;
     in property <int> focus-pane;
+    in property <bool> can-go-back;
+    in property <bool> can-go-forward;
 
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
     callback content-row-clicked(int);
     callback content-row-double-clicked(int);
+    callback back-requested();
+    callback forward-requested();
     callback cancel-requested();
     callback delete-requested();
     callback return-pressed();
@@ -85,6 +89,20 @@ export component MainWindow inherits Window {
         }
 
         VerticalLayout {
+            HorizontalLayout {
+                height: 28px;
+                spacing: 4px;
+                Button {
+                    text: "< Back";
+                    enabled: can-go-back;
+                    clicked => { back-requested(); }
+                }
+                Button {
+                    text: "Forward >";
+                    enabled: can-go-forward;
+                    clicked => { forward-requested(); }
+                }
+            }
             HorizontalLayout {
                 spacing: 2px;
                 Pane {

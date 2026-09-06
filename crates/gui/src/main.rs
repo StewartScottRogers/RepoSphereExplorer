@@ -107,6 +107,8 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         }};
     }
 
+    on_event!(on_back_requested, go_back);
+    on_event!(on_forward_requested, go_forward);
     on_event!(on_cancel_requested, cancel_pending);
     on_event!(on_delete_requested, request_delete);
     on_event!(on_return_pressed, handle_return);
