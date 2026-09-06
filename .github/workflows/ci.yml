@@ -33,6 +33,27 @@ jobs:
       - run: cargo test --all-features
       - run: cargo build --release
 
+  coverage:
+    name: coverage (informational, not a required check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install gui's native build dependencies (Slint)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libx11-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcursor-dev \
+            libinput-dev libgbm-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --workspace --all-features --html --output-dir coverage-html
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-html
+          path: coverage-html/*
+
   audit:
     name: dependency audit
     runs-on: ubuntu-latest
