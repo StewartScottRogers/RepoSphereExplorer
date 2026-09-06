@@ -60,6 +60,16 @@ pub enum Request {
         /// The directory to extract into.
         destination: String,
     },
+    /// Creates a new, empty directory at `path`. Journaled.
+    CreateDirectory {
+        /// The path of the directory to create.
+        path: String,
+    },
+    /// Creates a new, empty file at `path`. Journaled.
+    CreateFile {
+        /// The path of the file to create.
+        path: String,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -147,7 +157,7 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectoryEntry, Response, read_message, write_message};
+    use super::{DirectoryEntry, Request, Response, read_message, write_message};
 
     #[test]
     fn round_trips_a_response_through_the_wire_format() {
@@ -179,5 +189,31 @@ mod tests {
 
         let decoded: Response = read_message(buf.as_slice()).unwrap();
         assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn round_trips_a_create_directory_request_through_the_wire_format() {
+        let request = Request::CreateDirectory {
+            path: "new_dir".to_owned(),
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+
+        let decoded: Request = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn round_trips_a_create_file_request_through_the_wire_format() {
+        let request = Request::CreateFile {
+            path: "new_file.txt".to_owned(),
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+
+        let decoded: Request = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, request);
     }
 }

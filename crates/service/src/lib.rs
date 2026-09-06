@@ -316,6 +316,30 @@ pub fn extract(archive: &Path, destination: &Path) -> io::Result<()> {
     result
 }
 
+/// Creates exactly one new, empty directory at `path`, journaling the
+/// attempt. Does not create missing parent directories.
+///
+/// # Errors
+/// Returns an error if the directory cannot be created, e.g. because
+/// something already exists at `path` or its parent doesn't exist.
+pub fn create_directory(path: &Path) -> io::Result<()> {
+    let result = fs::create_dir(path);
+    journal("create_directory", &[path.display().to_string()], &result);
+    result
+}
+
+/// Creates a new, empty file at `path`, journaling the attempt. Fails
+/// rather than truncating if something already exists at `path`.
+///
+/// # Errors
+/// Returns an error if the file cannot be created, e.g. because something
+/// already exists at `path` or its parent doesn't exist.
+pub fn create_file(path: &Path) -> io::Result<()> {
+    let result = fs::File::create_new(path).map(|_| ());
+    journal("create_file", &[path.display().to_string()], &result);
+    result
+}
+
 /// Runs `operation` and turns its result into a [`Response`].
 fn respond_to_operation(operation: io::Result<()>) -> Response {
     match operation {
@@ -351,6 +375,10 @@ pub fn handle_request(request: &Request) -> Response {
             archive,
             destination,
         } => respond_to_operation(extract(Path::new(archive), Path::new(destination))),
+        Request::CreateDirectory { path } => {
+            respond_to_operation(create_directory(Path::new(path)))
+        }
+        Request::CreateFile { path } => respond_to_operation(create_file(Path::new(path))),
     }
 }
 
@@ -391,8 +419,8 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        bind, copy, delete, extract, handle_request, journal_to, list_directory, open, rename,
-        serve_one, view_file,
+        bind, copy, create_directory, create_file, delete, extract, handle_request, journal_to,
+        list_directory, open, rename, serve_one, view_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -521,6 +549,65 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&from).unwrap(), "content");
         assert_eq!(fs::read_to_string(&to).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn creates_a_new_directory() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let new_dir = dir.join("sub");
+
+        create_directory(&new_dir).unwrap();
+
+        assert!(new_dir.is_dir());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn creating_a_directory_over_an_existing_path_errors_via_handle_request() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let existing = dir.join("sub");
+        fs::create_dir_all(&existing).unwrap();
+
+        let request = Request::CreateDirectory {
+            path: existing.to_string_lossy().into_owned(),
+        };
+
+        assert!(matches!(handle_request(&request), Response::Error { .. }));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn creates_a_new_file() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let new_file = dir.join("note.txt");
+
+        create_file(&new_file).unwrap();
+
+        assert_eq!(fs::read_to_string(&new_file).unwrap(), "");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn creating_a_file_over_an_existing_path_errors_via_handle_request() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let existing = dir.join("note.txt");
+        fs::write(&existing, "content").unwrap();
+
+        let request = Request::CreateFile {
+            path: existing.to_string_lossy().into_owned(),
+        };
+
+        assert!(matches!(handle_request(&request), Response::Error { .. }));
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "content");
 
         fs::remove_dir_all(&dir).unwrap();
     }
