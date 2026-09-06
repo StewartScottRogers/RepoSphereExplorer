@@ -111,6 +111,7 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_delete_requested, request_delete);
     on_event!(on_return_pressed, handle_return);
     on_event!(on_backspace_pressed, backspace);
+    on_event!(on_address_bar_clicked, request_address_edit);
 
     let text_app = app.clone();
     let text_ui = ui.as_weak();

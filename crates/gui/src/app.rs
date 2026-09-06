@@ -221,7 +221,8 @@ pub enum Pane {
 }
 
 /// Whether the app is idling, waiting on a delete confirmation, or editing
-/// a name for a rename/copy/extract operation.
+/// a name for a rename/copy/extract operation, or a path in the address
+/// bar.
 #[derive(Debug)]
 enum Mode {
     Normal,
@@ -229,6 +230,25 @@ enum Mode {
     RenameInput { path: PathBuf, input: String },
     CopyInput { path: PathBuf, input: String },
     ExtractInput { path: PathBuf, input: String },
+    AddressInput { input: String },
+}
+
+/// Which request produced (or will produce) the directory listing shown in
+/// the contents pane: a node already known to the folders tree (so its
+/// cached children get refreshed too), or an arbitrary path typed into the
+/// address bar that may fall outside the tree's currently expanded shape.
+#[derive(Debug, Clone)]
+enum ContentsTarget {
+    Tree { indices: Vec<usize>, path: PathBuf },
+    Path(PathBuf),
+}
+
+impl ContentsTarget {
+    fn path(&self) -> &PathBuf {
+        match self {
+            Self::Tree { path, .. } | Self::Path(path) => path,
+        }
+    }
 }
 
 fn send_request(request: &Request) -> io::Result<Response> {
@@ -259,12 +279,14 @@ fn sibling_path(path: &std::path::Path, name: &str) -> String {
 pub struct App {
     root: FolderNode,
     folder_selected: usize,
+    current_dir: PathBuf,
+    current_tree_indices: Option<Vec<usize>>,
     contents: Vec<DirectoryEntry>,
     content_selected: usize,
     file_view: Option<Response>,
     status: Option<String>,
     focus: Pane,
-    pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
+    pending_contents: Option<(ContentsTarget, Receiver<io::Result<Response>>)>,
     pending_file: Option<Receiver<io::Result<Response>>>,
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
@@ -275,9 +297,12 @@ impl App {
     /// contents in the background.
     #[must_use]
     pub fn new(root: PathBuf) -> Self {
+        let current_dir = root.clone();
         let mut app = Self {
             root: FolderNode::root(root),
             folder_selected: 0,
+            current_dir,
+            current_tree_indices: Some(Vec::new()),
             contents: Vec::new(),
             content_selected: 0,
             file_view: None,
@@ -293,10 +318,16 @@ impl App {
     }
 
     fn selected_dir_path(&self) -> PathBuf {
-        let rows = self.root.flatten();
-        rows.get(self.folder_selected)
-            .and_then(|(_, indices)| self.root.node_at(indices))
-            .map_or_else(|| self.root.path.clone(), |node| node.path.clone())
+        self.current_dir.clone()
+    }
+
+    fn send_contents_request(&mut self, target: ContentsTarget) {
+        let path = target.path().clone();
+        let request = Request::ListDirectory {
+            path: path.to_string_lossy().into_owned(),
+        };
+        self.status = Some(format!("loading {}...", path.display()));
+        self.pending_contents = Some((target, spawn_request(request)));
     }
 
     fn load_contents_for_selected(&mut self) {
@@ -308,11 +339,28 @@ impl App {
             .root
             .node_at(&indices)
             .map_or_else(|| self.root.path.clone(), |node| node.path.clone());
-        let request = Request::ListDirectory {
-            path: path.to_string_lossy().into_owned(),
+        self.send_contents_request(ContentsTarget::Tree { indices, path });
+    }
+
+    /// Reloads whatever directory is currently shown in the contents pane,
+    /// e.g. after an operation (delete/rename/copy/extract) changes its
+    /// contents. Uses the tree if the current directory is a known tree
+    /// node, so the folders pane's cached children stay in sync too;
+    /// otherwise (an address-bar navigation outside the tree) reloads the
+    /// path directly.
+    fn reload_current_dir(&mut self) {
+        let target = match &self.current_tree_indices {
+            Some(indices) => ContentsTarget::Tree {
+                indices: indices.clone(),
+                path: self.current_dir.clone(),
+            },
+            None => ContentsTarget::Path(self.current_dir.clone()),
         };
-        self.pending_contents = Some((indices, spawn_request(request)));
-        self.status = Some(format!("loading {}...", path.display()));
+        self.send_contents_request(target);
+    }
+
+    fn navigate_to_path(&mut self, path: PathBuf) {
+        self.send_contents_request(ContentsTarget::Path(path));
     }
 
     fn load_file_view(&mut self) {
@@ -331,12 +379,12 @@ impl App {
     /// Applies any background request results that have arrived since the
     /// last call. Call this periodically (e.g. from a UI timer).
     pub fn tick(&mut self) {
-        if let Some((indices, rx)) = &self.pending_contents
+        if let Some((target, rx)) = &self.pending_contents
             && let Ok(result) = rx.try_recv()
         {
-            let indices = indices.clone();
+            let target = target.clone();
             self.pending_contents = None;
-            self.apply_contents_result(&indices, result);
+            self.apply_contents_result(&target, result);
         }
         if let Some(rx) = &self.pending_file
             && let Ok(result) = rx.try_recv()
@@ -354,17 +402,29 @@ impl App {
         }
     }
 
-    fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
+    fn apply_contents_result(&mut self, target: &ContentsTarget, result: io::Result<Response>) {
         self.status = None;
         match result {
             Ok(Response::Directory { entries }) => {
-                if let Some(node) = self.root.node_at_mut(indices) {
-                    node.set_children_from(&entries);
+                match target {
+                    ContentsTarget::Tree { indices, path } => {
+                        if let Some(node) = self.root.node_at_mut(indices) {
+                            node.set_children_from(&entries);
+                        }
+                        self.current_tree_indices = Some(indices.clone());
+                        self.current_dir = path.clone();
+                    }
+                    ContentsTarget::Path(path) => {
+                        self.current_tree_indices = None;
+                        self.current_dir = path.clone();
+                    }
                 }
                 self.contents = entries;
                 self.content_selected = 0;
                 self.load_file_view();
             }
+            // A failed navigation surfaces the error but leaves the
+            // previously displayed directory listing in place.
             Ok(Response::Error { message }) => self.status = Some(message),
             Ok(Response::FileView { .. } | Response::Done) => {
                 self.status = Some("expected a directory listing".to_owned());
@@ -377,7 +437,7 @@ impl App {
         match result {
             Ok(Response::Done) => {
                 self.status = None;
-                self.load_contents_for_selected();
+                self.reload_current_dir();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
             Ok(_) => self.status = Some("unexpected response to operation".to_owned()),
@@ -447,36 +507,56 @@ impl App {
         }
     }
 
+    /// Starts editing the address bar, prefilled with the directory
+    /// currently shown in the contents pane.
+    pub fn request_address_edit(&mut self) {
+        self.mode = Mode::AddressInput {
+            input: self.current_dir.to_string_lossy().into_owned(),
+        };
+    }
+
     fn input_mut(&mut self) -> Option<&mut String> {
         match &mut self.mode {
             Mode::RenameInput { input, .. }
             | Mode::CopyInput { input, .. }
-            | Mode::ExtractInput { input, .. } => Some(input),
+            | Mode::ExtractInput { input, .. }
+            | Mode::AddressInput { input } => Some(input),
             Mode::Normal | Mode::ConfirmDelete { .. } => None,
         }
     }
 
-    /// Confirms a pending rename/copy/extract input, sending its request.
+    fn send_operation(&mut self, request: Request) {
+        self.pending_operation = Some(spawn_request(request));
+        self.status = Some("working...".to_owned());
+    }
+
+    /// Confirms a pending address-bar/rename/copy/extract input, sending
+    /// its request.
     pub fn confirm_text_input(&mut self) {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
-        let request = match mode {
-            Mode::RenameInput { path, input } if !input.is_empty() => Some(Request::Rename {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
-            }),
-            Mode::CopyInput { path, input } if !input.is_empty() => Some(Request::Copy {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
-            }),
-            Mode::ExtractInput { path, input } if !input.is_empty() => Some(Request::Extract {
-                archive: path.to_string_lossy().into_owned(),
-                destination: sibling_path(&path, &input),
-            }),
-            _ => None,
-        };
-        if let Some(request) = request {
-            self.pending_operation = Some(spawn_request(request));
-            self.status = Some("working...".to_owned());
+        match mode {
+            Mode::AddressInput { input } if !input.is_empty() => {
+                self.navigate_to_path(PathBuf::from(input));
+            }
+            Mode::RenameInput { path, input } if !input.is_empty() => {
+                self.send_operation(Request::Rename {
+                    from: path.to_string_lossy().into_owned(),
+                    to: sibling_path(&path, &input),
+                });
+            }
+            Mode::CopyInput { path, input } if !input.is_empty() => {
+                self.send_operation(Request::Copy {
+                    from: path.to_string_lossy().into_owned(),
+                    to: sibling_path(&path, &input),
+                });
+            }
+            Mode::ExtractInput { path, input } if !input.is_empty() => {
+                self.send_operation(Request::Extract {
+                    archive: path.to_string_lossy().into_owned(),
+                    destination: sibling_path(&path, &input),
+                });
+            }
+            _ => {}
         }
     }
 
@@ -505,7 +585,10 @@ impl App {
     pub fn handle_return(&mut self) {
         if matches!(
             self.mode,
-            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. }
+            Mode::RenameInput { .. }
+                | Mode::CopyInput { .. }
+                | Mode::ExtractInput { .. }
+                | Mode::AddressInput { .. }
         ) {
             self.confirm_text_input();
         }
@@ -521,7 +604,10 @@ impl App {
                 "n" | "N" => self.decline_delete(),
                 _ => {}
             },
-            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
+            Mode::RenameInput { .. }
+            | Mode::CopyInput { .. }
+            | Mode::ExtractInput { .. }
+            | Mode::AddressInput { .. } => {
                 self.type_char(text);
             }
             Mode::Normal => match text {
@@ -686,6 +772,23 @@ impl App {
         }
     }
 
+    /// Display text for the address bar: the in-progress edit while the
+    /// user is typing a path, otherwise the directory currently shown in
+    /// the contents pane.
+    #[must_use]
+    pub fn address_bar_text(&self) -> String {
+        match &self.mode {
+            Mode::AddressInput { input } => input.clone(),
+            _ => self.current_dir.display().to_string(),
+        }
+    }
+
+    /// Whether the address bar is currently being edited.
+    #[must_use]
+    pub fn address_editing(&self) -> bool {
+        matches!(self.mode, Mode::AddressInput { .. })
+    }
+
     /// Which pane is currently focused, as an index (0/1/2) matching the
     /// UI's `focus-pane` property.
     #[must_use]
@@ -700,7 +803,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::App;
+    use super::{App, ContentsTarget};
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -715,11 +818,18 @@ mod tests {
             .collect()
     }
 
+    fn root_target() -> ContentsTarget {
+        ContentsTarget::Tree {
+            indices: vec![],
+            path: std::env::temp_dir(),
+        }
+    }
+
     #[test]
     fn applying_a_directory_result_populates_contents_and_tree() {
         let mut app = App::new(std::env::temp_dir());
         app.apply_contents_result(
-            &[],
+            &root_target(),
             Ok(Response::Directory {
                 entries: entries(&[("sub", true), ("note.txt", false)]),
             }),
@@ -733,7 +843,7 @@ mod tests {
     fn selecting_a_file_triggers_a_preview_request() {
         let mut app = App::new(std::env::temp_dir());
         app.apply_contents_result(
-            &[],
+            &root_target(),
             Ok(Response::Directory {
                 entries: entries(&[("a.txt", false), ("b.txt", false)]),
             }),
@@ -747,7 +857,7 @@ mod tests {
     fn cancelling_a_pending_request_makes_a_late_result_harmless() {
         let mut app = App::new(std::env::temp_dir());
         let (tx, rx) = std::sync::mpsc::channel();
-        app.pending_contents = Some((vec![], rx));
+        app.pending_contents = Some((root_target(), rx));
 
         app.cancel_pending();
         assert!(app.pending_contents.is_none());
@@ -767,7 +877,7 @@ mod tests {
             entries: entries(&[("only.txt", false)]),
         }))
         .unwrap();
-        app.pending_contents = Some((vec![], rx));
+        app.pending_contents = Some((root_target(), rx));
 
         app.tick();
 
@@ -779,7 +889,7 @@ mod tests {
     fn opening_a_directory_expands_and_selects_it_in_the_tree() {
         let mut app = App::new(std::env::temp_dir());
         app.apply_contents_result(
-            &[],
+            &root_target(),
             Ok(Response::Directory {
                 entries: entries(&[("sub", true)]),
             }),
@@ -802,7 +912,7 @@ mod tests {
     fn app_with_one_content_entry() -> App {
         let mut app = App::new(std::env::temp_dir());
         app.apply_contents_result(
-            &[],
+            &root_target(),
             Ok(Response::Directory {
                 entries: entries(&[("doomed.txt", false)]),
             }),
@@ -921,7 +1031,7 @@ mod tests {
     fn app_with_one_archive_entry() -> App {
         let mut app = App::new(std::env::temp_dir());
         app.apply_contents_result(
-            &[],
+            &root_target(),
             Ok(Response::Directory {
                 entries: entries(&[("bundle.zip", false)]),
             }),
@@ -968,5 +1078,103 @@ mod tests {
         app.handle_key_text("x");
 
         assert_eq!(app.status_text(), "Rename to: doomed.txtx_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn address_bar_text_tracks_the_directory_shown_in_the_contents_pane() {
+        let mut app = App::new(std::env::temp_dir());
+        assert_eq!(
+            app.address_bar_text(),
+            std::env::temp_dir().display().to_string()
+        );
+    }
+
+    #[test]
+    fn clicking_the_address_bar_prefills_it_with_the_current_directory() {
+        let mut app = App::new(std::env::temp_dir());
+        app.request_address_edit();
+        assert_eq!(
+            app.address_bar_text(),
+            std::env::temp_dir().display().to_string()
+        );
+        assert!(app.address_editing());
+    }
+
+    #[test]
+    fn confirming_an_edited_address_bar_navigates_to_the_typed_path() {
+        let mut app = App::new(std::env::temp_dir());
+        let target_dir = std::env::temp_dir().join("elsewhere");
+        app.request_address_edit();
+        for _ in 0..app.address_bar_text().len() {
+            app.backspace();
+        }
+        for c in target_dir.to_string_lossy().chars() {
+            app.type_char(&c.to_string());
+        }
+
+        app.confirm_text_input();
+
+        assert!(app.pending_contents.is_some());
+        assert!(!app.address_editing());
+    }
+
+    #[test]
+    fn a_successful_address_bar_navigation_updates_the_displayed_contents() {
+        let mut app = App::new(std::env::temp_dir());
+        let target_dir = std::env::temp_dir().join("elsewhere");
+
+        app.apply_contents_result(
+            &ContentsTarget::Path(target_dir.clone()),
+            Ok(Response::Directory {
+                entries: entries(&[("new.txt", false)]),
+            }),
+        );
+
+        assert_eq!(app.content_labels(), vec!["new.txt"]);
+        assert_eq!(app.address_bar_text(), target_dir.display().to_string());
+    }
+
+    #[test]
+    fn a_failed_address_bar_navigation_surfaces_the_error_and_keeps_existing_contents() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &root_target(),
+            Ok(Response::Directory {
+                entries: entries(&[("existing.txt", false)]),
+            }),
+        );
+
+        app.apply_contents_result(
+            &ContentsTarget::Path(std::env::temp_dir().join("missing")),
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+
+        assert_eq!(app.status_text(), "not found");
+        assert_eq!(app.content_labels(), vec!["existing.txt"]);
+        assert_eq!(
+            app.address_bar_text(),
+            std::env::temp_dir().display().to_string()
+        );
+    }
+
+    #[test]
+    fn reload_after_an_operation_reloads_an_address_bar_path_not_the_tree_selection() {
+        let mut app = App::new(std::env::temp_dir());
+        let target_dir = std::env::temp_dir().join("elsewhere");
+        app.apply_contents_result(
+            &ContentsTarget::Path(target_dir.clone()),
+            Ok(Response::Directory {
+                entries: entries(&[("doomed.txt", false)]),
+            }),
+        );
+
+        app.request_delete();
+        app.confirm_delete();
+        app.apply_operation_result(Ok(Response::Done));
+
+        let (target, _) = app.pending_contents.as_ref().expect("reload pending");
+        assert_eq!(target.path(), &target_dir);
     }
 }
