@@ -121,7 +121,19 @@ pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_dir = entry.file_type()?.is_dir();
-        entries.push(DirectoryEntry { name, is_dir });
+        let metadata = entry.metadata()?;
+        let size = metadata.len();
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs());
+        entries.push(DirectoryEntry {
+            name,
+            is_dir,
+            size,
+            modified,
+        });
     }
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(entries)
@@ -412,6 +424,21 @@ mod tests {
             vec!["a.txt", "b.txt", "sub"]
         );
         assert!(entries.iter().find(|e| e.name == "sub").unwrap().is_dir);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reports_a_file_s_size_and_modified_time() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("file.txt"), b"hello world").unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        let entry = entries.iter().find(|e| e.name == "file.txt").unwrap();
+        assert_eq!(entry.size, "hello world".len() as u64);
+        assert!(entry.modified.is_some());
 
         fs::remove_dir_all(&dir).unwrap();
     }
