@@ -67,6 +67,7 @@ export component MainWindow inherits Window {
     callback key-text(string);
     callback parent-requested();
     callback new-folder-requested();
+    callback undo-requested();
 
     forward-focus: key-scope;
 
@@ -84,6 +85,8 @@ export component MainWindow inherits Window {
                 parent-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
                 new-folder-requested();
+            } else if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
+                undo-requested();
             } else {
                 key-text(event.text);
             }

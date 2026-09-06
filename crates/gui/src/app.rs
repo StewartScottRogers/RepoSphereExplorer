@@ -352,6 +352,16 @@ pub struct App {
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
     after_operation: Option<AfterOperation>,
+    /// What [`Self::undo_target`] should become once the in-flight
+    /// operation completes: `Some` for a rename/copy/create (the request
+    /// that inverts it), `None` for anything D6 excludes from undo
+    /// (delete, extract) or for the undo action's own request, which must
+    /// not leave anything further behind to redo.
+    pending_undo_target: Option<Request>,
+    /// The single most recently completed rename/copy/create, invertible
+    /// via [`Self::undo`]. Per GUIDANCE.md D6, single-level only: no undo
+    /// stack, no redo.
+    undo_target: Option<Request>,
 }
 
 impl App {
@@ -380,6 +390,8 @@ impl App {
             mode: Mode::Normal,
             pending_operation: None,
             after_operation: None,
+            pending_undo_target: None,
+            undo_target: None,
         };
         app.load_contents_for_selected();
         app
@@ -468,9 +480,11 @@ impl App {
 
     fn apply_operation_result(&mut self, result: io::Result<Response>) {
         let after = self.after_operation.take();
+        let undo_target = self.pending_undo_target.take();
         match result {
             Ok(Response::Done) => {
                 self.status = None;
+                self.undo_target = undo_target;
                 self.load_contents_for_selected();
                 if let Some(AfterOperation::EnterRename { path, input }) = after {
                     self.mode = Mode::RenameInput { path, input };
@@ -506,6 +520,7 @@ impl App {
         let request = Request::Delete {
             paths: vec![path.to_string_lossy().into_owned()],
         };
+        self.pending_undo_target = None; // D6 excludes delete from undo.
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("deleting...".to_owned());
     }
@@ -562,15 +577,19 @@ impl App {
         let base = if is_dir { "New folder" } else { "New file" };
         let name = dedup_name(&self.contents, base);
         let path = self.selected_dir_path().join(&name);
+        let path_string = path.to_string_lossy().into_owned();
         let request = if is_dir {
             Request::CreateDirectory {
-                path: path.to_string_lossy().into_owned(),
+                path: path_string.clone(),
             }
         } else {
             Request::CreateFile {
-                path: path.to_string_lossy().into_owned(),
+                path: path_string.clone(),
             }
         };
+        self.pending_undo_target = Some(Request::Delete {
+            paths: vec![path_string],
+        });
         self.pending_operation = Some(spawn_request(request));
         self.after_operation = Some(AfterOperation::EnterRename { path, input: name });
         self.status = Some("working...".to_owned());
@@ -589,24 +608,51 @@ impl App {
     pub fn confirm_text_input(&mut self) {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
         let request = match mode {
-            Mode::RenameInput { path, input } if !input.is_empty() => Some(Request::Rename {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
-            }),
-            Mode::CopyInput { path, input } if !input.is_empty() => Some(Request::Copy {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
-            }),
-            Mode::ExtractInput { path, input } if !input.is_empty() => Some(Request::Extract {
-                archive: path.to_string_lossy().into_owned(),
-                destination: sibling_path(&path, &input),
-            }),
+            Mode::RenameInput { path, input } if !input.is_empty() => {
+                let from = path.to_string_lossy().into_owned();
+                let to = sibling_path(&path, &input);
+                self.pending_undo_target = Some(Request::Rename {
+                    from: to.clone(),
+                    to: from.clone(),
+                });
+                Some(Request::Rename { from, to })
+            }
+            Mode::CopyInput { path, input } if !input.is_empty() => {
+                let to = sibling_path(&path, &input);
+                self.pending_undo_target = Some(Request::Delete {
+                    paths: vec![to.clone()],
+                });
+                Some(Request::Copy {
+                    from: path.to_string_lossy().into_owned(),
+                    to,
+                })
+            }
+            Mode::ExtractInput { path, input } if !input.is_empty() => {
+                self.pending_undo_target = None; // D6 excludes extract from undo.
+                Some(Request::Extract {
+                    archive: path.to_string_lossy().into_owned(),
+                    destination: sibling_path(&path, &input),
+                })
+            }
             _ => None,
         };
         if let Some(request) = request {
             self.pending_operation = Some(spawn_request(request));
             self.status = Some("working...".to_owned());
         }
+    }
+
+    /// Undoes the single most recently completed rename/copy/create, if
+    /// any. A no-op if there's nothing to undo, including right after undo
+    /// has already fired once - per GUIDANCE.md D6 there is no redo, so
+    /// firing undo never leaves anything behind for a second undo to find.
+    pub fn undo(&mut self) {
+        let Some(request) = self.undo_target.take() else {
+            return;
+        };
+        self.pending_undo_target = None;
+        self.pending_operation = Some(spawn_request(request));
+        self.status = Some("undoing...".to_owned());
     }
 
     /// Handles a single character typed while a rename/copy/extract input
@@ -877,7 +923,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::{App, content_glyph};
-    use protocol::{DirectoryEntry, Response};
+    use protocol::{DirectoryEntry, Request, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
         names
@@ -1477,5 +1523,132 @@ mod tests {
         assert_ne!(folder_glyph, content_glyph("bundle.zip", false));
         assert_ne!(folder_glyph, content_glyph("report.pdf", false));
         assert_ne!(folder_glyph, content_glyph("mystery.xyz123", false));
+    }
+
+    fn type_into_input(app: &mut App, old_len: usize, new_text: &str) {
+        for _ in 0..old_len {
+            app.backspace();
+        }
+        for ch in new_text.chars() {
+            app.type_char(&ch.to_string());
+        }
+    }
+
+    #[test]
+    fn a_successful_rename_leaves_an_undo_target_that_swaps_from_and_to() {
+        let mut app = app_with_one_content_entry();
+        let from = app.selected_dir_path().join("doomed.txt");
+        let to = app.selected_dir_path().join("renamed.txt");
+
+        app.handle_key_text("r");
+        type_into_input(&mut app, "doomed.txt".len(), "renamed.txt");
+        app.handle_return();
+        app.apply_operation_result(Ok(Response::Done));
+
+        assert_eq!(
+            app.undo_target,
+            Some(Request::Rename {
+                from: to.to_string_lossy().into_owned(),
+                to: from.to_string_lossy().into_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_successful_copy_leaves_an_undo_target_that_deletes_the_destination() {
+        let mut app = app_with_one_content_entry();
+        let to = app.selected_dir_path().join("copy-of-doomed.txt");
+
+        app.handle_key_text("c");
+        type_into_input(&mut app, "doomed.txt".len(), "copy-of-doomed.txt");
+        app.handle_return();
+        app.apply_operation_result(Ok(Response::Done));
+
+        assert_eq!(
+            app.undo_target,
+            Some(Request::Delete {
+                paths: vec![to.to_string_lossy().into_owned()],
+            })
+        );
+    }
+
+    #[test]
+    fn a_successful_create_leaves_an_undo_target_that_deletes_the_created_path() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.request_new_folder();
+        app.apply_operation_result(Ok(Response::Done));
+
+        let created = app.selected_dir_path().join("New folder");
+        assert_eq!(
+            app.undo_target,
+            Some(Request::Delete {
+                paths: vec![created.to_string_lossy().into_owned()],
+            })
+        );
+    }
+
+    #[test]
+    fn a_completed_delete_does_not_leave_anything_undoable() {
+        let mut app = app_with_one_content_entry();
+
+        app.request_delete();
+        app.confirm_delete();
+        app.apply_operation_result(Ok(Response::Done));
+
+        assert!(app.undo_target.is_none());
+    }
+
+    #[test]
+    fn performing_a_second_operation_replaces_the_previous_undo_target() {
+        let mut app = app_with_one_content_entry();
+        app.request_new_folder();
+        app.apply_operation_result(Ok(Response::Done));
+        assert!(app.undo_target.is_some());
+
+        let from = app.selected_dir_path().join("doomed.txt");
+        let to = app.selected_dir_path().join("renamed.txt");
+        app.handle_key_text("r");
+        type_into_input(&mut app, "doomed.txt".len(), "renamed.txt");
+        app.handle_return();
+        app.apply_operation_result(Ok(Response::Done));
+
+        assert_eq!(
+            app.undo_target,
+            Some(Request::Rename {
+                from: to.to_string_lossy().into_owned(),
+                to: from.to_string_lossy().into_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn undo_with_nothing_to_undo_is_a_no_op() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.undo();
+
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn undo_sends_the_undo_target_and_clears_it_so_a_second_undo_is_a_no_op() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+        type_into_input(&mut app, "doomed.txt".len(), "renamed.txt");
+        app.handle_return();
+        app.apply_operation_result(Ok(Response::Done));
+        assert!(app.undo_target.is_some());
+
+        app.undo();
+
+        assert!(app.pending_operation.is_some());
+        assert!(app.undo_target.is_none());
+        assert_eq!(app.status_text(), "undoing...");
+
+        app.pending_operation = None; // isolate the second call from the first's async result.
+        app.undo();
+
+        assert!(app.pending_operation.is_none());
     }
 }
