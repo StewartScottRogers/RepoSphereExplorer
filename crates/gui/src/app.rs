@@ -967,4 +967,154 @@ mod tests {
 
         assert_eq!(app.status_text(), "Rename to: doomed.txtx_  (Enter/Esc)");
     }
+
+    #[test]
+    fn focus_index_reflects_which_pane_was_last_interacted_with() {
+        let mut app = app_with_one_content_entry();
+        assert_eq!(app.focus_index(), 0); // App::new leaves focus on Folders.
+
+        app.select_content(0);
+        assert_eq!(app.focus_index(), 1);
+
+        app.select_folder(0);
+        assert_eq!(app.focus_index(), 0);
+    }
+
+    #[test]
+    fn toggle_folder_flips_expanded_state() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        assert!(app.folder_labels()[0].contains('v')); // root starts expanded.
+
+        app.toggle_folder(0);
+        assert!(app.folder_labels()[0].contains('>'));
+
+        app.toggle_folder(0);
+        assert!(app.folder_labels()[0].contains('v'));
+    }
+
+    #[test]
+    fn selecting_an_out_of_range_content_row_is_a_no_op() {
+        let mut app = app_with_one_content_entry();
+        let before = app.content_selected();
+
+        app.select_content(999);
+
+        assert_eq!(app.content_selected(), before);
+    }
+
+    #[test]
+    fn opening_a_file_row_does_not_drill_into_the_tree() {
+        let mut app = app_with_one_content_entry();
+        let folder_before = app.folder_selected();
+
+        app.open_content(0); // "doomed.txt" is a file, not a directory.
+
+        assert_eq!(app.folder_selected(), folder_before);
+        assert!(!app.status_text().starts_with("loading"));
+    }
+
+    #[test]
+    fn returning_with_an_emptied_copy_input_does_not_send_a_request() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("c");
+        for _ in 0.."doomed.txt".len() {
+            app.backspace();
+        }
+
+        app.handle_return();
+
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn returning_with_an_emptied_extract_input_does_not_send_a_request() {
+        let mut app = app_with_one_archive_entry();
+        app.handle_key_text("x");
+        for _ in 0.."bundle".len() {
+            app.backspace();
+        }
+
+        app.handle_return();
+
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn cancel_pending_during_copy_input_returns_to_normal() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("c");
+
+        app.cancel_pending();
+
+        assert!(app.pending_operation.is_none());
+        assert_ne!(app.status_text(), "Copy to: doomed.txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn cancel_pending_during_extract_input_returns_to_normal() {
+        let mut app = app_with_one_archive_entry();
+        app.handle_key_text("x");
+
+        app.cancel_pending();
+
+        assert!(app.pending_operation.is_none());
+        assert_ne!(app.status_text(), "Extract to: bundle_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn an_unexpected_response_to_a_directory_listing_surfaces_a_message() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::FileView {
+                plugin: "text".to_owned(),
+                data: serde_json::json!({}),
+            }),
+        );
+
+        assert_eq!(app.status_text(), "expected a directory listing");
+    }
+
+    #[test]
+    fn unrecognized_characters_are_ignored_in_normal_mode_and_during_delete_confirmation() {
+        let mut app = app_with_one_content_entry();
+
+        app.handle_key_text("q");
+        assert!(app.pending_operation.is_none());
+        assert!(
+            !app.status_text().starts_with("Rename")
+                && !app.status_text().starts_with("Copy")
+                && !app.status_text().starts_with("Extract")
+        );
+
+        app.request_delete();
+        app.handle_key_text("q");
+        assert_eq!(app.status_text(), "Delete doomed.txt? y/n");
+    }
+
+    #[test]
+    fn folder_labels_mark_collapsed_and_leaf_rows_distinctly() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        // The root is expanded by default but "sub"'s own children have
+        // never been fetched, so it must render as a leaf ('.'), not a
+        // collapsed-but-known-nonempty folder ('>').
+        assert!(app.folder_labels()[1].contains('.'));
+
+        app.toggle_folder(0);
+        assert_eq!(app.folder_labels().len(), 1);
+        assert!(app.folder_labels()[0].contains('>'));
+    }
 }

@@ -635,4 +635,154 @@ mod tests {
 
         fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// Binds a listener on a fresh unique socket name and returns it
+    /// alongside that name, for a test to connect a client to.
+    fn bind_unique() -> (interprocess::local_socket::Listener, String) {
+        let name = unique_socket_name();
+        let listener = bind(name.as_str().to_ns_name::<GenericNamespaced>().unwrap()).unwrap();
+        (listener, name)
+    }
+
+    fn connect(name: &str) -> Stream {
+        Stream::connect(name.to_ns_name::<GenericNamespaced>().unwrap()).unwrap()
+    }
+
+    /// Sends `request` over a fresh socket, serves exactly one response to
+    /// it, and returns what the client received - exercising the same
+    /// wire path (`protocol::write_message`/`read_message` over a real
+    /// local socket) that every front end actually uses, rather than
+    /// calling [`handle_request`] in-process.
+    fn round_trip(request: Request) -> Response {
+        let (listener, name) = bind_unique();
+        let client = std::thread::spawn(move || {
+            let mut conn = connect(&name);
+            protocol::write_message(&mut conn, &request).unwrap();
+            protocol::read_message::<Response, _>(&mut conn).unwrap()
+        });
+        serve_one(&listener).unwrap();
+        client.join().unwrap()
+    }
+
+    #[test]
+    fn answers_a_view_file_request_over_the_socket() {
+        let path = std::env::temp_dir().join(unique_socket_name());
+        fs::write(&path, "hello over the wire").unwrap();
+
+        let response = round_trip(Request::ViewFile {
+            path: path.to_string_lossy().into_owned(),
+        });
+
+        match response {
+            Response::FileView { plugin, data } => {
+                assert_eq!(plugin, "text");
+                assert_eq!(data["content"], "hello over the wire");
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn answers_a_rename_request_over_the_socket() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("old.txt");
+        let to = dir.join("new.txt");
+        fs::write(&from, "content").unwrap();
+
+        let response = round_trip(Request::Rename {
+            from: from.to_string_lossy().into_owned(),
+            to: to.to_string_lossy().into_owned(),
+        });
+
+        assert_eq!(response, Response::Done);
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(&to).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn answers_a_copy_request_over_the_socket() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("source.txt");
+        let to = dir.join("copy.txt");
+        fs::write(&from, "content").unwrap();
+
+        let response = round_trip(Request::Copy {
+            from: from.to_string_lossy().into_owned(),
+            to: to.to_string_lossy().into_owned(),
+        });
+
+        assert_eq!(response, Response::Done);
+        assert_eq!(fs::read_to_string(&from).unwrap(), "content");
+        assert_eq!(fs::read_to_string(&to).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn answers_a_delete_request_over_the_socket() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let doomed = dir.join("doomed.txt");
+        let kept = dir.join("kept.txt");
+        fs::write(&doomed, "a").unwrap();
+        fs::write(&kept, "b").unwrap();
+
+        let response = round_trip(Request::Delete {
+            paths: vec![doomed.to_string_lossy().into_owned()],
+        });
+
+        assert_eq!(response, Response::Done);
+        assert!(!doomed.exists());
+        assert!(kept.exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn answers_an_extract_request_over_the_socket() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let archive_path = dir.join("test.zip");
+        let file = fs::File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file("inside.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut writer, b"payload").unwrap();
+        writer.finish().unwrap();
+        let destination = dir.join("out");
+
+        let response = round_trip(Request::Extract {
+            archive: archive_path.to_string_lossy().into_owned(),
+            destination: destination.to_string_lossy().into_owned(),
+        });
+
+        assert_eq!(response, Response::Done);
+        assert_eq!(
+            fs::read_to_string(destination.join("inside.txt")).unwrap(),
+            "payload"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn answers_an_error_over_the_socket_for_a_failed_operation() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        let from = dir.join("missing.txt");
+        let to = dir.join("wherever.txt");
+
+        let response = round_trip(Request::Rename {
+            from: from.to_string_lossy().into_owned(),
+            to: to.to_string_lossy().into_owned(),
+        });
+
+        assert!(matches!(response, Response::Error { .. }));
+    }
 }
