@@ -117,6 +117,24 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_content_copy_requested, request_copy);
     on_event!(on_content_delete_requested, request_delete);
     on_event!(on_content_extract_requested, request_extract);
+    on_event!(on_splitter_drag_finished, persist_layout);
+
+    macro_rules! on_float_event {
+        ($setter:ident, $method:ident) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move |delta| {
+                let mut app = app.borrow_mut();
+                app.$method(delta);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+
+    on_float_event!(on_folders_splitter_dragged, drag_folders_splitter);
+    on_float_event!(on_file_splitter_dragged, drag_file_splitter);
 
     let open_app = app.clone();
     let open_ui = ui.as_weak();

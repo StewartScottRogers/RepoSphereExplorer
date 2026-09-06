@@ -66,6 +66,39 @@ component ContextMenuItem inherits Rectangle {
     }
 }
 
+// A draggable handle between two panes: GUIDANCE.md §2.4, "Splitters are
+// draggable and persisted." Reports live drag motion as `dragged(delta)`,
+// a fraction of `reference-width` (the panes' shared row, passed in rather
+// than read from `root.width` so the handle doesn't need a name for its own
+// container), leaving all clamping and persistence to the Rust side, which
+// is directly unit-testable. `moved`'s `mouse-x`/`pressed-x` are read
+// against this element's own, possibly-shifting position, but adding their
+// difference to the previous width on every event still integrates to the
+// true cumulative drag distance - the position shifts by exactly the
+// amount already applied, so each event reports only the motion since the
+// last one.
+component Splitter inherits Rectangle {
+    in property <length> reference-width;
+    callback dragged(float);
+    callback drag-finished();
+
+    width: 6px;
+    background: area.has-hover || area.pressed ? #e5c07b : #555555;
+
+    area := TouchArea {
+        width: 100%;
+        height: 100%;
+        moved => {
+            root.dragged((self.mouse-x - self.pressed-x) / root.reference-width);
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.up) {
+                root.drag-finished();
+            }
+        }
+    }
+}
+
 // The contents pane's own variant of `Pane`, with a right-click context menu
 // added on top of the same row rendering: a menu on a row (Open/Rename/Copy/
 // Delete/Extract, mirroring the existing hotkeys) and a disabled "New
@@ -198,6 +231,8 @@ export component MainWindow inherits Window {
     in property <string> file-text;
     in property <string> status-text;
     in property <int> focus-pane;
+    in property <float> folders-fraction: 0.25;
+    in property <float> file-fraction: 0.40;
 
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
@@ -215,6 +250,9 @@ export component MainWindow inherits Window {
     callback key-text(string);
     callback parent-requested();
     callback new-folder-requested();
+    callback folders-splitter-dragged(float);
+    callback file-splitter-dragged(float);
+    callback splitter-drag-finished();
 
     forward-focus: key-scope;
 
@@ -248,23 +286,29 @@ export component MainWindow inherits Window {
                     clicked => { parent-requested(); }
                 }
             }
-            HorizontalLayout {
+            row := HorizontalLayout {
+                width: 100%;
                 spacing: 2px;
                 Pane {
                     title: "Folders";
                     focused: focus-pane == 0;
                     rows: folder-rows;
                     selected: folder-selected;
-                    horizontal-stretch: 25;
+                    width: row.width * folders-fraction;
                     row-clicked(i) => { folder-row-clicked(i); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
+                }
+                Splitter {
+                    reference-width: row.width;
+                    dragged(delta) => { folders-splitter-dragged(delta); }
+                    drag-finished => { splitter-drag-finished(); }
                 }
                 ContentsPane {
                     title: "Contents";
                     focused: focus-pane == 1;
                     rows: content-rows;
                     selected: content-selected;
-                    horizontal-stretch: 35;
+                    horizontal-stretch: 1;
                     row-clicked(i) => { content-row-clicked(i); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
                     open-requested => { content-open-requested(); }
@@ -273,8 +317,13 @@ export component MainWindow inherits Window {
                     delete-requested => { content-delete-requested(); }
                     extract-requested => { content-extract-requested(); }
                 }
+                Splitter {
+                    reference-width: row.width;
+                    dragged(delta) => { file-splitter-dragged(delta); }
+                    drag-finished => { splitter-drag-finished(); }
+                }
                 Rectangle {
-                    horizontal-stretch: 40;
+                    width: row.width * file-fraction;
                     border-width: 1px;
                     border-color: focus-pane == 2 ? #e5c07b : #555555;
                     VerticalLayout {

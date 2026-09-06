@@ -242,6 +242,105 @@ impl FolderNode {
     }
 }
 
+/// Smallest fraction of the window's width any single pane may be dragged
+/// to, so a splitter can never collapse a pane to zero or negative width.
+const MIN_PANE_FRACTION: f32 = 0.12;
+
+/// The two independently-adjustable pane widths, each a fraction of the
+/// window's total width: GUIDANCE.md §2.4, "Splitters are draggable and
+/// persisted." `folders` is the Folders pane's own width; `file` is the
+/// File pane's own width; the Contents pane in between always takes
+/// whatever fraction remains, so only these two are stored or dragged
+/// directly - matching the two splitters, one per boundary.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneLayout {
+    /// Fraction of the window's width given to the Folders pane.
+    pub folders: f32,
+    /// Fraction of the window's width given to the File pane.
+    pub file: f32,
+}
+
+impl PaneLayout {
+    /// The layout used when no saved file exists or it fails to parse,
+    /// matching this GUI's original fixed 25/35/40 split.
+    pub const DEFAULT: Self = Self {
+        folders: 0.25,
+        file: 0.40,
+    };
+
+    /// Fraction of the window's width left over for the Contents pane.
+    #[must_use]
+    pub fn contents(&self) -> f32 {
+        1.0 - self.folders - self.file
+    }
+
+    /// Drags the Folders|Contents splitter by `delta`, a fraction of the
+    /// window's width (positive widens Folders), clamping so neither pane
+    /// shrinks below [`MIN_PANE_FRACTION`].
+    pub fn drag_folders(&mut self, delta: f32) {
+        let max_folders = (1.0 - self.file - MIN_PANE_FRACTION).max(MIN_PANE_FRACTION);
+        self.folders = (self.folders + delta).clamp(MIN_PANE_FRACTION, max_folders);
+    }
+
+    /// Drags the Contents|File splitter by `delta`, a fraction of the
+    /// window's width (positive widens Contents, narrowing File), clamping
+    /// so neither pane shrinks below [`MIN_PANE_FRACTION`].
+    pub fn drag_file(&mut self, delta: f32) {
+        let max_file = (1.0 - self.folders - MIN_PANE_FRACTION).max(MIN_PANE_FRACTION);
+        self.file = (self.file - delta).clamp(MIN_PANE_FRACTION, max_file);
+    }
+}
+
+/// Where the pane layout is persisted by default:
+/// `<config-dir>/RepoSphereExplorer/layout.json`. Mirrors the service's own
+/// `dirs`-based lookup for its journal file (`service::default_journal_path`),
+/// just rooted under the config, not data, directory, since this is a user
+/// setting rather than an operations log.
+fn default_layout_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|dir| dir.join("RepoSphereExplorer").join("layout.json"))
+}
+
+/// Reads and validates a saved [`PaneLayout`] from `path`, falling back to
+/// [`PaneLayout::DEFAULT`] if the file is missing, unparseable, or holds
+/// fractions that don't leave every pane at least [`MIN_PANE_FRACTION`]
+/// wide.
+fn load_layout(path: &std::path::Path) -> PaneLayout {
+    try_load_layout(path).unwrap_or(PaneLayout::DEFAULT)
+}
+
+fn try_load_layout(path: &std::path::Path) -> Option<PaneLayout> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    #[allow(clippy::cast_possible_truncation)]
+    let folders = value.get("folders_fraction")?.as_f64()? as f32;
+    #[allow(clippy::cast_possible_truncation)]
+    let file = value.get("file_fraction")?.as_f64()? as f32;
+    let layout = PaneLayout { folders, file };
+    let valid_fraction = |f: f32| (MIN_PANE_FRACTION..=1.0 - MIN_PANE_FRACTION).contains(&f);
+    if valid_fraction(layout.folders)
+        && valid_fraction(layout.file)
+        && valid_fraction(layout.contents())
+    {
+        Some(layout)
+    } else {
+        None
+    }
+}
+
+/// Writes `layout` to `path` as small JSON object, creating `path`'s parent
+/// directory if needed. Best-effort: a failure here is not fatal to the
+/// running app, so callers discard the error.
+fn save_layout(path: &std::path::Path, layout: PaneLayout) -> io::Result<()> {
+    let value = serde_json::json!({
+        "folders_fraction": layout.folders,
+        "file_fraction": layout.file,
+    });
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, value.to_string())
+}
+
 /// Which pane last received user interaction, for the "focused" highlight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -352,6 +451,7 @@ pub struct App {
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
     after_operation: Option<AfterOperation>,
+    layout: PaneLayout,
 }
 
 impl App {
@@ -380,6 +480,7 @@ impl App {
             mode: Mode::Normal,
             pending_operation: None,
             after_operation: None,
+            layout: default_layout_path().map_or(PaneLayout::DEFAULT, |path| load_layout(&path)),
         };
         app.load_contents_for_selected();
         app
@@ -880,12 +981,56 @@ impl App {
             Pane::File => 2,
         }
     }
+
+    /// Fraction of the window's width currently given to the Folders pane.
+    #[must_use]
+    pub fn folders_fraction(&self) -> f32 {
+        self.layout.folders
+    }
+
+    /// Fraction of the window's width currently given to the File pane.
+    #[must_use]
+    pub fn file_fraction(&self) -> f32 {
+        self.layout.file
+    }
+
+    /// Drags the Folders|Contents splitter live by `delta`, a fraction of
+    /// the window's width.
+    pub fn drag_folders_splitter(&mut self, delta: f32) {
+        self.layout.drag_folders(delta);
+    }
+
+    /// Drags the Contents|File splitter live by `delta`, a fraction of the
+    /// window's width.
+    pub fn drag_file_splitter(&mut self, delta: f32) {
+        self.layout.drag_file(delta);
+    }
+
+    /// Persists the current pane layout, so it is restored on the next
+    /// launch. Called once a splitter drag finishes, not on every live
+    /// resize. Best-effort: a failure to persist is not surfaced to the
+    /// user, since it doesn't affect the running session.
+    pub fn persist_layout(&self) {
+        if let Some(path) = default_layout_path() {
+            let _ = save_layout(&path, self.layout);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{App, content_glyph};
+    use super::{App, PaneLayout, content_glyph, load_layout, save_layout};
     use protocol::{DirectoryEntry, Response};
+
+    fn unique_test_path(name: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "rse-gui-test-{}-{}-{name}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
         names
@@ -1513,5 +1658,113 @@ mod tests {
         assert_ne!(folder_glyph, content_glyph("bundle.zip", false));
         assert_ne!(folder_glyph, content_glyph("report.pdf", false));
         assert_ne!(folder_glyph, content_glyph("mystery.xyz123", false));
+    }
+
+    #[test]
+    fn loading_a_missing_layout_file_falls_back_to_the_default() {
+        let path = unique_test_path("missing.json");
+        assert_eq!(load_layout(&path), PaneLayout::DEFAULT);
+    }
+
+    #[test]
+    fn loading_an_unparseable_layout_file_falls_back_to_the_default() {
+        let path = unique_test_path("garbage.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "not json").unwrap();
+
+        assert_eq!(load_layout(&path), PaneLayout::DEFAULT);
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn saving_and_loading_a_layout_round_trips_the_widths() {
+        let path = unique_test_path("layout.json");
+        let layout = PaneLayout {
+            folders: 0.2,
+            file: 0.5,
+        };
+
+        save_layout(&path, layout).unwrap();
+        let loaded = load_layout(&path);
+
+        assert!((loaded.folders - layout.folders).abs() < 0.001);
+        assert!((loaded.file - layout.file).abs() < 0.001);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_saved_layout_with_a_pane_below_the_minimum_fraction_is_rejected() {
+        let path = unique_test_path("too-narrow.json");
+        // folders + file leave the Contents pane far below MIN_PANE_FRACTION.
+        let layout = PaneLayout {
+            folders: 0.49,
+            file: 0.49,
+        };
+
+        save_layout(&path, layout).unwrap();
+
+        assert_eq!(load_layout(&path), PaneLayout::DEFAULT);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn dragging_the_folders_splitter_resizes_folders_and_contents_only() {
+        let mut layout = PaneLayout::DEFAULT;
+        let file_before = layout.file;
+
+        layout.drag_folders(0.1);
+
+        assert!((layout.folders - 0.35).abs() < 0.0001);
+        assert_eq!(layout.file, file_before);
+    }
+
+    #[test]
+    fn dragging_the_folders_splitter_past_the_minimum_clamps_instead_of_collapsing() {
+        let mut layout = PaneLayout::DEFAULT;
+
+        layout.drag_folders(-1.0);
+
+        assert!(layout.folders >= super::MIN_PANE_FRACTION);
+        assert!(layout.contents() >= super::MIN_PANE_FRACTION);
+    }
+
+    #[test]
+    fn dragging_the_file_splitter_resizes_file_and_contents_only() {
+        let mut layout = PaneLayout::DEFAULT;
+        let folders_before = layout.folders;
+
+        layout.drag_file(-0.1);
+
+        assert!((layout.file - 0.50).abs() < 0.0001);
+        assert_eq!(layout.folders, folders_before);
+    }
+
+    #[test]
+    fn dragging_the_file_splitter_past_the_minimum_clamps_instead_of_collapsing() {
+        let mut layout = PaneLayout::DEFAULT;
+
+        layout.drag_file(1.0);
+
+        assert!(layout.file >= super::MIN_PANE_FRACTION);
+        assert!(layout.contents() >= super::MIN_PANE_FRACTION);
+    }
+
+    #[test]
+    fn a_freshly_created_app_uses_the_default_split_when_nothing_is_persisted() {
+        let app = App::new(std::env::temp_dir());
+        assert!((app.folders_fraction() - PaneLayout::DEFAULT.folders).abs() < 0.0001);
+        assert!((app.file_fraction() - PaneLayout::DEFAULT.file).abs() < 0.0001);
+    }
+
+    #[test]
+    fn dragging_a_splitter_through_the_app_updates_its_fractions() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.drag_folders_splitter(0.1);
+
+        assert!((app.folders_fraction() - 0.35).abs() < 0.0001);
     }
 }
