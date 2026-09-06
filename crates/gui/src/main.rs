@@ -112,6 +112,9 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_return_pressed, handle_return);
     on_event!(on_backspace_pressed, backspace);
     on_event!(on_parent_requested, navigate_to_parent);
+    on_event!(on_cut_requested, cut_to_clipboard);
+    on_event!(on_copy_requested, copy_to_clipboard);
+    on_event!(on_paste_requested, paste_from_clipboard);
 
     let text_app = app.clone();
     let text_ui = ui.as_weak();

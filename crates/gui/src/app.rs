@@ -231,6 +231,37 @@ enum Mode {
     ExtractInput { path: PathBuf, input: String },
 }
 
+/// Whether a marked clipboard selection should move or duplicate on paste.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardKind {
+    Cut,
+    Copy,
+}
+
+/// Builds one `Rename` (for a cut) or `Copy` (for a copy) request per
+/// recorded path, each destined for `dest_dir` - the currently browsed
+/// folder, not the source's own parent.
+fn paste_requests(
+    paths: &[PathBuf],
+    dest_dir: &std::path::Path,
+    kind: ClipboardKind,
+) -> Vec<Request> {
+    paths
+        .iter()
+        .map(|path| {
+            let from = path.to_string_lossy().into_owned();
+            let to = path.file_name().map_or_else(
+                || dest_dir.to_string_lossy().into_owned(),
+                |name| dest_dir.join(name).to_string_lossy().into_owned(),
+            );
+            match kind {
+                ClipboardKind::Cut => Request::Rename { from, to },
+                ClipboardKind::Copy => Request::Copy { from, to },
+            }
+        })
+        .collect()
+}
+
 fn send_request(request: &Request) -> io::Result<Response> {
     use interprocess::local_socket::traits::Stream as _;
     let mut conn = interprocess::local_socket::Stream::connect(protocol::socket_name()?)?;
@@ -242,6 +273,24 @@ fn spawn_request(request: Request) -> Receiver<io::Result<Response>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(send_request(&request));
+    });
+    rx
+}
+
+/// Sends each of `requests` in turn over its own connection, stopping at the
+/// first failure, and reports the last outcome - one IPC request per
+/// clipboard path, as `Rename`/`Copy` carry only a single `from`/`to` pair.
+fn spawn_batch_request(requests: Vec<Request>) -> Receiver<io::Result<Response>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut result = Ok(Response::Done);
+        for request in &requests {
+            result = send_request(request);
+            if !matches!(result, Ok(Response::Done)) {
+                break;
+            }
+        }
+        let _ = tx.send(result);
     });
     rx
 }
@@ -268,6 +317,8 @@ pub struct App {
     pending_file: Option<Receiver<io::Result<Response>>>,
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
+    clipboard: Option<(Vec<PathBuf>, ClipboardKind)>,
+    pending_paste_kind: Option<ClipboardKind>,
 }
 
 impl App {
@@ -287,6 +338,8 @@ impl App {
             pending_file: None,
             mode: Mode::Normal,
             pending_operation: None,
+            clipboard: None,
+            pending_paste_kind: None,
         };
         app.load_contents_for_selected();
         app
@@ -374,9 +427,13 @@ impl App {
     }
 
     fn apply_operation_result(&mut self, result: io::Result<Response>) {
+        let pasted_kind = self.pending_paste_kind.take();
         match result {
             Ok(Response::Done) => {
                 self.status = None;
+                if pasted_kind == Some(ClipboardKind::Cut) {
+                    self.clipboard = None;
+                }
                 self.load_contents_for_selected();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
@@ -445,6 +502,50 @@ impl App {
                 input: suggested,
             };
         }
+    }
+
+    /// Marks the current contents-pane selection as "cut": pasting it into
+    /// another folder moves it there and empties the clipboard. Additional
+    /// to, not a replacement for, the `r`-triggered rename-in-place input.
+    pub fn cut_to_clipboard(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        if let Some((path, name)) = self.selected_entry_path() {
+            self.clipboard = Some((vec![path], ClipboardKind::Cut));
+            self.status = Some(format!("cut {name}"));
+        }
+    }
+
+    /// Marks the current contents-pane selection as "copy": pasting it into
+    /// another folder duplicates it there, and the clipboard survives to
+    /// paste again. Additional to, not a replacement for, the
+    /// `c`-triggered copy-in-place input.
+    pub fn copy_to_clipboard(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        if let Some((path, name)) = self.selected_entry_path() {
+            self.clipboard = Some((vec![path], ClipboardKind::Copy));
+            self.status = Some(format!("copied {name}"));
+        }
+    }
+
+    /// Pastes a marked clipboard into the currently browsed folder: a
+    /// no-op with nothing marked. Sends one `Rename`/`Copy` request per
+    /// recorded path, destined for the current folder rather than the
+    /// source's own parent.
+    pub fn paste_from_clipboard(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        let Some((paths, kind)) = &self.clipboard else {
+            return;
+        };
+        let requests = paste_requests(paths, &self.selected_dir_path(), *kind);
+        self.pending_paste_kind = Some(*kind);
+        self.pending_operation = Some(spawn_batch_request(requests));
+        self.status = Some("working...".to_owned());
     }
 
     fn input_mut(&mut self) -> Option<&mut String> {
@@ -703,7 +804,7 @@ impl App {
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
             Mode::Normal => self.status.clone().unwrap_or_else(|| {
                 "Click a folder or file. Double-click to open. Delete/r/c/x on a file. \
-                 Esc cancels."
+                 Ctrl+X/C/V to cut/copy/paste. Esc cancels."
                     .to_owned()
             }),
         }
@@ -1181,5 +1282,111 @@ mod tests {
         app.toggle_folder(0);
         assert_eq!(app.folder_labels().len(), 1);
         assert!(app.folder_labels()[0].contains('>'));
+    }
+
+    #[test]
+    fn paste_requests_target_the_current_folder_not_the_source_parent() {
+        let requests = super::paste_requests(
+            &[std::path::PathBuf::from("/source/one.txt")],
+            std::path::Path::new("/elsewhere"),
+            super::ClipboardKind::Cut,
+        );
+        assert_eq!(
+            requests,
+            vec![protocol::Request::Rename {
+                from: "/source/one.txt".to_owned(),
+                to: "/elsewhere/one.txt".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn paste_requests_send_one_copy_request_per_recorded_path() {
+        let requests = super::paste_requests(
+            &[
+                std::path::PathBuf::from("/source/one.txt"),
+                std::path::PathBuf::from("/source/two.txt"),
+            ],
+            std::path::Path::new("/elsewhere"),
+            super::ClipboardKind::Copy,
+        );
+        assert_eq!(
+            requests,
+            vec![
+                protocol::Request::Copy {
+                    from: "/source/one.txt".to_owned(),
+                    to: "/elsewhere/one.txt".to_owned(),
+                },
+                protocol::Request::Copy {
+                    from: "/source/two.txt".to_owned(),
+                    to: "/elsewhere/two.txt".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn ctrl_x_marks_a_cut_clipboard_and_status_mentions_it() {
+        let mut app = app_with_one_content_entry();
+        app.cut_to_clipboard();
+        assert!(app.status_text().contains("cut"));
+        assert!(app.clipboard.is_some());
+    }
+
+    #[test]
+    fn ctrl_c_marks_a_copy_clipboard_and_status_mentions_it() {
+        let mut app = app_with_one_content_entry();
+        app.copy_to_clipboard();
+        assert!(app.status_text().contains("copy"));
+        assert!(app.clipboard.is_some());
+    }
+
+    #[test]
+    fn pasting_a_cut_sends_a_rename_and_clears_the_clipboard_once_done() {
+        let mut app = app_with_one_content_entry();
+        app.cut_to_clipboard();
+
+        app.paste_from_clipboard();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "working...");
+
+        app.apply_operation_result(Ok(Response::Done));
+        assert!(app.clipboard.is_none());
+    }
+
+    #[test]
+    fn pasting_a_copy_survives_a_successful_paste_for_a_second_paste() {
+        let mut app = app_with_one_content_entry();
+        app.copy_to_clipboard();
+
+        app.paste_from_clipboard();
+        app.apply_operation_result(Ok(Response::Done));
+
+        assert!(app.clipboard.is_some());
+
+        app.paste_from_clipboard();
+        assert!(app.pending_operation.is_some());
+    }
+
+    #[test]
+    fn pasting_an_empty_clipboard_is_a_no_op() {
+        let mut app = app_with_one_content_entry();
+        app.paste_from_clipboard();
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn a_failed_paste_leaves_the_cut_clipboard_intact() {
+        let mut app = app_with_one_content_entry();
+        app.cut_to_clipboard();
+
+        app.paste_from_clipboard();
+        app.apply_operation_result(Ok(Response::Error {
+            message: "name clash".to_owned(),
+        }));
+
+        assert!(app.clipboard.is_some());
+        assert_eq!(app.status_text(), "name clash");
     }
 }
