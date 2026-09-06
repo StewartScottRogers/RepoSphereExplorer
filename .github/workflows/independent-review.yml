@@ -25,6 +25,9 @@ permissions:
   contents: read
   pull-requests: write
   issues: read
+  # Needed for claude-code-action's OIDC-based token exchange with
+  # CLAUDE_CODE_OAUTH_TOKEN, same as claude.yml/factory-shift.yml.
+  id-token: write
 
 jobs:
   review:
