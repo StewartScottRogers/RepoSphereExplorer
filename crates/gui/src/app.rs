@@ -359,6 +359,14 @@ impl App {
     /// contents in the background.
     #[must_use]
     pub fn new(root: PathBuf) -> Self {
+        // Canonicalize so `root`'s ancestors are well-formed: a relative
+        // root such as "." has `Path::parent()` return `Some("")` (an
+        // empty path, not `None`), which `navigate_to_parent` would
+        // otherwise treat as a real, requestable directory - re-rooting the
+        // tree at "" and leaving every future request targeting a path
+        // that resolves to nothing. Falls back to the given root if it
+        // doesn't exist yet or canonicalization otherwise fails.
+        let root = std::fs::canonicalize(&root).unwrap_or(root);
         let mut app = Self {
             root: FolderNode::root(root),
             folder_selected: 0,
@@ -1049,6 +1057,26 @@ mod tests {
 
         assert!(app.pending_contents.is_none());
         assert_eq!(app.status_text(), status_before);
+    }
+
+    #[test]
+    fn new_canonicalizes_a_relative_root() {
+        let app = App::new(std::path::PathBuf::from("."));
+
+        assert!(app.root.path.is_absolute());
+    }
+
+    #[test]
+    fn navigating_to_parent_from_a_relative_root_never_targets_an_empty_path() {
+        // `Path::new(".").parent()` is `Some("")` (an empty path), not
+        // `None` - without canonicalizing the root first, this used to
+        // re-root the tree at "" and leave every future request targeting
+        // a path that resolves to nothing, freezing all further input.
+        let mut app = App::new(std::path::PathBuf::from("."));
+
+        app.navigate_to_parent();
+
+        assert!(!app.root.path.as_os_str().is_empty());
     }
 
     fn app_with_one_content_entry() -> App {
