@@ -258,10 +258,28 @@ pub enum Pane {
 #[derive(Debug)]
 enum Mode {
     Normal,
-    ConfirmDelete { path: PathBuf, name: String },
-    RenameInput { path: PathBuf, input: String },
-    CopyInput { path: PathBuf, input: String },
-    ExtractInput { path: PathBuf, input: String },
+    ConfirmDelete {
+        path: PathBuf,
+        name: String,
+    },
+    RenameInput {
+        path: PathBuf,
+        input: String,
+    },
+    CopyInput {
+        path: PathBuf,
+        input: String,
+    },
+    ExtractInput {
+        path: PathBuf,
+        input: String,
+    },
+    Properties {
+        name: String,
+        kind: String,
+        size: u64,
+        modified: Option<u64>,
+    },
 }
 
 /// What to do once a pending operation completes successfully, beyond the
@@ -336,6 +354,40 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{value:.1} {unit}")
     }
+}
+
+/// Formats a Unix timestamp (seconds since `UNIX_EPOCH`) as a UTC
+/// `YYYY-MM-DD HH:MM:SS` string, without pulling in a date/time crate for
+/// this one call site.
+///
+/// Uses Howard Hinnant's `civil_from_days` to convert the day count into a
+/// proleptic Gregorian date. `seconds` is always non-negative here (it comes
+/// from [`DirectoryEntry::modified`], itself seconds since `UNIX_EPOCH`), so
+/// unlike the general algorithm this never needs the negative-era branch
+/// that pre-epoch dates would require, and every step stays in `u64`.
+fn format_modified(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let time_of_day = seconds % 86_400;
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+    let second = time_of_day % 60;
+
+    let era_day = days + 719_468;
+    let era = era_day / 146_097;
+    let day_of_era = era_day - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
 }
 
 /// The three-pane explorer's state.
@@ -536,6 +588,39 @@ impl App {
         }
     }
 
+    /// Opens the properties view for the selected contents row, capturing
+    /// its name, type, size, and modified time. A no-op if nothing is
+    /// selected.
+    pub fn request_properties(&mut self) {
+        let Some(entry) = self.contents.get(self.content_selected).cloned() else {
+            return;
+        };
+        let kind = self.entry_kind(&entry);
+        self.mode = Mode::Properties {
+            name: entry.name,
+            kind,
+            size: entry.size,
+            modified: entry.modified,
+        };
+    }
+
+    /// The type to show in the properties view: the plugin that already
+    /// recognised the file (fetched alongside its preview), falling back to
+    /// its extension, or `"folder"` for a directory.
+    fn entry_kind(&self, entry: &DirectoryEntry) -> String {
+        if entry.is_dir {
+            return "folder".to_owned();
+        }
+        if let Some(Response::FileView { plugin, .. }) = &self.file_view {
+            return plugin.clone();
+        }
+        std::path::Path::new(&entry.name)
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_lowercase)
+            .unwrap_or_else(|| "file".to_owned())
+    }
+
     /// Creates a new, empty subdirectory of the currently-browsed folder
     /// under a de-duplicated default name, then drops into inline rename so
     /// the user can immediately retype it.
@@ -573,7 +658,7 @@ impl App {
             Mode::RenameInput { input, .. }
             | Mode::CopyInput { input, .. }
             | Mode::ExtractInput { input, .. } => Some(input),
-            Mode::Normal | Mode::ConfirmDelete { .. } => None,
+            Mode::Normal | Mode::ConfirmDelete { .. } | Mode::Properties { .. } => None,
         }
     }
 
@@ -633,8 +718,10 @@ impl App {
     }
 
     /// Dispatches one typed character by the current mode: a hotkey in
-    /// normal mode (`r`/`c`/`x`), y/n during a delete confirmation, or an
-    /// appended character during a rename/copy/extract input.
+    /// normal mode (`r`/`c`/`x`/`p`), y/n during a delete confirmation, or
+    /// an appended character during a rename/copy/extract input. A no-op
+    /// while the properties view is open; Escape (`cancel_pending`) is what
+    /// dismisses it.
     pub fn handle_key_text(&mut self, text: &str) {
         match &self.mode {
             Mode::ConfirmDelete { .. } => match text {
@@ -645,10 +732,12 @@ impl App {
             Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
                 self.type_char(text);
             }
+            Mode::Properties { .. } => {}
             Mode::Normal => match text {
                 "r" => self.request_rename(),
                 "c" => self.request_copy(),
                 "x" => self.request_extract(),
+                "p" => self.request_properties(),
                 _ => {}
             },
         }
@@ -823,6 +912,7 @@ impl App {
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
+            Mode::Properties { .. } => "Properties (Esc to close)".to_owned(),
             Mode::Normal => self
                 .status
                 .clone()
@@ -852,6 +942,32 @@ impl App {
             ),
             None => header,
         }
+    }
+
+    /// Whether the properties view is currently open.
+    #[must_use]
+    pub fn properties_active(&self) -> bool {
+        matches!(self.mode, Mode::Properties { .. })
+    }
+
+    /// Multi-line display text for the properties view: name, type, size,
+    /// and modified time. Empty when the properties view isn't open.
+    #[must_use]
+    pub fn properties_text(&self) -> String {
+        let Mode::Properties {
+            name,
+            kind,
+            size,
+            modified,
+        } = &self.mode
+        else {
+            return String::new();
+        };
+        let modified = modified.map_or_else(|| "unknown".to_owned(), format_modified);
+        format!(
+            "Name: {name}\nType: {kind}\nSize: {}\nModified: {modified}",
+            format_size(*size)
+        )
     }
 
     /// Which pane is currently focused, as an index (0/1/2) matching the
@@ -1449,5 +1565,81 @@ mod tests {
         assert_ne!(folder_glyph, content_glyph("bundle.zip", false));
         assert_ne!(folder_glyph, content_glyph("report.pdf", false));
         assert_ne!(folder_glyph, content_glyph("mystery.xyz123", false));
+    }
+
+    #[test]
+    fn p_key_opens_the_properties_view_with_name_size_and_modified() {
+        let mut app = App::new(std::env::temp_dir());
+        let mut rows = entries(&[("notes.txt", false)]);
+        rows[0].size = 2048;
+        rows[0].modified = Some(1_700_000_000);
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: rows }));
+
+        app.handle_key_text("p");
+
+        assert!(app.properties_active());
+        let text = app.properties_text();
+        assert!(text.contains("Name: notes.txt"));
+        assert!(text.contains("Size: 2.0 KB"));
+        assert!(text.contains("Modified: 2023-11-14 22:13:20"));
+    }
+
+    #[test]
+    fn properties_view_for_a_directory_reports_folder_as_its_type() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+
+        app.request_properties();
+
+        assert!(app.properties_text().contains("Type: folder"));
+    }
+
+    #[test]
+    fn properties_view_falls_back_to_the_extension_without_a_loaded_plugin_view() {
+        let mut app = app_with_one_content_entry();
+
+        app.request_properties();
+
+        assert!(app.properties_text().contains("Type: txt"));
+    }
+
+    #[test]
+    fn properties_view_prefers_the_loaded_plugin_view_over_the_extension() {
+        let mut app = app_with_one_content_entry();
+        app.file_view = Some(Response::FileView {
+            plugin: "custom-plugin".to_owned(),
+            data: serde_json::json!({}),
+        });
+
+        app.request_properties();
+
+        assert!(app.properties_text().contains("Type: custom-plugin"));
+    }
+
+    #[test]
+    fn requesting_properties_with_no_selection_is_a_no_op() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.request_properties();
+
+        assert!(!app.properties_active());
+    }
+
+    #[test]
+    fn dismissing_the_properties_view_returns_to_normal_without_side_effects() {
+        let mut app = app_with_one_content_entry();
+        app.request_properties();
+        assert!(app.properties_active());
+
+        app.cancel_pending();
+
+        assert!(!app.properties_active());
+        assert!(app.pending_operation.is_none());
+        assert_ne!(app.status_text(), "Properties (Esc to close)");
     }
 }

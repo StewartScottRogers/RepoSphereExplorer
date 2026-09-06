@@ -55,6 +55,8 @@ export component MainWindow inherits Window {
     in property <string> file-text;
     in property <string> status-text;
     in property <int> focus-pane;
+    in property <bool> properties-active;
+    in property <string> properties-text;
 
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
@@ -137,6 +139,24 @@ export component MainWindow inherits Window {
                                 x: 4px;
                             }
                         }
+                    }
+                }
+            }
+            if properties-active : Rectangle {
+                background: #2b2b2b;
+                border-width: 1px;
+                border-color: #e5c07b;
+                height: 90px;
+                VerticalLayout {
+                    padding: 6px;
+                    Text {
+                        text: "Properties (Esc to close)";
+                        font-weight: 700;
+                        color: #e5c07b;
+                    }
+                    Text {
+                        text: properties-text;
+                        color: #dddddd;
                     }
                 }
             }
