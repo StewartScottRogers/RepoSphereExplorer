@@ -23,6 +23,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_file_text(app.file_text().into());
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());
+    ui.set_content_filter(app.content_filter().into());
 }
 
 /// Converts a row index to the `i32` Slint properties expect, saturating

@@ -344,6 +344,11 @@ pub struct App {
     folder_selected: usize,
     contents: Vec<DirectoryEntry>,
     content_selected: usize,
+    /// Typed substring narrowing [`Self::content_labels`] to matching
+    /// entries of `contents`, case-insensitively. Resets to empty whenever
+    /// a fresh directory listing is applied, so a filter typed in one
+    /// folder never silently hides entries in the next one navigated to.
+    content_filter: String,
     file_view: Option<Response>,
     status: Option<String>,
     focus: Pane,
@@ -372,6 +377,7 @@ impl App {
             folder_selected: 0,
             contents: Vec::new(),
             content_selected: 0,
+            content_filter: String::new(),
             file_view: None,
             status: None,
             focus: Pane::Folders,
@@ -409,16 +415,34 @@ impl App {
     }
 
     fn load_file_view(&mut self) {
-        let Some(entry) = self.contents.get(self.content_selected) else {
+        let Some(name) = self
+            .filtered_contents()
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone())
+        else {
             self.file_view = None;
             self.pending_file = None;
             return;
         };
-        let path = self.selected_dir_path().join(&entry.name);
+        let path = self.selected_dir_path().join(&name);
         let request = Request::ViewFile {
             path: path.to_string_lossy().into_owned(),
         };
         self.pending_file = Some(spawn_request(request));
+    }
+
+    /// `contents`, narrowed to entries whose name contains
+    /// [`Self::content_filter`] case-insensitively (every entry, if the
+    /// filter is empty). Every place that maps a contents-pane row index to
+    /// an underlying entry goes through this, so a filtered row acts on the
+    /// entry actually shown at that position rather than
+    /// `contents[i]` unfiltered.
+    fn filtered_contents(&self) -> Vec<&DirectoryEntry> {
+        let filter = self.content_filter.to_lowercase();
+        self.contents
+            .iter()
+            .filter(|entry| filter.is_empty() || entry.name.to_lowercase().contains(&filter))
+            .collect()
     }
 
     /// Applies any background request results that have arrived since the
@@ -456,6 +480,7 @@ impl App {
                 }
                 self.contents = entries;
                 self.content_selected = 0;
+                self.content_filter.clear();
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
@@ -483,7 +508,7 @@ impl App {
     }
 
     fn selected_entry_path(&self) -> Option<(PathBuf, String)> {
-        let entry = self.contents.get(self.content_selected)?;
+        let entry = *self.filtered_contents().get(self.content_selected)?;
         Some((
             self.selected_dir_path().join(&entry.name),
             entry.name.clone(),
@@ -694,19 +719,25 @@ impl App {
         }
     }
 
-    /// Selects contents row `index`, loading its preview if it is a file.
+    /// Selects contents row `index` (a row of the filtered view when a
+    /// filter is active), loading its preview if it is a file.
     pub fn select_content(&mut self, index: usize) {
-        if index < self.contents.len() {
+        if index < self.filtered_contents().len() {
             self.content_selected = index;
             self.focus = Pane::Contents;
             self.load_file_view();
         }
     }
 
-    /// Drills into contents row `index` if it is a directory, expanding and
-    /// selecting it in the folders tree.
+    /// Drills into contents row `index` (a row of the filtered view when a
+    /// filter is active) if it is a directory, expanding and selecting it
+    /// in the folders tree.
     pub fn open_content(&mut self, index: usize) {
-        let Some(entry) = self.contents.get(index).cloned() else {
+        let Some(entry) = self
+            .filtered_contents()
+            .get(index)
+            .map(|entry| (*entry).clone())
+        else {
             return;
         };
         if !entry.is_dir {
@@ -791,11 +822,12 @@ impl App {
         self.folder_selected
     }
 
-    /// Display labels for the contents pane.
+    /// Display labels for the contents pane, narrowed to entries matching
+    /// [`Self::content_filter`].
     #[must_use]
     pub fn content_labels(&self) -> Vec<String> {
-        self.contents
-            .iter()
+        self.filtered_contents()
+            .into_iter()
             .map(|entry| {
                 let glyph = content_glyph(&entry.name, entry.is_dir);
                 if entry.is_dir {
@@ -811,6 +843,28 @@ impl App {
     #[must_use]
     pub fn content_selected(&self) -> usize {
         self.content_selected
+    }
+
+    /// Current contents-pane filter text (see [`Self::set_content_filter`]).
+    #[must_use]
+    pub fn content_filter(&self) -> &str {
+        &self.content_filter
+    }
+
+    /// Sets the contents-pane filter text, narrowing [`Self::content_labels`]
+    /// to entries whose name contains `text` as a case-insensitive
+    /// substring; an empty `text` restores the full listing. Clamps the
+    /// current selection into the narrowed view and reloads the file
+    /// preview, since the entry at the selected row may have changed.
+    pub fn set_content_filter(&mut self, text: &str) {
+        self.content_filter = text.to_owned();
+        let filtered_len = self.filtered_contents().len();
+        self.content_selected = if filtered_len == 0 {
+            0
+        } else {
+            self.content_selected.min(filtered_len - 1)
+        };
+        self.load_file_view();
     }
 
     /// Display text for the file pane.
@@ -852,11 +906,13 @@ impl App {
         let noun = if count == 1 { "item" } else { "items" };
         let total_size: u64 = self.contents.iter().map(|entry| entry.size).sum();
         let header = format!("{count} {noun}, {}", format_size(total_size));
-        match self.contents.get(self.content_selected) {
+        let filtered = self.filtered_contents();
+        match filtered.get(self.content_selected) {
             Some(entry) => format!(
-                "{header} — selected: {} ({} of {count})",
+                "{header} — selected: {} ({} of {})",
                 entry.name,
-                self.content_selected + 1
+                self.content_selected + 1,
+                filtered.len()
             ),
             None => header,
         }
@@ -1477,5 +1533,95 @@ mod tests {
         assert_ne!(folder_glyph, content_glyph("bundle.zip", false));
         assert_ne!(folder_glyph, content_glyph("report.pdf", false));
         assert_ne!(folder_glyph, content_glyph("mystery.xyz123", false));
+    }
+
+    fn app_with_three_content_entries() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("alpha.txt", false), ("Beta.txt", false), ("sub", true)]),
+            }),
+        );
+        app
+    }
+
+    #[test]
+    fn filtering_narrows_content_labels_case_insensitively() {
+        let mut app = app_with_three_content_entries();
+
+        app.set_content_filter("BETA");
+
+        assert_eq!(app.content_labels(), vec!["\u{25AA} Beta.txt"]);
+    }
+
+    #[test]
+    fn clearing_the_filter_restores_the_full_listing() {
+        let mut app = app_with_three_content_entries();
+        app.set_content_filter("beta");
+
+        app.set_content_filter("");
+
+        assert_eq!(app.content_labels().len(), 3);
+    }
+
+    #[test]
+    fn selecting_a_filtered_row_acts_on_the_entry_actually_shown_there() {
+        let mut app = app_with_three_content_entries();
+        app.set_content_filter("a"); // matches "alpha.txt" and "Beta.txt", not "sub".
+        assert_eq!(app.content_labels().len(), 2);
+
+        app.select_content(1); // the second visible row, i.e. "Beta.txt".
+
+        assert!(app.status_text().contains("selected: Beta.txt (2 of 2)"));
+    }
+
+    #[test]
+    fn opening_a_filtered_row_drills_into_the_entry_actually_shown_there() {
+        let mut app = app_with_three_content_entries();
+        app.set_content_filter("sub"); // matches only the "sub" directory.
+
+        app.open_content(0);
+
+        assert_eq!(app.folder_selected(), 1);
+    }
+
+    #[test]
+    fn a_filter_matching_nothing_yields_an_empty_listing_without_a_stale_selection() {
+        let mut app = app_with_three_content_entries();
+        app.select_content(2);
+
+        app.set_content_filter("no-such-name");
+
+        assert!(app.content_labels().is_empty());
+        assert_eq!(app.content_selected(), 0);
+        assert!(!app.status_text().contains("selected:"));
+    }
+
+    #[test]
+    fn narrowing_the_filter_clamps_a_now_out_of_range_selection() {
+        let mut app = app_with_three_content_entries();
+        app.select_content(2); // "sub", the third row.
+
+        app.set_content_filter("a"); // narrows to 2 rows: "alpha.txt", "Beta.txt".
+
+        assert_eq!(app.content_selected(), 1);
+        assert!(app.status_text().contains("selected: Beta.txt (2 of 2)"));
+    }
+
+    #[test]
+    fn navigating_to_a_new_folder_resets_the_filter() {
+        let mut app = app_with_three_content_entries();
+        app.set_content_filter("beta");
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("gamma.txt", false)]),
+            }),
+        );
+
+        assert_eq!(app.content_filter(), "");
+        assert_eq!(app.content_labels(), vec!["\u{25AA} gamma.txt"]);
     }
 }

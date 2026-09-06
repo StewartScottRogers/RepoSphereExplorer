@@ -1,4 +1,4 @@
-import { ScrollView, Button } from "std-widgets.slint";
+import { ScrollView, Button, LineEdit } from "std-widgets.slint";
 
 component Pane inherits Rectangle {
     in property <string> title;
@@ -55,6 +55,7 @@ export component MainWindow inherits Window {
     in property <string> file-text;
     in property <string> status-text;
     in property <int> focus-pane;
+    in property <string> content-filter;
 
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
@@ -67,6 +68,7 @@ export component MainWindow inherits Window {
     callback key-text(string);
     callback parent-requested();
     callback new-folder-requested();
+    callback content-filter-changed(string);
 
     forward-focus: key-scope;
 
@@ -109,14 +111,22 @@ export component MainWindow inherits Window {
                     row-clicked(i) => { folder-row-clicked(i); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
                 }
-                Pane {
-                    title: "Contents";
-                    focused: focus-pane == 1;
-                    rows: content-rows;
-                    selected: content-selected;
+                VerticalLayout {
                     horizontal-stretch: 35;
-                    row-clicked(i) => { content-row-clicked(i); }
-                    row-double-clicked(i) => { content-row-double-clicked(i); }
+                    LineEdit {
+                        height: 24px;
+                        placeholder-text: "Filter...";
+                        text: content-filter;
+                        edited(text) => { content-filter-changed(text); }
+                    }
+                    Pane {
+                        title: "Contents";
+                        focused: focus-pane == 1;
+                        rows: content-rows;
+                        selected: content-selected;
+                        row-clicked(i) => { content-row-clicked(i); }
+                        row-double-clicked(i) => { content-row-double-clicked(i); }
+                    }
                 }
                 Rectangle {
                     horizontal-stretch: 40;
