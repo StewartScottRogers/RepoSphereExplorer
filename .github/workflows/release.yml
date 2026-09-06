@@ -41,7 +41,7 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then
             ext=".exe"
           fi
-          for bin in repo_sphere_explorer service tui gui; do
+          for bin in repo_sphere_explorer service RepoSphereExplorerTui RepoSphereExplorerGui; do
             cp "target/${{ matrix.target }}/release/${bin}${ext}" \
                "dist/${bin}-${{ matrix.target }}${ext}"
           done

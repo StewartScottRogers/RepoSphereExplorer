@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "RepoSphereExplorerTui"
+path = "src/main.rs"
+
 [dependencies]
 interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }

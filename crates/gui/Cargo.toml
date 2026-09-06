@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 build = "build.rs"
 
+[[bin]]
+name = "RepoSphereExplorerGui"
+path = "src/main.rs"
+
 [dependencies]
 interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }

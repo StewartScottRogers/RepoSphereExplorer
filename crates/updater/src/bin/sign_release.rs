@@ -13,7 +13,12 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-const KNOWN_BINARIES: &[&str] = &["repo_sphere_explorer", "service", "tui", "gui"];
+const KNOWN_BINARIES: &[&str] = &[
+    "repo_sphere_explorer",
+    "service",
+    "RepoSphereExplorerTui",
+    "RepoSphereExplorerGui",
+];
 
 #[derive(Serialize)]
 struct Manifest {

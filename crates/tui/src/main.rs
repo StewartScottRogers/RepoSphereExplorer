@@ -107,7 +107,7 @@ fn detach(_command: &mut std::process::Command) {}
 /// Checks for and applies an update to this binary, per §4.2 of
 /// GUIDANCE.md.
 fn self_update() -> ExitCode {
-    match updater::self_update("tui") {
+    match updater::self_update("RepoSphereExplorerTui") {
         Ok(updater::Outcome::UpToDate { version }) => {
             println!("tui is up to date (v{version})");
             ExitCode::SUCCESS
