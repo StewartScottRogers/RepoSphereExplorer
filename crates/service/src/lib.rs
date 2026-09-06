@@ -269,20 +269,16 @@ pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
 
 /// Deletes every path in `paths` - the exact, confirmed target set per
 /// GUIDANCE.md §2.1.5, never a pattern the service resolves itself -
-/// journaling the attempt.
+/// journaling the attempt. Targets are moved to the OS trash/recycle bin
+/// per GUIDANCE.md §2.3, not permanently erased.
 ///
 /// # Errors
-/// Returns an error if any path cannot be deleted; earlier paths in the
-/// list may already have been removed.
+/// Returns an error if any path cannot be moved to the trash; earlier
+/// paths in the list may already have been moved.
 pub fn delete(paths: &[String]) -> io::Result<()> {
     let result = (|| {
         for path in paths {
-            let path = Path::new(path);
-            if fs::metadata(path)?.is_dir() {
-                fs::remove_dir_all(path)?;
-            } else {
-                fs::remove_file(path)?;
-            }
+            trash::delete(path).map_err(|err| io::Error::other(err.to_string()))?;
         }
         Ok(())
     })();
