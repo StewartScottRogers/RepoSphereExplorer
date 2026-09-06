@@ -19,7 +19,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_rows(string_model(app.folder_labels()));
     ui.set_folder_selected(row_index(app.folder_selected()));
     ui.set_content_rows(string_model(app.content_labels()));
-    ui.set_content_selected(row_index(app.content_selected()));
+    ui.set_content_marks(bool_model(app.content_selected_marks()));
     ui.set_file_text(app.file_text().into());
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());
@@ -38,4 +38,8 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
             .map(SharedString::from)
             .collect::<Vec<_>>(),
     ))
+}
+
+fn bool_model(items: Vec<bool>) -> ModelRc<bool> {
+    ModelRc::new(VecModel::from(items))
 }

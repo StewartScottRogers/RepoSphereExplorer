@@ -6,7 +6,7 @@
 
 use plugin_api::PluginPresentation;
 use protocol::{DirectoryEntry, Request, Response};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
@@ -225,7 +225,7 @@ pub enum Pane {
 #[derive(Debug)]
 enum Mode {
     Normal,
-    ConfirmDelete { path: PathBuf, name: String },
+    ConfirmDelete { paths: Vec<PathBuf>, label: String },
     RenameInput { path: PathBuf, input: String },
     CopyInput { path: PathBuf, input: String },
     ExtractInput { path: PathBuf, input: String },
@@ -260,7 +260,8 @@ pub struct App {
     root: FolderNode,
     folder_selected: usize,
     contents: Vec<DirectoryEntry>,
-    content_selected: usize,
+    content_selection: BTreeSet<usize>,
+    content_anchor: usize,
     file_view: Option<Response>,
     status: Option<String>,
     focus: Pane,
@@ -279,7 +280,8 @@ impl App {
             root: FolderNode::root(root),
             folder_selected: 0,
             contents: Vec::new(),
-            content_selected: 0,
+            content_selection: BTreeSet::new(),
+            content_anchor: 0,
             file_view: None,
             status: None,
             focus: Pane::Folders,
@@ -315,8 +317,8 @@ impl App {
         self.status = Some(format!("loading {}...", path.display()));
     }
 
-    fn load_file_view(&mut self) {
-        let Some(entry) = self.contents.get(self.content_selected) else {
+    fn load_file_view(&mut self, index: usize) {
+        let Some(entry) = self.contents.get(index) else {
             self.file_view = None;
             self.pending_file = None;
             return;
@@ -326,6 +328,20 @@ impl App {
             path: path.to_string_lossy().into_owned(),
         };
         self.pending_file = Some(spawn_request(request));
+    }
+
+    /// Loads the file preview only when exactly one contents row is
+    /// selected; a multi-row (or empty) selection has no single file to
+    /// preview, so the pane is cleared instead.
+    fn load_file_view_for_selection(&mut self) {
+        let mut selection = self.content_selection.iter();
+        match (selection.next(), selection.next()) {
+            (Some(&index), None) => self.load_file_view(index),
+            _ => {
+                self.file_view = None;
+                self.pending_file = None;
+            }
+        }
     }
 
     /// Applies any background request results that have arrived since the
@@ -362,8 +378,9 @@ impl App {
                     node.set_children_from(&entries);
                 }
                 self.contents = entries;
-                self.content_selected = 0;
-                self.load_file_view();
+                self.content_selection = BTreeSet::from([0]);
+                self.content_anchor = 0;
+                self.load_file_view_for_selection();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
             Ok(Response::FileView { .. } | Response::Done) => {
@@ -386,28 +403,51 @@ impl App {
     }
 
     fn selected_entry_path(&self) -> Option<(PathBuf, String)> {
-        let entry = self.contents.get(self.content_selected)?;
+        let entry = self.contents.get(self.content_anchor)?;
         Some((
             self.selected_dir_path().join(&entry.name),
             entry.name.clone(),
         ))
     }
 
-    /// Asks for confirmation before deleting the selected contents row.
-    pub fn request_delete(&mut self) {
-        if let Some((path, name)) = self.selected_entry_path() {
-            self.mode = Mode::ConfirmDelete { path, name };
-        }
+    /// Every contents row currently in the selection, as `(full path,
+    /// name)` pairs in row order.
+    fn selected_entries(&self) -> Vec<(PathBuf, String)> {
+        let dir = self.selected_dir_path();
+        self.content_selection
+            .iter()
+            .filter_map(|&index| self.contents.get(index))
+            .map(|entry| (dir.join(&entry.name), entry.name.clone()))
+            .collect()
     }
 
-    /// Confirms a pending delete confirmation, sending the delete request.
+    /// Asks for confirmation before deleting every row in the current
+    /// contents-pane selection.
+    pub fn request_delete(&mut self) {
+        let entries = self.selected_entries();
+        if entries.is_empty() {
+            return;
+        }
+        let label = match entries.as_slice() {
+            [(_, name)] => name.clone(),
+            _ => format!("{} items", entries.len()),
+        };
+        let paths = entries.into_iter().map(|(path, _)| path).collect();
+        self.mode = Mode::ConfirmDelete { paths, label };
+    }
+
+    /// Confirms a pending delete confirmation, sending one `Request::Delete`
+    /// carrying every selected row's full path.
     pub fn confirm_delete(&mut self) {
-        let Mode::ConfirmDelete { path, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
+        let Mode::ConfirmDelete { paths, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
         else {
             return;
         };
         let request = Request::Delete {
-            paths: vec![path.to_string_lossy().into_owned()],
+            paths: paths
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
         };
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("deleting...".to_owned());
@@ -565,13 +605,50 @@ impl App {
         }
     }
 
-    /// Selects contents row `index`, loading its preview if it is a file.
+    /// Selects contents row `index` alone, loading its preview if it is a
+    /// file. Equivalent to an unmodified click.
     pub fn select_content(&mut self, index: usize) {
-        if index < self.contents.len() {
-            self.content_selected = index;
-            self.focus = Pane::Contents;
-            self.load_file_view();
+        self.click_content(index, false, false);
+    }
+
+    /// Handles a click on contents row `index`, mirroring Windows Explorer:
+    /// a plain click clears the selection and selects just that row,
+    /// Ctrl+click toggles the row into or out of the selection without
+    /// disturbing the rest, and Shift+click selects the contiguous range
+    /// between the last plain- or Ctrl-clicked anchor row and this one.
+    pub fn click_content(&mut self, index: usize, ctrl: bool, shift: bool) {
+        if index >= self.contents.len() {
+            return;
         }
+        self.focus = Pane::Contents;
+        if shift {
+            let (low, high) = if self.content_anchor <= index {
+                (self.content_anchor, index)
+            } else {
+                (index, self.content_anchor)
+            };
+            self.content_selection = (low..=high).collect();
+        } else if ctrl {
+            if !self.content_selection.remove(&index) {
+                self.content_selection.insert(index);
+            }
+            self.content_anchor = index;
+        } else {
+            self.content_selection = BTreeSet::from([index]);
+            self.content_anchor = index;
+        }
+        self.load_file_view_for_selection();
+    }
+
+    /// Selects every row in the contents pane (Ctrl+A); a no-op outside
+    /// normal mode, so it cannot fire mid rename/copy/extract/delete.
+    pub fn select_all_content(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        self.content_selection = (0..self.contents.len()).collect();
+        self.focus = Pane::Contents;
+        self.load_file_view_for_selection();
     }
 
     /// Drills into contents row `index` if it is a directory, expanding and
@@ -677,10 +754,21 @@ impl App {
             .collect()
     }
 
-    /// Index of the selected row in [`Self::content_labels`].
+    /// Index of the row most recently interacted with in the contents pane
+    /// (the Shift-click anchor). Use [`Self::content_selected_marks`] for
+    /// the full multi-select highlight state.
     #[must_use]
     pub fn content_selected(&self) -> usize {
-        self.content_selected
+        self.content_anchor
+    }
+
+    /// Which contents rows are part of the current selection, one entry per
+    /// row in [`Self::content_labels`] order.
+    #[must_use]
+    pub fn content_selected_marks(&self) -> Vec<bool> {
+        (0..self.contents.len())
+            .map(|index| self.content_selection.contains(&index))
+            .collect()
     }
 
     /// Display text for the file pane.
@@ -697,7 +785,7 @@ impl App {
     #[must_use]
     pub fn status_text(&self) -> String {
         match &self.mode {
-            Mode::ConfirmDelete { name, .. } => format!("Delete {name}? y/n"),
+            Mode::ConfirmDelete { label, .. } => format!("Delete {label}? y/n"),
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
@@ -723,7 +811,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::App;
+    use super::{App, Mode};
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -868,6 +956,17 @@ mod tests {
             &[],
             Ok(Response::Directory {
                 entries: entries(&[("doomed.txt", false)]),
+            }),
+        );
+        app
+    }
+
+    fn app_with_three_content_entries() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
             }),
         );
         app
@@ -1181,5 +1280,85 @@ mod tests {
         app.toggle_folder(0);
         assert_eq!(app.folder_labels().len(), 1);
         assert!(app.folder_labels()[0].contains('>'));
+    }
+
+    #[test]
+    fn ctrl_click_toggles_a_row_into_and_out_of_the_selection() {
+        let mut app = app_with_three_content_entries();
+        // apply_contents_result leaves row 0 selected.
+
+        app.click_content(1, true, false);
+        assert_eq!(app.content_selected_marks(), vec![true, true, false]);
+
+        app.click_content(1, true, false);
+        assert_eq!(app.content_selected_marks(), vec![true, false, false]);
+    }
+
+    #[test]
+    fn shift_click_selects_a_contiguous_range() {
+        let mut app = app_with_three_content_entries();
+        app.click_content(0, false, false);
+
+        app.click_content(2, false, true);
+
+        assert_eq!(app.content_selected_marks(), vec![true, true, true]);
+    }
+
+    #[test]
+    fn ctrl_a_selects_every_content_row() {
+        let mut app = app_with_three_content_entries();
+
+        app.select_all_content();
+
+        assert_eq!(app.content_selected_marks(), vec![true, true, true]);
+    }
+
+    #[test]
+    fn a_plain_click_collapses_back_to_a_single_row_selection() {
+        let mut app = app_with_three_content_entries();
+        app.select_all_content();
+
+        app.click_content(1, false, false);
+
+        assert_eq!(app.content_selected_marks(), vec![false, true, false]);
+    }
+
+    #[test]
+    fn confirming_a_multi_row_delete_sends_one_request_with_every_selected_path() {
+        let mut app = app_with_three_content_entries();
+        app.click_content(0, false, false);
+        app.click_content(2, true, false);
+
+        app.request_delete();
+        let Mode::ConfirmDelete { paths, label } = &app.mode else {
+            panic!("expected a delete confirmation");
+        };
+        assert_eq!(paths.len(), 2);
+        assert_eq!(label, "2 items");
+
+        app.confirm_delete();
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "deleting...");
+    }
+
+    #[test]
+    fn delete_confirmation_names_the_count_for_a_multi_row_selection() {
+        let mut app = app_with_three_content_entries();
+        app.click_content(0, false, false);
+        app.click_content(1, true, false);
+
+        app.request_delete();
+
+        assert_eq!(app.status_text(), "Delete 2 items? y/n");
+    }
+
+    #[test]
+    fn a_multi_row_selection_clears_the_file_preview() {
+        let mut app = app_with_three_content_entries();
+
+        app.click_content(1, true, false);
+
+        assert!(app.pending_file.is_none());
+        assert_eq!(app.file_text(), "");
     }
 }

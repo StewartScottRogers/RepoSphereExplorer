@@ -4,8 +4,9 @@ component Pane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
     in property <[string]> rows;
-    in property <int> selected;
-    callback row-clicked(int);
+    in property <int> selected: -1;
+    in property <[bool]> marks: [];
+    callback row-clicked(int, bool, bool);
     callback row-double-clicked(int);
 
     border-width: 1px;
@@ -23,18 +24,22 @@ component Pane inherits Rectangle {
             VerticalLayout {
                 alignment: start;
                 for row[i] in rows: Rectangle {
-                    background: i == selected ? #3a6ea5 : transparent;
+                    background: marks[i] || i == selected ? #3a6ea5 : transparent;
                     height: 20px;
                     Text {
                         text: row;
-                        color: i == selected ? white : #dddddd;
+                        color: marks[i] || i == selected ? white : #dddddd;
                         vertical-alignment: center;
                         x: 4px;
                     }
                     TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => { row-clicked(i); }
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) {
+                                row-clicked(i, event.modifiers.control, event.modifiers.shift);
+                            }
+                        }
                         double-clicked => { row-double-clicked(i); }
                     }
                 }
@@ -51,14 +56,14 @@ export component MainWindow inherits Window {
     in property <[string]> folder-rows;
     in property <int> folder-selected;
     in property <[string]> content-rows;
-    in property <int> content-selected;
+    in property <[bool]> content-marks;
     in property <string> file-text;
     in property <string> status-text;
     in property <int> focus-pane;
 
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
-    callback content-row-clicked(int);
+    callback content-row-clicked(int, bool, bool);
     callback content-row-double-clicked(int);
     callback cancel-requested();
     callback delete-requested();
@@ -66,6 +71,7 @@ export component MainWindow inherits Window {
     callback backspace-pressed();
     callback key-text(string);
     callback parent-requested();
+    callback select-all-requested();
 
     forward-focus: key-scope;
 
@@ -81,6 +87,8 @@ export component MainWindow inherits Window {
                 backspace-pressed();
             } else if (event.text == Key.UpArrow && event.modifiers.alt) {
                 parent-requested();
+            } else if (event.text == "a" && event.modifiers.control) {
+                select-all-requested();
             } else {
                 key-text(event.text);
             }
@@ -103,16 +111,16 @@ export component MainWindow inherits Window {
                     rows: folder-rows;
                     selected: folder-selected;
                     horizontal-stretch: 25;
-                    row-clicked(i) => { folder-row-clicked(i); }
+                    row-clicked(i, ctrl, shift) => { folder-row-clicked(i); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
                 }
                 Pane {
                     title: "Contents";
                     focused: focus-pane == 1;
                     rows: content-rows;
-                    selected: content-selected;
+                    marks: content-marks;
                     horizontal-stretch: 35;
-                    row-clicked(i) => { content-row-clicked(i); }
+                    row-clicked(i, ctrl, shift) => { content-row-clicked(i, ctrl, shift); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
                 }
                 Rectangle {

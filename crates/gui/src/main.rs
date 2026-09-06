@@ -90,8 +90,19 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
 
     on_row_event!(on_folder_row_clicked, select_folder);
     on_row_event!(on_folder_row_double_clicked, toggle_folder);
-    on_row_event!(on_content_row_clicked, select_content);
     on_row_event!(on_content_row_double_clicked, open_content);
+
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_content_row_clicked(move |i, ctrl, shift| {
+            let mut app = app.borrow_mut();
+            app.click_content(index(i), ctrl, shift);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
 
     macro_rules! on_event {
         ($setter:ident, $method:ident) => {{
@@ -112,6 +123,7 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_return_pressed, handle_return);
     on_event!(on_backspace_pressed, backspace);
     on_event!(on_parent_requested, navigate_to_parent);
+    on_event!(on_select_all_requested, select_all_content);
 
     let text_app = app.clone();
     let text_ui = ui.as_weak();
