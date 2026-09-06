@@ -7,7 +7,7 @@ as GitHub issues, releases out, no human on the floor.
 
 ```bash
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo run -- explore acme/widgets
 ```
