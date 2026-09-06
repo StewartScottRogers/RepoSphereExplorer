@@ -1,11 +1,11 @@
 # RepoSphereExplorer — Design Guidance
 
-**Status: D1–D5 settled, ready for a build order.** This is the source document
+**Status: D1–D6 settled, ready for a build order.** This is the source document
 the factory builds from. Edit it directly; every work order should trace back to
 a line in here. If this document and the code disagree, this document is wrong —
 fix it here first, then let the factory change the code.
 
-Sections are numbered to match the original brief. Decisions D1–D5 in [§7](#7-open-decisions)
+Sections are numbered to match the original brief. Decisions D1–D6 in [§7](#7-open-decisions)
 are settled below and now gate the build order in [§8](#8-build-order-once-d1d5-are-settled).
 
 ---
@@ -225,8 +225,7 @@ package management beyond the updater, no telemetry of any kind.
 
 ## 7. Open decisions
 
-All settled as of 2026-09-01. Nothing here is open any longer; the build order
-in §8 proceeds.
+All settled. Nothing here is open any longer; the build order in §8 proceeds.
 
 **D1 — Plugin split.** Core-in-service plus presentation-in-front-end, as in §3.1?
 
@@ -249,6 +248,30 @@ code-signing certificate?
 **D5 — First five formats, to prove the architecture.**
 
 - [x] text, image, archive, PDF, directory-as-file
+
+**D6 — Editing scope for v2: GUI usability parity with Windows File Explorer.**
+The three-pane GUI (§2.2's TUI is not in scope for this decision) implements
+only D4's v1 operations today, and only a fraction of §2.3/§2.4's own
+already-settled behaviour: no multi-select, no context menus, no address bar,
+no sortable columns, no drag-and-drop, no create/undo. Settled 2026-09-06:
+
+- [x] Extend D4's v1 operations (rename, copy, delete, extract) to also cover
+  create (new folder, new empty file), move to an arbitrary destination (not
+  only a same-directory rename), and undo of the immediately preceding
+  operation.
+- [x] Build out §2.3/§2.4 as already specified but not yet implemented:
+  platform-appropriate keyboard shortcuts per the §2.3 table, right-click
+  context menus, sortable columns, marquee/multi-select and batch operations,
+  internal (pane-to-pane) drag-and-drop, inline rename, draggable and
+  persisted splitters, an address bar with back/forward navigation, a status
+  bar (item count/size), and a properties view (size, modified time).
+- [x] Add a directory-contents filter box (typed substring match against the
+  current folder's listing) - a new addition beyond §2.4's original wording,
+  since Explorer users expect it.
+- Deferred, explicitly not in this scope: dragging files in from the OS shell
+  (import from outside the app), recursive/whole-tree search, thumbnails
+  beyond what a plugin's own preview already renders. Network/cloud locations
+  remain excluded by §6.
 
 ## 8. Build order once D1–D5 are settled
 
