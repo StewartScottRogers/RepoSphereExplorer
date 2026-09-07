@@ -8,6 +8,14 @@ component Pane inherits Rectangle {
     callback row-clicked(int);
     callback row-double-clicked(int);
 
+    // A per-row `for`-loop generating `Rectangle`/`TouchArea` instances
+    // leaves every instance but the first permanently unresponsive to real
+    // mouse input under Slint 1.17.1 (matches upstream issue #6836).
+    // Worked around with a `for`-loop of plain `Text` rows (which does not
+    // trigger the bug), a single non-repeated highlight `Rectangle`, and one
+    // overlay `TouchArea` that derives the clicked row from `mouse-y`.
+    property <length> row-height: 20px;
+
     border-width: 1px;
     border-color: focused ? #e5c07b : #555555;
 
@@ -20,22 +28,32 @@ component Pane inherits Rectangle {
             horizontal-alignment: center;
         }
         ScrollView {
-            VerticalLayout {
-                alignment: start;
-                for row[i] in rows: Rectangle {
-                    background: i == selected ? #3a6ea5 : transparent;
-                    height: 20px;
-                    Text {
-                        text: row;
-                        color: i == selected ? white : #dddddd;
-                        vertical-alignment: center;
-                        x: 4px;
+            Rectangle {
+                height: max(rows.length * row-height, 1px);
+
+                Rectangle {
+                    y: selected >= 0 ? selected * row-height : 0px;
+                    height: selected >= 0 ? row-height : 0px;
+                    background: #3a6ea5;
+                }
+
+                for row[i] in rows: Text {
+                    text: row;
+                    color: i == selected ? white : #dddddd;
+                    y: i * row-height;
+                    height: row-height;
+                    vertical-alignment: center;
+                    x: 4px;
+                }
+
+                click-area := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => {
+                        row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
                     }
-                    TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { row-clicked(i); }
-                        double-clicked => { row-double-clicked(i); }
+                    double-clicked => {
+                        row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
                     }
                 }
             }
