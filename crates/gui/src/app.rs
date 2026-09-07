@@ -523,10 +523,12 @@ impl App {
     }
 
     /// Starts editing a destination name to copy the selected contents row
-    /// to.
+    /// to, de-duplicated against the current listing: the source's own name
+    /// always collides, and accepting it copies the file onto itself.
     pub fn request_copy(&mut self) {
         if let Some((path, name)) = self.selected_entry_path() {
-            self.mode = Mode::CopyInput { path, input: name };
+            let input = dedup_name(&self.contents, &name);
+            self.mode = Mode::CopyInput { path, input };
         }
     }
 
@@ -1217,10 +1219,10 @@ mod tests {
     }
 
     #[test]
-    fn c_key_prefills_the_copy_input_with_the_current_name() {
+    fn c_key_prefills_the_copy_input_with_a_name_that_does_not_collide() {
         let mut app = app_with_one_content_entry();
         app.handle_key_text("c");
-        assert_eq!(app.status_text(), "Copy to: doomed.txt_  (Enter/Esc)");
+        assert_eq!(app.status_text(), "Copy to: doomed.txt (2)_  (Enter/Esc)");
     }
 
     #[test]
@@ -1341,7 +1343,7 @@ mod tests {
     fn returning_with_an_emptied_copy_input_does_not_send_a_request() {
         let mut app = app_with_one_content_entry();
         app.handle_key_text("c");
-        for _ in 0.."doomed.txt".len() {
+        for _ in 0.."doomed.txt (2)".len() {
             app.backspace();
         }
 
