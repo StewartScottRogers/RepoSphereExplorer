@@ -13,6 +13,13 @@ pub const VERSION: u32 = 1;
 /// The name other processes use to find the service's local socket.
 pub const SOCKET_NAME: &str = "reposphereexplorer.sock";
 
+/// The largest message [`read_message`] will accept, in bytes. The length
+/// prefix arrives before any of the payload it describes, so without a cap
+/// four bytes are enough to make the reader commit up to 4 GiB. Real
+/// messages are far smaller - a file view is capped at 64 KiB by its
+/// plugin, and the largest thing on the wire is a directory listing.
+pub const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
+
 /// A request sent from a front end to the service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
@@ -130,12 +137,19 @@ pub fn socket_name() -> io::Result<Name<'static>> {
 /// Reads one length-prefixed, JSON-encoded message from `reader`.
 ///
 /// # Errors
-/// Returns an error if the underlying I/O fails or the bytes read are not a
-/// valid `T`.
+/// Returns an error if the announced length exceeds [`MAX_MESSAGE_BYTES`],
+/// if the underlying I/O fails, or if the bytes read are not a valid `T`.
 pub fn read_message<T: serde::de::DeserializeOwned, R: Read>(mut reader: R) -> io::Result<T> {
     let mut len_bytes = [0u8; 4];
     reader.read_exact(&mut len_bytes)?;
-    let len = u32::from_be_bytes(len_bytes) as usize;
+    let len = u32::from_be_bytes(len_bytes);
+    if len > MAX_MESSAGE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("message of {len} bytes exceeds the {MAX_MESSAGE_BYTES} byte limit"),
+        ));
+    }
+    let len = len as usize;
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf)?;
     serde_json::from_slice(&buf).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
@@ -150,6 +164,12 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
         serde_json::to_vec(value).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     let len =
         u32::try_from(buf.len()).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    if len > MAX_MESSAGE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("message of {len} bytes exceeds the {MAX_MESSAGE_BYTES} byte limit"),
+        ));
+    }
     writer.write_all(&len.to_be_bytes())?;
     writer.write_all(&buf)?;
     writer.flush()
@@ -157,7 +177,19 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectoryEntry, Request, Response, read_message, write_message};
+    use super::{
+        DirectoryEntry, MAX_MESSAGE_BYTES, Request, Response, read_message, write_message,
+    };
+
+    #[test]
+    fn refuses_a_length_prefix_larger_than_the_message_limit() {
+        let mut frame = (MAX_MESSAGE_BYTES + 1).to_be_bytes().to_vec();
+        frame.extend_from_slice(b"the payload is never read");
+
+        let err = read_message::<Response, _>(frame.as_slice()).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
 
     #[test]
     fn round_trips_a_response_through_the_wire_format() {
