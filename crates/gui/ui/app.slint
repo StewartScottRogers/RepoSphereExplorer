@@ -28,32 +28,42 @@ component Pane inherits Rectangle {
             horizontal-alignment: center;
         }
         ScrollView {
-            Rectangle {
-                height: max(rows.length * row-height, 1px);
-
+            // `ScrollView` vertically centers a child shorter than its
+            // viewport rather than pinning it to the top, so the row
+            // container needs an explicit top-aligned layout around it.
+            VerticalLayout {
+                alignment: start;
                 Rectangle {
-                    y: selected >= 0 ? selected * row-height : 0px;
-                    height: selected >= 0 ? row-height : 0px;
-                    background: #3a6ea5;
-                }
+                    height: max(rows.length * row-height, 1px);
 
-                for row[i] in rows: Text {
-                    text: row;
-                    color: i == selected ? white : #dddddd;
-                    y: i * row-height;
-                    height: row-height;
-                    vertical-alignment: center;
-                    x: 4px;
-                }
-
-                click-area := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    clicked => {
-                        row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                    Rectangle {
+                        y: selected >= 0 ? selected * row-height : 0px;
+                        height: selected >= 0 ? row-height : 0px;
+                        background: #3a6ea5;
                     }
-                    double-clicked => {
-                        row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+
+                    for row[i] in rows: Text {
+                        text: row;
+                        color: i == selected ? white : #dddddd;
+                        y: i * row-height;
+                        height: row-height;
+                        vertical-alignment: center;
+                        x: 4px;
+                    }
+
+                    click-area := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => {
+                            if (rows.length > 0) {
+                                row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                            }
+                        }
+                        double-clicked => {
+                            if (rows.length > 0) {
+                                row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                            }
+                        }
                     }
                 }
             }
@@ -89,6 +99,11 @@ component ContextMenuItem inherits Rectangle {
 // Delete/Extract, mirroring the existing hotkeys) and a disabled "New
 // Folder" menu on empty space. Kept separate from `Pane` (rather than a
 // shared toggle) so the folders pane's behavior is untouched.
+// The contents pane's own variant of `Pane`, with a right-click context menu
+// added on top of the same row rendering. Uses the same Text-row / single
+// overlay TouchArea workaround as `Pane` (see its comment) for the Slint
+// for-loop TouchArea bug - a per-row TouchArea here would also lose right-
+// click delivery on every row past the first, not just left-click.
 component ContentsPane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
@@ -101,6 +116,8 @@ component ContentsPane inherits Rectangle {
     callback copy-requested();
     callback delete-requested();
     callback extract-requested();
+
+    property <length> row-height: 20px;
 
     border-width: 1px;
     border-color: focused ? #e5c07b : #555555;
@@ -116,14 +133,44 @@ component ContentsPane inherits Rectangle {
         ScrollView {
             body := Rectangle {
                 width: 100%;
-                min-height: root.height - 22px;
+                min-height: max(rows.length * row-height, root.height - 22px);
 
-                TouchArea {
+                Rectangle {
+                    y: selected >= 0 ? selected * row-height : 0px;
+                    height: selected >= 0 ? row-height : 0px;
+                    background: #3a6ea5;
+                }
+
+                for row[i] in rows: Text {
+                    text: row;
+                    color: i == selected ? white : #dddddd;
+                    y: i * row-height;
+                    height: row-height;
+                    vertical-alignment: center;
+                    x: 4px;
+                }
+
+                click-area := TouchArea {
                     width: 100%;
                     height: 100%;
+                    clicked => {
+                        if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                            row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                        }
+                    }
+                    double-clicked => {
+                        if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                            row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                        }
+                    }
                     pointer-event(event) => {
                         if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
-                            empty-menu.show();
+                            if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                                row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                row-menu.show();
+                            } else {
+                                empty-menu.show();
+                            }
                         }
                     }
                 }
@@ -173,32 +220,6 @@ component ContentsPane inherits Rectangle {
                         }
                     }
                 }
-
-                VerticalLayout {
-                    alignment: start;
-                    for row[i] in rows: Rectangle {
-                        background: i == selected ? #3a6ea5 : transparent;
-                        height: 20px;
-                        Text {
-                            text: row;
-                            color: i == selected ? white : #dddddd;
-                            vertical-alignment: center;
-                            x: 4px;
-                        }
-                        TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => { row-clicked(i); }
-                            double-clicked => { row-double-clicked(i); }
-                            pointer-event(event) => {
-                                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
-                                    row-clicked(i);
-                                    row-menu.show();
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -208,6 +229,11 @@ export component MainWindow inherits Window {
     title: "RepoSphereExplorer";
     preferred-width: 1000px;
     preferred-height: 600px;
+    // Row/title text throughout (#cccccc, #dddddd) and the context menus
+    // (#2b2b2b) are all colored for a dark theme; without this the window
+    // defaults to a light background and that text reads as low-contrast
+    // grey-on-white instead.
+    background: #1e1e1e;
 
     in property <[string]> folder-rows;
     in property <int> folder-selected;
