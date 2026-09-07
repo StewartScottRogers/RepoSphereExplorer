@@ -251,12 +251,41 @@ fn journal(operation: &str, targets: &[String], outcome: &io::Result<()>) {
     }
 }
 
-/// Renames (moves) `from` to `to`, journaling the attempt.
+/// Fails if anything already exists at `path`, so an operation that would
+/// silently replace it stops before touching the filesystem.
+fn refuse_if_exists(path: &Path) -> io::Result<()> {
+    if path.symlink_metadata().is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} already exists", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+/// As [`refuse_if_exists`], but lets `to` be `from` itself: both front ends
+/// pre-fill the rename prompt with the current name, so renaming a path to
+/// the name it already has is the no-op a user gets by pressing Enter
+/// without editing, not an attempt to replace anything.
+fn refuse_if_occupied_by_another(from: &Path, to: &Path) -> io::Result<()> {
+    match (from.canonicalize(), to.canonicalize()) {
+        (Ok(from), Ok(to)) if from == to => Ok(()),
+        _ => refuse_if_exists(to),
+    }
+}
+
+/// Renames (moves) `from` to `to`, journaling the attempt. Refuses to
+/// replace an existing `to`, the way [`create_file`] and
+/// [`create_directory`] refuse an existing target: the front ends drive
+/// this from a free-text prompt, where a name that happens to match a
+/// sibling would otherwise destroy it without a word. Renaming a path to
+/// the name it already has stays the no-op it was.
 ///
 /// # Errors
-/// Returns an error if the rename fails.
+/// Returns an error if something other than `from` already exists at `to`,
+/// or if the rename fails.
 pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
-    let result = fs::rename(from, to);
+    let result = refuse_if_occupied_by_another(from, to).and_then(|()| fs::rename(from, to));
     journal(
         "rename",
         &[from.display().to_string(), to.display().to_string()],
@@ -265,12 +294,14 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
     result
 }
 
-/// Copies the file at `from` to `to`, journaling the attempt.
+/// Copies the file at `from` to `to`, journaling the attempt. Refuses to
+/// replace an existing `to`, for the same reason [`rename`] does.
 ///
 /// # Errors
-/// Returns an error if the copy fails.
+/// Returns an error if something already exists at `to`, or if the copy
+/// fails.
 pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
-    let result = fs::copy(from, to).map(|_| ());
+    let result = refuse_if_exists(to).and_then(|()| fs::copy(from, to).map(|_| ()));
     journal(
         "copy",
         &[from.display().to_string(), to.display().to_string()],
@@ -549,6 +580,55 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&from).unwrap(), "content");
         assert_eq!(fs::read_to_string(&to).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_rename_onto_an_existing_path() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("old.txt");
+        let to = dir.join("occupied.txt");
+        fs::write(&from, "content").unwrap();
+        fs::write(&to, "precious").unwrap();
+
+        let err = rename(&from, &to).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&from).unwrap(), "content");
+        assert_eq!(fs::read_to_string(&to).unwrap(), "precious");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_copy_onto_an_existing_path() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("source.txt");
+        let to = dir.join("occupied.txt");
+        fs::write(&from, "content").unwrap();
+        fs::write(&to, "precious").unwrap();
+
+        let err = copy(&from, &to).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&to).unwrap(), "precious");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_a_path_to_its_own_name_is_a_no_op() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("unchanged.txt");
+        fs::write(&path, "content").unwrap();
+
+        rename(&path, &path).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "content");
 
         fs::remove_dir_all(&dir).unwrap();
     }
