@@ -61,6 +61,149 @@ component Pane inherits Rectangle {
     }
 }
 
+component ContextMenuItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> item-enabled: true;
+    callback activated();
+
+    height: 24px;
+    background: touch.has-hover ? #3a6ea5 : transparent;
+
+    Text {
+        text: label;
+        color: item-enabled ? #dddddd : #777777;
+        vertical-alignment: center;
+        x: 8px;
+    }
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: item-enabled;
+        clicked => { activated(); }
+    }
+}
+
+// The contents pane's own variant of `Pane`, with a right-click context menu
+// added on top of the same row rendering: a menu on a row (Open/Rename/Copy/
+// Delete/Extract, mirroring the existing hotkeys) and a disabled "New
+// Folder" menu on empty space. Kept separate from `Pane` (rather than a
+// shared toggle) so the folders pane's behavior is untouched.
+component ContentsPane inherits Rectangle {
+    in property <string> title;
+    in property <bool> focused;
+    in property <[string]> rows;
+    in property <int> selected;
+    callback row-clicked(int);
+    callback row-double-clicked(int);
+    callback open-requested();
+    callback rename-requested();
+    callback copy-requested();
+    callback delete-requested();
+    callback extract-requested();
+
+    border-width: 1px;
+    border-color: focused ? #e5c07b : #555555;
+
+    VerticalLayout {
+        Text {
+            text: title;
+            font-weight: 700;
+            color: focused ? #e5c07b : #cccccc;
+            height: 22px;
+            horizontal-alignment: center;
+        }
+        ScrollView {
+            body := Rectangle {
+                width: 100%;
+                min-height: root.height - 22px;
+
+                TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                            empty-menu.show();
+                        }
+                    }
+                }
+
+                empty-menu := PopupWindow {
+                    Rectangle {
+                        background: #2b2b2b;
+                        border-width: 1px;
+                        border-color: #555555;
+                        width: 150px;
+                        VerticalLayout {
+                            ContextMenuItem {
+                                label: "New Folder";
+                                item-enabled: false;
+                            }
+                        }
+                    }
+                }
+
+                row-menu := PopupWindow {
+                    Rectangle {
+                        background: #2b2b2b;
+                        border-width: 1px;
+                        border-color: #555555;
+                        width: 150px;
+                        VerticalLayout {
+                            ContextMenuItem {
+                                label: "Open";
+                                activated => { row-menu.close(); open-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Rename";
+                                activated => { row-menu.close(); rename-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Copy";
+                                activated => { row-menu.close(); copy-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Delete";
+                                activated => { row-menu.close(); delete-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Extract";
+                                activated => { row-menu.close(); extract-requested(); }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: start;
+                    for row[i] in rows: Rectangle {
+                        background: i == selected ? #3a6ea5 : transparent;
+                        height: 20px;
+                        Text {
+                            text: row;
+                            color: i == selected ? white : #dddddd;
+                            vertical-alignment: center;
+                            x: 4px;
+                        }
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            clicked => { row-clicked(i); }
+                            double-clicked => { row-double-clicked(i); }
+                            pointer-event(event) => {
+                                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                                    row-clicked(i);
+                                    row-menu.show();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "RepoSphereExplorer";
     preferred-width: 1000px;
@@ -78,6 +221,11 @@ export component MainWindow inherits Window {
     callback folder-row-double-clicked(int);
     callback content-row-clicked(int);
     callback content-row-double-clicked(int);
+    callback content-open-requested();
+    callback content-rename-requested();
+    callback content-copy-requested();
+    callback content-delete-requested();
+    callback content-extract-requested();
     callback cancel-requested();
     callback delete-requested();
     callback return-pressed();
@@ -98,6 +246,8 @@ export component MainWindow inherits Window {
                 return-pressed();
             } else if (event.text == Key.Backspace) {
                 backspace-pressed();
+            } else if (event.text == Key.F2) {
+                content-rename-requested();
             } else if (event.text == Key.UpArrow && event.modifiers.alt) {
                 parent-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
@@ -127,7 +277,7 @@ export component MainWindow inherits Window {
                     row-clicked(i) => { folder-row-clicked(i); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
                 }
-                Pane {
+                ContentsPane {
                     title: "Contents";
                     focused: focus-pane == 1;
                     rows: content-rows;
@@ -135,6 +285,11 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 35;
                     row-clicked(i) => { content-row-clicked(i); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
+                    open-requested => { content-open-requested(); }
+                    rename-requested => { content-rename-requested(); }
+                    copy-requested => { content-copy-requested(); }
+                    delete-requested => { content-delete-requested(); }
+                    extract-requested => { content-extract-requested(); }
                 }
                 Rectangle {
                     horizontal-stretch: 40;
