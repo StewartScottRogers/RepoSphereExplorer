@@ -30,8 +30,11 @@ pub struct AssemblyView {
 }
 
 /// Whether `line`, once trimmed, starts with `keyword` case-insensitively.
+/// Compares bytes rather than slicing the `&str`, which panics when a
+/// multi-byte character straddles `keyword.len()`.
 fn starts_with_ci(line: &str, keyword: &str) -> bool {
-    let trimmed = line.trim_start();
+    let trimmed = line.trim_start().as_bytes();
+    let keyword = keyword.as_bytes();
     trimmed.len() >= keyword.len() && trimmed[..keyword.len()].eq_ignore_ascii_case(keyword)
 }
 
@@ -203,6 +206,27 @@ mod tests {
         assert!(!AssemblyCore.sniff(b"my $count = 0;\nprint \"hi\\n\";\n"));
         assert!(!AssemblyCore.sniff(b"just a regular line of text\n"));
         assert!(!AssemblyCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn views_a_file_with_a_multi_byte_character_at_a_keyword_boundary() {
+        // The em dash straddles byte 8, the length of the longest keyword
+        // parsed for (`.global `). Slicing the line there panicked, which
+        // took the whole service process down with it.
+        let path = unique_temp_file("dash.s");
+        std::fs::write(
+            &path,
+            ".global _start\n# note \u{2014} a comment\n_start:\n    ret\n",
+        )
+        .unwrap();
+
+        let data = AssemblyCore.view(&path).unwrap();
+        let view: AssemblyView = serde_json::from_value(data).unwrap();
+
+        assert_eq!(view.globals, vec!["_start"]);
+        assert_eq!(view.labels, vec!["_start"]);
+
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

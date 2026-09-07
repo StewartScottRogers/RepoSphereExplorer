@@ -24,8 +24,11 @@ pub struct FortranView {
 }
 
 /// Whether `line`, once trimmed, starts with `keyword` case-insensitively.
+/// Compares bytes rather than slicing the `&str`, which panics when a
+/// multi-byte character straddles `keyword.len()`.
 fn starts_with_ci(line: &str, keyword: &str) -> bool {
-    let trimmed = line.trim_start();
+    let trimmed = line.trim_start().as_bytes();
+    let keyword = keyword.as_bytes();
     trimmed.len() >= keyword.len() && trimmed[..keyword.len()].eq_ignore_ascii_case(keyword)
 }
 
@@ -180,6 +183,14 @@ mod tests {
         assert!(!FortranCore.sniff(b"module Greeter\n  def greet\n    puts 'hi'\n  end\nend\n"));
         assert!(!FortranCore.sniff(b"just a regular line of text\n"));
         assert!(!FortranCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn sniffs_prose_with_a_multi_byte_character_at_a_keyword_boundary() {
+        // The em dash straddles byte 14, the length of the longest keyword
+        // sniffed for (`end subroutine`). Slicing the line there panicked,
+        // which took the whole service process down with it.
+        assert!(!FortranCore.sniff("a plain line \u{2014} of prose\n".as_bytes()));
     }
 
     #[test]

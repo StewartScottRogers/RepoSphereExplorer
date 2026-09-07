@@ -34,10 +34,14 @@ const STATEMENT_KEYWORDS: &[&str] = &[
     "DROP TABLE",
 ];
 
-/// Strips `prefix` from the start of `s`, case-insensitively.
+/// Strips `prefix` from the start of `s`, case-insensitively. Compares
+/// bytes rather than slicing the `&str`, which panics when a multi-byte
+/// character straddles `prefix.len()`; once the ASCII prefix has matched,
+/// `prefix.len()` is a character boundary and the tail slice is safe.
 fn strip_ci_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    (s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix))
-        .then(|| &s[prefix.len()..])
+    (s.len() >= prefix.len()
+        && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes()))
+    .then(|| &s[prefix.len()..])
 }
 
 /// Whether `line`, once trimmed, starts with `keyword` case-insensitively.
@@ -179,6 +183,14 @@ mod tests {
         ));
         assert!(!SqlCore.sniff(b"just a regular line of text\n"));
         assert!(!SqlCore.sniff(&[0xFF, 0xFE, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn sniffs_prose_with_a_multi_byte_character_at_a_keyword_boundary() {
+        // The em dash straddles byte 12, the length of the longest statement
+        // keyword (`CREATE TABLE`). Slicing the line there panicked, which
+        // took the whole service process down with it.
+        assert!(!SqlCore.sniff("plain text \u{2014} of prose\n".as_bytes()));
     }
 
     #[test]
