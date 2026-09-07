@@ -73,10 +73,13 @@ impl PluginCore for ArchiveCore {
 /// Returns an error if the archive cannot be read or an entry cannot be
 /// written under `destination`.
 pub fn extract(archive_path: &Path, destination: &Path) -> io::Result<()> {
-    std::fs::create_dir_all(destination)?;
+    // Open and validate the archive before creating the destination, so
+    // extracting something that is not an archive leaves no empty directory
+    // behind.
     let file = std::fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    std::fs::create_dir_all(destination)?;
     archive
         .extract(destination)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
@@ -143,6 +146,20 @@ mod tests {
     fn sniffs_the_zip_local_file_header_magic() {
         assert!(ArchiveCore.sniff(b"PK\x03\x04rest of header"));
         assert!(!ArchiveCore.sniff(b"not a zip"));
+    }
+
+    #[test]
+    fn a_failed_extract_leaves_no_destination_directory_behind() {
+        let archive = unique_temp_file("not-an-archive.zip");
+        let destination = unique_temp_file("not-an-archive-out");
+        std::fs::write(&archive, b"plain text, not a zip").unwrap();
+
+        let err = super::extract(&archive, &destination).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(!destination.exists());
+
+        std::fs::remove_file(&archive).unwrap();
     }
 
     #[test]
