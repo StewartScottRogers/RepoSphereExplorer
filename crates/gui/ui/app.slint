@@ -329,12 +329,13 @@ export component MainWindow inherits Window {
                             height: 22px;
                             horizontal-alignment: center;
                         }
-                        ScrollView {
+                        view := ScrollView {
                             Text {
                                 text: file-text;
                                 color: #dddddd;
                                 wrap: word-wrap;
                                 x: 4px;
+                                width: view.visible-width - 8px;
                             }
                         }
                     }
