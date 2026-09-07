@@ -113,6 +113,7 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_backspace_pressed, backspace);
     on_event!(on_parent_requested, navigate_to_parent);
     on_event!(on_new_folder_requested, request_new_folder);
+    on_event!(on_new_file_requested, request_new_file);
     on_event!(on_content_rename_requested, request_rename);
     on_event!(on_content_copy_requested, request_copy);
     on_event!(on_content_delete_requested, request_delete);

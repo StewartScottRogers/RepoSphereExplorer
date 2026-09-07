@@ -259,6 +259,7 @@ export component MainWindow inherits Window {
     callback key-text(string);
     callback parent-requested();
     callback new-folder-requested();
+    callback new-file-requested();
 
     forward-focus: key-scope;
 
@@ -278,6 +279,8 @@ export component MainWindow inherits Window {
                 parent-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
                 new-folder-requested();
+            } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
+                new-file-requested();
             } else {
                 key-text(event.text);
             }
