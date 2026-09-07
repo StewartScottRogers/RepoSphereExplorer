@@ -24,7 +24,18 @@ const SNIFF_PREFIX_LEN: u64 = 32_774;
 /// Hand-registered: a registration macro would be structure with no second
 /// caller to justify it while twelve entries can still be read at a glance
 /// (see `plugin-api`'s crate docs).
+///
+/// `rust` leads. Rust's own syntax satisfies markers several other plugins
+/// sniff for - a `match` arm like `Some(x) => ...` reads as a JavaScript
+/// arrow function, and a top-level `enum` or `type` alias reads as
+/// TypeScript - so behind them it lost the great majority of real Rust
+/// files to whichever sibling matched first. Its own markers (`fn `,
+/// `impl `, `let mut `, `#[derive(`, `use std::`, `println!(`) are specific
+/// enough to lead without taking anything from a sibling: `samples/`
+/// pins that, since every fixture there must still be claimed by the
+/// plugin whose directory it sits in.
 const CORE_PLUGINS: &[&dyn PluginCore] = &[
+    &plugin_rust::RustCore,
     &plugin_perl::PerlCore,
     &plugin_prolog::PrologCore,
     &plugin_php::PhpCore,
@@ -35,7 +46,6 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_svelte::SvelteCore,
     &plugin_typescript::TypeScriptCore,
     &plugin_javascript::JavaScriptCore,
-    &plugin_rust::RustCore,
     &plugin_makefile::MakefileCore,
     &plugin_go::GoCore,
     &plugin_java::JavaCore,
@@ -550,6 +560,42 @@ mod tests {
         assert!(matches!(open(&file), Response::FileView { .. }));
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rust_leads_the_plugins_whose_markers_its_own_syntax_matches() {
+        // A `match` arm on a tuple pattern reads as a JavaScript arrow
+        // function, and a top-level `enum` or `type` alias reads as
+        // TypeScript. Both plugins used to sit ahead of `rust`.
+        let source = concat!(
+            "type Name = String;
+",
+            "enum Volume {
+",
+            "    Quiet,
+",
+            "}
+",
+            "fn parse(text: &str) -> Name {
+",
+            "    match text.split_once(',') {
+",
+            "        Some((name, _rest)) => name.to_owned(),
+",
+            "        None => text.to_owned(),
+",
+            "    }
+",
+            "}
+",
+        );
+
+        let plugin = super::CORE_PLUGINS
+            .iter()
+            .find(|plugin| plugin.sniff(source.as_bytes()))
+            .expect("some plugin should recognise Rust source");
+
+        assert_eq!(plugin.name(), "rust");
     }
 
     #[test]
