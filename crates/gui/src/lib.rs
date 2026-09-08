@@ -110,6 +110,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             .enumerate()
             .map(|(index, row)| ContentRow {
                 icon: icon_image(row.icon, row.is_dir),
+                is_repository: row.is_repository,
                 name: row.name.into(),
                 size: row.size.into(),
                 kind: row.kind.into(),
