@@ -262,10 +262,27 @@ pub enum Pane {
 #[derive(Debug)]
 enum Mode {
     Normal,
-    ConfirmDelete { paths: Vec<PathBuf>, name: String },
-    RenameInput { path: PathBuf, input: String },
-    CopyInput { path: PathBuf, input: String },
-    ExtractInput { path: PathBuf, input: String },
+    ConfirmDelete {
+        paths: Vec<PathBuf>,
+        name: String,
+    },
+    RenameInput {
+        path: PathBuf,
+        input: String,
+    },
+    CopyInput {
+        path: PathBuf,
+        input: String,
+    },
+    ExtractInput {
+        path: PathBuf,
+        input: String,
+    },
+    /// The address bar turned into a text field, the way Explorer's does on
+    /// Ctrl+L or a click past the last segment.
+    PathInput {
+        input: String,
+    },
 }
 
 /// What to do once a pending operation completes successfully, beyond the
@@ -779,7 +796,8 @@ impl App {
         match &mut self.mode {
             Mode::RenameInput { input, .. }
             | Mode::CopyInput { input, .. }
-            | Mode::ExtractInput { input, .. } => Some(input),
+            | Mode::ExtractInput { input, .. }
+            | Mode::PathInput { input } => Some(input),
             Mode::Normal | Mode::ConfirmDelete { .. } => None,
         }
     }
@@ -811,6 +829,17 @@ impl App {
                 },
                 input,
             )),
+            // A typed path is a navigation, not an operation on a file, so
+            // it goes straight to browsing rather than through the operation
+            // queue. A path that does not exist fails the way any other
+            // listing does, with the service's own message.
+            Mode::PathInput { input } if !input.trim().is_empty() => {
+                let target = PathBuf::from(input.trim());
+                self.remember_current();
+                self.push_history(target.clone());
+                self.browse(target);
+                return;
+            }
             _ => None,
         };
         if let Some((request, produced)) = request {
@@ -851,7 +880,10 @@ impl App {
     /// host, including the Linux CI runner that gates merges.
     fn handle_return_for_os(&mut self, os: &str) {
         match self.mode {
-            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
+            Mode::RenameInput { .. }
+            | Mode::CopyInput { .. }
+            | Mode::ExtractInput { .. }
+            | Mode::PathInput { .. } => {
                 self.confirm_text_input();
             }
             Mode::Normal if os == "macos" => self.request_rename(),
@@ -869,7 +901,10 @@ impl App {
                 "n" | "N" => self.decline_delete(),
                 _ => {}
             },
-            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
+            Mode::RenameInput { .. }
+            | Mode::CopyInput { .. }
+            | Mode::ExtractInput { .. }
+            | Mode::PathInput { .. } => {
                 self.type_char(text);
             }
             // Explorer's type-ahead: a typed letter jumps to a name, it is
@@ -1203,6 +1238,39 @@ impl App {
         self.reselect = Some(name);
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("working...".to_owned());
+    }
+
+    /// Ctrl+L, F4, or a click past the last segment: turns the address bar
+    /// into a text field holding the current path, for typing or pasting one.
+    pub fn begin_path_edit(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        self.mode = Mode::PathInput {
+            input: self.selected_dir_path().to_string_lossy().into_owned(),
+        };
+    }
+
+    /// The path being typed, or an empty string when the address bar is
+    /// showing its segments.
+    #[must_use]
+    pub fn path_input(&self) -> String {
+        match &self.mode {
+            Mode::PathInput { input } => input.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// Whether the address bar is currently a text field.
+    #[must_use]
+    pub const fn editing_path(&self) -> bool {
+        matches!(self.mode, Mode::PathInput { .. })
+    }
+
+    /// The browsed folder's full path, for the status bar and for copying.
+    #[must_use]
+    pub fn current_path(&self) -> String {
+        self.selected_dir_path().to_string_lossy().into_owned()
     }
 
     /// Ctrl+Z: asks the service to reverse the last operation. The service
@@ -1543,6 +1611,7 @@ impl App {
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
+            Mode::PathInput { input } => format!("Go to: {input}_  (Enter/Esc)"),
             Mode::Normal => self
                 .status
                 .clone()
@@ -1563,7 +1632,9 @@ impl App {
             Mode::RenameInput { input, .. } => format!("Rename to:  {input}"),
             Mode::CopyInput { input, .. } => format!("Copy to:  {input}"),
             Mode::ExtractInput { input, .. } => format!("Extract into:  {input}"),
-            Mode::Normal => String::new(),
+            // The address bar shows its own text field; the contents pane
+            // has nothing to say about a path being typed.
+            Mode::PathInput { .. } | Mode::Normal => String::new(),
         }
     }
 
@@ -1924,6 +1995,87 @@ mod tests {
 
         app.move_selection(-10);
         assert_eq!(app.content_selected(), 0);
+    }
+
+    #[test]
+    fn opening_the_address_bar_prefills_the_folder_being_browsed() {
+        let mut app = App::new(PathBuf::from("/one/two"));
+        assert!(!app.editing_path());
+        assert_eq!(app.path_input(), "");
+
+        app.begin_path_edit();
+
+        assert!(app.editing_path());
+        assert_eq!(
+            app.path_input(),
+            app.current_path(),
+            "the field starts as the path you are on, ready to be edited"
+        );
+    }
+
+    #[test]
+    fn a_typed_path_is_navigated_to_and_recorded_in_history() {
+        let mut app = App::new(PathBuf::from("/one/two"));
+        app.begin_path_edit();
+        for _ in 0..app.path_input().len() {
+            app.backspace();
+        }
+        for c in "/three/four".chars() {
+            app.handle_key_text(&c.to_string());
+        }
+
+        app.handle_return();
+
+        assert!(!app.editing_path(), "the field closes");
+        assert_eq!(
+            app.breadcrumbs().last().map(String::as_str),
+            Some("four"),
+            "and the typed folder is the one being browsed"
+        );
+        assert!(app.can_go_back(), "with Back able to return");
+    }
+
+    #[test]
+    fn escaping_the_address_bar_leaves_the_folder_alone() {
+        let mut app = App::new(PathBuf::from("/one/two"));
+        let before = app.breadcrumbs();
+        app.begin_path_edit();
+        for c in "/somewhere/else".chars() {
+            app.handle_key_text(&c.to_string());
+        }
+
+        app.cancel_pending();
+
+        assert!(!app.editing_path());
+        assert_eq!(app.breadcrumbs(), before, "nowhere was navigated to");
+    }
+
+    #[test]
+    fn an_empty_path_navigates_nowhere() {
+        let mut app = App::new(PathBuf::from("/one/two"));
+        let before = app.breadcrumbs();
+        app.begin_path_edit();
+        for _ in 0..app.path_input().len() {
+            app.backspace();
+        }
+
+        app.handle_return();
+
+        assert_eq!(app.breadcrumbs(), before);
+    }
+
+    #[test]
+    fn the_address_bar_does_not_open_over_another_prompt() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.request_rename();
+
+        app.begin_path_edit();
+
+        assert!(
+            !app.editing_path(),
+            "a rename in progress keeps the address bar closed"
+        );
     }
 
     #[test]
