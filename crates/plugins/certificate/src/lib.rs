@@ -14,6 +14,12 @@ use std::io;
 use std::path::Path;
 use x509_parser::prelude::{FromDer, X509Certificate, X509CertificationRequest};
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["pem", "crt", "cer", "der"];
+
 /// One parsed PEM block from a certificate/key file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -188,6 +194,10 @@ fn entry_for(label: &str, der: &[u8]) -> PemEntry {
 pub struct CertificateCore;
 
 impl PluginCore for CertificateCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "certificate"
     }
@@ -229,7 +239,7 @@ impl PluginPresentation for CertificatePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["pem", "crt", "cer", "der"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -572,5 +582,14 @@ nAFDn+ErQaZpZIA6OoVHxU0Y+yFeU8aJvOvqlOSXegA7z08ynnnVqJLj
         let lines = CertificatePresentation.present(&data);
 
         assert_eq!(lines, vec!["RSA private key".to_owned()]);
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::CertificateCore),
+            plugin_api::PluginPresentation::extensions(&crate::CertificatePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

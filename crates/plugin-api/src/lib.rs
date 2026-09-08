@@ -26,6 +26,19 @@ pub trait PluginCore: Send + Sync {
     /// # Errors
     /// Returns an error if `path` cannot be read.
     fn view(&self, path: &Path) -> io::Result<serde_json::Value>;
+
+    /// The lowercase extensions this type claims, without their dot - the
+    /// same list its presentation half reports.
+    ///
+    /// GUIDANCE.md §3.3 makes sniffing "content-based (magic bytes) with the
+    /// extension as a hint only". For a binary format the magic bytes decide
+    /// and this is never consulted. For the source languages there are no
+    /// magic bytes, only keywords that genuinely overlap - `struct` belongs
+    /// to C, C++, Rust, Swift and Solidity alike - and this is the hint that
+    /// settles which of the matching plugins owns the file.
+    fn extensions(&self) -> &'static [&'static str] {
+        &[]
+    }
 }
 
 /// How a file type is marked in a listing: a short label and the colour it

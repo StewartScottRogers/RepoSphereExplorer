@@ -17,6 +17,12 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["iso", "img", "vhd", "vmdk"];
+
 /// Sector size fixed by the ISO 9660 spec.
 const SECTOR_SIZE: u64 = 2048;
 
@@ -102,6 +108,10 @@ pub struct DiskImageView {
 pub struct DiskImageCore;
 
 impl PluginCore for DiskImageCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "disk-image"
     }
@@ -152,7 +162,7 @@ impl PluginPresentation for DiskImagePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["iso", "img", "vhd", "vmdk"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -290,6 +300,15 @@ mod tests {
                 "100 blocks x 2048 bytes = 204800 bytes",
                 "204800 bytes on disk",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::DiskImageCore),
+            plugin_api::PluginPresentation::extensions(&crate::DiskImagePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["zip", "tar", "gz", "bz2", "xz", "7z", "rar"];
+
 /// Maximum number of entries listed in the view; archives with more are
 /// truncated, matching §2.1's parse limits.
 const MAX_ENTRIES: usize = 200;
@@ -32,6 +38,10 @@ pub struct ArchiveView {
 pub struct ArchiveCore;
 
 impl PluginCore for ArchiveCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "archive"
     }
@@ -107,7 +117,7 @@ impl PluginPresentation for ArchivePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["zip", "tar", "gz", "bz2", "xz", "7z", "rar"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -234,5 +244,14 @@ mod tests {
 
         std::fs::remove_file(&archive_path).unwrap();
         std::fs::remove_dir_all(&destination).unwrap();
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::ArchiveCore),
+            plugin_api::PluginPresentation::extensions(&crate::ArchivePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

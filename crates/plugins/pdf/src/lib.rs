@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["pdf"];
+
 /// View data produced by [`PdfCore::view`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PdfView {
@@ -61,6 +67,10 @@ fn page_texts(doc: &lopdf::Document) -> (Vec<String>, bool) {
 pub struct PdfCore;
 
 impl PluginCore for PdfCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "pdf"
     }
@@ -110,7 +120,7 @@ impl PluginPresentation for PdfPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["pdf"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -344,6 +354,15 @@ mod tests {
         assert!(
             lines.iter().any(|line| line == "(no extractable text)"),
             "a scanned page is pictures of text: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::PdfCore),
+            plugin_api::PluginPresentation::extensions(&crate::PdfPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

@@ -15,6 +15,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["ttf", "otf", "woff", "woff2"];
+
 /// A font's container format, identified by its leading magic bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Container {
@@ -91,6 +97,10 @@ pub struct FontView {
 pub struct FontCore;
 
 impl PluginCore for FontCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "font"
     }
@@ -152,7 +162,7 @@ impl PluginPresentation for FontPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["ttf", "otf", "woff", "woff2"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -342,6 +352,15 @@ mod tests {
                 "5 glyphs",
                 "123 bytes on disk",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::FontCore),
+            plugin_api::PluginPresentation::extensions(&crate::FontPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

@@ -16,6 +16,12 @@ use std::borrow::Cow;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["mp3", "wav", "flac", "ogg", "m4a", "aac"];
+
 /// Whether `prefix` starts with an MP3 frame sync (`0xFF` followed by three
 /// set high bits) or an `ID3v2` tag header.
 fn is_mp3(prefix: &[u8]) -> bool {
@@ -67,6 +73,10 @@ pub struct AudioView {
 pub struct AudioCore;
 
 impl PluginCore for AudioCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "audio"
     }
@@ -128,7 +138,7 @@ impl PluginPresentation for AudioPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["mp3", "wav", "flac", "ogg", "m4a", "aac"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -350,5 +360,14 @@ mod tests {
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
         png.into_inner()
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::AudioCore),
+            plugin_api::PluginPresentation::extensions(&crate::AudioPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

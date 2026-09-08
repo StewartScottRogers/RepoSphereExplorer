@@ -15,6 +15,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tiff"];
+
 /// View data produced by [`ImageCore::view`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageView {
@@ -43,6 +49,10 @@ fn preview_of(path: &Path) -> Option<String> {
 pub struct ImageCore;
 
 impl PluginCore for ImageCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "image"
     }
@@ -88,7 +98,7 @@ impl PluginPresentation for ImagePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tiff"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -160,5 +170,14 @@ mod tests {
         assert_eq!(lines[0], "Png image");
         assert_eq!(lines[1], "10 x 20 pixels");
         assert_eq!(lines[2], "123 bytes on disk");
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::ImageCore),
+            plugin_api::PluginPresentation::extensions(&crate::ImagePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

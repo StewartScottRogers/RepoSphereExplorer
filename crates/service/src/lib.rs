@@ -168,10 +168,37 @@ fn read_prefix(path: &Path) -> io::Result<Vec<u8>> {
 /// Finds the first registered plugin that recognises `path`'s content.
 fn sniff(path: &Path) -> io::Result<Option<&'static dyn PluginCore>> {
     let prefix = read_prefix(path)?;
-    Ok(CORE_PLUGINS
+    let matches: Vec<&'static dyn PluginCore> = CORE_PLUGINS
         .iter()
-        .find(|plugin| plugin.sniff(&prefix))
-        .copied())
+        .filter(|plugin| plugin.sniff(&prefix))
+        .copied()
+        .collect();
+    Ok(claimed_by_extension(path, &matches).or_else(|| matches.first().copied()))
+}
+
+/// Whichever of `matches` claims `path`'s extension, if one does.
+///
+/// GUIDANCE.md §3.3 makes the extension "a hint only", and this is the whole
+/// of that hint: it chooses between plugins that all recognised the content,
+/// and never overrules them. A file whose extension nobody claims, or whose
+/// claimant did not recognise the content, is left to priority order - so a
+/// PNG named `.txt` is still a PNG.
+///
+/// Ties are real rather than hypothetical among the source languages, which
+/// have no magic bytes to sniff: `struct` is C, C++, Rust, Swift and
+/// Solidity; `package` is Java, Go and Perl; `class` is a dozen of them.
+fn claimed_by_extension(
+    path: &Path,
+    matches: &[&'static dyn PluginCore],
+) -> Option<&'static dyn PluginCore> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())?
+        .to_ascii_lowercase();
+    matches
+        .iter()
+        .find(|plugin| plugin.extensions().contains(&extension.as_str()))
+        .copied()
 }
 
 /// Views the path through whichever registered plugin recognises it: the
@@ -627,8 +654,8 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        bind, copy, create_directory, create_file, delete, extract, handle_request, journal_to,
-        list_directory, open, rename, serve_one, undo, view_file, write_file,
+        CORE_PLUGINS, bind, copy, create_directory, create_file, delete, extract, handle_request,
+        journal_to, list_directory, open, rename, serve_one, undo, view_file, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -644,6 +671,156 @@ mod tests {
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         )
+    }
+
+    /// Writes `content` to a uniquely named file ending in `name`, and
+    /// returns which plugin `view_file` attributes it to.
+    fn plugin_for(name: &str, content: &[u8]) -> String {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        fs::write(&path, content).unwrap();
+        let plugin = match view_file(&path).unwrap() {
+            Response::FileView { plugin, .. } => plugin,
+            other => panic!("expected a file view, got {other:?}"),
+        };
+        fs::remove_dir_all(&dir).unwrap();
+        plugin
+    }
+
+    #[test]
+    fn a_source_file_is_attributed_to_its_own_language() {
+        // Each of these went to the wrong plugin when the first content
+        // match won outright: C and C++ to `rust` on their `struct` lines,
+        // C# to `javascript`, Java to `perl` on its `package` line.
+        let cases: [(&str, &[u8], &str); 4] = [
+            (
+                "ring.c",
+                b"#include <stdio.h>
+
+struct ring_slot {
+    unsigned long sequence;
+};
+
+int main(void) {
+    return 0;
+}
+",
+                "c",
+            ),
+            (
+                "matrix.cpp",
+                b"#include <iostream>
+
+struct Identity {
+    static int one() { return 1; }
+};
+
+int main() {
+    std::cout << Identity::one();
+}
+",
+                "cpp",
+            ),
+            (
+                "Inventory.cs",
+                b"using System;
+
+namespace Warehouse
+{
+    public class Inventory
+    {
+        public int Count { get; set; }
+    }
+}
+",
+                "csharp",
+            ),
+            (
+                "OrderBook.java",
+                b"package com.example.trading;
+
+import java.util.List;
+
+public class OrderBook {
+    public static void main(String[] args) {
+        System.out.println(\"hello\");
+    }
+}
+",
+                "java",
+            ),
+        ];
+
+        for (name, content, expected) in cases {
+            assert_eq!(
+                plugin_for(name, content),
+                expected,
+                "{name} should open in its own language's plugin"
+            );
+        }
+    }
+
+    #[test]
+    fn content_still_decides_when_the_extension_disagrees() {
+        // A PNG called `.txt`: the extension's owner never recognised the
+        // content, so the hint has nothing to choose between and the magic
+        // bytes win, exactly as before. A whole 1x1 PNG, not just a header,
+        // since attribution is only half the job - the plugin then reads it.
+        let png = [
+            0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0xda, 0x63, 0x38, 0x21, 0x27, 0x07, 0x00, 0x02, 0xb6, 0x01, 0x05, 0x0a, 0x5b, 0xa6,
+            0x06, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        assert_eq!(plugin_for("secretly-a-picture.txt", &png), "image");
+    }
+
+    #[test]
+    fn an_extension_nobody_claims_is_attributed_by_content_alone() {
+        assert_eq!(
+            plugin_for(
+                "notes.unheard-of",
+                b"fn main() {
+    let mut total = 0;
+    println!(\"{total}\");
+}
+"
+            ),
+            "rust",
+            "an unclaimed extension leaves priority order exactly as it was"
+        );
+    }
+
+    #[test]
+    fn no_two_plugins_claim_the_same_extension() {
+        let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        for plugin in CORE_PLUGINS {
+            for extension in plugin.extensions() {
+                if let Some(other) = seen.insert(extension, plugin.name()) {
+                    panic!(
+                        "`{extension}` is claimed by both {other} and {}, so the hint cannot break a tie",
+                        plugin.name()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_claimed_extension_is_lowercase_and_undotted() {
+        for plugin in CORE_PLUGINS {
+            for extension in plugin.extensions() {
+                assert!(
+                    !extension.is_empty()
+                        && !extension.starts_with('.')
+                        && extension.chars().all(|c| !c.is_ascii_uppercase()),
+                    "{}: `{extension}` will never match a path's extension",
+                    plugin.name()
+                );
+            }
+        }
     }
 
     #[test]

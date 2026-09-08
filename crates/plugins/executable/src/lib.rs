@@ -13,6 +13,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["exe", "dll", "so", "dylib"];
+
 /// Maximum number of sections/symbols listed in the view; binaries with
 /// more are truncated, matching the `archive` plugin's own `MAX_ENTRIES`.
 const MAX_ENTRIES: usize = 200;
@@ -68,6 +74,10 @@ pub struct ExecutableView {
 pub struct ExecutableCore;
 
 impl PluginCore for ExecutableCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "executable"
     }
@@ -139,7 +149,7 @@ impl PluginPresentation for ExecutablePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["exe", "dll", "so", "dylib"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -260,6 +270,15 @@ mod tests {
                 "  answer",
                 "4096 bytes on disk",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::ExecutableCore),
+            plugin_api::PluginPresentation::extensions(&crate::ExecutablePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

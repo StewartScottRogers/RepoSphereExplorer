@@ -16,6 +16,12 @@ use std::io;
 use std::io::BufReader;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "mov", "webm"];
+
 /// MP4 major/compatible brands that identify a video container, distinct
 /// from the audio-only `M4A `/`M4B `/`M4P ` brands the `audio` plugin's own
 /// (brand-agnostic) `ftyp` check already claims.
@@ -229,6 +235,10 @@ fn view_avi(path: &Path, file_size: u64) -> io::Result<VideoView> {
 pub struct VideoCore;
 
 impl PluginCore for VideoCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "video"
     }
@@ -274,7 +284,7 @@ impl PluginPresentation for VideoPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["mp4", "mkv", "avi", "mov", "webm"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -510,6 +520,15 @@ mod tests {
         assert!(
             lines.iter().any(|line| line.contains("A_OPUS")),
             "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::VideoCore),
+            plugin_api::PluginPresentation::extensions(&crate::VideoPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

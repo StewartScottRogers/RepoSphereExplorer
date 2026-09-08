@@ -10,6 +10,12 @@ use std::io;
 use std::io::{Cursor, Read as _};
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["ppt", "pptx", "odp"];
+
 /// The PPTX-specific internal part path, unique to OOXML presentations (as
 /// opposed to `word/document.xml` for a word-processing document or
 /// `xl/workbook.xml` for a spreadsheet) — a marker not used by any sibling
@@ -192,6 +198,10 @@ fn extract_odp_slides(bytes: &[u8]) -> io::Result<Vec<PresentationSlide>> {
 pub struct PresentationCore;
 
 impl PluginCore for PresentationCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "presentation"
     }
@@ -230,7 +240,7 @@ impl PluginPresentation for PresentationPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["ppt", "pptx", "odp"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -453,6 +463,15 @@ mod tests {
         assert_eq!(
             lines,
             vec!["Slide 1", "one", "two", "", "Slide 2", "(no text)"]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::PresentationCore),
+            plugin_api::PluginPresentation::extensions(&crate::PresentationPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

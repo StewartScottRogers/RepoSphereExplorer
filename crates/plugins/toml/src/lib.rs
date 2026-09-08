@@ -6,6 +6,12 @@ use serde_json::Value;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["toml"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -169,6 +175,10 @@ fn push_tree_lines(value: &Value, depth: usize, label: &Label<'_>, lines: &mut V
 pub struct TomlCore;
 
 impl PluginCore for TomlCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "toml"
     }
@@ -212,7 +222,7 @@ impl PluginPresentation for TomlPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["toml"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &Value) -> Vec<String> {
@@ -371,6 +381,15 @@ mod tests {
                 "not = = toml",
                 "… (truncated)",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::TomlCore),
+            plugin_api::PluginPresentation::extensions(&crate::TomlPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

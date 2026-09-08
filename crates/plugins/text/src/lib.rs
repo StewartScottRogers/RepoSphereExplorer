@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["txt", "log", "md", "markdown", "text"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -22,6 +28,10 @@ pub struct TextView {
 pub struct TextCore;
 
 impl PluginCore for TextCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "text"
     }
@@ -59,7 +69,7 @@ impl PluginPresentation for TextPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["txt", "log", "md", "markdown", "text"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -136,5 +146,14 @@ mod tests {
         let lines = TextPresentation.present(&data);
 
         assert_eq!(lines, vec!["a", "b", "… (truncated)"]);
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::TextCore),
+            plugin_api::PluginPresentation::extensions(&crate::TextPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

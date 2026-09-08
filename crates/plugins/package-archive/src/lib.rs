@@ -21,6 +21,12 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Read as _};
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["deb", "rpm", "apk", "nupkg"];
+
 /// Maximum number of file entries listed in the view; packages with more
 /// are truncated, matching the `archive` plugin's own `MAX_ENTRIES` limit.
 const MAX_ENTRIES: usize = 200;
@@ -244,6 +250,10 @@ fn view_rpm(path: &Path) -> io::Result<PackageArchiveView> {
 pub struct PackageArchiveCore;
 
 impl PluginCore for PackageArchiveCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "package-archive"
     }
@@ -280,7 +290,7 @@ impl PluginPresentation for PackageArchivePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["deb", "rpm", "apk", "nupkg"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -497,6 +507,15 @@ mod tests {
                 "1 files",
                 "usr/bin/hello (22 bytes)",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::PackageArchiveCore),
+            plugin_api::PluginPresentation::extensions(&crate::PackageArchivePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

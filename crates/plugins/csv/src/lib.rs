@@ -6,6 +6,12 @@ use serde_json::Value;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["csv", "tsv"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -151,6 +157,10 @@ fn present_table(table: &CsvTable) -> Vec<String> {
 pub struct CsvCore;
 
 impl PluginCore for CsvCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "csv"
     }
@@ -192,7 +202,7 @@ impl PluginPresentation for CsvPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["csv", "tsv"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &Value) -> Vec<String> {
@@ -356,6 +366,15 @@ mod tests {
                 "c,d",
                 "… (truncated)",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::CsvCore),
+            plugin_api::PluginPresentation::extensions(&crate::CsvPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

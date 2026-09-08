@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["pl", "pm"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -89,6 +95,10 @@ fn has_perl_syntax(text: &str) -> bool {
 pub struct PerlCore;
 
 impl PluginCore for PerlCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "perl"
     }
@@ -133,7 +143,7 @@ impl PluginPresentation for PerlPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["pl", "pm"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -263,6 +273,15 @@ mod tests {
                 "sub greet {",
                 "}"
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::PerlCore),
+            plugin_api::PluginPresentation::extensions(&crate::PerlPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }
