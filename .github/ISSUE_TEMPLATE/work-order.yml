@@ -17,7 +17,7 @@ body:
       description: Commands or tests that prove the outcome. These become the definition of done.
       placeholder: |
         - cargo test --all-features passes
-        - `repo_sphere_explorer explore acme/widgets` prints the star count
+        - a folder holding a `.git` marker is listed as a repository, and names its provider
     validations:
       required: true
   - type: textarea

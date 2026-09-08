@@ -1,10 +1,16 @@
 # Plugin registry
 
 Tracks every file-type plugin this project has built or rejected, per
-[GUIDANCE.md §3.1](GUIDANCE.md#31-plugin-architecture) and
-[§7 D5](GUIDANCE.md#7-open-decisions). Consulted before proposing or
-building any plugin work order, so the factory never duplicates a plugin
-that already exists or retries a format already ruled out.
+[GUIDANCE.md §3.1](GUIDANCE.md#31-two-halves-one-crate) and
+[§7 D5](GUIDANCE.md#7-decisions). Consulted before proposing or building any
+plugin work order, so the factory never duplicates a plugin that already
+exists or retries a format already ruled out.
+
+Plugins exist to show what is *inside* a repository — the source, the
+configuration, the assets, the documents a working copy holds — which is why
+the catalogue leans so heavily on source languages and build files. A format
+nobody would find in a checkout is a weak candidate, whatever else recommends
+it.
 
 ## Built
 
@@ -20,7 +26,7 @@ that already exists or retries a format already ruled out.
 | TypeScript source | `crates/plugins/typescript` | #9 | Sniffs by TypeScript-only markers (`interface`/`enum`/type-alias declarations, type annotations, visibility modifiers, `implements`, `import type`), ahead of `javascript` in `CORE_PLUGINS` so it claims TS-specific syntax first |
 | Rust source | `crates/plugins/rust` | #10 | Sniffs by `fn`/`struct`/`enum`/`trait`/`impl` declarations and markers (`let mut`, `println!(`, `#[derive(`, `use std::`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS` |
 | Go source | `crates/plugins/go` | #11 | Sniffs by `package`/`func`/`import (` declarations and markers (`:=`, `fmt.Println(`, `fmt.Printf(`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS` |
-| C source | `crates/plugins/c` | #12 | Sniffs by `#include <...>`/`#include "..."` directives and markers (`int main(`, `void main(`, `printf(`, `malloc(`, `NULL`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS`. No path/extension-based dispatch exists in this architecture (sniffing is content-only), so disambiguating `.c`/`.h` from a future C++ plugin will need that plugin's sniff to avoid these same markers, or to be ordered after `c` |
+| C source | `crates/plugins/c` | #12 | Sniffs by `#include <...>`/`#include "..."` directives and markers (`int main(`, `void main(`, `printf(`, `malloc(`, `NULL`) not used by this project's other source-language plugins; placed just ahead of `text` in `CORE_PLUGINS`. Since #272 the file's extension breaks ties between plugins whose content heuristics all match, so `.c` and `.h` reach this plugin even when a sibling's markers also fire; ordering remains the fallback for a file with no extension |
 | C++ source | `crates/plugins/cpp` | #13 | Sniffs by C++-only markers (`#include <iostream>`/`<vector>`/`<string>`, `class `, `namespace `, `std::`, `cout <<`, `cin >>`, `nullptr`, `public:`/`private:`/`protected:`, `template<`) that avoid the C plugin's markers per its note, so a C++ file that also contains C-style constructs (`int main(`, `printf(`) is still claimed correctly; placed just ahead of `c` in `CORE_PLUGINS` |
 | C# source | `crates/plugins/csharp` | #14 | Sniffs by C#-only markers (`using System`, `Console.WriteLine(`/`Console.Write(`, `public class `/`internal class `, `public static void Main(`/`static void Main(`, `{ get; set; }`) that avoid the C++ plugin's overlapping `class `/`namespace ` markers, so a C# file whose `namespace` block also matches C++'s bare check is still claimed correctly; placed just ahead of `cpp` in `CORE_PLUGINS` |
 | Java source | `crates/plugins/java` | #15 | Sniffs by Java-only markers (`import java.`, `System.out.println(`/`System.out.print(`/`System.err.println(`, `public static void main(String`, `@Override`) that avoid the C#'s bare `public class ` marker and the Go plugin's bare `package ` marker, so a Java file is still claimed correctly rather than by either; placed just ahead of `csharp` in `CORE_PLUGINS` |

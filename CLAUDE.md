@@ -1,7 +1,15 @@
-# RepoSphereExplorer
+# Repos Explorer
 
-A Rust CLI (`repo_sphere_explorer`) developed as a dark factory: work orders in
-as GitHub issues, releases out, no human on the floor.
+A cross-platform Repos Explorer — a front door to the local working
+directories that source control systems check code out into — developed as a
+dark factory: work orders in as GitHub issues, releases out, no human on the
+floor.
+
+It is not a general-purpose file explorer. Before building anything, ask
+whether it helps somebody reach or understand the repositories they work in.
+If the honest answer is "a file explorer would have this", that is a reason to
+stop, not a reason to build. See [GUIDANCE.md §0](GUIDANCE.md#0-what-this-application-is-for)
+and [DECISIONS.md](DECISIONS.md) D7 to D10.
 
 ## Commands
 
@@ -9,30 +17,32 @@ as GitHub issues, releases out, no human on the floor.
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
-cargo run -- explore acme/widgets
+cargo run -p gui                 # opens at the configured Repos Directory
 ```
 
-All three checks must pass before a PR is opened. CI runs the same three plus
-`cargo build --release` and `cargo audit`, so a green local run means a green
-pipeline.
+All three checks must pass before a pull request is opened. The factory runs
+the same three plus `cargo build --release` and `cargo audit`, so a green local
+run means a green pipeline.
 
 ## Layout
 
 A cargo workspace, per [GUIDANCE.md §5](GUIDANCE.md#5-proposed-workspace-layout):
 
-- `crates/cli/` — today's `explore` command: `src/lib.rs` (all behaviour,
-  testable without a process), `src/main.rs` (argument parsing only, a thin
-  shell over the lib), `tests/cli.rs` (end-to-end tests against the binary).
-- `crates/protocol/` — IPC message types shared by the service and both front
+- `crates/cli/` — the `explore` placeholder from before the pivot: `src/lib.rs`
+  (all behaviour, testable without a process), `src/main.rs` (argument parsing
+  only), `tests/cli.rs`. Parked; do not extend it.
+- `crates/protocol/` — inter-process communication (IPC) message types shared
+  by the service and both front ends.
+- `crates/plugin-api/` — the core and presentation plugin traits.
+- `crates/service/` — the fat process: filesystem, repositories, configuration,
+  operations, plugin cores.
+- `crates/tui/`, `crates/gui/` — the Ratatui terminal and Slint graphical front
   ends.
-- `crates/plugin-api/` — the core/presentation plugin traits and registration
-  macro.
-- `crates/service/` — the fat process: filesystem, index, operations, plugin
-  cores.
-- `crates/tui/`, `crates/gui/` — the Ratatui and Slint front ends.
-- `crates/plugins/{text,image,archive,pdf,directory}/` — one crate per file
-  type, each with a core half and a presentation half. See
-  [PLUGINS.md](PLUGINS.md) for the full built/rejected registry.
+- `crates/plugins/*/` — one crate per file type, each with a core half and a
+  presentation half. See [PLUGINS.md](PLUGINS.md) for the built and rejected
+  registry.
+- `samples/` — one fixture directory per plugin. See
+  [samples/README.md](samples/README.md).
 
 Shared lints and the release profile live once in the workspace root
 `Cargo.toml`; member crates opt in with `[lints] workspace = true`.
@@ -41,14 +51,16 @@ Shared lints and the release profile live once in the workspace root
 
 [GUIDANCE.md](GUIDANCE.md) is the design this project is built from. Every work
 order should trace back to a line in it. If the guidance and the code disagree,
-change the guidance first. Decisions D1-D5 in its section 7 gate the large work.
+change the guidance first. Decisions D1 to D10 in its section 7 gate the large
+work; [DECISIONS.md](DECISIONS.md) records why the settled ones were settled
+and what it would take to revisit them.
 
 ## Rules of the floor
 
 1. **Acceptance checks are the definition of done.** A work order states its
    checks; the change is finished when they pass, not when the code looks right.
 2. **New behaviour lands with a test.** Unit test in `lib.rs` for logic,
-   integration test in `tests/cli.rs` for anything visible at the CLI.
+   integration test for anything visible at the surface.
 3. **Lints are not negotiable.** `unsafe_code` is forbidden, `clippy::all` is
    deny, `missing_docs` warns. Fix the cause; do not add `#[allow]` without
    saying why in the same commit.
@@ -59,20 +71,32 @@ change the guidance first. Decisions D1-D5 in its section 7 gate the large work.
    configurability nobody asked for, no error handling for impossible states.
 6. **Stop and ask in the issue** when the work order is ambiguous, rather than
    guessing. An unattended wrong build costs more than a blocked one.
-7. **Track plugins in [PLUGINS.md](PLUGINS.md).** Before proposing or building
+7. **The Repos Directory is the anchor.** Every launch opens at the configured
+   root; there is no last-location session restore, and none is to be added
+   (D7). The root is stored as a list with one entry marked active (D9), and
+   the boundary around it is soft — one configuration point, not a rule spread
+   through the navigation code (D8).
+8. **Detect, do not drive.** Repository awareness means reading: the `.git`
+   marker, the provider in the remote address, the branch. Clone, fetch, pull
+   and commit are out of scope (D10). Never run a source control command on a
+   user's working copy.
+9. **Track plugins in [PLUGINS.md](PLUGINS.md).** Before proposing or building
    a file-type plugin, check its Built and Rejected sections, plus
    `gh issue list --label work-order --state all`, for that format. When a
-   plugin's PR merges, add it to Built. When a work order concludes a format
-   can't reasonably become a plugin, add it to Rejected with a one-line
-   reason and close the issue without a PR — do not retry a rejected format
-   unless explicitly asked to.
-8. **Label a work order's PR `auto-merge`.** Once the acceptance checks pass
-   and the PR is open, apply the `auto-merge` label so it lands itself under
-   the same no-human-review policy that already governs `main` — do not wait
-   for manual review, and do not merge it directly yourself.
-9. **Keep `samples/` current.** If a `samples/` directory exists at the repo
-   root (one subdirectory per `crates/plugins/*` entry, checked by an
-   integration test), a plugin work order that adds a new plugin crate must
-   also add its `samples/<name>/` entry with a real, valid example file, in
-   the same PR — the fixture set and its regression test only stay useful if
-   every new plugin keeps it complete.
+   plugin's pull request merges, add it to Built. When a work order concludes a
+   format cannot reasonably become a plugin, add it to Rejected with a one-line
+   reason and close the issue without a pull request — do not retry a rejected
+   format unless explicitly asked to.
+10. **Label a work order's pull request `auto-merge`.** Once the acceptance
+    checks pass and the pull request is open, apply the `auto-merge` label so it
+    lands itself under the same no-human-review policy that already governs
+    `main` — do not wait for manual review, and do not merge it directly
+    yourself.
+11. **Keep `samples/` current.** A plugin work order that adds a new plugin
+    crate must also add its `samples/<name>/` entry with a real, valid example
+    file, in the same pull request. Make the fixture exercise every field the
+    plugin extracts: `sample_coverage.rs` fails when a fixture stops proving
+    anything.
+12. **Spell out an acronym before using it.** First use gives the full term,
+    with the acronym in parentheses after it. This applies to documentation,
+    commit messages, work orders and user-facing strings.
