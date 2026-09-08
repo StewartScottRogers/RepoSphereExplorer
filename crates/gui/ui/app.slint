@@ -1,4 +1,33 @@
-import { ScrollView, Button } from "std-widgets.slint";
+import { ScrollView, Palette } from "std-widgets.slint";
+
+// Every colour comes from the system palette, so the window follows the
+// Windows light/dark setting and its accent colour instead of being dark
+// whatever the user chose. `Palette` reports the scheme the platform is
+// using; the derived shades below are the handful of tones the panes need
+// on top of it, expressed as offsets from the system's own so they stay
+// right in both schemes.
+global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    // Panels sitting on the window background: toolbar, column header, menus.
+    out property <brush> panel: dark
+        ? Palette.background.brighter(0.35)
+        : Palette.background.darker(0.06);
+    // A sunken field, such as the address bar.
+    out property <brush> field: dark
+        ? Palette.background.darker(0.25)
+        : Palette.background.brighter(0.6);
+    // Hover feedback on a menu item or toolbar button.
+    out property <brush> hover: dark
+        ? Palette.background.brighter(0.7)
+        : Palette.background.darker(0.12);
+    // Secondary text: the size, type and date columns.
+    out property <brush> dim-text: Palette.foreground.transparentize(0.35);
+    // Text on a pane heading that is not focused.
+    out property <brush> heading-text: Palette.foreground.transparentize(0.2);
+    out property <brush> border: Palette.border;
+    out property <brush> accent: Palette.accent-background;
+    out property <brush> on-accent: Palette.accent-foreground;
+}
 
 component Pane inherits Rectangle {
     in property <string> title;
@@ -17,13 +46,13 @@ component Pane inherits Rectangle {
     property <length> row-height: 20px;
 
     border-width: 1px;
-    border-color: focused ? #e5c07b : #555555;
+    border-color: focused ? Theme.accent : Theme.border;
 
     VerticalLayout {
         Text {
             text: title;
             font-weight: 700;
-            color: focused ? #e5c07b : #cccccc;
+            color: focused ? Theme.accent : Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
         }
@@ -39,12 +68,12 @@ component Pane inherits Rectangle {
                     Rectangle {
                         y: selected >= 0 ? selected * row-height : 0px;
                         height: selected >= 0 ? row-height : 0px;
-                        background: #3a6ea5;
+                        background: Theme.accent;
                     }
 
                     for row[i] in rows: Text {
                         text: row;
-                        color: i == selected ? white : #dddddd;
+                        color: i == selected ? Theme.on-accent : Palette.foreground;
                         y: i * row-height;
                         height: row-height;
                         vertical-alignment: center;
@@ -89,12 +118,12 @@ component NavButton inherits Rectangle {
     callback activated();
 
     width: 28px;
-    background: button-enabled && nav-touch.has-hover ? #3a3a3a : transparent;
+    background: button-enabled && nav-touch.has-hover ? Theme.hover : transparent;
     border-radius: 3px;
 
     Text {
         text: glyph;
-        color: button-enabled ? #dddddd : #666666;
+        color: button-enabled ? Palette.foreground : Theme.dim-text;
         horizontal-alignment: center;
         vertical-alignment: center;
         width: 100%;
@@ -115,7 +144,7 @@ component Crumb inherits Rectangle {
     in property <bool> last;
     callback activated();
 
-    background: crumb-touch.has-hover && !last ? #3a3a3a : transparent;
+    background: crumb-touch.has-hover && !last ? Theme.hover : transparent;
     border-radius: 3px;
 
     HorizontalLayout {
@@ -123,7 +152,7 @@ component Crumb inherits Rectangle {
         padding-right: 6px;
         Text {
             text: label;
-            color: last ? #e5c07b : #dddddd;
+            color: last ? Theme.accent : Palette.foreground;
             vertical-alignment: center;
         }
     }
@@ -143,7 +172,7 @@ component ColumnHeader inherits Rectangle {
     in property <bool> align-right;
     callback activated();
 
-    background: heading-touch.has-hover ? #333333 : transparent;
+    background: heading-touch.has-hover ? Theme.hover : transparent;
 
     HorizontalLayout {
         padding-left: 4px;
@@ -152,7 +181,7 @@ component ColumnHeader inherits Rectangle {
         spacing: 2px;
         Text {
             text: label;
-            color: active ? #e5c07b : #cccccc;
+            color: active ? Theme.accent : Theme.heading-text;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -160,7 +189,7 @@ component ColumnHeader inherits Rectangle {
             // U+25B2 / U+25BC. The smaller U+25B4 / U+25BE render as tofu
             // in the default font here.
             text: active ? (ascending ? "\u{25B2}" : "\u{25BC}") : "";
-            color: #e5c07b;
+            color: Theme.accent;
             vertical-alignment: center;
         }
     }
@@ -179,7 +208,7 @@ component ContextMenuItem inherits Rectangle {
     callback activated();
 
     height: item-height;
-    background: touch.has-hover ? #3a6ea5 : transparent;
+    background: touch.has-hover ? Theme.accent : transparent;
     // Named for assistive technology, and so a test can find the item by
     // the label the user reads rather than by its position in the menu.
     accessible-role: button;
@@ -188,7 +217,7 @@ component ContextMenuItem inherits Rectangle {
 
     Text {
         text: label;
-        color: item-enabled ? #dddddd : #777777;
+        color: item-enabled ? Palette.foreground : Theme.dim-text;
         vertical-alignment: center;
         x: 8px;
     }
@@ -257,19 +286,19 @@ component ContentsPane inherits Rectangle {
     property <length> header-height: 20px;
 
     border-width: 1px;
-    border-color: focused ? #e5c07b : #555555;
+    border-color: focused ? Theme.accent : Theme.border;
 
     VerticalLayout {
         Text {
             text: title;
             font-weight: 700;
-            color: focused ? #e5c07b : #cccccc;
+            color: focused ? Theme.accent : Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
         }
         Rectangle {
             height: header-height;
-            background: #262626;
+            background: Theme.panel;
             HorizontalLayout {
                 padding-left: 4px;
                 padding-right: 4px;
@@ -318,7 +347,7 @@ component ContentsPane inherits Rectangle {
                 Rectangle {
                     y: selected >= 0 ? selected * row-height : 0px;
                     height: selected >= 0 ? row-height : 0px;
-                    background: #3a6ea5;
+                    background: Theme.accent;
                 }
 
                 for row[i] in rows: Rectangle {
@@ -330,7 +359,7 @@ component ContentsPane inherits Rectangle {
                         padding-right: 4px;
                         Text {
                             text: row.glyph + " " + row.name;
-                            color: i == selected ? white : #dddddd;
+                            color: i == selected ? Theme.on-accent : Palette.foreground;
                             overflow: elide;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
@@ -338,7 +367,7 @@ component ContentsPane inherits Rectangle {
                         }
                         Text {
                             text: row.size;
-                            color: i == selected ? white : #aaaaaa;
+                            color: i == selected ? Theme.on-accent : Theme.dim-text;
                             width: size-column;
                             horizontal-alignment: right;
                             vertical-alignment: center;
@@ -346,7 +375,7 @@ component ContentsPane inherits Rectangle {
                         }
                         Text {
                             text: row.kind;
-                            color: i == selected ? white : #aaaaaa;
+                            color: i == selected ? Theme.on-accent : Theme.dim-text;
                             width: kind-column;
                             overflow: elide;
                             horizontal-alignment: right;
@@ -355,7 +384,7 @@ component ContentsPane inherits Rectangle {
                         }
                         Text {
                             text: row.modified;
-                            color: i == selected ? white : #aaaaaa;
+                            color: i == selected ? Theme.on-accent : Theme.dim-text;
                             width: modified-column;
                             overflow: elide;
                             horizontal-alignment: right;
@@ -369,29 +398,29 @@ component ContentsPane inherits Rectangle {
                     y: prompt-row * row-height;
                     height: row-height;
                     width: 100%;
-                    background: #1e1e1e;
+                    background: Theme.field;
                     border-width: 1px;
-                    border-color: #e5c07b;
+                    border-color: Theme.accent;
                     HorizontalLayout {
                         padding-left: 4px;
                         spacing: 2px;
                         alignment: start;
                         Text {
                             text: prompt-text;
-                            color: #e5c07b;
+                            color: Theme.accent;
                             vertical-alignment: center;
                         }
                         // A caret, so a text prompt reads as one waiting for
                         // typing rather than as a label.
                         Rectangle {
                             width: prompt-editable ? 1px : 0px;
-                            background: #e5c07b;
+                            background: Theme.accent;
                             y: 3px;
                             height: row-height - 6px;
                         }
                         Text {
                             text: prompt-editable ? "  (Enter / Esc)" : "";
-                            color: #777777;
+                            color: Theme.dim-text;
                             vertical-alignment: center;
                         }
                     }
@@ -443,9 +472,9 @@ component ContentsPane inherits Rectangle {
                         y: 0;
                         width: 100%;
                         height: 100%;
-                        background: #2b2b2b;
+                        background: Theme.panel;
                         border-width: 1px;
-                        border-color: #555555;
+                        border-color: Theme.border;
                         VerticalLayout {
                             ContextMenuItem {
                                 label: "New Folder";
@@ -473,9 +502,9 @@ component ContentsPane inherits Rectangle {
                         y: 0;
                         width: 100%;
                         height: 100%;
-                        background: #2b2b2b;
+                        background: Theme.panel;
                         border-width: 1px;
-                        border-color: #555555;
+                        border-color: Theme.border;
                         VerticalLayout {
                             ContextMenuItem {
                                 label: "Open";
@@ -515,11 +544,10 @@ export component MainWindow inherits Window {
     title: "RepoSphereExplorer";
     preferred-width: 1000px;
     preferred-height: 600px;
-    // Row/title text throughout (#cccccc, #dddddd) and the context menus
-    // (#2b2b2b) are all colored for a dark theme; without this the window
-    // defaults to a light background and that text reads as low-contrast
-    // grey-on-white instead.
-    background: #1e1e1e;
+    background: Palette.background;
+    // Windows' UI font. Slint falls back to the platform default wherever
+    // it is not installed, so this costs nothing on other systems.
+    default-font-family: "Segoe UI";
 
     in property <[string]> folder-rows;
     in property <int> folder-selected;
@@ -629,7 +657,7 @@ export component MainWindow inherits Window {
         VerticalLayout {
             Rectangle {
                 height: 30px;
-                background: #262626;
+                background: Theme.panel;
                 HorizontalLayout {
                     padding: 2px;
                     spacing: 2px;
@@ -655,9 +683,9 @@ export component MainWindow inherits Window {
                     // component, the last being the folder being browsed.
                     Rectangle {
                         horizontal-stretch: 1;
-                        background: #1e1e1e;
+                        background: Theme.field;
                         border-width: 1px;
-                        border-color: #3a3a3a;
+                        border-color: Theme.hover;
                         border-radius: 3px;
                         HorizontalLayout {
                             padding-left: 2px;
@@ -671,7 +699,7 @@ export component MainWindow inherits Window {
                                 }
                                 Text {
                                     text: i == breadcrumbs.length - 1 ? "" : "\u{203A}";
-                                    color: #777777;
+                                    color: Theme.dim-text;
                                     vertical-alignment: center;
                                 }
                             }
@@ -716,19 +744,19 @@ export component MainWindow inherits Window {
                 Rectangle {
                     horizontal-stretch: 40;
                     border-width: 1px;
-                    border-color: focus-pane == 2 ? #e5c07b : #555555;
+                    border-color: focus-pane == 2 ? Theme.accent : Theme.border;
                     VerticalLayout {
                         Text {
                             text: "File";
                             font-weight: 700;
-                            color: focus-pane == 2 ? #e5c07b : #cccccc;
+                            color: focus-pane == 2 ? Theme.accent : Theme.heading-text;
                             height: 22px;
                             horizontal-alignment: center;
                         }
                         view := ScrollView {
                             Text {
                                 text: file-text;
-                                color: #dddddd;
+                                color: Palette.foreground;
                                 wrap: word-wrap;
                                 x: 4px;
                                 width: view.visible-width - 8px;
@@ -739,7 +767,7 @@ export component MainWindow inherits Window {
             }
             Text {
                 text: status-text;
-                color: #dddddd;
+                color: Palette.foreground;
                 height: 22px;
                 x: 4px;
                 vertical-alignment: center;
