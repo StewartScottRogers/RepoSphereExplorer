@@ -1,0 +1,73 @@
+name: Close linked work orders
+
+# Closes the issues a pull request declared it closes, the moment that pull
+# request merges.
+#
+# GitHub's own auto-close does not fire in this repository. The linkage is
+# registered - `closingIssuesReferences` names the issue on every one of
+# these PRs - but the merge is performed by `app/github-actions`, the token
+# `auto-merge.yml` enables auto-merge with, and no `closed` event ever
+# reaches the issue. Four work orders shipped on 2026-09-08 and all four
+# were still open afterwards; the comment atop `floor-health-check.yml`
+# records seven found the same way before that.
+#
+# That health check sweeps for exactly this and stays the backstop, but it
+# is scheduled `*/30` and GitHub throttles cron on a repository with little
+# push activity: its runs that day were 20:44, 23:19, 01:19, 06:19, 11:36,
+# 16:11 - gaps of two to five hours. `factory-shift.yml` picks the oldest
+# open work order with no pull request each night, so that gap is a window
+# in which the factory can start rebuilding something it has already
+# shipped. This closes the loop on the merge event instead, in seconds.
+
+on:
+  pull_request_target:
+    types: [closed]
+  # So the same logic can be pointed at a pull request by hand - to prove it
+  # works, or to mop up one that merged while this workflow was broken.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number whose linked issues should close
+        required: true
+
+# Nothing from the pull request branch is checked out or executed here, so
+# `pull_request_target`'s write-capable token is not exposed to its code.
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close every issue the pull request finishes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          set -eu
+
+          merged=$(gh pr view "$PR" --repo "$REPO" --json mergedAt --jq '.mergedAt // empty')
+          if [ -z "$merged" ]; then
+            echo "PR #$PR was closed without merging: its work order stays open, to be picked up fresh."
+            exit 0
+          fi
+
+          issues=$(gh pr view "$PR" --repo "$REPO" --json closingIssuesReferences \
+            --jq '.closingIssuesReferences[].number')
+          if [ -z "$issues" ]; then
+            echo "PR #$PR declares no issue to close."
+            exit 0
+          fi
+
+          for n in $issues; do
+            state=$(gh issue view "$n" --repo "$REPO" --json state --jq '.state')
+            if [ "$state" = "CLOSED" ]; then
+              echo "Issue #$n is already closed - the sweep, or a person, got there first."
+              continue
+            fi
+            echo "Closing issue #$n, finished by PR #$PR."
+            gh issue close "$n" --repo "$REPO" \
+              --comment "Closed by PR #$PR, merged into \`main\`."
+          done

@@ -87,8 +87,17 @@ jobs:
           issues=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq '.[].number')
           for n in $issues; do
             pr=$(gh issue view "$n" --repo "$REPO" --json closedByPullRequestsReferences --jq '.closedByPullRequestsReferences[0].number // empty')
-            if [ -n "$pr" ]; then
-              echo "Issue #$n: already resolved by merged PR #$pr, closing."
-              gh issue close "$n" --repo "$REPO" --comment "Closed by merged PR #$pr (automated floor health check)."
+            if [ -z "$pr" ]; then
+              continue
             fi
+            # A linked pull request is not a finished one: it may still be
+            # open, in which case closing its issue would say the work is
+            # done while it is still being built.
+            merged=$(gh pr view "$pr" --repo "$REPO" --json mergedAt --jq '.mergedAt // empty')
+            if [ -z "$merged" ]; then
+              echo "Issue #$n: PR #$pr is linked but not merged, leaving it open."
+              continue
+            fi
+            echo "Issue #$n: already resolved by merged PR #$pr, closing."
+            gh issue close "$n" --repo "$REPO" --comment "Closed by merged PR #$pr (automated floor health check)."
           done
