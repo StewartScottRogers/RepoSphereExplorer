@@ -11,7 +11,7 @@ repository.workspace = true
 plugin-api = { path = "../../plugin-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-wasmparser = { version = "0.225", default-features = false, features = ["std"] }
+wasmparser = { version = "0.258", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
