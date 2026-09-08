@@ -1,12 +1,12 @@
 name: Auto-merge
 
-# Lights-out merging: enable auto-merge on PRs the factory is allowed to land
-# on its own. GitHub still waits for the required checks defined in branch
-# protection before merging.
+# Lights-out merging: enable auto-merge on pull requests the factory is
+# allowed to land on its own. GitHub still waits for the required checks
+# defined in branch protection before merging.
 
 # pull_request_target, not pull_request: workflows triggered by Dependabot's
 # pull_request event get a read-only token, which cannot enable auto-merge.
-# Nothing from the PR branch is checked out or executed here.
+# Nothing from the pull request branch is checked out or executed here.
 on:
   pull_request_target:
     types: [opened, labeled, ready_for_review]
@@ -14,8 +14,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  # "Closes #N" auto-closing the linked issue on merge needs this - work-
-  # order issues were staying open after their PR merged without it.
   issues: write
 
 jobs:
@@ -25,7 +23,35 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'auto-merge')
     runs-on: ubuntu-latest
     steps:
-      - run: gh pr merge --squash --auto "$PR_URL"
+      # Which token does the merging is not a detail. GitHub starts no
+      # workflow run from an event caused by GITHUB_TOKEN, and it closes no
+      # linked issue for a merge performed with one either. Every work order
+      # this factory has shipped stayed open afterwards, waiting for
+      # floor-health-check.yml's sweep - two to five hours, since GitHub
+      # throttles cron on a quiet repository. Measured, not assumed: #294.
+      #
+      # AUTO_MERGE_TOKEN is a fine-grained personal access token, scoped to
+      # this repository, with Contents, Pull requests and Issues write. A
+      # merge performed with it is a merge by a user, so "Closes #N" closes
+      # the work order at the moment the pull request lands, and the
+      # `pull_request: closed` event that close-linked-issues.yml listens for
+      # actually arrives.
+      #
+      # The fallback keeps the floor running when the secret is absent: the
+      # factory merges as before, and the sweep still closes the issues in
+      # its own time. Nothing breaks; it is only slower and quieter.
+      - name: Enable auto-merge
+        run: gh pr merge --squash --auto "$PR_URL"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+
+      - name: Say which token did it
+        run: |
+          if [ -n "${{ secrets.AUTO_MERGE_TOKEN }}" ]; then
+            echo "Merging with AUTO_MERGE_TOKEN: linked issues will close as the pull request lands."
+          else
+            echo "AUTO_MERGE_TOKEN is not set, so merging with GITHUB_TOKEN."
+            echo "The pull request will still land. Its linked issues will stay open until"
+            echo "floor-health-check.yml's next sweep - see work order #294."
+          fi

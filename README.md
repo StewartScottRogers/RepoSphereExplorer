@@ -119,7 +119,7 @@ Direct link to the current video:
 | Night shift | [`factory-shift.yml`](.github/workflows/factory-shift.yml) | nightly 03:00 UTC, or dispatched directly: builds the oldest open work order and opens a pull request |
 | Day shift | [`day-shift.yml`](.github/workflows/day-shift.yml) | a Night shift run finishes cleanly: re-dispatches the next one while open work orders remain |
 | Quality control | [`floor-health-check.yml`](.github/workflows/floor-health-check.yml) | every 30 minutes: unsticks auto-merge pull requests whose check never ran (or closes them if stale), and closes work-order issues already resolved by a merged pull request |
-| Closing | [`close-linked-issues.yml`](.github/workflows/close-linked-issues.yml) | a pull request closes: closes the issues its `Closes #N` named, in seconds rather than on the next sweep |
+| Closing | [`close-linked-issues.yml`](.github/workflows/close-linked-issues.yml) | a pull request closes: closes the issues its `Closes #N` named. Needs `AUTO_MERGE_TOKEN` to fire at all — an event caused by `GITHUB_TOKEN` starts no workflow run |
 | Independent review | [`independent-review.yml`](.github/workflows/independent-review.yml) | a work-order pull request opens or updates: a second, separately-invoked agent re-runs the checks and reviews the diff against CLAUDE.md — informational, not yet required |
 | Repair | [`repair.yml`](.github/workflows/repair.yml) | checks failed on `main`: diagnoses the run and opens a fix pull request |
 | Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux, Windows and macOS binaries attached to a GitHub release |
@@ -141,6 +141,26 @@ One-time setup on GitHub, all of it required before the floor runs itself:
    that never run their checks and therefore never satisfy auto-merge.
 2. In Settings, Actions, General: allow GitHub Actions to create and approve
    pull requests.
+3. Set `AUTO_MERGE_TOKEN`, so a merged pull request closes its work order
+   at the moment it lands.
+
+   GitHub starts no workflow run from an event caused by `GITHUB_TOKEN`, and
+   closes no linked issue for a merge performed with one. Without this
+   secret the factory still merges, but every work order stays open until
+   the next sweep of `floor-health-check.yml` - two to five hours, because
+   GitHub throttles scheduled workflows on a quiet repository.
+
+   Create a **fine-grained personal access token**, scoped to this
+   repository only, with **Contents: read and write**, **Pull requests: read
+   and write**, and **Issues: read and write**. Then, from a terminal in
+   this repository:
+
+   ```bash
+   gh secret set AUTO_MERGE_TOKEN --repo StewartScottRogers/RepoSphereExplorer
+   ```
+
+   That command prompts for the value and reads it from your terminal; the
+   token never appears in a file, a command line, or a chat.
 
 Already configured on this repository: `main` requires the
 `fmt / clippy / test` check with no human review, auto-merge is on, head
