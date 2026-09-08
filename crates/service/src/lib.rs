@@ -165,15 +165,70 @@ fn read_prefix(path: &Path) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Runs one call into a plugin behind a boundary that catches an unwind.
+///
+/// Eighty plugin cores are linked into this process, and behind them sit
+/// `psd`, `lopdf`, `matroska`, `mp4`, `lofty`, `parquet`, `hdf5`,
+/// `ttf-parser` and the rest - every one of them parsing untrusted bytes.
+/// A bounds slip in any of them used to unwind straight out of the request
+/// handler and end the service, which is the one process that can read the
+/// filesystem: both front ends lose everything, over one unreadable file.
+/// This is a boundary, not a recovery. The preview is lost either way; the
+/// service is not.
+///
+/// `AssertUnwindSafe` is the honest choice here: the plugin owns no state
+/// this process keeps, so there is nothing for a half-finished call to
+/// leave inconsistent.
+fn guarded<T>(plugin: &str, path: &Path, call: impl FnOnce() -> T) -> Result<T, io::Error> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)).map_err(|payload| {
+        let detail = panic_detail(&payload);
+        let message = format!(
+            "the {plugin} plugin panicked reading {}: {detail}",
+            path.display()
+        );
+        journal(
+            "plugin-panic",
+            &[path.display().to_string()],
+            &Err(io::Error::other(message.clone())),
+        );
+        io::Error::new(io::ErrorKind::InvalidData, message)
+    })
+}
+
+/// What a caught panic said, when it said anything a string can hold.
+fn panic_detail(payload: &Box<dyn std::any::Any + Send>) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".to_owned())
+}
+
 /// Finds the first registered plugin that recognises `path`'s content.
 fn sniff(path: &Path) -> io::Result<Option<&'static dyn PluginCore>> {
     let prefix = read_prefix(path)?;
-    let matches: Vec<&'static dyn PluginCore> = CORE_PLUGINS
+    Ok(sniff_among(CORE_PLUGINS, path, &prefix))
+}
+
+/// Which of `plugins` should view `path`, given its `prefix`.
+///
+/// Split out from [`sniff`] so a test can offer a file to a list of its
+/// own - including a plugin that panics, which is the case worth pinning
+/// and the one a static list cannot express.
+fn sniff_among<'a>(
+    plugins: &[&'a dyn PluginCore],
+    path: &Path,
+    prefix: &[u8],
+) -> Option<&'a dyn PluginCore> {
+    // A plugin that panics while sniffing declines the file: the ones after
+    // it in the list still get their turn, which is the whole point of
+    // asking all of them.
+    let matches: Vec<&'a dyn PluginCore> = plugins
         .iter()
-        .filter(|plugin| plugin.sniff(&prefix))
+        .filter(|plugin| guarded(plugin.name(), path, || plugin.sniff(prefix)).unwrap_or(false))
         .copied()
         .collect();
-    Ok(claimed_by_extension(path, &matches).or_else(|| matches.first().copied()))
+    claimed_by_extension(path, &matches).or_else(|| matches.first().copied())
 }
 
 /// Whichever of `matches` claims `path`'s extension, if one does.
@@ -187,10 +242,10 @@ fn sniff(path: &Path) -> io::Result<Option<&'static dyn PluginCore>> {
 /// Ties are real rather than hypothetical among the source languages, which
 /// have no magic bytes to sniff: `struct` is C, C++, Rust, Swift and
 /// Solidity; `package` is Java, Go and Perl; `class` is a dozen of them.
-fn claimed_by_extension(
+fn claimed_by_extension<'a>(
     path: &Path,
-    matches: &[&'static dyn PluginCore],
-) -> Option<&'static dyn PluginCore> {
+    matches: &[&'a dyn PluginCore],
+) -> Option<&'a dyn PluginCore> {
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())?
@@ -209,16 +264,27 @@ fn claimed_by_extension(
 /// Returns an error if `path` cannot be read.
 pub fn view_file(path: &Path) -> io::Result<Response> {
     if fs::metadata(path)?.is_dir() {
+        let name = DIRECTORY_PLUGIN.name();
         return Ok(Response::FileView {
-            plugin: DIRECTORY_PLUGIN.name().to_owned(),
-            data: DIRECTORY_PLUGIN.view(path)?,
+            plugin: name.to_owned(),
+            data: guarded(name, path, || DIRECTORY_PLUGIN.view(path))??,
         });
     }
     Ok(match sniff(path)? {
-        Some(plugin) => Response::FileView {
-            plugin: plugin.name().to_owned(),
-            data: plugin.view(path)?,
-        },
+        Some(plugin) => {
+            let name = plugin.name();
+            match guarded(name, path, || plugin.view(path)) {
+                Ok(data) => Response::FileView {
+                    plugin: name.to_owned(),
+                    data: data?,
+                },
+                // A panicking plugin costs this file its preview and
+                // nothing else: the caller can go straight on to the next.
+                Err(err) => Response::Error {
+                    message: err.to_string(),
+                },
+            }
+        }
         None => Response::Error {
             message: format!("no plugin recognises {}", path.display()),
         },
@@ -654,11 +720,13 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CORE_PLUGINS, bind, copy, create_directory, create_file, delete, extract, handle_request,
-        journal_to, list_directory, open, rename, serve_one, undo, view_file, write_file,
+        CORE_PLUGINS, bind, copy, create_directory, create_file, delete, extract, guarded,
+        handle_request, journal_to, list_directory, open, rename, serve_one, sniff_among, undo,
+        view_file, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
+    use plugin_api::PluginCore;
     use protocol::{Request, Response};
     use std::fs;
     use std::io;
@@ -821,6 +889,137 @@ public class OrderBook {
                 );
             }
         }
+    }
+
+    /// A plugin that panics the moment it is asked to read anything - the
+    /// shape of a bounds slip inside a third-party parser, of which this
+    /// process links a great many.
+    #[derive(Debug)]
+    struct PanickingCore;
+
+    impl PluginCore for PanickingCore {
+        fn name(&self) -> &'static str {
+            "panicking"
+        }
+
+        fn sniff(&self, _prefix: &[u8]) -> bool {
+            panic!("sniff went out of bounds");
+        }
+
+        fn view(&self, _path: &std::path::Path) -> io::Result<serde_json::Value> {
+            panic!("view went out of bounds");
+        }
+    }
+
+    /// A plugin that claims everything and reads nothing, to stand behind
+    /// the panicking one in a list.
+    #[derive(Debug)]
+    struct AlwaysCore;
+
+    impl PluginCore for AlwaysCore {
+        fn name(&self) -> &'static str {
+            "always"
+        }
+
+        fn sniff(&self, _prefix: &[u8]) -> bool {
+            true
+        }
+
+        fn view(&self, _path: &std::path::Path) -> io::Result<serde_json::Value> {
+            Ok(serde_json::json!({ "read": true }))
+        }
+    }
+
+    #[test]
+    fn a_panicking_plugin_yields_an_error_naming_the_file_and_the_plugin() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trips-a-parser.bin");
+        fs::write(&path, b"anything").unwrap();
+
+        let outcome = guarded("panicking", &path, || PanickingCore.view(&path));
+
+        let err = outcome.expect_err("the panic should have been caught");
+        let message = err.to_string();
+        assert!(message.contains("panicking"), "{message}");
+        assert!(message.contains("trips-a-parser.bin"), "{message}");
+        assert!(
+            message.contains("sniff went out of bounds")
+                || message.contains("view went out of bounds"),
+            "{message}"
+        );
+
+        // And the process is still here to say so.
+        assert!(view_file(&path).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_plugin_that_panics_while_sniffing_does_not_stop_the_others() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sample.bin");
+        fs::write(&path, b"anything").unwrap();
+
+        let plugins: [&dyn PluginCore; 2] = [&PanickingCore, &AlwaysCore];
+        let chosen = sniff_among(&plugins, &path, b"anything");
+
+        assert_eq!(
+            chosen.map(PluginCore::name),
+            Some("always"),
+            "the plugin after the panicking one must still get its turn"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_service_keeps_working_after_a_plugin_panics() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("after.txt");
+        fs::write(
+            &path,
+            b"still readable
+",
+        )
+        .unwrap();
+
+        // A panic caught, then an ordinary file viewed through the real
+        // plugin list: the second call is the one that matters.
+        let _ = guarded("panicking", &path, || PanickingCore.view(&path));
+
+        match view_file(&path).unwrap() {
+            Response::FileView { plugin, .. } => assert_eq!(plugin, "text"),
+            other => panic!("expected a file view, got {other:?}"),
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_ordinary_plugin_error_is_left_alone() {
+        // The boundary catches unwinds, not `Err`: a plugin that reports a
+        // problem the normal way still reports it the normal way.
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("nothing.txt");
+
+        let outcome: io::Result<io::Result<serde_json::Value>> =
+            guarded("text", &path, || Err(io::Error::other("no such thing")));
+
+        let inner = outcome.expect("no panic, so no boundary error");
+        assert_eq!(inner.unwrap_err().to_string(), "no such thing");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn every_registered_plugin_is_asked_behind_the_boundary() {
+        // Not a behaviour test: a reminder that the list is what is exposed
+        // to untrusted bytes, and that its size is the reason the boundary
+        // exists.
+        assert!(
+            CORE_PLUGINS.len() > 50,
+            "eighty parsers behind one process is the exposure being bounded"
+        );
     }
 
     #[test]
