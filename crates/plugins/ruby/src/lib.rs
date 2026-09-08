@@ -32,7 +32,16 @@ pub struct RubyView {
 /// method names may end in `?`, `!`, or `=`, which are included in the
 /// match; class names may not.
 fn top_level_name<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
-    let rest = line.strip_prefix(keyword)?.strip_prefix(' ')?;
+    // Ruby indents everything inside a class or module, so matching only at
+    // the start of a line found the methods a file has outside one - which
+    // in a file with any structure at all is none of them.
+    let rest = line
+        .trim_start()
+        .strip_prefix(keyword)?
+        .strip_prefix(' ')?
+        .trim_start();
+    // `def self.name` defines a class method; the name is what follows.
+    let rest = rest.strip_prefix("self.").unwrap_or(rest);
     let end = rest
         .find(|ch: char| {
             !(ch.is_alphanumeric() || ch == '_' || ch == '?' || ch == '!' || ch == '=')
@@ -324,5 +333,29 @@ mod tests {
             plugin_api::PluginPresentation::extensions(&crate::RubyPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    #[test]
+    fn extracts_definitions_nested_inside_a_module_or_class() {
+        // Ruby indents everything inside a class, so matching at line start
+        // only found the methods a structured file does not have.
+        let source = concat!(
+            "module Warehouse\n",
+            "  class Item\n",
+            "    def initialize(sku)\n    end\n\n",
+            "    def self.from_hash(raw)\n    end\n\n",
+            "    def in_stock?\n    end\n",
+            "  end\n",
+            "end\n\n",
+            "def loose_method\nend\n",
+        );
+
+        let (functions, classes) = super::parse_definitions(source);
+
+        assert_eq!(
+            functions,
+            vec!["initialize", "from_hash", "in_stock?", "loose_method"]
+        );
+        assert_eq!(classes, vec!["Item"]);
     }
 }

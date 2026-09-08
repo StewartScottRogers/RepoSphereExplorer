@@ -67,10 +67,15 @@ impl Container {
 /// entries; the first one `ttf-parser` can decode to UTF-8 is good enough for
 /// a metadata view.
 fn find_name(names: ttf_parser::name::Names<'_>, name_id: u16) -> Option<String> {
+    // The first record with the right id is not necessarily one that can be
+    // read: the specification orders records by platform, so a font that
+    // carries both Macintosh and Windows names puts the Macintosh record
+    // first, and `to_string` only decodes Unicode. Taking the first match
+    // and stopping left most real fonts reporting no family at all.
     names
         .into_iter()
-        .find(|name| name.name_id == name_id)
-        .and_then(|name| name.to_string())
+        .filter(|name| name.name_id == name_id)
+        .find_map(|name| name.to_string())
 }
 
 /// View data produced by [`FontCore::view`].
@@ -211,9 +216,59 @@ mod tests {
     /// `name` table carrying a family name - enough for `ttf-parser` to parse
     /// a real `Face` and for this plugin to read back family/glyph metadata.
     fn write_test_ttf(path: &std::path::Path) {
-        let family = "Test Font";
-        let family_utf16be: Vec<u8> = family.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        write_test_ttf_with_names(path, &windows_name_table("Test Font"));
+    }
 
+    /// A `name` table with one Windows Unicode record, which is the simplest
+    /// thing a reader can decode.
+    fn windows_name_table(family: &str) -> Vec<u8> {
+        let family_utf16be: Vec<u8> = family.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        let mut name = Vec::new();
+        push_u16be(&mut name, 0); // format
+        push_u16be(&mut name, 1); // count
+        push_u16be(&mut name, 18); // stringOffset (6 header + 1 * 12 record bytes)
+        push_u16be(&mut name, 3); // platformID: Windows
+        push_u16be(&mut name, 1); // encodingID: Unicode BMP
+        push_u16be(&mut name, 0x0409); // languageID: en-US
+        push_u16be(&mut name, 1); // nameID: FAMILY
+        push_u16be(&mut name, u16::try_from(family_utf16be.len()).unwrap());
+        push_u16be(&mut name, 0); // offset within storage
+        name.extend_from_slice(&family_utf16be);
+        name
+    }
+
+    /// A `name` table ordered the way the specification requires: platform 1
+    /// (Macintosh) before platform 3 (Windows). Real fonts carry both, and
+    /// only the Windows record decodes as Unicode.
+    fn macintosh_first_name_table(family: &str) -> Vec<u8> {
+        let mac = family.as_bytes().to_vec();
+        let windows: Vec<u8> = family.encode_utf16().flat_map(u16::to_be_bytes).collect();
+
+        let mut name = Vec::new();
+        push_u16be(&mut name, 0); // format
+        push_u16be(&mut name, 2); // count
+        push_u16be(&mut name, 30); // stringOffset (6 header + 2 * 12 record bytes)
+
+        push_u16be(&mut name, 1); // platformID: Macintosh
+        push_u16be(&mut name, 0); // encodingID: Roman
+        push_u16be(&mut name, 0); // languageID: English
+        push_u16be(&mut name, 1); // nameID: FAMILY
+        push_u16be(&mut name, u16::try_from(mac.len()).unwrap());
+        push_u16be(&mut name, 0); // offset within storage
+
+        push_u16be(&mut name, 3); // platformID: Windows
+        push_u16be(&mut name, 1); // encodingID: Unicode BMP
+        push_u16be(&mut name, 0x0409); // languageID: en-US
+        push_u16be(&mut name, 1); // nameID: FAMILY
+        push_u16be(&mut name, u16::try_from(windows.len()).unwrap());
+        push_u16be(&mut name, u16::try_from(mac.len()).unwrap()); // offset
+
+        name.extend_from_slice(&mac);
+        name.extend_from_slice(&windows);
+        name
+    }
+
+    fn write_test_ttf_with_names(path: &std::path::Path, name: &[u8]) {
         let mut head = Vec::new();
         push_u16be(&mut head, 1); // majorVersion
         push_u16be(&mut head, 0); // minorVersion
@@ -251,23 +306,11 @@ mod tests {
         maxp.extend_from_slice(&[0; 26]); // remaining v1.0 fields
         assert_eq!(maxp.len(), 32);
 
-        let mut name = Vec::new();
-        push_u16be(&mut name, 0); // format
-        push_u16be(&mut name, 1); // count
-        push_u16be(&mut name, 18); // stringOffset (6 header + 1 * 12 record bytes)
-        push_u16be(&mut name, 3); // platformID: Windows
-        push_u16be(&mut name, 1); // encodingID: Unicode BMP
-        push_u16be(&mut name, 0x0409); // languageID: en-US
-        push_u16be(&mut name, 1); // nameID: FAMILY
-        push_u16be(&mut name, u16::try_from(family_utf16be.len()).unwrap());
-        push_u16be(&mut name, 0); // offset within storage
-        name.extend_from_slice(&family_utf16be);
-
         let tables: [(&[u8; 4], &[u8]); 4] = [
             (b"head", &head),
             (b"hhea", &hhea),
             (b"maxp", &maxp),
-            (b"name", &name),
+            (b"name", name),
         ];
 
         let mut font = Vec::new();
@@ -362,5 +405,22 @@ mod tests {
             plugin_api::PluginPresentation::extensions(&crate::FontPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    #[test]
+    fn reads_the_family_of_a_font_whose_macintosh_records_come_first() {
+        // The specification orders name records by platform, so a font
+        // carrying both puts the Macintosh record first - and only the
+        // Windows one decodes as Unicode. Taking the first record with the
+        // right id and stopping left most real fonts reporting no family.
+        let path = unique_temp_file("mac-first.ttf");
+        write_test_ttf_with_names(&path, &macintosh_first_name_table("Test Font"));
+
+        let data = FontCore.view(&path).unwrap();
+        let view: FontView = serde_json::from_value(data).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(view.family.as_deref(), Some("Test Font"));
     }
 }

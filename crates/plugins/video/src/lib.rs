@@ -168,6 +168,20 @@ fn view_matroska(path: &Path, prefix: &[u8], file_size: u64) -> io::Result<Video
 /// header chunk, descending into `LIST` chunks since `avih` lives nested
 /// inside the `hdrl` list rather than at the top level.
 fn find_avih_chunk(bytes: &[u8]) -> Option<&[u8]> {
+    find_chunk(bytes, *b"avih")
+}
+
+/// Every `strh` stream header in a RIFF tree, in the order they appear.
+/// One per stream: the first four bytes name the stream type (`vids` or
+/// `auds`), the next four the handler - which is the codec an AVI declares.
+fn stream_headers(bytes: &[u8]) -> Vec<&[u8]> {
+    let mut found = Vec::new();
+    collect_chunks(bytes, *b"strh", &mut found);
+    found
+}
+
+/// Collects every chunk with `wanted` id, descending into `LIST` chunks.
+fn collect_chunks<'a>(bytes: &'a [u8], wanted: [u8; 4], found: &mut Vec<&'a [u8]>) {
     let mut offset = 0;
     while offset + 8 <= bytes.len() {
         let chunk_id = &bytes[offset..offset + 4];
@@ -175,18 +189,30 @@ fn find_avih_chunk(bytes: &[u8]) -> Option<&[u8]> {
             u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
         let body_start = offset + 8;
         let body_end = (body_start + chunk_size).min(bytes.len());
-        if chunk_id == b"avih" {
-            return Some(&bytes[body_start..body_end]);
-        }
-        if chunk_id == b"LIST"
-            && body_start + 4 <= body_end
-            && let Some(found) = find_avih_chunk(&bytes[body_start + 4..body_end])
-        {
-            return Some(found);
+        if chunk_id == wanted {
+            found.push(&bytes[body_start..body_end]);
+        } else if chunk_id == b"LIST" && body_start + 4 <= body_end {
+            collect_chunks(&bytes[body_start + 4..body_end], wanted, found);
         }
         offset = body_start + chunk_size + (chunk_size % 2);
     }
-    None
+}
+
+/// The first chunk with `wanted` id, or `None`.
+fn find_chunk(bytes: &[u8], wanted: [u8; 4]) -> Option<&[u8]> {
+    let mut found = Vec::new();
+    collect_chunks(bytes, wanted, &mut found);
+    found.into_iter().next()
+}
+
+/// A four-character code as text, when every byte of it is printable. A
+/// stream with no handler stores four zero bytes, which names nothing.
+fn fourcc(bytes: &[u8]) -> Option<String> {
+    let code = bytes.get(..4)?;
+    code.iter()
+        .all(u8::is_ascii_graphic)
+        .then(|| String::from_utf8_lossy(code).trim().to_owned())
+        .filter(|text| !text.is_empty())
 }
 
 /// Reads `path` as an AVI file, hand-parsing the RIFF `avih` main header
@@ -218,13 +244,25 @@ fn view_avi(path: &Path, file_size: u64) -> io::Result<VideoView> {
             duration_secs = f64::from(total_frames) * f64::from(microsec_per_frame) / 1_000_000.0;
         }
     }
+    // Each `strh` names its stream type and handler, which is where an AVI
+    // records its codec: `MJPG`, `DIVX`, `H264` and so on.
+    let mut video_codec = None;
+    let mut audio_codec = None;
+    for header in stream_headers(bytes.get(12..).unwrap_or(&[])) {
+        match header.get(..4) {
+            Some(b"vids") => video_codec = video_codec.or_else(|| fourcc(&header[4..])),
+            Some(b"auds") => audio_codec = audio_codec.or_else(|| fourcc(&header[4..])),
+            _ => {}
+        }
+    }
+
     Ok(VideoView {
         format: "AVI".to_owned(),
         duration_secs,
         width,
         height,
-        video_codec: None,
-        audio_codec: None,
+        video_codec,
+        audio_codec,
         file_size,
         poster: None,
     })
@@ -530,5 +568,89 @@ mod tests {
             plugin_api::PluginPresentation::extensions(&crate::VideoPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    /// The same AVI, with the stream header an AVI carries in practice: a
+    /// `strl` LIST holding a `strh` that names the stream type and its
+    /// handler - which is where the codec is recorded.
+    fn write_test_avi_with_stream(path: &std::path::Path, kind: [u8; 4], handler: [u8; 4]) {
+        let mut avih_body = vec![0u8; 56];
+        avih_body[0..4].copy_from_slice(&40_000u32.to_le_bytes());
+        avih_body[16..20].copy_from_slice(&10u32.to_le_bytes());
+        avih_body[32..36].copy_from_slice(&320u32.to_le_bytes());
+        avih_body[36..40].copy_from_slice(&240u32.to_le_bytes());
+
+        let mut avih_chunk = Vec::new();
+        avih_chunk.extend_from_slice(b"avih");
+        avih_chunk.extend_from_slice(&u32::try_from(avih_body.len()).unwrap().to_le_bytes());
+        avih_chunk.extend_from_slice(&avih_body);
+
+        let mut strh_body = Vec::new();
+        strh_body.extend_from_slice(&kind);
+        strh_body.extend_from_slice(&handler);
+        strh_body.extend_from_slice(&[0u8; 48]);
+
+        let mut strh_chunk = Vec::new();
+        strh_chunk.extend_from_slice(b"strh");
+        strh_chunk.extend_from_slice(&u32::try_from(strh_body.len()).unwrap().to_le_bytes());
+        strh_chunk.extend_from_slice(&strh_body);
+
+        let mut strl_list = Vec::new();
+        strl_list.extend_from_slice(b"LIST");
+        strl_list.extend_from_slice(&u32::try_from(4 + strh_chunk.len()).unwrap().to_le_bytes());
+        strl_list.extend_from_slice(b"strl");
+        strl_list.extend_from_slice(&strh_chunk);
+
+        let mut hdrl_list = Vec::new();
+        hdrl_list.extend_from_slice(b"LIST");
+        hdrl_list.extend_from_slice(
+            &u32::try_from(4 + avih_chunk.len() + strl_list.len())
+                .unwrap()
+                .to_le_bytes(),
+        );
+        hdrl_list.extend_from_slice(b"hdrl");
+        hdrl_list.extend_from_slice(&avih_chunk);
+        hdrl_list.extend_from_slice(&strl_list);
+
+        let mut riff_body = Vec::new();
+        riff_body.extend_from_slice(b"AVI ");
+        riff_body.extend_from_slice(&hdrl_list);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&u32::try_from(riff_body.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(&riff_body);
+
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn reads_the_codec_an_avi_stream_header_names() {
+        let path = unique_temp_file("codec.avi");
+        write_test_avi_with_stream(&path, *b"vids", *b"MJPG");
+
+        let data = VideoCore.view(&path).unwrap();
+        let view: VideoView = serde_json::from_value(data).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(view.video_codec.as_deref(), Some("MJPG"));
+        assert_eq!(
+            view.audio_codec, None,
+            "a file with no audio stream has no audio codec to report"
+        );
+    }
+
+    #[test]
+    fn a_stream_with_no_handler_names_no_codec() {
+        let path = unique_temp_file("no-handler.avi");
+        write_test_avi_with_stream(&path, *b"vids", [0, 0, 0, 0]);
+
+        let data = VideoCore.view(&path).unwrap();
+        let view: VideoView = serde_json::from_value(data).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(view.video_codec, None, "four zero bytes name nothing");
     }
 }

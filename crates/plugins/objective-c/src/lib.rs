@@ -67,12 +67,20 @@ fn parse_method_name(line: &str) -> Option<String> {
 /// Parses the class names and method selectors out of `content`, in source
 /// order.
 fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
-    let mut classes = Vec::new();
-    let mut methods = Vec::new();
+    let mut classes: Vec<String> = Vec::new();
+    let mut methods: Vec<String> = Vec::new();
     for line in content.lines() {
         if let Some(name) = parse_class_name(line) {
-            classes.push(name.to_owned());
-        } else if let Some(name) = parse_method_name(line) {
+            // Objective-C declares a class in its `@interface` and defines
+            // it again in its `@implementation`, and declares each method
+            // in both. Listing the file's contents twice is noise, not
+            // information.
+            if !classes.iter().any(|seen| seen == name) {
+                classes.push(name.to_owned());
+            }
+        } else if let Some(name) = parse_method_name(line)
+            && !methods.contains(&name)
+        {
             methods.push(name);
         }
     }
@@ -248,8 +256,11 @@ mod tests {
         let view: ObjectiveCView = serde_json::from_value(data).unwrap();
 
         assert!(!view.truncated);
-        assert_eq!(view.classes, vec!["Greeter", "Greeter"]);
-        assert_eq!(view.methods, vec!["greet:", "greet:", "new"]);
+        // The file declares `Greeter` in its `@interface` and defines it
+        // again in its `@implementation`; this test used to pin the
+        // duplicate, which is the file's structure rather than its contents.
+        assert_eq!(view.classes, vec!["Greeter"]);
+        assert_eq!(view.methods, vec!["greet:", "new"]);
         assert!(view.content.contains("Hello"));
 
         std::fs::remove_file(&path).unwrap();
@@ -301,5 +312,24 @@ mod tests {
             plugin_api::PluginPresentation::extensions(&crate::ObjectiveCPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    #[test]
+    fn a_class_declared_and_then_implemented_is_listed_once() {
+        let source = concat!(
+            "@interface DownloadTask : NSObject\n",
+            "- (instancetype)initWithURL:(NSURL *)url;\n",
+            "- (NSString *)describeState;\n",
+            "@end\n\n",
+            "@implementation DownloadTask\n",
+            "- (instancetype)initWithURL:(NSURL *)url {\n    return self;\n}\n",
+            "- (NSString *)describeState {\n    return @\"queued\";\n}\n",
+            "@end\n",
+        );
+
+        let (classes, methods) = super::parse_definitions(source);
+
+        assert_eq!(classes, vec!["DownloadTask"]);
+        assert_eq!(methods, vec!["initWithURL:", "describeState"]);
     }
 }

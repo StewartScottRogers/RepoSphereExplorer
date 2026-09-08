@@ -27,10 +27,30 @@ pub struct JavaScriptView {
     pub classes: Vec<String>,
 }
 
+/// Words that may stand between the start of a line and the declaration it
+/// carries. An ES module exports most of what it declares, so without this
+/// the common case - `export class`, `export function` - is invisible.
+const MODIFIERS: [&str; 4] = ["export", "default", "async", "static"];
+
+/// `line` with its leading modifiers removed.
+fn without_modifiers(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    while let Some((word, tail)) = rest.split_once(char::is_whitespace) {
+        if MODIFIERS.contains(&word) {
+            rest = tail.trim_start();
+        } else {
+            break;
+        }
+    }
+    rest
+}
+
 /// Extracts the identifier following `keyword` (`"function"` or `"class"`) at
 /// the start of `line`, if present.
 fn top_level_name<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
-    let rest = line.strip_prefix(keyword)?.strip_prefix(' ')?;
+    let rest = without_modifiers(line)
+        .strip_prefix(keyword)?
+        .strip_prefix(' ')?;
     let end = rest
         .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .unwrap_or(rest.len());
@@ -349,5 +369,21 @@ mod tests {
             plugin_api::PluginPresentation::extensions(&crate::JavaScriptPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    #[test]
+    fn extracts_declarations_that_carry_modifiers() {
+        let source = concat!(
+            "export class Store {\n}\n\n",
+            "export default class Persistent extends Store {\n}\n\n",
+            "export function combine(reducers) {}\n",
+            "async function demo() {}\n",
+            "function plain() {}\n",
+        );
+
+        let (functions, classes) = super::parse_definitions(source);
+
+        assert_eq!(functions, vec!["combine", "demo", "plain"]);
+        assert_eq!(classes, vec!["Store", "Persistent"]);
     }
 }
