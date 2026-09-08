@@ -5,7 +5,7 @@
 //! own width/height when explicit attributes are absent) rather than pixel
 //! dimensions, and the presentation half labels it a vector image.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -43,6 +43,11 @@ pub struct SvgView {
     pub view_box: Option<String>,
     /// Size of the file on disk, in bytes.
     pub file_size: u64,
+    /// The SVG source itself, for a front end that can draw vectors.
+    /// `None` when the file is larger than the view limit, since a preview
+    /// is not worth sending a megabyte of markup for.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Extracts the first `<svg ...>` opening tag from `content`, or `None` if
@@ -139,7 +144,9 @@ impl PluginCore for SvgCore {
             .and_then(parse_length);
         let view_box_size = view_box.as_deref().and_then(parse_view_box_size);
 
+        let source = (bytes.len() <= MAX_VIEW_BYTES).then(|| content.clone());
         let view = SvgView {
+            source,
             width: explicit_width.or(view_box_size.map(|(width, _)| width)),
             height: explicit_height.or(view_box_size.map(|(_, height)| height)),
             view_box,
@@ -183,6 +190,11 @@ impl PluginPresentation for SvgPresentation {
         }
         lines.push(format!("{} bytes on disk", view.file_size));
         lines
+    }
+
+    fn graphic(&self, data: &serde_json::Value) -> Option<Graphic> {
+        let view: SvgView = serde_json::from_value(data.clone()).ok()?;
+        view.source.map(Graphic::Svg)
     }
 }
 
@@ -285,6 +297,7 @@ mod tests {
             height: Some(32.0),
             view_box: Some("0 0 24 32".to_owned()),
             file_size: 512,
+            source: None,
         })
         .unwrap();
 

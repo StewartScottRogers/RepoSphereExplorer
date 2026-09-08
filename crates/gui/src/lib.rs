@@ -13,8 +13,8 @@ pub mod app;
 pub mod settings;
 
 use app::App;
-use plugin_api::Icon;
-use slint::{Image, ModelRc, SharedString, VecModel};
+use plugin_api::{Graphic, Icon};
+use slint::{Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -66,6 +66,27 @@ fn icon_svg(icon: Icon, folder: bool) -> String {
     )
 }
 
+/// Turns a plugin's [`Graphic`] into something Slint can draw. Decoded
+/// pixels are handed over as they are; SVG source is rendered by Slint,
+/// which already does that for the file-type icons.
+fn graphic_image(graphic: &Graphic) -> Option<Image> {
+    match graphic {
+        Graphic::Rgba {
+            width,
+            height,
+            pixels,
+        } => {
+            let expected = (*width as usize) * (*height as usize) * 4;
+            // A plugin that miscounts its own pixels would otherwise panic
+            // the front end inside Slint's buffer constructor.
+            (pixels.len() == expected && expected > 0).then(|| {
+                Image::from_rgba8(SharedPixelBuffer::clone_from_slice(pixels, *width, *height))
+            })
+        }
+        Graphic::Svg(source) => Image::load_from_svg_data(source.as_bytes()).ok(),
+    }
+}
+
 /// The rendered image for `icon`, drawing it the first time it is asked for.
 fn icon_image(icon: Icon, folder: bool) -> Image {
     ICON_CACHE.with_borrow_mut(|cache| {
@@ -98,6 +119,9 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             .collect::<Vec<_>>(),
     )));
     ui.set_content_selected(row_index(app.content_selected()));
+    let graphic = app.file_graphic().as_ref().and_then(graphic_image);
+    ui.set_file_has_graphic(graphic.is_some());
+    ui.set_file_graphic(graphic.unwrap_or_default());
     ui.set_file_text(app.file_text().into());
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());

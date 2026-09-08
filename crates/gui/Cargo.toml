@@ -111,6 +111,9 @@ slint-build = "1.17"
 # Slint version, as its README requires.
 [dev-dependencies]
 i-slint-backend-testing = "=1.17.1"
+# Test-only: the sweep over `samples/` needs the core halves to produce the
+# view data the presentation halves then render.
+service = { path = "../service" }
 
 # Not `[lints] workspace = true`: Slint's generated component code (from
 # build.rs, included into this crate) contains its own #[allow(unsafe_code)]

@@ -47,6 +47,28 @@ pub const UNKNOWN_ICON: Icon = Icon {
     tint: 0x009c_a3af,
 };
 
+/// Something a front end can draw for a file whose content is a picture.
+///
+/// GUIDANCE.md §3 gives each plugin its own "thumbnail and graphics", but
+/// the presentation half only ever returned lines of text, so no plugin
+/// could show one: an image previewed as the words "Png image, 16 x 16
+/// pixels". Both shapes here are toolkit-neutral - decoded pixels, or SVG
+/// source a front end renders itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Graphic {
+    /// Decoded pixels, row-major RGBA8, `width * height * 4` bytes long.
+    Rgba {
+        /// Width in pixels.
+        width: u32,
+        /// Height in pixels.
+        height: u32,
+        /// The pixels themselves.
+        pixels: Vec<u8>,
+    },
+    /// SVG source, for a front end that can render vectors.
+    Svg(String),
+}
+
 /// The presentation half of a file-type plugin: turns the core half's view
 /// data into lines of text a front end can render, without ever touching
 /// raw file bytes.
@@ -72,5 +94,13 @@ pub trait PluginPresentation: Send + Sync {
     /// extension belongs to exactly one plugin.
     fn extensions(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    /// A picture to draw for this view, for the file types that are one.
+    /// `None` for everything else, which is most of them: source code and
+    /// structured data say more as text.
+    fn graphic(&self, data: &serde_json::Value) -> Option<Graphic> {
+        let _ = data;
+        None
     }
 }

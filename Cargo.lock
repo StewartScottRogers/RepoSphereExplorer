@@ -2763,6 +2763,7 @@ dependencies = [
  "plugin-xml",
  "protocol",
  "serde_json",
+ "service",
  "slint",
  "slint-build",
  "updater",
@@ -5704,6 +5705,7 @@ dependencies = [
 name = "plugin-image"
 version = "0.6.0"
 dependencies = [
+ "base64 0.22.1",
  "image",
  "plugin-api",
  "serde",
