@@ -100,6 +100,60 @@ fn icon_image(icon: Icon, folder: bool) -> Image {
     })
 }
 
+/// Row height in `app.slint`'s panes. The scroll arithmetic below has to
+/// agree with what is drawn, and a listing draws row `i` at `i * ROW_HEIGHT`.
+const ROW_HEIGHT: f32 = 20.0;
+
+/// Where a pane should be scrolled to so that row `selected` is fully
+/// visible, given how much of the listing is on screen and where it is
+/// scrolled now.
+///
+/// Offsets are what a `ScrollView` uses: zero at the top of the listing, and
+/// negative as it scrolls down.
+///
+/// Moves by the smallest amount that does the job - to the top edge if the
+/// row sits above the viewport, to the bottom edge if it sits below, and not
+/// at all if it is already visible. A pane that jumped a full page whenever
+/// the selection moved one row past the fold would be worse than one that
+/// never scrolled: the reader would lose their place every time.
+///
+/// This lives in Rust rather than in a `changed selected` handler in
+/// `app.slint` because such a handler is never dispatched without an event
+/// loop, so nothing could test it - and the three defects this project has
+/// already had in that file were all of that kind.
+#[must_use]
+pub fn scroll_offset_for(selected: usize, viewport_height: f32, current: f32) -> f32 {
+    // A viewport that has not been laid out yet cannot be reasoned about,
+    // and a listing shorter than its pane never scrolls.
+    if viewport_height <= 0.0 {
+        return current;
+    }
+
+    // A listing that reached the precision limit here would hold sixteen
+    // million rows, and would have run out of memory long before it ran out
+    // of mantissa. `u16` covers a listing anybody can scroll and converts
+    // exactly, so the arithmetic stays honest without a cast that lies.
+    let Ok(index) = u16::try_from(selected) else {
+        // Past that, scroll to the end of what can be addressed and stop:
+        // an answer that is off by a row is better than one that is off by
+        // a listing.
+        return -(f32::from(u16::MAX) * ROW_HEIGHT);
+    };
+    let top = f32::from(index) * ROW_HEIGHT;
+    let bottom = top + ROW_HEIGHT;
+    // `current` is zero or negative; the visible band is what it exposes.
+    let visible_top = -current;
+    let visible_bottom = visible_top + viewport_height;
+
+    if top < visible_top {
+        -top
+    } else if bottom > visible_bottom {
+        viewport_height - bottom
+    } else {
+        current
+    }
+}
+
 /// Copies `app`'s current state into `ui`'s bound properties.
 pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_rows(string_model(app.folder_labels()));
@@ -120,6 +174,19 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             .collect::<Vec<_>>(),
     )));
     ui.set_content_selected(row_index(app.content_selected()));
+    // Whatever moved the selection - a click, type-ahead, an arrow key,
+    // Home or End, or the reselect after an operation - it lands here, so
+    // one adjustment per render covers every one of them.
+    ui.set_content_scroll_y(scroll_offset_for(
+        app.content_selected(),
+        ui.get_content_viewport_height(),
+        ui.get_content_scroll_y(),
+    ));
+    ui.set_folders_scroll_y(scroll_offset_for(
+        app.folder_selected(),
+        ui.get_folders_viewport_height(),
+        ui.get_folders_scroll_y(),
+    ));
     let graphic = app.file_graphic().as_ref().and_then(graphic_image);
     ui.set_file_has_graphic(graphic.is_some());
     ui.set_file_graphic(graphic.unwrap_or_default());
@@ -169,4 +236,89 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
             .map(SharedString::from)
             .collect::<Vec<_>>(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ROW_HEIGHT, scroll_offset_for};
+
+    /// Offsets are whole multiples of a row height, so anything inside a
+    /// pixel is the same answer. Stated once rather than comparing floats
+    /// for exact equality all through the file.
+    fn same(left: f32, right: f32) -> bool {
+        (left - right).abs() < 1.0
+    }
+
+    /// A pane showing ten rows at a time.
+    const VIEWPORT: f32 = 10.0 * ROW_HEIGHT;
+
+    #[test]
+    fn a_row_already_visible_does_not_move_the_pane() {
+        // Rows 0 to 9 are on screen; selecting any of them changes nothing,
+        // which is what stops the listing twitching as the reader arrows
+        // down it.
+        for selected in 0..10 {
+            assert!(same(scroll_offset_for(selected, VIEWPORT, 0.0), 0.0));
+        }
+    }
+
+    #[test]
+    fn a_row_below_the_fold_comes_to_the_bottom_edge() {
+        // Row 10 is one past the last visible row, so the pane moves by
+        // exactly one row - not by a page.
+        assert!(same(scroll_offset_for(10, VIEWPORT, 0.0), -ROW_HEIGHT));
+        assert!(same(
+            scroll_offset_for(11, VIEWPORT, 0.0),
+            -2.0 * ROW_HEIGHT
+        ));
+    }
+
+    #[test]
+    fn a_row_far_below_puts_that_row_last() {
+        let offset = scroll_offset_for(199, VIEWPORT, 0.0);
+
+        // Row 199 occupies the band ending at the bottom edge.
+        let visible_top = -offset;
+        let visible_bottom = visible_top + VIEWPORT;
+        let row_bottom = 200.0 * ROW_HEIGHT;
+        assert!(same(visible_bottom, row_bottom));
+    }
+
+    #[test]
+    fn a_row_above_the_fold_comes_to_the_top_edge() {
+        // Scrolled down to row 100, then the selection jumps back to 40.
+        let scrolled = -100.0 * ROW_HEIGHT;
+
+        let offset = scroll_offset_for(40, VIEWPORT, scrolled);
+
+        assert!(same(offset, -40.0 * ROW_HEIGHT), "the row sits at the top");
+    }
+
+    #[test]
+    fn the_first_row_scrolls_the_listing_home() {
+        assert!(same(
+            scroll_offset_for(0, VIEWPORT, -100.0 * ROW_HEIGHT),
+            0.0
+        ));
+    }
+
+    #[test]
+    fn a_pane_that_has_not_been_laid_out_is_left_alone() {
+        // Before the first layout the viewport has no height, and an
+        // arithmetic answer from that would scroll the listing off screen.
+        assert!(same(scroll_offset_for(50, 0.0, -20.0), -20.0));
+    }
+
+    #[test]
+    fn moving_one_row_at_a_time_scrolls_one_row_at_a_time() {
+        // Walking down past the fold: each step moves the pane by exactly a
+        // row, so the selected row stays at the bottom edge rather than the
+        // view jumping ahead of the reader.
+        let mut offset = 0.0;
+        for selected in 0..30 {
+            offset = scroll_offset_for(selected, VIEWPORT, offset);
+        }
+
+        assert!(same(offset, -20.0 * ROW_HEIGHT));
+    }
 }

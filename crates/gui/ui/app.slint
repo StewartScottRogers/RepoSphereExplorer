@@ -51,6 +51,14 @@ component Pane inherits Rectangle {
     callback row-clicked(int);
     callback row-double-clicked(int);
 
+    // The scroll offset, and how much of the listing fits. Both surfaced so
+    // the front end can put the selected row on screen: the rule for that is
+    // in Rust (`scroll_offset_for`), because a `changed selected` handler in
+    // here cannot be exercised without an event loop, and untestable
+    // behaviour in this file has cost this project three defects already.
+    in-out property <length> scroll-y;
+    out property <length> viewport-height: scroll.visible-height;
+
     // A per-row `for`-loop generating `Rectangle`/`TouchArea` instances
     // leaves every instance but the first permanently unresponsive to real
     // mouse input under Slint 1.17.1 (matches upstream issue #6836).
@@ -70,7 +78,8 @@ component Pane inherits Rectangle {
             height: 22px;
             horizontal-alignment: center;
         }
-        ScrollView {
+        scroll := ScrollView {
+            viewport-y <=> root.scroll-y;
             // `ScrollView` vertically centers a child shorter than its
             // viewport rather than pinning it to the top, so the row
             // container needs an explicit top-aligned layout around it.
@@ -451,6 +460,11 @@ component ContentsPane inherits Rectangle {
     property <length> modified-column: 118px;
     property <length> header-height: 20px;
 
+    // As `Pane`: the offset and the visible height, so the front end can
+    // scroll the selected row into view from Rust.
+    in-out property <length> scroll-y;
+    out property <length> viewport-height: scroll.visible-height;
+
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
 
@@ -505,7 +519,8 @@ component ContentsPane inherits Rectangle {
                 }
             }
         }
-        ScrollView {
+        scroll := ScrollView {
+            viewport-y <=> root.scroll-y;
             body := Rectangle {
                 width: 100%;
                 min-height: max(rows.length * row-height, root.height - 22px - header-height);
@@ -517,10 +532,16 @@ component ContentsPane inherits Rectangle {
                     background: Theme.accent;
                 }
 
-                for row[i] in rows: Rectangle {
+                for row[i] in rows: listing-row := Rectangle {
                     y: i * row-height;
                     height: row-height;
                     width: 100%;
+                    // Named so a test can ask which rows are on screen: the
+                    // element search returns the visible ones, which is
+                    // exactly the question "did the pane scroll far enough,
+                    // and no further".
+                    accessible-role: text;
+                    accessible-label: row.name;
                     HorizontalLayout {
                         padding-left: 4px;
                         padding-right: 4px;
@@ -865,6 +886,15 @@ export component MainWindow inherits Window {
     // the window closes; the splitters move them in between.
     in-out property <length> folders-width: 240px;
     in-out property <length> contents-width: 470px;
+    // Each pane's scroll offset, so the front end can bring the selected row
+    // into view. Two-way: the user scrolls with the wheel and the scrollbar
+    // too, and whatever they left it at is where the next adjustment starts.
+    in-out property <length> folders-scroll-y;
+    in-out property <length> content-scroll-y;
+    // How much of each listing is on screen, which decides whether the
+    // selected row needs bringing into view at all.
+    out property <length> folders-viewport-height: folders-pane.viewport-height;
+    out property <length> content-viewport-height: contents-pane.viewport-height;
     // Which menu is open: -1 none, then File, Edit, View, Help. A menu is a
     // property rather than a `PopupWindow` so it can be sized, placed and
     // clicked like any other element.
@@ -1158,11 +1188,12 @@ export component MainWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 2px;
-                Pane {
+                folders-pane := Pane {
                     title: "Folders";
                     focused: focus-pane == 0;
                     rows: folder-rows;
                     selected: folder-selected;
+                    scroll-y <=> folders-scroll-y;
                     width: folders-width;
                     horizontal-stretch: 0;
                     row-clicked(i) => { folder-row-clicked(i); }
@@ -1173,11 +1204,12 @@ export component MainWindow inherits Window {
                         folders-width = clamp(folders-width + delta, 120px, root.width - contents-width - 200px);
                     }
                 }
-                ContentsPane {
+                contents-pane := ContentsPane {
                     title: "Contents";
                     focused: focus-pane == 1;
                     rows: content-rows;
                     selected: content-selected;
+                    scroll-y <=> content-scroll-y;
                     width: contents-width;
                     horizontal-stretch: 0;
                     row-clicked(i) => { content-row-clicked(i); }
