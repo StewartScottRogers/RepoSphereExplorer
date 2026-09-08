@@ -106,6 +106,10 @@ export struct ContentRow {
     size: string,
     kind: string,
     modified: string,
+    // Whether this row is a source control working copy. The Repos Directory
+    // is a workspace, so which of its folders are checkouts is the first
+    // thing a reader is looking for.
+    is-repository: bool,
     // Whether this row is part of the selection. With Ctrl and Shift in play
     // that is no longer "the one row whose index matches".
     selected: bool,
@@ -485,7 +489,14 @@ component ContentsPane inherits Rectangle {
                             }
                             Text {
                                 text: row.name;
-                                color: row.selected ? Theme.on-accent : Palette.foreground;
+                                // A working copy is named in the accent
+                                // colour and in bold: distinguishable at a
+                                // glance from an ordinary folder, which
+                                // stays listed and stays plain.
+                                color: row.selected
+                                    ? Theme.on-accent
+                                    : (row.is-repository ? Theme.accent : Palette.foreground);
+                                font-weight: row.is-repository ? 700 : 400;
                                 overflow: elide;
                                 vertical-alignment: center;
                                 horizontal-stretch: 1;
@@ -700,7 +711,7 @@ component ContentsPane inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
-    title: "RepoSphereExplorer";
+    title: "Repos Explorer";
     preferred-width: 1000px;
     preferred-height: 600px;
     background: Palette.background;
@@ -760,6 +771,8 @@ export component MainWindow inherits Window {
     in property <bool> has-selection;
     in property <bool> can-paste;
     callback quit-requested();
+    // File > Repos Directory...: settles where every launch opens.
+    callback repos-root-requested();
     callback about-requested();
     // Which contents column is sorted on, and which way.
     in property <int> content-sort-column;
@@ -1242,7 +1255,7 @@ export component MainWindow inherits Window {
             x: 4px;
             y: 24px;
             width: 210px;
-            height: 8 * menu-item-h;
+            height: 9 * menu-item-h;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
@@ -1292,6 +1305,11 @@ export component MainWindow inherits Window {
                     item-enabled: has-selection;
                     item-height: menu-item-h;
                     activated => { open-menu = -1; delete-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Repos Directory...";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; repos-root-requested(); }
                 }
                 ContextMenuItem {
                     label: "Exit";

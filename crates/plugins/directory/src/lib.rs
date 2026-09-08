@@ -6,6 +6,8 @@
 //! attempting `sniff`; [`DirectoryCore::sniff`] always returns `false` and
 //! exists only to satisfy the trait.
 
+pub mod repository;
+
 use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -19,6 +21,11 @@ pub struct DirectoryView {
     /// Combined size in bytes of immediate entries whose size is known
     /// (subdirectories are not recursed into).
     pub total_size: u64,
+    /// What this directory is as a source control working copy, or `None`
+    /// when it is an ordinary folder - which is not a lesser thing, just a
+    /// different one (GUIDANCE.md 2.5).
+    #[serde(default)]
+    pub repository: Option<repository::Repository>,
 }
 
 /// The directory-as-file plugin's core half.
@@ -53,6 +60,7 @@ impl PluginCore for DirectoryCore {
         let view = DirectoryView {
             entry_count,
             total_size,
+            repository: repository::describe(path),
         };
         serde_json::to_value(view).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
@@ -84,13 +92,40 @@ impl PluginPresentation for DirectoryPresentation {
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
-        match serde_json::from_value::<DirectoryView>(data.clone()) {
-            Ok(view) => vec![
-                format!("{} {}", view.entry_count, entries_noun(view.entry_count)),
-                format!("{} bytes total", view.total_size),
-            ],
-            Err(err) => vec![format!("could not read view data: {err}")],
+        let view = match serde_json::from_value::<DirectoryView>(data.clone()) {
+            Ok(view) => view,
+            Err(err) => return vec![format!("could not read view data: {err}")],
+        };
+
+        let mut lines = Vec::new();
+        // A working copy leads with what it is: which provider it came from
+        // and what is checked out. The folder facts follow, because they are
+        // the less interesting half for a repository.
+        if let Some(repository) = &view.repository {
+            lines.push("Source control working copy".to_owned());
+            if let Some(provider) = &repository.provider {
+                lines.push(format!("Provider: {provider}"));
+            }
+            if let Some(branch) = &repository.branch {
+                lines.push(format!("Branch: {branch}"));
+            } else {
+                lines.push("Branch: none checked out (detached head)".to_owned());
+            }
+            if let Some(remote) = &repository.remote {
+                lines.push(format!("Remote: {remote}"));
+            } else {
+                lines.push("Remote: none configured".to_owned());
+            }
+            lines.push(String::new());
         }
+
+        lines.push(format!(
+            "{} {}",
+            view.entry_count,
+            entries_noun(view.entry_count)
+        ));
+        lines.push(format!("{} bytes total", view.total_size));
+        lines
     }
 }
 
@@ -131,6 +166,7 @@ mod tests {
         let data = serde_json::to_value(DirectoryView {
             entry_count: 4,
             total_size: 1024,
+            repository: None,
         })
         .unwrap();
 
@@ -144,11 +180,72 @@ mod tests {
         let view = DirectoryView {
             entry_count: 1,
             total_size: 10,
+            repository: None,
         };
         let data = serde_json::to_value(view).unwrap();
 
         let lines = DirectoryPresentation.present(&data);
 
         assert_eq!(lines, vec!["1 entry", "10 bytes total"]);
+    }
+
+    #[test]
+    fn a_working_copy_leads_with_where_it_came_from() {
+        let data = serde_json::to_value(DirectoryView {
+            entry_count: 12,
+            total_size: 4096,
+            repository: Some(super::repository::Repository {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: Some("https://github.com/owner/name.git".to_owned()),
+                dirty: None,
+            }),
+        })
+        .unwrap();
+
+        let lines = DirectoryPresentation.present(&data);
+
+        assert_eq!(
+            lines,
+            vec![
+                "Source control working copy",
+                "Provider: github.com",
+                "Branch: main",
+                "Remote: https://github.com/owner/name.git",
+                "",
+                "12 entries",
+                "4096 bytes total",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_working_copy_says_so_even_when_it_has_no_remote_or_branch() {
+        let data = serde_json::to_value(DirectoryView {
+            entry_count: 3,
+            total_size: 90,
+            repository: Some(super::repository::Repository::default()),
+        })
+        .unwrap();
+
+        let lines = DirectoryPresentation.present(&data);
+
+        assert!(lines.contains(&"Source control working copy".to_owned()));
+        assert!(lines.contains(&"Branch: none checked out (detached head)".to_owned()));
+        assert!(lines.contains(&"Remote: none configured".to_owned()));
+    }
+
+    #[test]
+    fn an_ordinary_folder_says_nothing_about_source_control() {
+        let data = serde_json::to_value(DirectoryView {
+            entry_count: 2,
+            total_size: 15,
+            repository: None,
+        })
+        .unwrap();
+
+        let lines = DirectoryPresentation.present(&data);
+
+        assert_eq!(lines, vec!["2 entries", "15 bytes total"]);
     }
 }

@@ -27,6 +27,7 @@ fn row(name: &str) -> ContentRow {
         kind: SharedString::new(),
         modified: SharedString::new(),
         selected: false,
+        is_repository: false,
     }
 }
 
