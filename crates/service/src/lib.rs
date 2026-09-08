@@ -1,5 +1,7 @@
 //! The fat process: filesystem traversal, indexing, operations, and plugin cores.
 
+pub mod repos;
+
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream};
 use plugin_api::PluginCore;
@@ -141,11 +143,19 @@ pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
             .ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|duration| duration.as_secs());
+        // What a directory *is* to this application: a working copy, or an
+        // ordinary folder that stays listed either way (GUIDANCE.md 2.5).
+        let repository = if is_dir {
+            repos::describe(&entry.path())
+        } else {
+            None
+        };
         entries.push(DirectoryEntry {
             name,
             is_dir,
             size,
             modified,
+            repository,
         });
     }
     entries.sort_by(|a, b| {
@@ -680,6 +690,16 @@ pub fn handle_request(request: &Request) -> Response {
             respond_to_operation(write_file(Path::new(path), content))
         }
         Request::Undo => respond_to_operation(undo()),
+        Request::ReposRoots => Response::ReposRoots {
+            roots: repos::roots(),
+            default: repos::default_root().to_string_lossy().into_owned(),
+        },
+        Request::SetReposRoot { path } => {
+            let target = Path::new(path);
+            let outcome = repos::set_active_root(target);
+            journal("set-repos-root", &[target.display().to_string()], &outcome);
+            respond_to_operation(outcome)
+        }
     }
 }
 

@@ -5,7 +5,7 @@
 //! similar shape.
 
 use plugin_api::{Graphic, Icon, PluginPresentation, UNKNOWN_ICON};
-use protocol::{DirectoryEntry, Request, Response};
+use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
@@ -296,6 +296,13 @@ enum Mode {
     PathInput {
         input: String,
     },
+    /// The prompt for the Repos Directory: on a first run, and whenever the
+    /// user asks to change it. Shaped like the path prompt because it is the
+    /// same act - typing where to look - but it settles where every future
+    /// launch begins, so it is its own mode rather than a flag on that one.
+    ReposRootInput {
+        input: String,
+    },
 }
 
 /// What to do once a pending operation completes successfully, beyond the
@@ -329,6 +336,49 @@ fn send_request(request: &Request) -> io::Result<Response> {
     let mut conn = interprocess::local_socket::Stream::connect(protocol::socket_name()?)?;
     protocol::write_message(&mut conn, request)?;
     protocol::read_message(&mut conn)
+}
+
+/// Where the application opens, and whether it has to ask first.
+///
+/// Per decision D7 there is no last-location restore: the answer is the
+/// configured Repos Directory, and nothing else. When nothing is configured
+/// (a first run) this reports the platform's default and says it should be
+/// offered rather than assumed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opening {
+    /// The directory to open at.
+    pub root: PathBuf,
+    /// Whether the user should be asked to confirm or change it, because
+    /// nothing is configured yet.
+    pub ask: bool,
+}
+
+/// Asks the service where this machine's Repos Directory is.
+///
+/// The service owns the configuration, as it owns everything else that
+/// outlives a window. A front end that cannot reach it falls back to the
+/// platform default and asks, which is the same thing a first run does.
+#[must_use]
+pub fn opening() -> Opening {
+    match send_request(&Request::ReposRoots) {
+        Ok(Response::ReposRoots { roots, default }) => {
+            let active = roots
+                .into_iter()
+                .find(|root: &ReposRoot| root.active)
+                .map(|root| PathBuf::from(root.path));
+            match active {
+                Some(root) => Opening { root, ask: false },
+                None => Opening {
+                    root: PathBuf::from(default),
+                    ask: true,
+                },
+            }
+        }
+        _ => Opening {
+            root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            ask: true,
+        },
+    }
 }
 
 fn spawn_request(request: Request) -> Receiver<io::Result<Response>> {
@@ -375,6 +425,28 @@ fn format_size(bytes: u64) -> String {
 /// Explorer's "Type" column: `"File folder"` for a directory, otherwise the
 /// uppercased extension as `"RS file"`, or plain `"File"` when there is none.
 fn format_kind(name: &str, is_dir: bool) -> String {
+    format_kind_of(name, is_dir, None)
+}
+
+/// As [`format_kind`], but for an entry the service has told us something
+/// about as a source control working copy.
+///
+/// A repository says so, and names the provider it came from, because that
+/// is the fact somebody opening their workspace is looking for. An ordinary
+/// folder is still an ordinary folder - visible, and plainly different
+/// (GUIDANCE.md 2.5).
+fn format_kind_of(name: &str, is_dir: bool, repository: Option<&RepositoryInfo>) -> String {
+    if let Some(repository) = repository {
+        // The provider alone, because the Type column is narrow and
+        // "Repository (github.com)" elides to "Repository (git..." - which
+        // keeps the half a reader already knows from the row's own styling
+        // and throws away the half they do not. A checkout with no remote
+        // has no provider to name, and says what it is instead.
+        return repository
+            .provider
+            .clone()
+            .unwrap_or_else(|| "Repository".to_owned());
+    }
     if is_dir {
         return "File folder".to_owned();
     }
@@ -470,6 +542,10 @@ impl SortKey {
 pub struct ContentRow {
     /// The type's icon, from its plugin.
     pub icon: Icon,
+    /// Whether this row is a source control working copy. Drawn differently
+    /// from a plain folder: the Repos Directory is a workspace, and which of
+    /// its folders are checkouts is the first thing to see.
+    pub is_repository: bool,
     /// Whether the row is a directory, which the icon is drawn as.
     pub is_dir: bool,
     /// Entry name, with a trailing `/` for a directory.
@@ -681,7 +757,7 @@ impl App {
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
-            Ok(Response::FileView { .. } | Response::Done) => {
+            Ok(Response::FileView { .. } | Response::Done | Response::ReposRoots { .. }) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
             Err(err) => self.status = Some(err.to_string()),
@@ -827,7 +903,8 @@ impl App {
             Mode::RenameInput { input, .. }
             | Mode::CopyInput { input, .. }
             | Mode::ExtractInput { input, .. }
-            | Mode::PathInput { input } => Some(input),
+            | Mode::PathInput { input }
+            | Mode::ReposRootInput { input } => Some(input),
             Mode::Normal | Mode::ConfirmDelete { .. } => None,
         }
     }
@@ -866,6 +943,22 @@ impl App {
             Mode::PathInput { input } if !input.trim().is_empty() => {
                 let target = PathBuf::from(input.trim());
                 self.remember_current();
+                self.push_history(target.clone());
+                self.browse(target);
+                return;
+            }
+            // Settling the Repos Directory does two things at once: it opens
+            // there now, and it tells the service to open there every time
+            // from now on. The service validates the path and refuses one
+            // that is not a directory, so a typo answers rather than
+            // silently taking effect at the next launch.
+            Mode::ReposRootInput { input } if !input.trim().is_empty() => {
+                let target = PathBuf::from(input.trim());
+                self.pending_operation = Some(spawn_request(Request::SetReposRoot {
+                    path: target.to_string_lossy().into_owned(),
+                }));
+                self.status = Some(format!("opening at {} from now on", target.display()));
+                self.mode = Mode::Normal;
                 self.push_history(target.clone());
                 self.browse(target);
                 return;
@@ -913,7 +1006,8 @@ impl App {
             Mode::RenameInput { .. }
             | Mode::CopyInput { .. }
             | Mode::ExtractInput { .. }
-            | Mode::PathInput { .. } => {
+            | Mode::PathInput { .. }
+            | Mode::ReposRootInput { .. } => {
                 self.confirm_text_input();
             }
             Mode::Normal if os == "macos" => self.request_rename(),
@@ -934,7 +1028,8 @@ impl App {
             Mode::RenameInput { .. }
             | Mode::CopyInput { .. }
             | Mode::ExtractInput { .. }
-            | Mode::PathInput { .. } => {
+            | Mode::PathInput { .. }
+            | Mode::ReposRootInput { .. } => {
                 self.type_char(text);
             }
             // Explorer's type-ahead: a typed letter jumps to a name, it is
@@ -1374,6 +1469,22 @@ impl App {
         };
     }
 
+    /// Opens the prompt for the Repos Directory, seeded with `suggestion`.
+    ///
+    /// Used twice: on a first run, where the suggestion is the platform's
+    /// default, and from the menu, where it is whatever is configured now.
+    pub fn begin_repos_root_edit(&mut self, suggestion: &str) {
+        self.mode = Mode::ReposRootInput {
+            input: suggestion.to_owned(),
+        };
+    }
+
+    /// Whether the application is asking where the repositories are.
+    #[must_use]
+    pub const fn choosing_repos_root(&self) -> bool {
+        matches!(self.mode, Mode::ReposRootInput { .. })
+    }
+
     /// The path being typed, or an empty string when the address bar is
     /// showing its segments.
     #[must_use]
@@ -1693,8 +1804,9 @@ impl App {
                 } else {
                     format_size(entry.size)
                 },
-                kind: format_kind(&entry.name, entry.is_dir),
+                kind: format_kind_of(&entry.name, entry.is_dir, entry.repository.as_ref()),
                 modified: format_timestamp(entry.modified),
+                is_repository: entry.repository.is_some(),
             })
             .collect()
     }
@@ -1758,7 +1870,8 @@ impl App {
                 present_view(plugin, view, data).join("\n")
             }
             Some(Response::Error { message }) => message.clone(),
-            Some(Response::Directory { .. } | Response::Done) | None => String::new(),
+            Some(Response::Directory { .. } | Response::Done | Response::ReposRoots { .. })
+            | None => String::new(),
         }
     }
 
@@ -1771,6 +1884,11 @@ impl App {
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
             Mode::PathInput { input } => format!("Go to: {input}_  (Enter/Esc)"),
+            Mode::ReposRootInput { input } => {
+                format!(
+                    "Repos Directory: {input}_  (Enter to open there from now on, Esc to cancel)"
+                )
+            }
             Mode::Normal => self
                 .status
                 .clone()
@@ -1791,6 +1909,12 @@ impl App {
             Mode::RenameInput { input, .. } => format!("Rename to:  {input}"),
             Mode::CopyInput { input, .. } => format!("Copy to:  {input}"),
             Mode::ExtractInput { input, .. } => format!("Extract into:  {input}"),
+            // A first run has no rows to point at, and an empty pane with a
+            // status line nobody reads is how somebody decides the
+            // application is broken. So this prompt is shown in the pane.
+            Mode::ReposRootInput { input } => {
+                format!("Where are your repositories?  {input}")
+            }
             // The address bar shows its own text field; the contents pane
             // has nothing to say about a path being typed.
             Mode::PathInput { .. } | Mode::Normal => String::new(),
@@ -1864,7 +1988,7 @@ mod tests {
         App, PathBuf, UNKNOWN_ICON, format_kind, format_timestamp, icon_for, strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
-    use protocol::{DirectoryEntry, Response};
+    use protocol::{DirectoryEntry, RepositoryInfo, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
         names
@@ -1874,6 +1998,7 @@ mod tests {
                 is_dir: *is_dir,
                 size: 0,
                 modified: None,
+                repository: None,
             })
             .collect()
     }
@@ -1886,6 +2011,7 @@ mod tests {
                 is_dir: *is_dir,
                 size: *size,
                 modified: *modified,
+                repository: None,
             })
             .collect()
     }
@@ -3402,5 +3528,106 @@ third",
         app.apply_operation_result(Ok(Response::Done));
 
         assert_eq!(app.status_text(), "Rename to: New folder (2)_  (Enter/Esc)");
+    }
+
+    /// A listing holding one working copy and one ordinary folder, as the
+    /// service reports it.
+    fn workspace_entries() -> Vec<DirectoryEntry> {
+        vec![
+            DirectoryEntry {
+                name: "explorer".to_owned(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+                repository: Some(RepositoryInfo {
+                    provider: Some("github.com".to_owned()),
+                    branch: Some("main".to_owned()),
+                    remote: Some("https://github.com/owner/explorer.git".to_owned()),
+                    dirty: None,
+                }),
+            },
+            DirectoryEntry {
+                name: "scratch".to_owned(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+                repository: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn a_working_copy_is_marked_and_names_its_provider() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: workspace_entries(),
+            }),
+        );
+
+        let rows = app.content_rows();
+
+        assert!(rows[0].is_repository, "a checkout should be marked as one");
+        assert_eq!(rows[0].kind, "github.com");
+        assert!(
+            !rows[1].is_repository,
+            "an ordinary folder is not a checkout"
+        );
+        assert_eq!(
+            rows[1].kind, "File folder",
+            "and it stays listed, plainly, rather than being hidden"
+        );
+    }
+
+    #[test]
+    fn a_working_copy_with_no_remote_is_still_marked() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "local-only".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(RepositoryInfo::default()),
+                }],
+            }),
+        );
+
+        let rows = app.content_rows();
+
+        assert!(rows[0].is_repository);
+        assert_eq!(rows[0].kind, "Repository");
+    }
+
+    #[test]
+    fn the_repos_directory_prompt_holds_what_it_was_seeded_with() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.begin_repos_root_edit(r"Z:\repos");
+
+        assert!(app.choosing_repos_root());
+        assert!(
+            app.status_text().contains(r"Z:\repos"),
+            "the prompt shows the suggestion: {}",
+            app.status_text()
+        );
+        assert!(
+            app.prompt_text().contains("Where are your repositories?"),
+            "and asks in the pane, where a first run is looking: {}",
+            app.prompt_text()
+        );
+    }
+
+    #[test]
+    fn cancelling_the_repos_directory_prompt_leaves_the_configuration_alone() {
+        let mut app = App::new(std::env::temp_dir());
+        app.begin_repos_root_edit("/somewhere");
+
+        app.cancel_pending();
+
+        assert!(!app.choosing_repos_root());
     }
 }

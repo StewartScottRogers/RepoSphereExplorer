@@ -156,6 +156,21 @@ pub(crate) fn render_with_block(
         Response::Done => {
             frame.render_widget(Paragraph::new("done").block(block), area);
         }
+        // The terminal front end keeps its own path argument until its own
+        // realignment work order; it has no reason to ask for the roots, and
+        // renders the reply as what it is if it somehow receives one.
+        Response::ReposRoots { roots, default } => {
+            let text = roots.iter().map(|root| root.path.as_str()).fold(
+                format!("Repos Directory (default {default}):"),
+                |text, path| {
+                    format!(
+                        "{text}
+{path}"
+                    )
+                },
+            );
+            frame.render_widget(Paragraph::new(text).block(block), area);
+        }
     }
 }
 
@@ -212,6 +227,7 @@ mod tests {
                     is_dir: false,
                     size: 0,
                     modified: None,
+                    repository: None,
                 }],
             };
             protocol::write_message(&mut conn, &response).unwrap();
@@ -268,6 +284,7 @@ mod tests {
                 is_dir: true,
                 size: 0,
                 modified: None,
+                repository: None,
             }],
         };
 

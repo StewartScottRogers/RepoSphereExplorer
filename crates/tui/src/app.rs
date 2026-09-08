@@ -337,7 +337,7 @@ impl App {
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
-            Ok(Response::FileView { .. } | Response::Done) => {
+            Ok(Response::FileView { .. } | Response::Done | Response::ReposRoots { .. }) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
             Err(err) => self.status = Some(err.to_string()),
@@ -737,6 +737,7 @@ mod tests {
                 is_dir: *is_dir,
                 size: 0,
                 modified: None,
+                repository: None,
             })
             .collect()
     }

@@ -1,5 +1,10 @@
-//! Command line entry point for the Slint front end: the three-pane
-//! explorer, rooted at an optional path argument (default `.`).
+//! Command line entry point for the Slint front end: the three panes,
+//! opening at this machine's Repos Directory.
+//!
+//! A path given on the command line still wins, for a one-off look and for
+//! the test harness. That is not a session restore (decision D7): it is an
+//! explicit instruction, given now, rather than a memory of where somebody
+//! happened to be when they last closed the window.
 
 use gui::app::App;
 use gui::{MainWindow, sync_ui};
@@ -21,9 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return self_update();
     }
 
-    let root = env::args()
-        .nth(1)
-        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let explicit = env::args().nth(1).map(PathBuf::from);
 
     if let Err(err) = ensure_service_running() {
         eprintln!(
@@ -34,7 +37,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(err.into());
     }
 
+    // Where to open: the path given on the command line, or the configured
+    // Repos Directory, or - on a first run - the platform's default, offered
+    // rather than assumed.
+    let opening = gui::app::opening();
+    let ask_for_root = explicit.is_none() && opening.ask;
+    let root = explicit.unwrap_or_else(|| opening.root.clone());
+
     let app = Rc::new(RefCell::new(App::new(root)));
+    if ask_for_root {
+        app.borrow_mut()
+            .begin_repos_root_edit(&opening.root.to_string_lossy());
+    }
     let ui = MainWindow::new()?;
     if let Some(widths) = gui::settings::load_pane_widths() {
         ui.set_folders_width(widths.folders);
@@ -223,10 +237,24 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         ui.on_about_requested(move || {
             let mut app = app.borrow_mut();
             app.report(concat!(
-                "RepoSphereExplorer ",
+                "Repos Explorer ",
                 env!("CARGO_PKG_VERSION"),
-                " - a three-pane explorer over a plugin service"
+                " - a front door to your development workspace"
             ));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    {
+        // File > Repos Directory...: the same prompt a first run shows,
+        // seeded with wherever the application is opening today.
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_repos_root_requested(move || {
+            let mut app = app.borrow_mut();
+            let current = gui::app::opening().root.to_string_lossy().into_owned();
+            app.begin_repos_root_edit(&current);
             if let Some(ui) = ui_weak.upgrade() {
                 sync_ui(&ui, &app);
             }

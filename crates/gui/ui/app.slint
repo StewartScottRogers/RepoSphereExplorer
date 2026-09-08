@@ -25,6 +25,20 @@ global Theme {
     // Text on a pane heading that is not focused.
     out property <brush> heading-text: Palette.foreground.transparentize(0.2);
     out property <brush> border: Palette.border;
+    // A group divider inside a bar sits on the panel colour, where the
+    // ordinary border is too faint to register at a glance. This is the
+    // same rule a Windows toolbar draws between its groups.
+    out property <brush> divider: dark
+        ? Palette.background.brighter(1.1)
+        : Palette.background.darker(0.30);
+    // The edge under a bar, separating chrome from content.
+    out property <brush> chrome-edge: dark
+        ? Palette.background.brighter(0.9)
+        : Palette.background.darker(0.22);
+    // A button being pressed, which should not look like one being hovered.
+    out property <brush> pressed: dark
+        ? Palette.background.brighter(1.0)
+        : Palette.background.darker(0.20);
     out property <brush> accent: Palette.accent-background;
     out property <brush> on-accent: Palette.accent-foreground;
 }
@@ -106,6 +120,10 @@ export struct ContentRow {
     size: string,
     kind: string,
     modified: string,
+    // Whether this row is a source control working copy. The Repos Directory
+    // is a workspace, so which of its folders are checkouts is the first
+    // thing a reader is looking for.
+    is-repository: bool,
     // Whether this row is part of the selection. With Ctrl and Shift in play
     // that is no longer "the one row whose index matches".
     selected: bool,
@@ -121,8 +139,14 @@ component NavButton inherits Rectangle {
     callback activated();
 
     width: 28px;
-    background: button-enabled && nav-touch.has-hover ? Theme.hover : transparent;
+    background: !button-enabled
+        ? transparent
+        : (nav-touch.pressed
+            ? Theme.pressed
+            : (nav-touch.has-hover ? Theme.hover : transparent));
     border-radius: 3px;
+    border-width: button-enabled && nav-touch.has-hover ? 1px : 0px;
+    border-color: Theme.divider;
 
     Text {
         text: glyph;
@@ -258,9 +282,18 @@ component CommandButton inherits Rectangle {
     in property <bool> button-enabled: true;
     callback activated();
 
-    width: command-text.preferred-width + 16px;
+    width: command-text.preferred-width + 20px;
     border-radius: 3px;
-    background: button-enabled && command-touch.has-hover ? Theme.hover : transparent;
+    // Three states, told apart: at rest, hovered (a fill and an edge, so the
+    // button has a shape), and pressed (a deeper fill). A press that looks
+    // like a hover is a button that never confirms it was clicked.
+    background: !button-enabled
+        ? transparent
+        : (command-touch.pressed
+            ? Theme.pressed
+            : (command-touch.has-hover ? Theme.hover : transparent));
+    border-width: button-enabled && command-touch.has-hover ? 1px : 0px;
+    border-color: Theme.divider;
 
     command-text := Text {
         text: label;
@@ -279,14 +312,33 @@ component CommandButton inherits Rectangle {
     }
 }
 
-// A thin vertical rule between groups of command buttons.
+// The hairline that ends a bar, so the chrome reads as chrome and the panes
+// start where it stops. Its own component because a Windows title area is
+// several strips, each with an edge, and an element id has to be unique
+// inside the component that holds it.
+component ChromeEdge inherits Rectangle {
+    // Positioned by whoever places it: a component cannot reach its parent,
+    // and the bars know their own height.
+    height: 1px;
+    rule := Rectangle {
+        width: 100%;
+        height: 1px;
+        background: Theme.chrome-edge;
+    }
+}
+
+// The rule between two groups of commands, with the room around it that
+// makes the grouping read as grouping. Named so a test can find it and
+// check the divisions are there and visible.
 component CommandSeparator inherits Rectangle {
-    width: 9px;
-    Rectangle {
+    width: 15px;
+    accessible-role: none;
+    rule := Rectangle {
         width: 1px;
-        height: 60%;
+        height: 70%;
+        x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        background: Theme.border;
+        background: Theme.divider;
     }
 }
 
@@ -485,7 +537,14 @@ component ContentsPane inherits Rectangle {
                             }
                             Text {
                                 text: row.name;
-                                color: row.selected ? Theme.on-accent : Palette.foreground;
+                                // A working copy is named in the accent
+                                // colour and in bold: distinguishable at a
+                                // glance from an ordinary folder, which
+                                // stays listed and stays plain.
+                                color: row.selected
+                                    ? Theme.on-accent
+                                    : (row.is-repository ? Theme.accent : Palette.foreground);
+                                font-weight: row.is-repository ? 700 : 400;
                                 overflow: elide;
                                 vertical-alignment: center;
                                 horizontal-stretch: 1;
@@ -700,7 +759,7 @@ component ContentsPane inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
-    title: "RepoSphereExplorer";
+    title: "Repos Explorer";
     preferred-width: 1000px;
     preferred-height: 600px;
     background: Palette.background;
@@ -760,6 +819,8 @@ export component MainWindow inherits Window {
     in property <bool> has-selection;
     in property <bool> can-paste;
     callback quit-requested();
+    // File > Repos Directory...: settles where every launch opens.
+    callback repos-root-requested();
     callback about-requested();
     // Which contents column is sorted on, and which way.
     in property <int> content-sort-column;
@@ -881,6 +942,11 @@ export component MainWindow inherits Window {
             Rectangle {
                 height: 24px;
                 background: Theme.panel;
+                // The menu bar is its own strip: the command bar below is a
+                // different kind of thing and should not run into it.
+                ChromeEdge {
+                    y: parent.height - 1px;
+                }
                 HorizontalLayout {
                     alignment: start;
                     MenuTitle {
@@ -908,12 +974,17 @@ export component MainWindow inherits Window {
 
             // Command bar.
             Rectangle {
-                height: 28px;
+                height: 30px;
                 background: Theme.panel;
+                // The edge that ends the chrome: everything below this line
+                // is content.
+                ChromeEdge {
+                    y: parent.height - 1px;
+                }
                 HorizontalLayout {
-                    padding-left: 4px;
-                    padding-top: 2px;
-                    padding-bottom: 2px;
+                    padding-left: 6px;
+                    padding-top: 3px;
+                    padding-bottom: 4px;
                     spacing: 1px;
                     alignment: start;
                     CommandButton {
@@ -997,6 +1068,9 @@ export component MainWindow inherits Window {
                         button-enabled: can-go-forward;
                         activated => { forward-requested(); }
                     }
+                    // Back and forward are a pair - they walk one history -
+                    // and up is not: it is a move, not a step backwards.
+                    CommandSeparator { }
                     NavButton {
                         glyph: "\u{2191}";
                         activated => { parent-requested(); }
@@ -1242,7 +1316,7 @@ export component MainWindow inherits Window {
             x: 4px;
             y: 24px;
             width: 210px;
-            height: 8 * menu-item-h;
+            height: 9 * menu-item-h;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
@@ -1292,6 +1366,11 @@ export component MainWindow inherits Window {
                     item-enabled: has-selection;
                     item-height: menu-item-h;
                     activated => { open-menu = -1; delete-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Repos Directory...";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; repos-root-requested(); }
                 }
                 ContextMenuItem {
                     label: "Exit";
