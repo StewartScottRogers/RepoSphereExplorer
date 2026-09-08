@@ -132,6 +132,7 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
 
     on_delta_event!(on_selection_moved, move_selection);
     on_delta_event!(on_pane_cycled, cycle_focus);
+    on_delta_event!(on_content_sort_requested, sort_by_column);
     on_event!(on_content_rename_requested, request_rename);
     on_event!(on_content_copy_requested, request_copy);
     on_event!(on_content_delete_requested, request_delete);

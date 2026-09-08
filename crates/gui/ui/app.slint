@@ -71,6 +71,52 @@ component Pane inherits Rectangle {
     }
 }
 
+export struct ContentRow {
+    glyph: string,
+    name: string,
+    size: string,
+    kind: string,
+    modified: string,
+}
+
+// One column heading in the contents pane's details view: clickable to sort,
+// showing the direction arrow when it is the active column.
+component ColumnHeader inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    in property <bool> ascending;
+    in property <bool> align-right;
+    callback activated();
+
+    background: heading-touch.has-hover ? #333333 : transparent;
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        alignment: align-right ? end : start;
+        spacing: 2px;
+        Text {
+            text: label;
+            color: active ? #e5c07b : #cccccc;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            // U+25B2 / U+25BC. The smaller U+25B4 / U+25BE render as tofu
+            // in the default font here.
+            text: active ? (ascending ? "\u{25B2}" : "\u{25BC}") : "";
+            color: #e5c07b;
+            vertical-alignment: center;
+        }
+    }
+
+    heading-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { activated(); }
+    }
+}
+
 component ContextMenuItem inherits Rectangle {
     in property <string> label;
     in property <bool> item-enabled: true;
@@ -108,8 +154,13 @@ component ContextMenuItem inherits Rectangle {
 component ContentsPane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
-    in property <[string]> rows;
+    in property <[ContentRow]> rows;
     in property <int> selected;
+    // Which column the list is sorted by, and which way, so the header can
+    // show the indicator Explorer shows.
+    in property <int> sort-column;
+    in property <bool> sort-ascending;
+    callback sort-requested(int);
     // Whether the selected row previewed as an archive; Extract is greyed
     // out otherwise, since extracting anything else only ever errors.
     in property <bool> extract-enabled;
@@ -141,6 +192,14 @@ component ContentsPane inherits Rectangle {
     // their size, which means stating the item height and count here.
     property <length> menu-width: 150px;
     property <length> menu-item-height: 24px;
+    // Details-view columns. The three trailing ones are fixed and Name
+    // stretches into the rest, in both the header and every row, so the two
+    // line up without either deriving a width from the pane's own width -
+    // which would close a layout binding loop.
+    property <length> size-column: 80px;
+    property <length> kind-column: 90px;
+    property <length> modified-column: 118px;
+    property <length> header-height: 20px;
 
     border-width: 1px;
     border-color: focused ? #e5c07b : #555555;
@@ -153,10 +212,53 @@ component ContentsPane inherits Rectangle {
             height: 22px;
             horizontal-alignment: center;
         }
+        Rectangle {
+            height: header-height;
+            background: #262626;
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                ColumnHeader {
+                    horizontal-stretch: 1;
+                    min-width: 40px;
+                    label: "Name";
+                    active: sort-column == 0;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(0); }
+                }
+                ColumnHeader {
+                    width: size-column;
+                    horizontal-stretch: 0;
+                    label: "Size";
+                    align-right: true;
+                    active: sort-column == 1;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(1); }
+                }
+                ColumnHeader {
+                    width: kind-column;
+                    horizontal-stretch: 0;
+                    align-right: true;
+                    label: "Type";
+                    active: sort-column == 2;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(2); }
+                }
+                ColumnHeader {
+                    width: modified-column;
+                    horizontal-stretch: 0;
+                    align-right: true;
+                    label: "Modified";
+                    active: sort-column == 3;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(3); }
+                }
+            }
+        }
         ScrollView {
             body := Rectangle {
                 width: 100%;
-                min-height: max(rows.length * row-height, root.height - 22px);
+                min-height: max(rows.length * row-height, root.height - 22px - header-height);
 
                 Rectangle {
                     y: selected >= 0 ? selected * row-height : 0px;
@@ -164,13 +266,48 @@ component ContentsPane inherits Rectangle {
                     background: #3a6ea5;
                 }
 
-                for row[i] in rows: Text {
-                    text: row;
-                    color: i == selected ? white : #dddddd;
+                for row[i] in rows: Rectangle {
                     y: i * row-height;
                     height: row-height;
-                    vertical-alignment: center;
-                    x: 4px;
+                    width: 100%;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        Text {
+                            text: row.glyph + " " + row.name;
+                            color: i == selected ? white : #dddddd;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            min-width: 40px;
+                        }
+                        Text {
+                            text: row.size;
+                            color: i == selected ? white : #aaaaaa;
+                            width: size-column;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                        Text {
+                            text: row.kind;
+                            color: i == selected ? white : #aaaaaa;
+                            width: kind-column;
+                            overflow: elide;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                        Text {
+                            text: row.modified;
+                            color: i == selected ? white : #aaaaaa;
+                            width: modified-column;
+                            overflow: elide;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                    }
                 }
 
                 if prompt-row >= 0: Rectangle {
@@ -331,7 +468,7 @@ export component MainWindow inherits Window {
 
     in property <[string]> folder-rows;
     in property <int> folder-selected;
-    in property <[string]> content-rows;
+    in property <[ContentRow]> content-rows;
     in property <int> content-selected;
     in property <string> file-text;
     in property <string> status-text;
@@ -362,6 +499,10 @@ export component MainWindow inherits Window {
     in property <string> content-prompt-text;
     in property <int> content-prompt-row: -1;
     in property <bool> content-prompt-editable;
+    // Which contents column is sorted on, and which way.
+    in property <int> content-sort-column;
+    in property <bool> content-sort-ascending;
+    callback content-sort-requested(int);
 
     forward-focus: key-scope;
 
@@ -433,6 +574,9 @@ export component MainWindow inherits Window {
                     prompt-text: content-prompt-text;
                     prompt-row: content-prompt-row;
                     prompt-editable: content-prompt-editable;
+                    sort-column: content-sort-column;
+                    sort-ascending: content-sort-ascending;
+                    sort-requested(c) => { content-sort-requested(c); }
                     new-folder-requested => { new-folder-requested(); }
                     new-file-requested => { new-file-requested(); }
                 }

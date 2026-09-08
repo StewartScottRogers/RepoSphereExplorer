@@ -4,7 +4,7 @@
 //! body and derives the clicked index from the same origin, so the two should
 //! agree exactly. This measures that rather than trusting it.
 
-use gui::MainWindow;
+use gui::{ContentRow, MainWindow};
 use i_slint_backend_testing::ElementHandle;
 use slint::platform::{PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, ModelRc, SharedString, VecModel};
@@ -20,12 +20,22 @@ const MENU_WIDTH: f32 = 150.0;
 const ROW_COUNT: f32 = 6.0;
 const ROWS: [&str; 6] = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"];
 
+/// A details row with only its name filled in; the other columns play no
+/// part in what these tests measure.
+fn row(name: &str) -> ContentRow {
+    ContentRow {
+        glyph: SharedString::from("\u{25AA}"),
+        name: SharedString::from(name),
+        size: SharedString::new(),
+        kind: SharedString::new(),
+        modified: SharedString::new(),
+    }
+}
+
 fn shown_window() -> MainWindow {
     let ui = MainWindow::new().expect("the window should build");
     ui.set_content_rows(ModelRc::new(VecModel::from(
-        ROWS.iter()
-            .map(|r| SharedString::from(*r))
-            .collect::<Vec<_>>(),
+        ROWS.iter().map(|name| row(name)).collect::<Vec<_>>(),
     )));
     ui.show().expect("the window should show");
     ui

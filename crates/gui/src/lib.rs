@@ -7,7 +7,7 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::MainWindow;
+pub use generated::{ContentRow, MainWindow};
 
 pub mod app;
 
@@ -18,7 +18,18 @@ use slint::{ModelRc, SharedString, VecModel};
 pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_rows(string_model(app.folder_labels()));
     ui.set_folder_selected(row_index(app.folder_selected()));
-    ui.set_content_rows(string_model(app.content_labels()));
+    ui.set_content_rows(ModelRc::new(VecModel::from(
+        app.content_rows()
+            .into_iter()
+            .map(|row| ContentRow {
+                glyph: row.glyph.into(),
+                name: row.name.into(),
+                size: row.size.into(),
+                kind: row.kind.into(),
+                modified: row.modified.into(),
+            })
+            .collect::<Vec<_>>(),
+    )));
     ui.set_content_selected(row_index(app.content_selected()));
     ui.set_file_text(app.file_text().into());
     ui.set_status_text(app.status_text().into());
@@ -27,6 +38,8 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_content_prompt_text(app.prompt_text().into());
     ui.set_content_prompt_row(app.prompt_row());
     ui.set_content_prompt_editable(app.prompt_is_editable());
+    ui.set_content_sort_column(app.sort_column());
+    ui.set_content_sort_ascending(app.sort_ascending());
 }
 
 /// Converts a row index to the `i32` Slint properties expect, saturating

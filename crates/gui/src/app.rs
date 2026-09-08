@@ -110,7 +110,9 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
 /// which most Linux font setups (including CI's) don't install by default.
 fn content_glyph(name: &str, is_dir: bool) -> &'static str {
     if is_dir {
-        return "\u{25B8}"; // ▸
+        // U+25A0. The pointing triangle U+25B8 this used renders as tofu in
+        // the GUI's default font.
+        return "\u{25A0}";
     }
     let extension = std::path::Path::new(name)
         .extension()
@@ -338,6 +340,105 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Explorer's "Type" column: `"File folder"` for a directory, otherwise the
+/// uppercased extension as `"RS file"`, or plain `"File"` when there is none.
+fn format_kind(name: &str, is_dir: bool) -> String {
+    if is_dir {
+        return "File folder".to_owned();
+    }
+    std::path::Path::new(name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|extension| !extension.is_empty())
+        .map_or_else(
+            || "File".to_owned(),
+            |extension| format!("{} file", extension.to_uppercase()),
+        )
+}
+
+/// A modified time as `YYYY-MM-DD HH:MM`, from seconds since the Unix epoch.
+/// Rendered in UTC: the service reports the timestamp in epoch seconds and
+/// this front end has no timezone database to convert it with, so a label
+/// that is unambiguous beats one that is quietly wrong by an offset.
+fn format_timestamp(seconds: Option<u64>) -> String {
+    let Some(seconds) = seconds else {
+        return String::new();
+    };
+    let days = i64::try_from(seconds / 86_400).unwrap_or(0);
+    let time_of_day = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute) = (time_of_day / 3_600, (time_of_day % 3_600) / 60);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+/// Converts days since 1970-01-01 into a civil `(year, month, day)`, by
+/// Howard Hinnant's `civil_from_days`. Avoids taking on a date library for
+/// one column.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = u32::try_from(day_of_year - (153 * mp + 2) / 5 + 1).unwrap_or(1);
+    let month = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// Which column the contents pane is sorted by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    /// Entry name, case-insensitively.
+    Name,
+    /// Size in bytes.
+    Size,
+    /// The "Type" column's text.
+    Kind,
+    /// Last modified time.
+    Modified,
+}
+
+impl SortKey {
+    /// The column index the UI uses for this key.
+    const fn index(self) -> i32 {
+        match self {
+            Self::Name => 0,
+            Self::Size => 1,
+            Self::Kind => 2,
+            Self::Modified => 3,
+        }
+    }
+
+    /// The key a column index names, if any.
+    const fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(Self::Name),
+            1 => Some(Self::Size),
+            2 => Some(Self::Kind),
+            3 => Some(Self::Modified),
+            _ => None,
+        }
+    }
+}
+
+/// One contents row, as the details view renders it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentRow {
+    /// Type marker shown ahead of the name.
+    pub glyph: String,
+    /// Entry name, with a trailing `/` for a directory.
+    pub name: String,
+    /// Formatted size, empty for a directory.
+    pub size: String,
+    /// The "Type" column.
+    pub kind: String,
+    /// Formatted modified time, empty when the filesystem reports none.
+    pub modified: String,
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
@@ -348,6 +449,9 @@ pub struct App {
     /// The entry name to reselect after the next listing arrives, set
     /// by whichever operation is about to change the folder in place.
     reselect: Option<String>,
+    /// Which column the contents pane is sorted by, and in which direction.
+    sort_key: SortKey,
+    sort_ascending: bool,
     status: Option<String>,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
@@ -399,6 +503,8 @@ impl App {
             content_selected: 0,
             file_view: None,
             reselect: None,
+            sort_key: SortKey::Name,
+            sort_ascending: true,
             status: None,
             focus: Pane::Folders,
             pending_contents: None,
@@ -481,6 +587,7 @@ impl App {
                     node.set_children_from(&entries);
                 }
                 self.contents = entries;
+                self.sort_contents();
                 // A listing arriving after an operation is the same folder
                 // reloaded, so put the selection back on the entry that
                 // operation produced rather than dropping it to the top.
@@ -917,6 +1024,90 @@ impl App {
             .collect()
     }
 
+    /// Orders `contents` by the current sort column. Directories come
+    /// first whichever column is chosen, the way Explorer groups them, and
+    /// the name is the tiebreak so the order is total and stable.
+    fn sort_contents(&mut self) {
+        let key = self.sort_key;
+        let ascending = self.sort_ascending;
+        self.contents.sort_by(|a, b| {
+            let ordering = match key {
+                SortKey::Name => std::cmp::Ordering::Equal,
+                SortKey::Size => a.size.cmp(&b.size),
+                SortKey::Kind => {
+                    format_kind(&a.name, a.is_dir).cmp(&format_kind(&b.name, b.is_dir))
+                }
+                SortKey::Modified => a.modified.cmp(&b.modified),
+            }
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name));
+            let ordering = if ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            };
+            b.is_dir.cmp(&a.is_dir).then(ordering)
+        });
+    }
+
+    /// Sorts by `column`, reversing the direction if it is already the sort
+    /// column. Out-of-range columns are ignored. The selected entry keeps
+    /// its selection across the reorder.
+    pub fn sort_by_column(&mut self, column: i32) {
+        let Some(key) = SortKey::from_index(column) else {
+            return;
+        };
+        if self.sort_key == key {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_key = key;
+            self.sort_ascending = true;
+        }
+        let selected = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
+        self.sort_contents();
+        self.content_selected = selected
+            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .unwrap_or(0);
+    }
+
+    /// The column currently sorted on, as a UI column index.
+    #[must_use]
+    pub const fn sort_column(&self) -> i32 {
+        self.sort_key.index()
+    }
+
+    /// Whether the current sort is ascending.
+    #[must_use]
+    pub const fn sort_ascending(&self) -> bool {
+        self.sort_ascending
+    }
+
+    /// The contents pane's rows, one per entry, with a cell per column.
+    #[must_use]
+    pub fn content_rows(&self) -> Vec<ContentRow> {
+        self.contents
+            .iter()
+            .map(|entry| ContentRow {
+                glyph: content_glyph(&entry.name, entry.is_dir).to_owned(),
+                name: if entry.is_dir {
+                    format!("{}/", entry.name)
+                } else {
+                    entry.name.clone()
+                },
+                size: if entry.is_dir {
+                    String::new()
+                } else {
+                    format_size(entry.size)
+                },
+                kind: format_kind(&entry.name, entry.is_dir),
+                modified: format_timestamp(entry.modified),
+            })
+            .collect()
+    }
+
     /// Index of the selected row in [`Self::content_labels`].
     #[must_use]
     pub fn content_selected(&self) -> usize {
@@ -1024,7 +1215,9 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, PathBuf, content_glyph, strip_verbatim_prefix};
+    use super::{
+        App, PathBuf, content_glyph, format_kind, format_timestamp, strip_verbatim_prefix,
+    };
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -1039,6 +1232,122 @@ mod tests {
             .collect()
     }
 
+    /// Entries with sizes and modified times, for the details columns.
+    fn detailed_entries(rows: &[(&str, bool, u64, Option<u64>)]) -> Vec<DirectoryEntry> {
+        rows.iter()
+            .map(|(name, is_dir, size, modified)| DirectoryEntry {
+                name: (*name).to_owned(),
+                is_dir: *is_dir,
+                size: *size,
+                modified: *modified,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_type_column_names_folders_and_extensions_the_way_explorer_does() {
+        assert_eq!(format_kind("src", true), "File folder");
+        assert_eq!(format_kind("main.rs", false), "RS file");
+        assert_eq!(format_kind("archive.TAR", false), "TAR file");
+        assert_eq!(format_kind("LICENSE", false), "File");
+    }
+
+    #[test]
+    fn the_modified_column_formats_epoch_seconds_as_a_date_and_time() {
+        assert_eq!(format_timestamp(Some(0)), "1970-01-01 00:00");
+        // 2026-09-07T14:31:00Z.
+        assert_eq!(format_timestamp(Some(1_788_791_460)), "2026-09-07 14:31");
+        assert_eq!(
+            format_timestamp(None),
+            "",
+            "a filesystem that reports no time leaves the cell blank"
+        );
+    }
+
+    #[test]
+    fn content_rows_carry_a_cell_per_column() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: detailed_entries(&[
+                    ("notes.txt", false, 2048, Some(0)),
+                    ("src", true, 0, Some(0)),
+                ]),
+            }),
+        );
+
+        let rows = app.content_rows();
+
+        assert_eq!(rows[0].name, "src/", "folders sort ahead of files");
+        assert_eq!(rows[0].kind, "File folder");
+        assert_eq!(rows[0].size, "", "a folder shows no size");
+        assert_eq!(rows[1].name, "notes.txt");
+        assert_eq!(rows[1].size, "2.0 KB");
+        assert_eq!(rows[1].kind, "TXT file");
+        assert_eq!(rows[1].modified, "1970-01-01 00:00");
+    }
+
+    #[test]
+    fn clicking_a_column_sorts_by_it_and_clicking_again_reverses() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: detailed_entries(&[
+                    ("big.bin", false, 900, None),
+                    ("small.bin", false, 10, None),
+                    ("mid.bin", false, 100, None),
+                ]),
+            }),
+        );
+        assert_eq!(app.sort_column(), 0, "name to begin with");
+
+        app.sort_by_column(1);
+        assert_eq!(app.sort_column(), 1);
+        assert!(app.sort_ascending());
+        let names: Vec<_> = app.content_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["small.bin", "mid.bin", "big.bin"]);
+
+        app.sort_by_column(1);
+        assert!(!app.sort_ascending(), "the same column reverses");
+        let names: Vec<_> = app.content_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["big.bin", "mid.bin", "small.bin"]);
+
+        app.sort_by_column(9);
+        assert_eq!(app.sort_column(), 1, "an unknown column is ignored");
+    }
+
+    #[test]
+    fn sorting_keeps_folders_first_and_holds_the_selection() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: detailed_entries(&[
+                    ("zeta.txt", false, 10, None),
+                    ("alpha", true, 0, None),
+                    ("beta.txt", false, 900, None),
+                ]),
+            }),
+        );
+        app.select_content(1); // beta.txt, after the folder.
+        assert_eq!(app.content_rows()[1].name, "beta.txt");
+
+        app.sort_by_column(1);
+
+        assert_eq!(
+            app.content_rows()[0].name,
+            "alpha/",
+            "the folder stays at the top whichever column is sorted on"
+        );
+        assert_eq!(
+            app.content_rows()[app.content_selected()].name,
+            "beta.txt",
+            "the selection follows its entry"
+        );
+    }
+
     #[test]
     fn applying_a_directory_result_populates_contents_and_tree() {
         let mut app = App::new(std::env::temp_dir());
@@ -1051,7 +1360,7 @@ mod tests {
 
         assert_eq!(
             app.content_labels(),
-            vec!["\u{25B8} sub/", "\u{25AA} note.txt"]
+            vec!["\u{25A0} sub/", "\u{25AA} note.txt"]
         );
         assert_eq!(app.folder_labels().len(), 2); // root + "sub"
     }
@@ -1778,7 +2087,7 @@ mod tests {
     #[test]
     fn content_glyph_marks_directories_distinctly_from_every_file_glyph() {
         let folder_glyph = content_glyph("anything", true);
-        assert_eq!(folder_glyph, "\u{25B8}");
+        assert_eq!(folder_glyph, "\u{25A0}");
         assert_ne!(folder_glyph, content_glyph("main.rs", false));
         assert_ne!(folder_glyph, content_glyph("photo.png", false));
         assert_ne!(folder_glyph, content_glyph("bundle.zip", false));
