@@ -1178,6 +1178,17 @@ impl App {
         self.status = Some("working...".to_owned());
     }
 
+    /// Ctrl+Z: asks the service to reverse the last operation. The service
+    /// holds what that is; this front end only asks, and reloads whatever
+    /// comes back.
+    pub fn undo(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        self.pending_operation = Some(spawn_request(Request::Undo));
+        self.status = Some("undoing...".to_owned());
+    }
+
     /// F5: re-reads the folder being browsed.
     pub fn refresh(&mut self) {
         self.reselect = self

@@ -166,6 +166,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_clipboard_paste_requested, paste_from_clipboard);
     on_event!(on_refresh_requested, refresh);
     on_event!(on_select_all_requested, select_all);
+    on_event!(on_undo_requested, undo);
 
     ui.on_quit_requested(|| {
         // The menu's File > Exit; the window's own close button goes through

@@ -292,6 +292,73 @@ fn refuse_if_occupied_by_another(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// What would undo the last operation, if it can be undone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Undoable {
+    /// Move `to` back to `from`, undoing a rename or a move.
+    Rename { from: PathBuf, to: PathBuf },
+    /// Remove what an operation created: a copy's destination, a new file
+    /// or folder, an extracted directory.
+    Remove { path: PathBuf },
+}
+
+thread_local! {
+    /// The single step [`Request::Undo`] would take. GUIDANCE.md §2 keeps
+    /// business rules out of the front ends, so the service remembers what
+    /// the last operation was and how to reverse it; a front end only asks.
+    ///
+    /// One step deep, per D6's "undo of the immediately preceding
+    /// operation". Thread-local because the service answers every request on
+    /// one thread ([`run`] loops over [`serve_one`]), which also keeps the
+    /// tests from treading on each other's step.
+    static UNDO: std::cell::RefCell<Option<Undoable>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Records `step` as what would undo the operation just performed, or
+/// clears the record when the operation cannot be undone.
+fn remember_undo(step: Option<Undoable>) {
+    UNDO.with_borrow_mut(|slot| *slot = step);
+}
+
+/// Records an undo step only if `result` succeeded; a failed operation
+/// changed nothing and leaves the previous step alone.
+fn remember_if_done(result: &io::Result<()>, step: Undoable) {
+    if result.is_ok() {
+        remember_undo(Some(step));
+    }
+}
+
+/// Undoes the last operation, journaling the attempt.
+///
+/// # Errors
+/// Returns an error if there is nothing to undo, or if reversing it fails.
+pub fn undo() -> io::Result<()> {
+    let step = UNDO.with_borrow_mut(Option::take);
+    let Some(step) = step else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "nothing to undo. A delete is undone from the Recycle Bin",
+        ));
+    };
+    let (operation, targets, result) = match step {
+        Undoable::Rename { from, to } => {
+            let targets = vec![from.display().to_string(), to.display().to_string()];
+            let result = refuse_if_occupied_by_another(&from, &to)
+                .and_then(|()| std::fs::rename(&from, &to));
+            ("undo_rename", targets, result)
+        }
+        Undoable::Remove { path } => {
+            let targets = vec![path.display().to_string()];
+            // To the recycle bin, not erased: undoing a copy should be no
+            // more destructive than the copy was.
+            let result = trash::delete(&path).map_err(|err| io::Error::other(err.to_string()));
+            ("undo_create", targets, result)
+        }
+    };
+    journal(operation, &targets, &result);
+    result
+}
+
 /// Renames (moves) `from` to `to`, journaling the attempt. Refuses to
 /// replace an existing `to`, the way [`create_file`] and
 /// [`create_directory`] refuse an existing target: the front ends drive
@@ -304,6 +371,13 @@ fn refuse_if_occupied_by_another(from: &Path, to: &Path) -> io::Result<()> {
 /// or if the rename fails.
 pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
     let result = refuse_if_occupied_by_another(from, to).and_then(|()| fs::rename(from, to));
+    remember_if_done(
+        &result,
+        Undoable::Rename {
+            from: to.to_path_buf(),
+            to: from.to_path_buf(),
+        },
+    );
     journal(
         "rename",
         &[from.display().to_string(), to.display().to_string()],
@@ -320,6 +394,12 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
 /// fails.
 pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
     let result = refuse_if_exists(to).and_then(|()| fs::copy(from, to).map(|_| ()));
+    remember_if_done(
+        &result,
+        Undoable::Remove {
+            path: to.to_path_buf(),
+        },
+    );
     journal(
         "copy",
         &[from.display().to_string(), to.display().to_string()],
@@ -343,6 +423,9 @@ pub fn delete(paths: &[String]) -> io::Result<()> {
         }
         Ok(())
     })();
+    // A delete goes to the recycle bin, which this service cannot pull back
+    // out; leaving a stale step here would undo the wrong thing.
+    remember_undo(None);
     journal("delete", paths, &result);
     result
 }
@@ -354,6 +437,12 @@ pub fn delete(paths: &[String]) -> io::Result<()> {
 /// Returns an error if the archive cannot be extracted.
 pub fn extract(archive: &Path, destination: &Path) -> io::Result<()> {
     let result = plugin_archive::extract(archive, destination);
+    remember_if_done(
+        &result,
+        Undoable::Remove {
+            path: destination.to_path_buf(),
+        },
+    );
     journal(
         "extract",
         &[
@@ -373,6 +462,12 @@ pub fn extract(archive: &Path, destination: &Path) -> io::Result<()> {
 /// something already exists at `path` or its parent doesn't exist.
 pub fn create_directory(path: &Path) -> io::Result<()> {
     let result = fs::create_dir(path);
+    remember_if_done(
+        &result,
+        Undoable::Remove {
+            path: path.to_path_buf(),
+        },
+    );
     journal("create_directory", &[path.display().to_string()], &result);
     result
 }
@@ -385,6 +480,12 @@ pub fn create_directory(path: &Path) -> io::Result<()> {
 /// already exists at `path` or its parent doesn't exist.
 pub fn create_file(path: &Path) -> io::Result<()> {
     let result = fs::File::create_new(path).map(|_| ());
+    remember_if_done(
+        &result,
+        Undoable::Remove {
+            path: path.to_path_buf(),
+        },
+    );
     journal("create_file", &[path.display().to_string()], &result);
     result
 }
@@ -428,6 +529,7 @@ pub fn handle_request(request: &Request) -> Response {
             respond_to_operation(create_directory(Path::new(path)))
         }
         Request::CreateFile { path } => respond_to_operation(create_file(Path::new(path))),
+        Request::Undo => respond_to_operation(undo()),
     }
 }
 
@@ -469,7 +571,7 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 mod tests {
     use super::{
         bind, copy, create_directory, create_file, delete, extract, handle_request, journal_to,
-        list_directory, open, rename, serve_one, view_file,
+        list_directory, open, rename, serve_one, undo, view_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -700,6 +802,113 @@ mod tests {
         rename(&path, &path).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undo_puts_a_renamed_file_back() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("before.txt");
+        let to = dir.join("after.txt");
+        fs::write(&from, "content").unwrap();
+        rename(&from, &to).unwrap();
+
+        undo().unwrap();
+
+        assert_eq!(fs::read_to_string(&from).unwrap(), "content");
+        assert!(!to.exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undo_removes_what_a_copy_created_and_leaves_the_source() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("source.txt");
+        let to = dir.join("copy.txt");
+        fs::write(&from, "content").unwrap();
+        copy(&from, &to).unwrap();
+
+        undo().unwrap();
+
+        assert!(!to.exists(), "the copy is gone");
+        assert_eq!(
+            fs::read_to_string(&from).unwrap(),
+            "content",
+            "the original is untouched"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undo_removes_a_newly_created_folder() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let created = dir.join("New folder");
+        create_directory(&created).unwrap();
+
+        undo().unwrap();
+
+        assert!(!created.exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undo_goes_only_one_step_and_says_so_when_there_is_nothing_left() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        create_directory(&dir.join("one")).unwrap();
+
+        undo().unwrap();
+        let err = undo().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            err.to_string().contains("Recycle Bin"),
+            "and points at where a delete goes instead: {err}"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_delete_leaves_nothing_to_undo() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let doomed = dir.join("doomed.txt");
+        fs::write(&doomed, "content").unwrap();
+        // A create would otherwise be the step on record.
+        create_directory(&dir.join("earlier")).unwrap();
+
+        delete(&[doomed.to_string_lossy().into_owned()]).unwrap();
+
+        let err = undo().unwrap_err();
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::NotFound,
+            "the earlier create must not be undone in a delete's place"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_operation_leaves_the_previous_undo_step_alone() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let created = dir.join("kept");
+        create_directory(&created).unwrap();
+        // Refused, because something already exists there.
+        create_directory(&created).unwrap_err();
+
+        undo().unwrap();
+
+        assert!(!created.exists(), "the successful create is still undoable");
 
         fs::remove_dir_all(&dir).unwrap();
     }

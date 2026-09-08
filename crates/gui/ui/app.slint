@@ -727,6 +727,7 @@ export component MainWindow inherits Window {
     callback clipboard-paste-requested();
     callback refresh-requested();
     callback select-all-requested();
+    callback undo-requested();
     // Pane widths, moved by the splitters between them. The file pane takes
     // whatever the other two leave.
     property <length> folders-width: 240px;
@@ -762,6 +763,8 @@ export component MainWindow inherits Window {
                 back-requested();
             } else if (event.modifiers.alt && event.text == Key.RightArrow) {
                 forward-requested();
+            } else if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
+                undo-requested();
             } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
                 select-all-requested();
             } else if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
@@ -875,6 +878,10 @@ export component MainWindow inherits Window {
                         activated => { content-extract-requested(); }
                     }
                     CommandSeparator { }
+                    CommandButton {
+                        label: "Undo";
+                        activated => { undo-requested(); }
+                    }
                     CommandButton {
                         label: "Refresh";
                         activated => { refresh-requested(); }
@@ -1078,11 +1085,17 @@ export component MainWindow inherits Window {
             x: 44px;
             y: 24px;
             width: 200px;
-            height: 4 * menu-item-h;
+            height: 5 * menu-item-h;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
+                ContextMenuItem {
+                    label: "Undo";
+                    shortcut: "Ctrl+Z";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; undo-requested(); }
+                }
                 ContextMenuItem {
                     label: "Cut";
                     shortcut: "Ctrl+X";

@@ -116,13 +116,15 @@ fn every_file_menu_item_reaches_its_callback() {
 fn every_edit_menu_item_reaches_its_callback() {
     i_slint_backend_testing::init_no_event_loop();
     let ui = ready_window();
-    let (cut, copy, paste, all) = (flag(), flag(), flag(), flag());
+    let (undo, cut, copy, paste, all) = (flag(), flag(), flag(), flag(), flag());
+    watch!(ui, on_undo_requested, undo);
     watch!(ui, on_clipboard_cut_requested, cut);
     watch!(ui, on_clipboard_copy_requested, copy);
     watch!(ui, on_clipboard_paste_requested, paste);
     watch!(ui, on_select_all_requested, all);
 
     for (item, fired) in [
+        ("Undo", &undo),
         ("Cut", &cut),
         ("Copy", &copy),
         ("Paste", &paste),
@@ -188,7 +190,7 @@ fn every_command_bar_button_reaches_its_callback() {
     i_slint_backend_testing::init_no_event_loop();
     let ui = ready_window();
     let (folder, file, cut, copy, paste) = (flag(), flag(), flag(), flag(), flag());
-    let (rename, delete, extract, refresh) = (flag(), flag(), flag(), flag());
+    let (rename, delete, extract, refresh, undo) = (flag(), flag(), flag(), flag(), flag());
     watch!(ui, on_new_folder_requested, folder);
     watch!(ui, on_new_file_requested, file);
     watch!(ui, on_clipboard_cut_requested, cut);
@@ -198,6 +200,7 @@ fn every_command_bar_button_reaches_its_callback() {
     watch!(ui, on_delete_requested, delete);
     watch!(ui, on_content_extract_requested, extract);
     watch!(ui, on_refresh_requested, refresh);
+    watch!(ui, on_undo_requested, undo);
 
     for (button, fired) in [
         ("New folder", &folder),
@@ -208,6 +211,7 @@ fn every_command_bar_button_reaches_its_callback() {
         ("Rename", &rename),
         ("Delete", &delete),
         ("Extract", &extract),
+        ("Undo", &undo),
         ("Refresh", &refresh),
     ] {
         click_button(&ui, button);
