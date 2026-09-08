@@ -5403,6 +5403,8 @@ dependencies = [
 name = "plugin-api"
 version = "0.6.0"
 dependencies = [
+ "base64 0.22.1",
+ "image",
  "serde_json",
 ]
 
@@ -5429,6 +5431,7 @@ dependencies = [
 name = "plugin-audio"
 version = "0.6.0"
 dependencies = [
+ "image",
  "lofty",
  "plugin-api",
  "serde",
@@ -5481,6 +5484,7 @@ dependencies = [
 name = "plugin-comic-archive"
 version = "0.6.0"
 dependencies = [
+ "image",
  "plugin-api",
  "rars",
  "serde",
@@ -5705,7 +5709,6 @@ dependencies = [
 name = "plugin-image"
 version = "0.6.0"
 dependencies = [
- "base64 0.22.1",
  "image",
  "plugin-api",
  "serde",
@@ -5905,6 +5908,7 @@ dependencies = [
 name = "plugin-psd"
 version = "0.6.0"
 dependencies = [
+ "image",
  "plugin-api",
  "psd",
  "serde",
@@ -6108,6 +6112,7 @@ dependencies = [
 name = "plugin-video"
 version = "0.6.0"
 dependencies = [
+ "image",
  "matroska",
  "mp4",
  "plugin-api",

@@ -9,7 +9,7 @@
 
 use matroska::Matroska;
 use mp4::{Mp4Reader, TrackType};
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation, thumbnail};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
@@ -66,6 +66,15 @@ pub struct VideoView {
     pub audio_codec: Option<String>,
     /// Size of the file on disk, in bytes.
     pub file_size: u64,
+    /// A poster attached to the container, as a bounded PNG thumbnail,
+    /// base64-encoded. `None` for a container that carries none, which is
+    /// most of them.
+    ///
+    /// This is an *attachment*, not a frame. Pulling a frame out of the
+    /// stream needs a decoder, and `mp4`/`matroska` parse containers rather
+    /// than decoding video.
+    #[serde(default)]
+    pub poster: Option<String>,
 }
 
 /// Reads `path` as an MP4 container.
@@ -99,6 +108,7 @@ fn view_mp4(path: &Path, file_size: u64) -> io::Result<VideoView> {
         video_codec,
         audio_codec,
         file_size,
+        poster: None,
     })
 }
 
@@ -126,6 +136,13 @@ fn view_matroska(path: &Path, prefix: &[u8], file_size: u64) -> io::Result<Video
         ),
         _ => (None, None),
     };
+    // Matroska carries cover art as an attached file, by convention named
+    // "cover" and always an image MIME type.
+    let poster = mkv
+        .attachments
+        .iter()
+        .find(|attachment| attachment.mime_type.starts_with("image/"))
+        .and_then(|attachment| thumbnail::encode_bytes(&attachment.data));
     Ok(VideoView {
         format: format.to_owned(),
         duration_secs: mkv
@@ -137,6 +154,7 @@ fn view_matroska(path: &Path, prefix: &[u8], file_size: u64) -> io::Result<Video
         video_codec: video_track.map(|track| track.codec_id.clone()),
         audio_codec: audio_track.map(|track| track.codec_id.clone()),
         file_size,
+        poster,
     })
 }
 
@@ -202,6 +220,7 @@ fn view_avi(path: &Path, file_size: u64) -> io::Result<VideoView> {
         video_codec: None,
         audio_codec: None,
         file_size,
+        poster: None,
     })
 }
 
@@ -278,6 +297,11 @@ impl PluginPresentation for VideoPresentation {
         }
         lines.push(format!("{} bytes on disk", view.file_size));
         lines
+    }
+
+    fn graphic(&self, data: &serde_json::Value) -> Option<Graphic> {
+        let view: VideoView = serde_json::from_value(data.clone()).ok()?;
+        thumbnail::decode(&view.poster?)
     }
 }
 
@@ -394,6 +418,7 @@ mod tests {
             video_codec: Some("H264".to_owned()),
             audio_codec: Some("AAC".to_owned()),
             file_size: 4096,
+            poster: None,
         })
         .unwrap();
 
@@ -409,6 +434,82 @@ mod tests {
                 "Audio codec: AAC",
                 "4096 bytes on disk",
             ]
+        );
+    }
+
+    #[test]
+    fn a_container_with_no_attachment_offers_no_picture() {
+        let bytes = include_bytes!("../../../../samples/video/example.avi");
+        let path = unique_temp_file("plain.avi");
+        std::fs::write(&path, bytes).unwrap();
+
+        let data = VideoCore.view(&path).unwrap();
+
+        assert!(
+            VideoPresentation.graphic(&data).is_none(),
+            "the fixture carries no attached poster"
+        );
+        assert!(!VideoPresentation.present(&data).is_empty());
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn an_attached_poster_is_offered_as_drawable_pixels() {
+        let mut png = std::io::Cursor::new(Vec::new());
+        let buffer = image::RgbaImage::from_pixel(6, 3, image::Rgba([4, 5, 6, 255]));
+        image::DynamicImage::ImageRgba8(buffer)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let encoded =
+            plugin_api::thumbnail::encode_bytes(&png.into_inner()).expect("a png encodes");
+        let data = serde_json::json!({
+            "format": "Matroska",
+            "duration_secs": 1.0,
+            "width": 320,
+            "height": 240,
+            "video_codec": "V_VP9",
+            "audio_codec": serde_json::Value::Null,
+            "file_size": 10,
+            "poster": encoded,
+        });
+
+        match VideoPresentation
+            .graphic(&data)
+            .expect("an attached poster is offered")
+        {
+            plugin_api::Graphic::Rgba {
+                width,
+                height,
+                pixels,
+            } => {
+                assert_eq!((width, height), (6, 3));
+                assert_eq!(pixels.len(), 6 * 3 * 4);
+            }
+            plugin_api::Graphic::Svg(source) => panic!("expected pixels, got {source:.40}"),
+        }
+    }
+
+    #[test]
+    fn dimensions_and_codecs_are_presented_when_the_container_knows_them() {
+        let data = serde_json::json!({
+            "format": "Matroska",
+            "duration_secs": 2.0,
+            "width": 1920,
+            "height": 1080,
+            "video_codec": "V_VP9",
+            "audio_codec": "A_OPUS",
+            "file_size": 10,
+            "poster": serde_json::Value::Null,
+        });
+
+        let lines = VideoPresentation.present(&data);
+
+        assert!(lines.iter().any(|line| line == "1920x1080"), "{lines:?}");
+        assert!(lines.iter().any(|line| line.contains("V_VP9")), "{lines:?}");
+        assert!(
+            lines.iter().any(|line| line.contains("A_OPUS")),
+            "{lines:?}"
         );
     }
 }

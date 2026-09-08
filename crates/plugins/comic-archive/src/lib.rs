@@ -6,7 +6,7 @@
 //! listing - the shape a page-by-page comic reader needs, per the issue's
 //! direction.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation, thumbnail};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -40,6 +40,39 @@ pub struct ComicArchiveView {
     pub page_count: usize,
     /// The first [`MAX_PAGES`] pages, in name order.
     pub pages: Vec<ComicPage>,
+    /// The first page as a bounded PNG thumbnail, base64-encoded. `None`
+    /// when it cannot be decoded - the page listing is still worth showing.
+    #[serde(default)]
+    pub cover: Option<String>,
+}
+
+/// The bytes of the entry named `name` in the ZIP archive at `path`.
+fn read_zip_entry(path: &Path, name: &str) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut entry = archive.by_name(name).ok()?;
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut entry, &mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// The bytes of the member named `name` in the RAR archive at `path`.
+fn read_rar_entry(path: &Path, name: &str) -> Option<Vec<u8>> {
+    let archive = rars::ArchiveReader::read_path(path).ok()?;
+    archive.read_member(name.as_bytes(), None).ok().flatten()
+}
+
+/// The first page, scaled for the wire. The cover is the page a reader sees
+/// first, so it is taken from the sorted list rather than from whichever
+/// entry the archive happens to store first.
+fn cover_of(path: &Path, is_rar: bool, pages: &[ComicPage]) -> Option<String> {
+    let first = pages.first()?;
+    let bytes = if is_rar {
+        read_rar_entry(path, &first.name)?
+    } else {
+        read_zip_entry(path, &first.name)?
+    };
+    thumbnail::encode_bytes(&bytes)
 }
 
 /// Reads every image entry out of the ZIP archive at `path`, unsorted.
@@ -108,7 +141,8 @@ impl PluginCore for ComicArchiveCore {
     fn view(&self, path: &Path) -> io::Result<serde_json::Value> {
         let mut prefix = [0u8; 8];
         let read = io::Read::read(&mut std::fs::File::open(path)?, &mut prefix)?;
-        let mut pages = if rars::detect_archive_family(&prefix[..read]).is_some() {
+        let is_rar = rars::detect_archive_family(&prefix[..read]).is_some();
+        let mut pages = if is_rar {
             read_rar_pages(path)?
         } else {
             read_zip_pages(path)?
@@ -116,7 +150,12 @@ impl PluginCore for ComicArchiveCore {
         pages.sort_by(|a, b| a.name.cmp(&b.name));
         let page_count = pages.len();
         pages.truncate(MAX_PAGES);
-        let view = ComicArchiveView { page_count, pages };
+        let cover = cover_of(path, is_rar, &pages);
+        let view = ComicArchiveView {
+            page_count,
+            pages,
+            cover,
+        };
         serde_json::to_value(view).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
 }
@@ -157,6 +196,11 @@ impl PluginPresentation for ComicArchivePresentation {
             ));
         }
         lines
+    }
+
+    fn graphic(&self, data: &serde_json::Value) -> Option<Graphic> {
+        let view: ComicArchiveView = serde_json::from_value(data.clone()).ok()?;
+        thumbnail::decode(&view.cover?)
     }
 }
 
@@ -286,11 +330,85 @@ mod tests {
                 name: "page001.jpg".to_owned(),
                 size: 5,
             }],
+            cover: None,
         })
         .unwrap();
 
         let lines = ComicArchivePresentation.present(&data);
 
         assert_eq!(lines, vec!["1 pages", "Page 1: page001.jpg (5 bytes)"]);
+    }
+
+    /// A solid PNG of the given size, for a page that is a real picture.
+    fn page_png(width: u32, height: u32) -> Vec<u8> {
+        let mut png = std::io::Cursor::new(Vec::new());
+        let buffer = image::RgbaImage::from_pixel(width, height, image::Rgba([9, 9, 9, 255]));
+        image::DynamicImage::ImageRgba8(buffer)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        png.into_inner()
+    }
+
+    /// A cbz whose pages are real images, stored out of order so the cover
+    /// has to come from the sorted listing rather than from storage order.
+    fn write_cbz_of_images(path: &std::path::Path) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file("page002.png", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(&page_png(8, 4)).unwrap();
+        writer
+            .start_file("page001.png", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(&page_png(4, 2)).unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn the_cover_is_the_first_page_in_reading_order() {
+        let path = unique_temp_file("cover.cbz");
+        write_cbz_of_images(&path);
+
+        let data = ComicArchiveCore.view(&path).unwrap();
+        let view: ComicArchiveView = serde_json::from_value(data.clone()).unwrap();
+        let graphic = ComicArchivePresentation
+            .graphic(&data)
+            .expect("a comic archive offers its first page");
+
+        match graphic {
+            plugin_api::Graphic::Rgba {
+                width,
+                height,
+                pixels,
+            } => {
+                assert_eq!(pixels.len(), width as usize * height as usize * 4);
+                assert_eq!(
+                    (width, height),
+                    (4, 2),
+                    "page001, the first in reading order, not page002 which is stored first"
+                );
+            }
+            plugin_api::Graphic::Svg(source) => panic!("expected pixels, got {source:.40}"),
+        }
+        assert_eq!(
+            view.pages.first().map(|page| page.name.as_str()),
+            Some("page001.png"),
+            "and the listing agrees on which page is first"
+        );
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn an_archive_with_no_decodable_first_page_still_lists_its_pages() {
+        let data = serde_json::json!({
+            "page_count": 1,
+            "pages": [{ "name": "page001.jpg", "size": 10 }],
+            "cover": serde_json::Value::Null,
+        });
+
+        assert!(ComicArchivePresentation.graphic(&data).is_none());
+        assert!(!ComicArchivePresentation.present(&data).is_empty());
     }
 }

@@ -10,7 +10,7 @@
 use lofty::file::FileType;
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation, thumbnail};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::io;
@@ -53,6 +53,11 @@ pub struct AudioView {
     pub artist: Option<String>,
     /// Album title, from the primary tag, if present.
     pub album: Option<String>,
+    /// The embedded cover art as a bounded PNG thumbnail, base64-encoded.
+    /// `None` when the file carries none, which is what the metadata lines
+    /// are there for.
+    #[serde(default)]
+    pub cover: Option<String>,
     /// Size of the file on disk, in bytes.
     pub file_size: u64,
 }
@@ -97,6 +102,9 @@ impl PluginCore for AudioCore {
             title: tag.and_then(Accessor::title).map(Cow::into_owned),
             artist: tag.and_then(Accessor::artist).map(Cow::into_owned),
             album: tag.and_then(Accessor::album).map(Cow::into_owned),
+            cover: tag
+                .and_then(|tag| tag.pictures().first())
+                .and_then(|picture| thumbnail::encode_bytes(picture.data())),
             file_size,
         };
         serde_json::to_value(view).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
@@ -152,6 +160,11 @@ impl PluginPresentation for AudioPresentation {
         }
         lines.push(format!("{} bytes on disk", view.file_size));
         lines
+    }
+
+    fn graphic(&self, data: &serde_json::Value) -> Option<Graphic> {
+        let view: AudioView = serde_json::from_value(data.clone()).ok()?;
+        thumbnail::decode(&view.cover?)
     }
 }
 
@@ -256,6 +269,7 @@ mod tests {
             artist: None,
             album: None,
             file_size: 123,
+            cover: None,
         })
         .unwrap();
 
@@ -273,5 +287,68 @@ mod tests {
                 "123 bytes on disk",
             ]
         );
+    }
+
+    #[test]
+    fn a_file_with_no_artwork_offers_no_picture_and_keeps_its_metadata() {
+        let bytes = include_bytes!("../../../../samples/audio/example.flac");
+        let path = unique_temp_file("plain.flac");
+        std::fs::write(&path, bytes).unwrap();
+
+        let data = AudioCore.view(&path).unwrap();
+        let lines = AudioPresentation.present(&data);
+
+        assert!(
+            AudioPresentation.graphic(&data).is_none(),
+            "the fixture carries no cover art"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("seconds")),
+            "and the metadata is what it has to show: {lines:?}"
+        );
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn embedded_artwork_is_offered_as_drawable_pixels() {
+        // A one-pixel PNG standing in for a cover, encoded the way the core
+        // half encodes one.
+        let png = image_bytes();
+        let encoded = plugin_api::thumbnail::encode_bytes(&png).expect("a png encodes");
+        let data = serde_json::json!({
+            "format": "Flac",
+            "duration_secs": 1.0,
+            "sample_rate": serde_json::Value::Null,
+            "channels": serde_json::Value::Null,
+            "bitrate_kbps": serde_json::Value::Null,
+            "title": serde_json::Value::Null,
+            "artist": serde_json::Value::Null,
+            "album": serde_json::Value::Null,
+            "cover": encoded,
+            "file_size": 1,
+        });
+
+        match AudioPresentation
+            .graphic(&data)
+            .expect("artwork is offered as a picture")
+        {
+            plugin_api::Graphic::Rgba {
+                width,
+                height,
+                pixels,
+            } => assert_eq!(pixels.len(), width as usize * height as usize * 4),
+            plugin_api::Graphic::Svg(source) => panic!("expected pixels, got {source:.40}"),
+        }
+    }
+
+    /// A minimal PNG, for standing in as embedded artwork.
+    fn image_bytes() -> Vec<u8> {
+        let mut png = std::io::Cursor::new(Vec::new());
+        let buffer = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]));
+        image::DynamicImage::ImageRgba8(buffer)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        png.into_inner()
     }
 }
