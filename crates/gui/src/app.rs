@@ -4,7 +4,7 @@
 //! presentation half, so the two are separate, not shared, despite the
 //! similar shape.
 
-use plugin_api::{Icon, PluginPresentation, UNKNOWN_ICON};
+use plugin_api::{Graphic, Icon, PluginPresentation, UNKNOWN_ICON};
 use protocol::{DirectoryEntry, Request, Response};
 use std::collections::HashMap;
 use std::io;
@@ -127,9 +127,19 @@ pub fn icon_for(name: &str, is_dir: bool) -> Icon {
         .map_or(UNKNOWN_ICON, |plugin| plugin.icon())
 }
 
+/// The picture a plugin offers for `data`, if its type is one.
+#[must_use]
+pub fn present_graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+        .and_then(|candidate| candidate.graphic(data))
+}
+
 /// Turns a plugin's view data into displayable lines, via whichever
 /// registered presentation plugin matches `plugin`.
-fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
+#[must_use]
+pub fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
     match PRESENTATION_PLUGINS
         .iter()
         .find(|candidate| candidate.name() == plugin)
@@ -1502,6 +1512,17 @@ impl App {
     #[must_use]
     pub fn content_selected(&self) -> usize {
         self.content_selected
+    }
+
+    /// The picture the previewed file's plugin offers, if its type is one.
+    /// The pane draws this above the text, so an image reads as the image
+    /// rather than as three lines describing it.
+    #[must_use]
+    pub fn file_graphic(&self) -> Option<Graphic> {
+        match &self.file_view {
+            Some(Response::FileView { plugin, data }) => present_graphic(plugin, data),
+            _ => None,
+        }
     }
 
     /// Display text for the file pane.

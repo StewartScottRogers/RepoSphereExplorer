@@ -713,6 +713,9 @@ export component MainWindow inherits Window {
     in property <[ContentRow]> content-rows;
     in property <int> content-selected;
     in property <string> file-text;
+    // A picture for the previewed file, when its type is one.
+    in property <image> file-graphic;
+    in property <bool> file-has-graphic;
     in property <string> status-text;
     in property <int> focus-pane;
 
@@ -1044,12 +1047,32 @@ export component MainWindow inherits Window {
                             height: 22px;
                             horizontal-alignment: center;
                         }
+                        // A picture, for the types that are one, above the
+                        // text the plugin also supplies.
+                        if file-has-graphic: Rectangle {
+                            // A fixed band rather than a share of the pane:
+                            // deriving it from the parent closes a layout
+                            // binding loop, since the parent sizes to its
+                            // children.
+                            height: 220px;
+                            Image {
+                                source: file-graphic;
+                                image-fit: contain;
+                                width: parent.width - 8px;
+                                height: 212px;
+                            }
+                        }
                         view := ScrollView {
                             Text {
                                 text: file-text;
                                 color: Palette.foreground;
                                 wrap: word-wrap;
+                                // Both needed: an element with no `x`/`y` is
+                                // centred in its parent, so without these a
+                                // short preview floats in the middle of the
+                                // pane instead of starting at the top.
                                 x: 4px;
+                                y: 4px;
                                 width: view.visible-width - 8px;
                             }
                         }

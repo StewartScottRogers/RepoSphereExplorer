@@ -1,13 +1,17 @@
 //! Image file type plugin: core and presentation halves.
 //!
-//! The view is metadata only (format, dimensions, size on disk), not a
-//! rendered thumbnail: `plugin-api`'s presentation half returns lines of
-//! text, a front-end-agnostic shape chosen in step 3, and pixel rendering
-//! doesn't fit it. A real thumbnail would need the presentation trait to
-//! carry richer, toolkit-specific data - deferred until a plugin actually
-//! needs it.
+//! The view carries a bounded thumbnail alongside the metadata. This was
+//! deferred while `plugin_api::PluginPresentation` could only return lines
+//! of text; `Graphic` now carries decoded pixels, so an image previews as
+//! the picture rather than as the words describing it.
+//!
+//! The core half does the scaling, so what crosses the wire is bounded by
+//! [`THUMBNAIL_EDGE`] rather than by whatever the file happens to be: a
+//! photograph is a few hundred kilobytes of PNG here, not the tens of
+//! megabytes its raw pixels would be.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use base64::Engine as _;
+use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -23,6 +27,26 @@ pub struct ImageView {
     pub height: u32,
     /// Size of the file on disk, in bytes.
     pub file_size: u64,
+    /// A PNG thumbnail, base64-encoded, or `None` if the image could not be
+    /// decoded. Encoded rather than raw so the wire stays small.
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+}
+
+/// Longest edge of the thumbnail the core half produces. Big enough to read
+/// at the size a preview pane gives it, small enough that the wire does not
+/// carry a photograph.
+const THUMBNAIL_EDGE: u32 = 512;
+
+/// Scales `path`'s image to fit [`THUMBNAIL_EDGE`] and encodes it as PNG,
+/// base64 for the wire. `None` when the image cannot be decoded - the
+/// metadata is still worth showing.
+fn thumbnail(path: &Path) -> Option<String> {
+    let decoded = image::ImageReader::open(path).ok()?.decode().ok()?;
+    let scaled = decoded.thumbnail(THUMBNAIL_EDGE, THUMBNAIL_EDGE);
+    let mut png = std::io::Cursor::new(Vec::new());
+    scaled.write_to(&mut png, image::ImageFormat::Png).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(png.into_inner()))
 }
 
 /// The image plugin's core half.
@@ -52,6 +76,7 @@ impl PluginCore for ImageCore {
             width,
             height,
             file_size,
+            thumbnail: thumbnail(path),
         };
         serde_json::to_value(view).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
@@ -86,6 +111,20 @@ impl PluginPresentation for ImagePresentation {
             ],
             Err(err) => vec![format!("could not read view data: {err}")],
         }
+    }
+
+    fn graphic(&self, data: &serde_json::Value) -> Option<Graphic> {
+        let view: ImageView = serde_json::from_value(data.clone()).ok()?;
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(view.thumbnail?)
+            .ok()?;
+        let decoded = image::load_from_memory_with_format(&png, image::ImageFormat::Png).ok()?;
+        let rgba = decoded.to_rgba8();
+        Some(Graphic::Rgba {
+            width: rgba.width(),
+            height: rgba.height(),
+            pixels: rgba.into_raw(),
+        })
     }
 }
 
@@ -132,6 +171,7 @@ mod tests {
             width: 10,
             height: 20,
             file_size: 123,
+            thumbnail: None,
         })
         .unwrap();
 
