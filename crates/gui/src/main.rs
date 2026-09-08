@@ -189,6 +189,24 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_clipboard_paste_requested, paste_from_clipboard);
     on_event!(on_refresh_requested, refresh);
     on_event!(on_path_edit_requested, begin_path_edit);
+    on_event!(on_edit_requested, begin_file_edit);
+
+    {
+        // Save takes the editor's current text from the UI first: the user
+        // has been typing into it, not into `App`.
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_save_requested(move || {
+            let mut app = app.borrow_mut();
+            if let Some(ui) = ui_weak.upgrade() {
+                app.set_edit_text(&ui.get_edit_text());
+            }
+            app.save_file_edit();
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
     on_event!(on_select_all_requested, select_all);
     on_event!(on_undo_requested, undo);
 

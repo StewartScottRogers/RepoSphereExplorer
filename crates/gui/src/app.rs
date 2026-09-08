@@ -476,6 +476,9 @@ pub struct App {
     contents: Vec<DirectoryEntry>,
     content_selected: usize,
     file_view: Option<Response>,
+    /// The text being edited in the file pane, and the file it belongs to.
+    /// `None` when the pane is showing a preview rather than an editor.
+    editing_file: Option<(PathBuf, String)>,
     /// The entry name to reselect after the next listing arrives, set
     /// by whichever operation is about to change the folder in place.
     reselect: Option<String>,
@@ -544,6 +547,7 @@ impl App {
             contents: Vec::new(),
             content_selected: 0,
             file_view: None,
+            editing_file: None,
             reselect: None,
             sort_key: SortKey::Name,
             sort_ascending: true,
@@ -971,6 +975,10 @@ impl App {
     /// Cancels any pending request; a late result is simply discarded when
     /// it arrives, since its receiver is dropped.
     pub fn cancel_pending(&mut self) {
+        if self.editing_file.is_some() {
+            self.cancel_file_edit();
+            return;
+        }
         let cancelled = self.pending_contents.take().is_some()
             | self.pending_file.take().is_some()
             | self.pending_operation.take().is_some();
@@ -1238,6 +1246,95 @@ impl App {
         self.reselect = Some(name);
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("working...".to_owned());
+    }
+
+    /// Plants a file view, as a completed preview request would. Test-only:
+    /// the real path arrives through [`Self::tick`].
+    #[cfg(test)]
+    fn set_file_view(&mut self, plugin: &str, data: serde_json::Value) {
+        self.file_view = Some(Response::FileView {
+            plugin: plugin.to_owned(),
+            data,
+        });
+    }
+
+    /// The previewed file's text, when its plugin can edit it. `None` for a
+    /// type that is not text, or a view holding only part of one - the
+    /// plugin decides, per GUIDANCE.md §3.
+    #[must_use]
+    pub fn editable_text(&self) -> Option<String> {
+        match &self.file_view {
+            Some(Response::FileView { plugin, data }) => PRESENTATION_PLUGINS
+                .iter()
+                .find(|candidate| candidate.name() == plugin)
+                .and_then(|candidate| candidate.editable_text(data)),
+            _ => None,
+        }
+    }
+
+    /// Whether the selected file can be opened in the editor.
+    #[must_use]
+    pub fn can_edit(&self) -> bool {
+        self.editing_file.is_none() && self.editable_text().is_some()
+    }
+
+    /// Whether the file pane is currently an editor.
+    #[must_use]
+    pub const fn editing_file(&self) -> bool {
+        self.editing_file.is_some()
+    }
+
+    /// The text in the editor, or an empty string when it is closed.
+    #[must_use]
+    pub fn edit_text(&self) -> String {
+        self.editing_file
+            .as_ref()
+            .map_or_else(String::new, |(_, text)| text.clone())
+    }
+
+    /// Opens the selected file in the editor, if its plugin can edit it.
+    pub fn begin_file_edit(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        let Some(text) = self.editable_text() else {
+            return;
+        };
+        let Some((path, _)) = self.selected_entry_path() else {
+            return;
+        };
+        self.editing_file = Some((path, text));
+        self.focus = Pane::File;
+    }
+
+    /// Takes the editor's text as the user has changed it.
+    pub fn set_edit_text(&mut self, text: &str) {
+        if let Some((_, current)) = self.editing_file.as_mut() {
+            text.clone_into(current);
+        }
+    }
+
+    /// Ctrl+S: writes the editor's text back through the service, which is
+    /// the only process that touches the filesystem.
+    pub fn save_file_edit(&mut self) {
+        let Some((path, text)) = self.editing_file.clone() else {
+            return;
+        };
+        self.editing_file = None;
+        self.pending_operation = Some(spawn_request(Request::WriteFile {
+            path: path.to_string_lossy().into_owned(),
+            content: text,
+        }));
+        self.status = Some("saving...".to_owned());
+    }
+
+    /// Closes the editor without writing. The service keeps no record of a
+    /// discarded edit, so this is the one place the text is lost - which is
+    /// why the status bar says so rather than closing silently.
+    pub fn cancel_file_edit(&mut self) {
+        if self.editing_file.take().is_some() {
+            self.status = Some("edit discarded".to_owned());
+        }
     }
 
     /// Ctrl+L, F4, or a click past the last segment: turns the address bar
@@ -1995,6 +2092,123 @@ mod tests {
 
         app.move_selection(-10);
         assert_eq!(app.content_selected(), 0);
+    }
+
+    /// An app with one selected entry whose preview is an editable text
+    /// view, as a text plugin would produce.
+    fn app_with_editable_file() -> App {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "first
+second", "truncated": false }),
+        );
+        app
+    }
+
+    #[test]
+    fn a_text_view_offers_its_text_for_editing() {
+        let app = app_with_editable_file();
+
+        assert_eq!(
+            app.editable_text().as_deref(),
+            Some(
+                "first
+second"
+            )
+        );
+        assert!(app.can_edit());
+    }
+
+    #[test]
+    fn a_truncated_view_is_never_editable() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "the first half", "truncated": true }),
+        );
+
+        assert_eq!(
+            app.editable_text(),
+            None,
+            "saving part of a file back would discard the rest"
+        );
+        assert!(!app.can_edit());
+    }
+
+    #[test]
+    fn a_view_that_is_not_text_is_not_editable() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view("image", serde_json::json!({ "width": 4, "height": 4 }));
+
+        assert_eq!(app.editable_text(), None);
+        assert!(!app.can_edit());
+    }
+
+    #[test]
+    fn saving_an_edit_sends_the_typed_text_to_the_service() {
+        let mut app = app_with_editable_file();
+
+        app.begin_file_edit();
+        assert!(app.editing_file());
+        assert_eq!(
+            app.edit_text(),
+            "first
+second"
+        );
+        assert!(!app.can_edit(), "already open, so Edit has nothing to do");
+
+        app.set_edit_text(
+            "first
+second
+third",
+        );
+        app.save_file_edit();
+
+        assert!(!app.editing_file(), "the editor closes on save");
+        assert!(app.pending_operation.is_some(), "a write went out");
+        assert_eq!(app.status_text(), "saving...");
+    }
+
+    #[test]
+    fn discarding_an_edit_writes_nothing_and_says_so() {
+        let mut app = app_with_editable_file();
+        app.begin_file_edit();
+        app.set_edit_text("changed");
+
+        app.cancel_file_edit();
+
+        assert!(!app.editing_file());
+        assert!(app.pending_operation.is_none(), "nothing was written");
+        assert_eq!(
+            app.status_text(),
+            "edit discarded",
+            "the one place text is lost, so it is not lost silently"
+        );
+    }
+
+    #[test]
+    fn escape_closes_the_editor_rather_than_leaving_it_open() {
+        let mut app = app_with_editable_file();
+        app.begin_file_edit();
+
+        app.cancel_pending();
+
+        assert!(!app.editing_file());
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_edited_does_not_open_an_editor() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view("image", serde_json::json!({ "width": 4 }));
+
+        app.begin_file_edit();
+
+        assert!(!app.editing_file());
     }
 
     #[test]

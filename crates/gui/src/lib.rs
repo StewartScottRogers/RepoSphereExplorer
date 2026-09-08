@@ -138,6 +138,16 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_can_go_forward(app.can_go_forward());
     ui.set_path_input(app.path_input().into());
     ui.set_editing_path(app.editing_path());
+    ui.set_editing_file(app.editing_file());
+    ui.set_can_edit(app.can_edit());
+    if app.editing_file() {
+        // Only while the editor is open: writing this back every sync would
+        // fight the cursor as the user types.
+        let text = app.edit_text();
+        if ui.get_edit_text() != text.as_str() {
+            ui.set_edit_text(text.into());
+        }
+    }
     ui.set_location_icon(icon_image(app::icon_for("", true), true));
 }
 

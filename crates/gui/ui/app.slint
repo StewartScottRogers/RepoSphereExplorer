@@ -1,4 +1,4 @@
-import { ScrollView, Palette } from "std-widgets.slint";
+import { ScrollView, Palette, TextEdit } from "std-widgets.slint";
 
 // Every colour comes from the system palette, so the window follows the
 // Windows light/dark setting and its accent colour instead of being dark
@@ -764,6 +764,12 @@ export component MainWindow inherits Window {
     in property <string> path-input;
     in property <bool> editing-path;
     in property <image> location-icon;
+    // The file pane as an editor, for the types whose plugin can edit them.
+    in property <bool> editing-file;
+    in property <bool> can-edit;
+    in-out property <string> edit-text;
+    callback edit-requested();
+    callback save-requested();
     callback path-edit-requested();
     // How much of a long path is shown. Explorer hides the middle behind a
     // menu; this keeps the tail, which is the part that says where you are,
@@ -833,6 +839,10 @@ export component MainWindow inherits Window {
             } else if (event.text == Key.F4
                 || (event.modifiers.control && (event.text == "l" || event.text == "L"))) {
                 path-edit-requested();
+            } else if (event.modifiers.control && (event.text == "s" || event.text == "S")) {
+                save-requested();
+            } else if (event.modifiers.control && (event.text == "e" || event.text == "E")) {
+                edit-requested();
             } else if (event.text == Key.F5) {
                 refresh-requested();
             } else if (event.text == Key.Home) {
@@ -936,6 +946,17 @@ export component MainWindow inherits Window {
                         label: "Extract";
                         button-enabled: content-is-archive;
                         activated => { content-extract-requested(); }
+                    }
+                    CommandSeparator { }
+                    CommandButton {
+                        label: "Edit";
+                        button-enabled: can-edit;
+                        activated => { edit-requested(); }
+                    }
+                    CommandButton {
+                        label: "Save";
+                        button-enabled: editing-file;
+                        activated => { save-requested(); }
                     }
                     CommandSeparator { }
                     CommandButton {
@@ -1113,9 +1134,17 @@ export component MainWindow inherits Window {
                             height: 22px;
                             horizontal-alignment: center;
                         }
+                        // The editor, when a file is open in it. The plugin
+                        // decides which types get here; the pane just draws
+                        // what it is handed.
+                        if editing-file: TextEdit {
+                            text <=> edit-text;
+                            wrap: no-wrap;
+                        }
+
                         // A picture, for the types that are one, above the
                         // text the plugin also supplies.
-                        if file-has-graphic: Rectangle {
+                        if !editing-file && file-has-graphic: Rectangle {
                             // A fixed band rather than a share of the pane:
                             // deriving it from the parent closes a layout
                             // binding loop, since the parent sizes to its
@@ -1128,7 +1157,7 @@ export component MainWindow inherits Window {
                                 height: 212px;
                             }
                         }
-                        view := ScrollView {
+                        if !editing-file: view := ScrollView {
                             Text {
                                 text: file-text;
                                 color: Palette.foreground;
@@ -1167,7 +1196,7 @@ export component MainWindow inherits Window {
             x: 4px;
             y: 24px;
             width: 210px;
-            height: 6 * menu-item-h;
+            height: 8 * menu-item-h;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
@@ -1189,6 +1218,20 @@ export component MainWindow inherits Window {
                     item-enabled: has-selection;
                     item-height: menu-item-h;
                     activated => { open-menu = -1; content-open-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Edit";
+                    shortcut: "Ctrl+E";
+                    item-enabled: can-edit;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; edit-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Save";
+                    shortcut: "Ctrl+S";
+                    item-enabled: editing-file;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; save-requested(); }
                 }
                 ContextMenuItem {
                     label: "Rename";
@@ -1261,7 +1304,7 @@ export component MainWindow inherits Window {
             x: 88px;
             y: 24px;
             width: 210px;
-            height: 6 * menu-item-h;
+            height: 8 * menu-item-h;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
