@@ -1,4 +1,33 @@
-import { ScrollView, Button } from "std-widgets.slint";
+import { ScrollView, Palette } from "std-widgets.slint";
+
+// Every colour comes from the system palette, so the window follows the
+// Windows light/dark setting and its accent colour instead of being dark
+// whatever the user chose. `Palette` reports the scheme the platform is
+// using; the derived shades below are the handful of tones the panes need
+// on top of it, expressed as offsets from the system's own so they stay
+// right in both schemes.
+global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    // Panels sitting on the window background: toolbar, column header, menus.
+    out property <brush> panel: dark
+        ? Palette.background.brighter(0.35)
+        : Palette.background.darker(0.06);
+    // A sunken field, such as the address bar.
+    out property <brush> field: dark
+        ? Palette.background.darker(0.25)
+        : Palette.background.brighter(0.6);
+    // Hover feedback on a menu item or toolbar button.
+    out property <brush> hover: dark
+        ? Palette.background.brighter(0.7)
+        : Palette.background.darker(0.12);
+    // Secondary text: the size, type and date columns.
+    out property <brush> dim-text: Palette.foreground.transparentize(0.35);
+    // Text on a pane heading that is not focused.
+    out property <brush> heading-text: Palette.foreground.transparentize(0.2);
+    out property <brush> border: Palette.border;
+    out property <brush> accent: Palette.accent-background;
+    out property <brush> on-accent: Palette.accent-foreground;
+}
 
 component Pane inherits Rectangle {
     in property <string> title;
@@ -17,13 +46,13 @@ component Pane inherits Rectangle {
     property <length> row-height: 20px;
 
     border-width: 1px;
-    border-color: focused ? #e5c07b : #555555;
+    border-color: focused ? Theme.accent : Theme.border;
 
     VerticalLayout {
         Text {
             text: title;
             font-weight: 700;
-            color: focused ? #e5c07b : #cccccc;
+            color: focused ? Theme.accent : Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
         }
@@ -39,12 +68,12 @@ component Pane inherits Rectangle {
                     Rectangle {
                         y: selected >= 0 ? selected * row-height : 0px;
                         height: selected >= 0 ? row-height : 0px;
-                        background: #3a6ea5;
+                        background: Theme.accent;
                     }
 
                     for row[i] in rows: Text {
                         text: row;
-                        color: i == selected ? white : #dddddd;
+                        color: i == selected ? Theme.on-accent : Palette.foreground;
                         y: i * row-height;
                         height: row-height;
                         vertical-alignment: center;
@@ -71,6 +100,130 @@ component Pane inherits Rectangle {
     }
 }
 
+export struct ContentRow {
+    glyph: string,
+    name: string,
+    size: string,
+    kind: string,
+    modified: string,
+    // Whether this row is part of the selection. With Ctrl and Shift in play
+    // that is no longer "the one row whose index matches".
+    selected: bool,
+}
+
+// One column heading in the contents pane's details view: clickable to sort,
+// showing the direction arrow when it is the active column.
+// A toolbar button: a square glyph button that greys out when it has nowhere
+// to go, the way Explorer's back and forward arrows do.
+component NavButton inherits Rectangle {
+    in property <string> glyph;
+    in property <bool> button-enabled: true;
+    callback activated();
+
+    width: 28px;
+    background: button-enabled && nav-touch.has-hover ? Theme.hover : transparent;
+    border-radius: 3px;
+
+    Text {
+        text: glyph;
+        color: button-enabled ? Palette.foreground : Theme.dim-text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    nav-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: button-enabled;
+        clicked => { activated(); }
+    }
+}
+
+// One segment of the address bar's path, clickable to jump to that folder.
+component Crumb inherits Rectangle {
+    in property <string> label;
+    in property <bool> last;
+    callback activated();
+
+    background: crumb-touch.has-hover && !last ? Theme.hover : transparent;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        Text {
+            text: label;
+            color: last ? Theme.accent : Palette.foreground;
+            vertical-alignment: center;
+        }
+    }
+
+    crumb-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: !last;
+        clicked => { activated(); }
+    }
+}
+
+component ColumnHeader inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    in property <bool> ascending;
+    in property <bool> align-right;
+    callback activated();
+
+    background: heading-touch.has-hover ? Theme.hover : transparent;
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        alignment: align-right ? end : start;
+        spacing: 2px;
+        Text {
+            text: label;
+            color: active ? Theme.accent : Theme.heading-text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            // U+25B2 / U+25BC. The smaller U+25B4 / U+25BE render as tofu
+            // in the default font here.
+            text: active ? (ascending ? "\u{25B2}" : "\u{25BC}") : "";
+            color: Theme.accent;
+            vertical-alignment: center;
+        }
+    }
+
+    heading-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { activated(); }
+    }
+}
+
+// A draggable divider between two panes. Reports how far it was dragged so
+// the window can widen one pane and narrow the next.
+component Splitter inherits Rectangle {
+    callback dragged(length);
+
+    width: 5px;
+    background: split-touch.has-hover || split-touch.pressed ? Theme.accent : Theme.border;
+
+    split-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: ew-resize;
+        moved => {
+            if (self.pressed) {
+                dragged(self.mouse-x - self.pressed-x);
+            }
+        }
+    }
+}
+
 component ContextMenuItem inherits Rectangle {
     in property <string> label;
     in property <bool> item-enabled: true;
@@ -78,7 +231,7 @@ component ContextMenuItem inherits Rectangle {
     callback activated();
 
     height: item-height;
-    background: touch.has-hover ? #3a6ea5 : transparent;
+    background: touch.has-hover ? Theme.accent : transparent;
     // Named for assistive technology, and so a test can find the item by
     // the label the user reads rather than by its position in the menu.
     accessible-role: button;
@@ -87,7 +240,7 @@ component ContextMenuItem inherits Rectangle {
 
     Text {
         text: label;
-        color: item-enabled ? #dddddd : #777777;
+        color: item-enabled ? Palette.foreground : Theme.dim-text;
         vertical-alignment: center;
         x: 8px;
     }
@@ -108,8 +261,13 @@ component ContextMenuItem inherits Rectangle {
 component ContentsPane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
-    in property <[string]> rows;
+    in property <[ContentRow]> rows;
     in property <int> selected;
+    // Which column the list is sorted by, and which way, so the header can
+    // show the indicator Explorer shows.
+    in property <int> sort-column;
+    in property <bool> sort-ascending;
+    callback sort-requested(int);
     // Whether the selected row previewed as an archive; Extract is greyed
     // out otherwise, since extracting anything else only ever errors.
     in property <bool> extract-enabled;
@@ -120,6 +278,8 @@ component ContentsPane inherits Rectangle {
     in property <int> prompt-row;
     in property <bool> prompt-editable;
     callback row-clicked(int);
+    callback row-ctrl-clicked(int);
+    callback row-shift-clicked(int);
     callback row-double-clicked(int);
     callback open-requested();
     callback rename-requested();
@@ -141,65 +301,152 @@ component ContentsPane inherits Rectangle {
     // their size, which means stating the item height and count here.
     property <length> menu-width: 150px;
     property <length> menu-item-height: 24px;
+    // Details-view columns. The three trailing ones are fixed and Name
+    // stretches into the rest, in both the header and every row, so the two
+    // line up without either deriving a width from the pane's own width -
+    // which would close a layout binding loop.
+    property <length> size-column: 80px;
+    property <length> kind-column: 90px;
+    property <length> modified-column: 118px;
+    property <length> header-height: 20px;
 
     border-width: 1px;
-    border-color: focused ? #e5c07b : #555555;
+    border-color: focused ? Theme.accent : Theme.border;
 
     VerticalLayout {
         Text {
             text: title;
             font-weight: 700;
-            color: focused ? #e5c07b : #cccccc;
+            color: focused ? Theme.accent : Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
+        }
+        Rectangle {
+            height: header-height;
+            background: Theme.panel;
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                ColumnHeader {
+                    horizontal-stretch: 1;
+                    min-width: 40px;
+                    label: "Name";
+                    active: sort-column == 0;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(0); }
+                }
+                ColumnHeader {
+                    width: size-column;
+                    horizontal-stretch: 0;
+                    label: "Size";
+                    align-right: true;
+                    active: sort-column == 1;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(1); }
+                }
+                ColumnHeader {
+                    width: kind-column;
+                    horizontal-stretch: 0;
+                    align-right: true;
+                    label: "Type";
+                    active: sort-column == 2;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(2); }
+                }
+                ColumnHeader {
+                    width: modified-column;
+                    horizontal-stretch: 0;
+                    align-right: true;
+                    label: "Modified";
+                    active: sort-column == 3;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(3); }
+                }
+            }
         }
         ScrollView {
             body := Rectangle {
                 width: 100%;
-                min-height: max(rows.length * row-height, root.height - 22px);
+                min-height: max(rows.length * row-height, root.height - 22px - header-height);
 
-                Rectangle {
-                    y: selected >= 0 ? selected * row-height : 0px;
-                    height: selected >= 0 ? row-height : 0px;
-                    background: #3a6ea5;
+                for row[i] in rows: Rectangle {
+                    y: i * row-height;
+                    height: row.selected ? row-height : 0px;
+                    width: 100%;
+                    background: Theme.accent;
                 }
 
-                for row[i] in rows: Text {
-                    text: row;
-                    color: i == selected ? white : #dddddd;
+                for row[i] in rows: Rectangle {
                     y: i * row-height;
                     height: row-height;
-                    vertical-alignment: center;
-                    x: 4px;
+                    width: 100%;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        Text {
+                            text: row.glyph + " " + row.name;
+                            color: row.selected ? Theme.on-accent : Palette.foreground;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            min-width: 40px;
+                        }
+                        Text {
+                            text: row.size;
+                            color: row.selected ? Theme.on-accent : Theme.dim-text;
+                            width: size-column;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                        Text {
+                            text: row.kind;
+                            color: row.selected ? Theme.on-accent : Theme.dim-text;
+                            width: kind-column;
+                            overflow: elide;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                        Text {
+                            text: row.modified;
+                            color: row.selected ? Theme.on-accent : Theme.dim-text;
+                            width: modified-column;
+                            overflow: elide;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                    }
                 }
 
                 if prompt-row >= 0: Rectangle {
                     y: prompt-row * row-height;
                     height: row-height;
                     width: 100%;
-                    background: #1e1e1e;
+                    background: Theme.field;
                     border-width: 1px;
-                    border-color: #e5c07b;
+                    border-color: Theme.accent;
                     HorizontalLayout {
                         padding-left: 4px;
                         spacing: 2px;
                         alignment: start;
                         Text {
                             text: prompt-text;
-                            color: #e5c07b;
+                            color: Theme.accent;
                             vertical-alignment: center;
                         }
                         // A caret, so a text prompt reads as one waiting for
                         // typing rather than as a label.
                         Rectangle {
                             width: prompt-editable ? 1px : 0px;
-                            background: #e5c07b;
+                            background: Theme.accent;
                             y: 3px;
                             height: row-height - 6px;
                         }
                         Text {
                             text: prompt-editable ? "  (Enter / Esc)" : "";
-                            color: #777777;
+                            color: Theme.dim-text;
                             vertical-alignment: center;
                         }
                     }
@@ -208,17 +455,23 @@ component ContentsPane inherits Rectangle {
                 click-area := TouchArea {
                     width: 100%;
                     height: 100%;
-                    clicked => {
-                        if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
-                            row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
-                        }
-                    }
                     double-clicked => {
                         if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                             row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
                         }
                     }
                     pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                            if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                                if (event.modifiers.control) {
+                                    row-ctrl-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                } else if (event.modifiers.shift) {
+                                    row-shift-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                } else {
+                                    row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                }
+                            }
+                        }
                         if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
                             if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                                 row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
@@ -251,9 +504,9 @@ component ContentsPane inherits Rectangle {
                         y: 0;
                         width: 100%;
                         height: 100%;
-                        background: #2b2b2b;
+                        background: Theme.panel;
                         border-width: 1px;
-                        border-color: #555555;
+                        border-color: Theme.border;
                         VerticalLayout {
                             ContextMenuItem {
                                 label: "New Folder";
@@ -281,9 +534,9 @@ component ContentsPane inherits Rectangle {
                         y: 0;
                         width: 100%;
                         height: 100%;
-                        background: #2b2b2b;
+                        background: Theme.panel;
                         border-width: 1px;
-                        border-color: #555555;
+                        border-color: Theme.border;
                         VerticalLayout {
                             ContextMenuItem {
                                 label: "Open";
@@ -323,15 +576,14 @@ export component MainWindow inherits Window {
     title: "RepoSphereExplorer";
     preferred-width: 1000px;
     preferred-height: 600px;
-    // Row/title text throughout (#cccccc, #dddddd) and the context menus
-    // (#2b2b2b) are all colored for a dark theme; without this the window
-    // defaults to a light background and that text reads as low-contrast
-    // grey-on-white instead.
-    background: #1e1e1e;
+    background: Palette.background;
+    // Windows' UI font. Slint falls back to the platform default wherever
+    // it is not installed, so this costs nothing on other systems.
+    default-font-family: "Segoe UI";
 
     in property <[string]> folder-rows;
     in property <int> folder-selected;
-    in property <[string]> content-rows;
+    in property <[ContentRow]> content-rows;
     in property <int> content-selected;
     in property <string> file-text;
     in property <string> status-text;
@@ -340,6 +592,8 @@ export component MainWindow inherits Window {
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
     callback content-row-clicked(int);
+    callback content-row-ctrl-clicked(int);
+    callback content-row-shift-clicked(int);
     callback content-row-double-clicked(int);
     callback content-open-requested();
     callback content-rename-requested();
@@ -362,6 +616,28 @@ export component MainWindow inherits Window {
     in property <string> content-prompt-text;
     in property <int> content-prompt-row: -1;
     in property <bool> content-prompt-editable;
+    // Which contents column is sorted on, and which way.
+    in property <int> content-sort-column;
+    in property <bool> content-sort-ascending;
+    callback content-sort-requested(int);
+    // Address bar and history navigation.
+    in property <[string]> breadcrumbs;
+    in property <bool> can-go-back;
+    in property <bool> can-go-forward;
+    callback back-requested();
+    callback forward-requested();
+    callback breadcrumb-requested(int);
+    // Windows clipboard and list navigation keys.
+    callback clipboard-copy-requested();
+    callback clipboard-cut-requested();
+    callback clipboard-paste-requested();
+    callback refresh-requested();
+    callback select-all-requested();
+    // Pane widths, moved by the splitters between them. The file pane takes
+    // whatever the other two leave.
+    property <length> folders-width: 240px;
+    property <length> contents-width: 470px;
+    callback edge-requested(int);
 
     forward-focus: key-scope;
 
@@ -383,6 +659,28 @@ export component MainWindow inherits Window {
                 new-folder-requested();
             } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
                 new-file-requested();
+            } else if (event.modifiers.alt && event.text == Key.LeftArrow) {
+                back-requested();
+            } else if (event.modifiers.alt && event.text == Key.RightArrow) {
+                forward-requested();
+            } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
+                select-all-requested();
+            } else if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
+                clipboard-copy-requested();
+            } else if (event.modifiers.control && (event.text == "x" || event.text == "X")) {
+                clipboard-cut-requested();
+            } else if (event.modifiers.control && (event.text == "v" || event.text == "V")) {
+                clipboard-paste-requested();
+            } else if (event.text == Key.F5) {
+                refresh-requested();
+            } else if (event.text == Key.Home) {
+                edge-requested(0);
+            } else if (event.text == Key.End) {
+                edge-requested(1);
+            } else if (event.text == Key.PageUp) {
+                selection-moved(-10);
+            } else if (event.text == Key.PageDown) {
+                selection-moved(10);
             } else if (event.text == Key.UpArrow) {
                 selection-moved(-1);
             } else if (event.text == Key.DownArrow) {
@@ -398,11 +696,56 @@ export component MainWindow inherits Window {
         }
 
         VerticalLayout {
-            HorizontalLayout {
-                height: 28px;
-                Button {
-                    text: "Up";
-                    clicked => { parent-requested(); }
+            Rectangle {
+                height: 30px;
+                background: Theme.panel;
+                HorizontalLayout {
+                    padding: 2px;
+                    spacing: 2px;
+                    NavButton {
+                        // U+2190 / U+2192 / U+2191: the plain arrows.
+                        glyph: "\u{2190}";
+                        button-enabled: can-go-back;
+                        activated => { back-requested(); }
+                    }
+                    NavButton {
+                        glyph: "\u{2192}";
+                        button-enabled: can-go-forward;
+                        activated => { forward-requested(); }
+                    }
+                    NavButton {
+                        glyph: "\u{2191}";
+                        activated => { parent-requested(); }
+                    }
+                    Rectangle {
+                        width: 6px;
+                    }
+                    // The address bar: one clickable segment per path
+                    // component, the last being the folder being browsed.
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: Theme.field;
+                        border-width: 1px;
+                        border-color: Theme.hover;
+                        border-radius: 3px;
+                        HorizontalLayout {
+                            padding-left: 2px;
+                            padding-right: 2px;
+                            alignment: start;
+                            for crumb[i] in breadcrumbs: HorizontalLayout {
+                                Crumb {
+                                    label: crumb;
+                                    last: i == breadcrumbs.length - 1;
+                                    activated => { breadcrumb-requested(i); }
+                                }
+                                Text {
+                                    text: i == breadcrumbs.length - 1 ? "" : "\u{203A}";
+                                    color: Theme.dim-text;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             HorizontalLayout {
@@ -412,17 +755,26 @@ export component MainWindow inherits Window {
                     focused: focus-pane == 0;
                     rows: folder-rows;
                     selected: folder-selected;
-                    horizontal-stretch: 25;
+                    width: folders-width;
+                    horizontal-stretch: 0;
                     row-clicked(i) => { folder-row-clicked(i); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
+                }
+                Splitter {
+                    dragged(delta) => {
+                        folders-width = clamp(folders-width + delta, 120px, root.width - contents-width - 200px);
+                    }
                 }
                 ContentsPane {
                     title: "Contents";
                     focused: focus-pane == 1;
                     rows: content-rows;
                     selected: content-selected;
-                    horizontal-stretch: 35;
+                    width: contents-width;
+                    horizontal-stretch: 0;
                     row-clicked(i) => { content-row-clicked(i); }
+                    row-ctrl-clicked(i) => { content-row-ctrl-clicked(i); }
+                    row-shift-clicked(i) => { content-row-shift-clicked(i); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
                     open-requested => { content-open-requested(); }
                     rename-requested => { content-rename-requested(); }
@@ -433,25 +785,33 @@ export component MainWindow inherits Window {
                     prompt-text: content-prompt-text;
                     prompt-row: content-prompt-row;
                     prompt-editable: content-prompt-editable;
+                    sort-column: content-sort-column;
+                    sort-ascending: content-sort-ascending;
+                    sort-requested(c) => { content-sort-requested(c); }
                     new-folder-requested => { new-folder-requested(); }
                     new-file-requested => { new-file-requested(); }
                 }
+                Splitter {
+                    dragged(delta) => {
+                        contents-width = clamp(contents-width + delta, 200px, root.width - folders-width - 160px);
+                    }
+                }
                 Rectangle {
-                    horizontal-stretch: 40;
+                    horizontal-stretch: 1;
                     border-width: 1px;
-                    border-color: focus-pane == 2 ? #e5c07b : #555555;
+                    border-color: focus-pane == 2 ? Theme.accent : Theme.border;
                     VerticalLayout {
                         Text {
                             text: "File";
                             font-weight: 700;
-                            color: focus-pane == 2 ? #e5c07b : #cccccc;
+                            color: focus-pane == 2 ? Theme.accent : Theme.heading-text;
                             height: 22px;
                             horizontal-alignment: center;
                         }
                         view := ScrollView {
                             Text {
                                 text: file-text;
-                                color: #dddddd;
+                                color: Palette.foreground;
                                 wrap: word-wrap;
                                 x: 4px;
                                 width: view.visible-width - 8px;
@@ -462,7 +822,7 @@ export component MainWindow inherits Window {
             }
             Text {
                 text: status-text;
-                color: #dddddd;
+                color: Palette.foreground;
                 height: 22px;
                 x: 4px;
                 vertical-alignment: center;

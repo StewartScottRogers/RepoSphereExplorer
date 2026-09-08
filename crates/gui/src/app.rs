@@ -110,7 +110,9 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
 /// which most Linux font setups (including CI's) don't install by default.
 fn content_glyph(name: &str, is_dir: bool) -> &'static str {
     if is_dir {
-        return "\u{25B8}"; // ▸
+        // U+25A0. The pointing triangle U+25B8 this used renders as tofu in
+        // the GUI's default font.
+        return "\u{25A0}";
     }
     let extension = std::path::Path::new(name)
         .extension()
@@ -258,7 +260,7 @@ pub enum Pane {
 #[derive(Debug)]
 enum Mode {
     Normal,
-    ConfirmDelete { path: PathBuf, name: String },
+    ConfirmDelete { paths: Vec<PathBuf>, name: String },
     RenameInput { path: PathBuf, input: String },
     CopyInput { path: PathBuf, input: String },
     ExtractInput { path: PathBuf, input: String },
@@ -338,6 +340,114 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Explorer's "Type" column: `"File folder"` for a directory, otherwise the
+/// uppercased extension as `"RS file"`, or plain `"File"` when there is none.
+fn format_kind(name: &str, is_dir: bool) -> String {
+    if is_dir {
+        return "File folder".to_owned();
+    }
+    std::path::Path::new(name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|extension| !extension.is_empty())
+        .map_or_else(
+            || "File".to_owned(),
+            |extension| format!("{} file", extension.to_uppercase()),
+        )
+}
+
+/// A modified time as `YYYY-MM-DD HH:MM`, from seconds since the Unix epoch.
+/// Rendered in UTC: the service reports the timestamp in epoch seconds and
+/// this front end has no timezone database to convert it with, so a label
+/// that is unambiguous beats one that is quietly wrong by an offset.
+fn format_timestamp(seconds: Option<u64>) -> String {
+    let Some(seconds) = seconds else {
+        return String::new();
+    };
+    let days = i64::try_from(seconds / 86_400).unwrap_or(0);
+    let time_of_day = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute) = (time_of_day / 3_600, (time_of_day % 3_600) / 60);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+/// Converts days since 1970-01-01 into a civil `(year, month, day)`, by
+/// Howard Hinnant's `civil_from_days`. Avoids taking on a date library for
+/// one column.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = u32::try_from(day_of_year - (153 * mp + 2) / 5 + 1).unwrap_or(1);
+    let month = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// Whether a clipboard entry was copied or cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardMode {
+    /// Ctrl+C: paste leaves the original in place.
+    Copy,
+    /// Ctrl+X: paste moves it.
+    Cut,
+}
+
+/// Which column the contents pane is sorted by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    /// Entry name, case-insensitively.
+    Name,
+    /// Size in bytes.
+    Size,
+    /// The "Type" column's text.
+    Kind,
+    /// Last modified time.
+    Modified,
+}
+
+impl SortKey {
+    /// The column index the UI uses for this key.
+    const fn index(self) -> i32 {
+        match self {
+            Self::Name => 0,
+            Self::Size => 1,
+            Self::Kind => 2,
+            Self::Modified => 3,
+        }
+    }
+
+    /// The key a column index names, if any.
+    const fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(Self::Name),
+            1 => Some(Self::Size),
+            2 => Some(Self::Kind),
+            3 => Some(Self::Modified),
+            _ => None,
+        }
+    }
+}
+
+/// One contents row, as the details view renders it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentRow {
+    /// Type marker shown ahead of the name.
+    pub glyph: String,
+    /// Entry name, with a trailing `/` for a directory.
+    pub name: String,
+    /// Formatted size, empty for a directory.
+    pub size: String,
+    /// The "Type" column.
+    pub kind: String,
+    /// Formatted modified time, empty when the filesystem reports none.
+    pub modified: String,
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
@@ -348,6 +458,21 @@ pub struct App {
     /// The entry name to reselect after the next listing arrives, set
     /// by whichever operation is about to change the folder in place.
     reselect: Option<String>,
+    /// Which column the contents pane is sorted by, and in which direction.
+    sort_key: SortKey,
+    sort_ascending: bool,
+    /// Folders visited, in order, and where in them Back/Forward currently
+    /// sits. Explorer's arrows walk this rather than the folder tree.
+    history: Vec<PathBuf>,
+    history_index: usize,
+    /// What Ctrl+C or Ctrl+X put aside for the next Ctrl+V.
+    clipboard: Option<(PathBuf, ClipboardMode)>,
+    /// Every selected contents row. `content_selected` is the lead row -
+    /// the one the preview and the rename/copy prompts act on - and is kept
+    /// inside this set whenever the set is non-empty.
+    selection: std::collections::BTreeSet<usize>,
+    /// The row a Shift range extends from.
+    anchor: usize,
     status: Option<String>,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
@@ -399,6 +524,13 @@ impl App {
             content_selected: 0,
             file_view: None,
             reselect: None,
+            sort_key: SortKey::Name,
+            sort_ascending: true,
+            history: Vec::new(),
+            history_index: 0,
+            clipboard: None,
+            selection: std::collections::BTreeSet::new(),
+            anchor: 0,
             status: None,
             focus: Pane::Folders,
             pending_contents: None,
@@ -481,6 +613,7 @@ impl App {
                     node.set_children_from(&entries);
                 }
                 self.contents = entries;
+                self.sort_contents();
                 // A listing arriving after an operation is the same folder
                 // reloaded, so put the selection back on the entry that
                 // operation produced rather than dropping it to the top.
@@ -489,6 +622,11 @@ impl App {
                     .take()
                     .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
                     .unwrap_or(0);
+                self.anchor = self.content_selected;
+                self.selection.clear();
+                if !self.contents.is_empty() {
+                    self.selection.insert(self.content_selected);
+                }
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
@@ -525,19 +663,40 @@ impl App {
 
     /// Asks for confirmation before deleting the selected contents row.
     pub fn request_delete(&mut self) {
-        if let Some((path, name)) = self.selected_entry_path() {
-            self.mode = Mode::ConfirmDelete { path, name };
+        let indices = self.selected_indices();
+        if indices.is_empty() {
+            return;
         }
+        let dir = self.selected_dir_path();
+        let paths: Vec<PathBuf> = indices
+            .iter()
+            .filter_map(|index| self.contents.get(*index))
+            .map(|entry| dir.join(&entry.name))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let name = match indices.len() {
+            1 => self
+                .contents
+                .get(indices[0])
+                .map_or_else(String::new, |entry| entry.name.clone()),
+            count => format!("{count} items"),
+        };
+        self.mode = Mode::ConfirmDelete { paths, name };
     }
 
     /// Confirms a pending delete confirmation, sending the delete request.
     pub fn confirm_delete(&mut self) {
-        let Mode::ConfirmDelete { path, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
+        let Mode::ConfirmDelete { paths, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
         else {
             return;
         };
         let request = Request::Delete {
-            paths: vec![path.to_string_lossy().into_owned()],
+            paths: paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
         };
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("deleting...".to_owned());
@@ -709,12 +868,10 @@ impl App {
             Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
                 self.type_char(text);
             }
-            Mode::Normal => match text {
-                "r" => self.request_rename(),
-                "c" => self.request_copy(),
-                "x" => self.request_extract(),
-                _ => {}
-            },
+            // Explorer's type-ahead: a typed letter jumps to a name, it is
+            // not a command. Rename, copy and extract are on F2, Ctrl+C and
+            // the context menu.
+            Mode::Normal => self.type_ahead(text),
         }
     }
 
@@ -808,9 +965,78 @@ impl App {
     pub fn select_content(&mut self, index: usize) {
         if index < self.contents.len() {
             self.content_selected = index;
+            self.anchor = index;
+            self.selection.clear();
+            self.selection.insert(index);
             self.focus = Pane::Contents;
             self.load_file_view();
         }
+    }
+
+    /// Ctrl+click: adds `index` to the selection, or takes it out again if it
+    /// was already in. The lead row moves onto whatever was clicked, or onto
+    /// another selected row when the lead itself is deselected.
+    pub fn toggle_content(&mut self, index: usize) {
+        if index >= self.contents.len() {
+            return;
+        }
+        self.focus = Pane::Contents;
+        self.anchor = index;
+        if self.selection.remove(&index) {
+            // Deselecting the lead row hands the lead to another selected
+            // one, so the preview keeps showing something that is selected.
+            if index == self.content_selected
+                && let Some(next) = self.selection.iter().next().copied()
+            {
+                self.content_selected = next;
+            }
+        } else {
+            self.selection.insert(index);
+            self.content_selected = index;
+        }
+        self.load_file_view();
+    }
+
+    /// Shift+click: selects every row between the anchor and `index`.
+    pub fn extend_selection_to(&mut self, index: usize) {
+        if index >= self.contents.len() {
+            return;
+        }
+        let (low, high) = if self.anchor <= index {
+            (self.anchor, index)
+        } else {
+            (index, self.anchor)
+        };
+        self.selection = (low..=high).collect();
+        self.content_selected = index;
+        self.focus = Pane::Contents;
+        self.load_file_view();
+    }
+
+    /// Ctrl+A: selects every row in the folder.
+    pub fn select_all(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
+            return;
+        }
+        self.selection = (0..self.contents.len()).collect();
+        self.focus = Pane::Contents;
+    }
+
+    /// Every selected row, in listing order.
+    fn selected_indices(&self) -> Vec<usize> {
+        self.selection.iter().copied().collect()
+    }
+
+    /// How many rows are selected.
+    #[must_use]
+    pub fn selected_count(&self) -> usize {
+        self.selection.len()
+    }
+
+    /// Whether contents row `index` is part of the selection.
+    #[must_use]
+    pub fn is_selected(&self, index: usize) -> bool {
+        self.selection.contains(&index)
     }
 
     /// Drills into contents row `index` if it is a directory, expanding and
@@ -856,6 +1082,8 @@ impl App {
         let Some(parent) = self.selected_dir_path().parent().map(PathBuf::from) else {
             return;
         };
+        self.remember_current();
+        self.push_history(parent.clone());
         let rows = self.root.flatten();
         let Some((_, indices)) = rows.get(self.folder_selected).cloned() else {
             return;
@@ -867,9 +1095,229 @@ impl App {
             }
             return;
         }
-        self.root = FolderNode::root(parent);
+        self.browse(parent);
+    }
+
+    /// Ctrl+C: puts the selected entry aside for a later paste, leaving it
+    /// where it is.
+    pub fn copy_to_clipboard(&mut self) {
+        self.set_clipboard(ClipboardMode::Copy);
+    }
+
+    /// Ctrl+X: puts the selected entry aside to be moved by a later paste.
+    pub fn cut_to_clipboard(&mut self) {
+        self.set_clipboard(ClipboardMode::Cut);
+    }
+
+    fn set_clipboard(&mut self, mode: ClipboardMode) {
+        let Some((path, name)) = self.selected_entry_path() else {
+            return;
+        };
+        let verb = match mode {
+            ClipboardMode::Copy => "copied",
+            ClipboardMode::Cut => "cut",
+        };
+        self.clipboard = Some((path, mode));
+        self.status = Some(format!("{name} {verb}"));
+    }
+
+    /// Ctrl+V: copies or moves whatever the clipboard holds into the folder
+    /// being browsed. The destination name is de-duplicated, since both
+    /// operations refuse to replace an existing entry.
+    pub fn paste_from_clipboard(&mut self) {
+        let Some((source, mode)) = self.clipboard.clone() else {
+            return;
+        };
+        let Some(name) = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+        let destination_dir = self.selected_dir_path();
+        // Pasting back into the folder it came from has to land beside the
+        // original rather than on it.
+        let name = if source.parent() == Some(destination_dir.as_path()) {
+            dedup_name(&self.contents, &name)
+        } else {
+            name
+        };
+        let destination = destination_dir.join(&name);
+        let from = source.to_string_lossy().into_owned();
+        let to = destination.to_string_lossy().into_owned();
+        let request = match mode {
+            ClipboardMode::Copy => Request::Copy { from, to },
+            ClipboardMode::Cut => Request::Rename { from, to },
+        };
+        if mode == ClipboardMode::Cut {
+            self.clipboard = None;
+        }
+        self.reselect = Some(name);
+        self.pending_operation = Some(spawn_request(request));
+        self.status = Some("working...".to_owned());
+    }
+
+    /// F5: re-reads the folder being browsed.
+    pub fn refresh(&mut self) {
+        self.reselect = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
+        self.load_contents_for_selected();
+    }
+
+    /// Moves the contents selection to the first or last row.
+    pub fn select_edge(&mut self, last: bool) {
+        if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
+            return;
+        }
+        let index = if last { self.contents.len() - 1 } else { 0 };
+        self.select_content(index);
+    }
+
+    /// Jumps to the first entry whose name starts with `prefix`, matched
+    /// without regard to case, the way Explorer's type-ahead does. Search
+    /// starts after the current row so repeated presses cycle through the
+    /// matches.
+    pub fn type_ahead(&mut self, prefix: &str) {
+        if !matches!(self.mode, Mode::Normal) || prefix.is_empty() {
+            return;
+        }
+        let prefix = prefix.to_lowercase();
+        let count = self.contents.len();
+        let found = (1..=count)
+            .map(|step| (self.content_selected + step) % count)
+            .find(|index| {
+                self.contents[*index]
+                    .name
+                    .to_lowercase()
+                    .starts_with(&prefix)
+            });
+        if let Some(index) = found {
+            self.select_content(index);
+        }
+    }
+
+    /// Re-roots the tree at `path` and browses it, without touching history.
+    fn browse(&mut self, path: PathBuf) {
+        self.root = FolderNode::root(path);
         self.folder_selected = 0;
         self.load_contents_for_selected();
+    }
+
+    /// Records `path` as the newest history entry. Anything ahead of the
+    /// current position is dropped, the way a browser discards the forward
+    /// stack once you navigate somewhere new. A repeat of the current entry
+    /// is not recorded.
+    fn push_history(&mut self, path: PathBuf) {
+        if self.history.get(self.history_index) == Some(&path) {
+            return;
+        }
+        if !self.history.is_empty() {
+            self.history.truncate(self.history_index + 1);
+        }
+        self.history.push(path);
+        self.history_index = self.history.len() - 1;
+    }
+
+    /// Records wherever the app is now, so Back has somewhere to return to.
+    /// Called before any navigation that changes the browsed folder.
+    fn remember_current(&mut self) {
+        let current = self.selected_dir_path();
+        if self.history.is_empty() {
+            self.history.push(current);
+            self.history_index = 0;
+        } else {
+            self.push_history(current);
+        }
+    }
+
+    /// Whether Back has an earlier folder to return to.
+    #[must_use]
+    pub const fn can_go_back(&self) -> bool {
+        self.history_index > 0
+    }
+
+    /// Whether Forward has a folder to return to.
+    #[must_use]
+    pub fn can_go_forward(&self) -> bool {
+        self.history_index + 1 < self.history.len()
+    }
+
+    /// Goes back one folder in history.
+    pub fn go_back(&mut self) {
+        if !self.can_go_back() {
+            return;
+        }
+        self.remember_current();
+        self.history_index -= 1;
+        if let Some(path) = self.history.get(self.history_index).cloned() {
+            self.browse(path);
+        }
+    }
+
+    /// Goes forward one folder in history.
+    pub fn go_forward(&mut self) {
+        if !self.can_go_forward() {
+            return;
+        }
+        self.history_index += 1;
+        if let Some(path) = self.history.get(self.history_index).cloned() {
+            self.browse(path);
+        }
+    }
+
+    /// The browsed folder's path as address-bar segments, each paired with
+    /// the path that segment names. A Windows path starts with a prefix and
+    /// a root component (`Z:` then `\`); those are one place, so they are
+    /// one segment.
+    fn breadcrumb_paths(&self) -> Vec<(String, PathBuf)> {
+        let path = self.selected_dir_path();
+        let mut crumbs: Vec<(String, PathBuf)> = Vec::new();
+        let mut so_far = PathBuf::new();
+        for component in path.components() {
+            so_far.push(component);
+            let text = component.as_os_str().to_string_lossy().into_owned();
+            match component {
+                std::path::Component::RootDir => match crumbs.last_mut() {
+                    // `Z:` and the separator after it name one place.
+                    Some((label, target)) => {
+                        label.push(std::path::MAIN_SEPARATOR);
+                        target.clone_from(&so_far);
+                    }
+                    None => crumbs.push((text, so_far.clone())),
+                },
+                _ => crumbs.push((text, so_far.clone())),
+            }
+        }
+        crumbs
+    }
+
+    /// Labels for the address bar, root first and the browsed folder last.
+    #[must_use]
+    pub fn breadcrumbs(&self) -> Vec<String> {
+        self.breadcrumb_paths()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
+    }
+
+    /// Browses the folder named by breadcrumb `index`.
+    pub fn navigate_to_breadcrumb(&mut self, index: i32) {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let crumbs = self.breadcrumb_paths();
+        let Some((_, target)) = crumbs.get(index) else {
+            return;
+        };
+        if target == &self.selected_dir_path() {
+            return;
+        }
+        let target = target.clone();
+        self.remember_current();
+        self.push_history(target.clone());
+        self.browse(target);
     }
 
     /// Display labels for the folders pane, one per visible tree row.
@@ -913,6 +1361,90 @@ impl App {
                 } else {
                     format!("{glyph} {}", entry.name)
                 }
+            })
+            .collect()
+    }
+
+    /// Orders `contents` by the current sort column. Directories come
+    /// first whichever column is chosen, the way Explorer groups them, and
+    /// the name is the tiebreak so the order is total and stable.
+    fn sort_contents(&mut self) {
+        let key = self.sort_key;
+        let ascending = self.sort_ascending;
+        self.contents.sort_by(|a, b| {
+            let ordering = match key {
+                SortKey::Name => std::cmp::Ordering::Equal,
+                SortKey::Size => a.size.cmp(&b.size),
+                SortKey::Kind => {
+                    format_kind(&a.name, a.is_dir).cmp(&format_kind(&b.name, b.is_dir))
+                }
+                SortKey::Modified => a.modified.cmp(&b.modified),
+            }
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name));
+            let ordering = if ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            };
+            b.is_dir.cmp(&a.is_dir).then(ordering)
+        });
+    }
+
+    /// Sorts by `column`, reversing the direction if it is already the sort
+    /// column. Out-of-range columns are ignored. The selected entry keeps
+    /// its selection across the reorder.
+    pub fn sort_by_column(&mut self, column: i32) {
+        let Some(key) = SortKey::from_index(column) else {
+            return;
+        };
+        if self.sort_key == key {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_key = key;
+            self.sort_ascending = true;
+        }
+        let selected = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
+        self.sort_contents();
+        self.content_selected = selected
+            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .unwrap_or(0);
+    }
+
+    /// The column currently sorted on, as a UI column index.
+    #[must_use]
+    pub const fn sort_column(&self) -> i32 {
+        self.sort_key.index()
+    }
+
+    /// Whether the current sort is ascending.
+    #[must_use]
+    pub const fn sort_ascending(&self) -> bool {
+        self.sort_ascending
+    }
+
+    /// The contents pane's rows, one per entry, with a cell per column.
+    #[must_use]
+    pub fn content_rows(&self) -> Vec<ContentRow> {
+        self.contents
+            .iter()
+            .map(|entry| ContentRow {
+                glyph: content_glyph(&entry.name, entry.is_dir).to_owned(),
+                name: if entry.is_dir {
+                    format!("{}/", entry.name)
+                } else {
+                    entry.name.clone()
+                },
+                size: if entry.is_dir {
+                    String::new()
+                } else {
+                    format_size(entry.size)
+                },
+                kind: format_kind(&entry.name, entry.is_dir),
+                modified: format_timestamp(entry.modified),
             })
             .collect()
     }
@@ -1000,6 +1532,10 @@ impl App {
         let noun = if count == 1 { "item" } else { "items" };
         let total_size: u64 = self.contents.iter().map(|entry| entry.size).sum();
         let header = format!("{count} {noun}, {}", format_size(total_size));
+        let selected = self.selected_count();
+        if selected > 1 {
+            return format!("{header} — {selected} selected");
+        }
         match self.contents.get(self.content_selected) {
             Some(entry) => format!(
                 "{header} — selected: {} ({} of {count})",
@@ -1024,7 +1560,9 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, PathBuf, content_glyph, strip_verbatim_prefix};
+    use super::{
+        App, PathBuf, content_glyph, format_kind, format_timestamp, strip_verbatim_prefix,
+    };
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -1039,6 +1577,406 @@ mod tests {
             .collect()
     }
 
+    /// Entries with sizes and modified times, for the details columns.
+    fn detailed_entries(rows: &[(&str, bool, u64, Option<u64>)]) -> Vec<DirectoryEntry> {
+        rows.iter()
+            .map(|(name, is_dir, size, modified)| DirectoryEntry {
+                name: (*name).to_owned(),
+                is_dir: *is_dir,
+                size: *size,
+                modified: *modified,
+            })
+            .collect()
+    }
+
+    /// Four rows, with the second selected.
+    fn app_with_four_rows() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[
+                    ("a.txt", false),
+                    ("b.txt", false),
+                    ("c.txt", false),
+                    ("d.txt", false),
+                ]),
+            }),
+        );
+        app.select_content(1);
+        app
+    }
+
+    #[test]
+    fn ctrl_click_adds_a_row_to_the_selection_and_clicking_it_again_removes_it() {
+        let mut app = app_with_four_rows();
+        assert_eq!(app.selected_count(), 1);
+
+        app.toggle_content(3);
+        assert_eq!(app.selected_count(), 2);
+        assert!(app.is_selected(1));
+        assert!(app.is_selected(3));
+
+        app.toggle_content(1);
+        assert_eq!(app.selected_count(), 1, "the first row drops out again");
+        assert!(!app.is_selected(1));
+        assert!(app.is_selected(3));
+    }
+
+    #[test]
+    fn shift_click_selects_the_range_from_the_anchor() {
+        let mut app = app_with_four_rows();
+
+        app.extend_selection_to(3);
+
+        assert_eq!(app.selected_count(), 3);
+        assert!(!app.is_selected(0));
+        for index in 1..=3 {
+            assert!(app.is_selected(index), "row {index} is in the range");
+        }
+    }
+
+    #[test]
+    fn shift_click_backwards_selects_the_range_the_other_way() {
+        let mut app = app_with_four_rows();
+        app.select_content(2);
+
+        app.extend_selection_to(0);
+
+        assert_eq!(app.selected_count(), 3);
+        for index in 0..=2 {
+            assert!(app.is_selected(index));
+        }
+        assert!(!app.is_selected(3));
+    }
+
+    #[test]
+    fn a_plain_click_drops_back_to_a_single_row() {
+        let mut app = app_with_four_rows();
+        app.extend_selection_to(3);
+        assert_eq!(app.selected_count(), 3);
+
+        app.select_content(0);
+
+        assert_eq!(app.selected_count(), 1);
+        assert!(app.is_selected(0));
+    }
+
+    #[test]
+    fn ctrl_a_selects_every_row_and_the_status_bar_counts_them() {
+        let mut app = app_with_four_rows();
+
+        app.select_all();
+
+        assert_eq!(app.selected_count(), 4);
+        assert!(
+            app.status_text().ends_with("4 selected"),
+            "{}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn deleting_a_multi_row_selection_confirms_once_and_sends_every_path() {
+        let mut app = app_with_four_rows();
+        app.extend_selection_to(3);
+
+        app.request_delete();
+        assert_eq!(app.prompt_text(), "Delete 3 items?  (y / n)");
+
+        app.confirm_delete();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "deleting...");
+    }
+
+    #[test]
+    fn deleting_a_single_row_still_names_it() {
+        let mut app = app_with_four_rows();
+
+        app.request_delete();
+
+        assert_eq!(app.prompt_text(), "Delete b.txt?  (y / n)");
+    }
+
+    #[test]
+    fn typing_a_letter_jumps_to_the_next_name_starting_with_it() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[
+                    ("apple.txt", false),
+                    ("Banana.txt", false),
+                    ("blueberry.txt", false),
+                    ("cherry.txt", false),
+                ]),
+            }),
+        );
+        app.select_content(0);
+
+        app.handle_key_text("b");
+        assert_eq!(app.content_selected(), 1, "matched without regard to case");
+
+        app.handle_key_text("b");
+        assert_eq!(
+            app.content_selected(),
+            2,
+            "a repeat cycles to the next match"
+        );
+
+        app.handle_key_text("z");
+        assert_eq!(
+            app.content_selected(),
+            2,
+            "no match leaves the selection put"
+        );
+    }
+
+    #[test]
+    fn copying_then_pasting_in_the_same_folder_asks_for_a_name_beside_the_original() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+
+        app.copy_to_clipboard();
+        assert_eq!(app.status_text(), "doomed.txt copied");
+
+        app.paste_from_clipboard();
+
+        assert!(app.pending_operation.is_some(), "a copy request went out");
+        assert_eq!(app.status_text(), "working...");
+    }
+
+    #[test]
+    fn cutting_clears_the_clipboard_once_it_has_been_pasted() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.cut_to_clipboard();
+        assert_eq!(app.status_text(), "doomed.txt cut");
+
+        app.paste_from_clipboard();
+        assert!(app.pending_operation.is_some());
+
+        app.cancel_pending();
+        app.paste_from_clipboard();
+        assert!(
+            app.pending_operation.is_none(),
+            "a cut is spent by the paste that moved it"
+        );
+    }
+
+    #[test]
+    fn pasting_with_an_empty_clipboard_does_nothing() {
+        let mut app = app_with_one_content_entry();
+
+        app.paste_from_clipboard();
+
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn home_and_end_jump_to_the_first_and_last_row() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.select_content(1);
+
+        app.select_edge(true);
+        assert_eq!(app.content_selected(), 2);
+
+        app.select_edge(false);
+        assert_eq!(app.content_selected(), 0);
+    }
+
+    #[test]
+    fn page_movement_clamps_at_the_ends_of_the_list() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.select_content(0);
+
+        app.move_selection(10);
+        assert_eq!(app.content_selected(), 2);
+
+        app.move_selection(-10);
+        assert_eq!(app.content_selected(), 0);
+    }
+
+    #[test]
+    fn breadcrumbs_name_each_folder_on_the_way_down_with_the_root_as_one() {
+        let app = App::new(PathBuf::from("/one/two/three"));
+
+        let crumbs = app.breadcrumbs();
+
+        assert_eq!(crumbs.last().map(String::as_str), Some("three"));
+        assert!(
+            crumbs.len() >= 3,
+            "root, then a segment per folder: {crumbs:?}"
+        );
+        assert!(
+            !crumbs.iter().any(String::is_empty),
+            "no blank segment for the root separator: {crumbs:?}"
+        );
+    }
+
+    #[test]
+    fn back_and_forward_walk_the_folders_that_were_visited() {
+        let mut app = App::new(PathBuf::from("/one/two/three"));
+        assert!(!app.can_go_back(), "nowhere to go back to yet");
+        assert!(!app.can_go_forward());
+
+        app.navigate_to_parent();
+        assert_eq!(app.breadcrumbs().last().map(String::as_str), Some("two"));
+        assert!(app.can_go_back());
+        assert!(!app.can_go_forward());
+
+        app.go_back();
+        assert_eq!(app.breadcrumbs().last().map(String::as_str), Some("three"));
+        assert!(app.can_go_forward(), "and forward returns");
+
+        app.go_forward();
+        assert_eq!(app.breadcrumbs().last().map(String::as_str), Some("two"));
+    }
+
+    #[test]
+    fn navigating_somewhere_new_discards_the_forward_stack() {
+        let mut app = App::new(PathBuf::from("/one/two/three"));
+        app.navigate_to_parent();
+        app.go_back();
+        assert!(app.can_go_forward());
+
+        app.navigate_to_breadcrumb(0);
+
+        assert!(
+            !app.can_go_forward(),
+            "a fresh navigation drops what was ahead"
+        );
+        assert!(app.can_go_back());
+    }
+
+    #[test]
+    fn clicking_the_folder_already_shown_in_the_address_bar_does_nothing() {
+        let mut app = App::new(PathBuf::from("/one/two/three"));
+        let before = app.breadcrumbs();
+
+        app.navigate_to_breadcrumb(i32::try_from(before.len()).unwrap() - 1);
+
+        assert_eq!(app.breadcrumbs(), before);
+        assert!(!app.can_go_back(), "and records no history for it");
+    }
+
+    #[test]
+    fn the_type_column_names_folders_and_extensions_the_way_explorer_does() {
+        assert_eq!(format_kind("src", true), "File folder");
+        assert_eq!(format_kind("main.rs", false), "RS file");
+        assert_eq!(format_kind("archive.TAR", false), "TAR file");
+        assert_eq!(format_kind("LICENSE", false), "File");
+    }
+
+    #[test]
+    fn the_modified_column_formats_epoch_seconds_as_a_date_and_time() {
+        assert_eq!(format_timestamp(Some(0)), "1970-01-01 00:00");
+        // 2026-09-07T14:31:00Z.
+        assert_eq!(format_timestamp(Some(1_788_791_460)), "2026-09-07 14:31");
+        assert_eq!(
+            format_timestamp(None),
+            "",
+            "a filesystem that reports no time leaves the cell blank"
+        );
+    }
+
+    #[test]
+    fn content_rows_carry_a_cell_per_column() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: detailed_entries(&[
+                    ("notes.txt", false, 2048, Some(0)),
+                    ("src", true, 0, Some(0)),
+                ]),
+            }),
+        );
+
+        let rows = app.content_rows();
+
+        assert_eq!(rows[0].name, "src/", "folders sort ahead of files");
+        assert_eq!(rows[0].kind, "File folder");
+        assert_eq!(rows[0].size, "", "a folder shows no size");
+        assert_eq!(rows[1].name, "notes.txt");
+        assert_eq!(rows[1].size, "2.0 KB");
+        assert_eq!(rows[1].kind, "TXT file");
+        assert_eq!(rows[1].modified, "1970-01-01 00:00");
+    }
+
+    #[test]
+    fn clicking_a_column_sorts_by_it_and_clicking_again_reverses() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: detailed_entries(&[
+                    ("big.bin", false, 900, None),
+                    ("small.bin", false, 10, None),
+                    ("mid.bin", false, 100, None),
+                ]),
+            }),
+        );
+        assert_eq!(app.sort_column(), 0, "name to begin with");
+
+        app.sort_by_column(1);
+        assert_eq!(app.sort_column(), 1);
+        assert!(app.sort_ascending());
+        let names: Vec<_> = app.content_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["small.bin", "mid.bin", "big.bin"]);
+
+        app.sort_by_column(1);
+        assert!(!app.sort_ascending(), "the same column reverses");
+        let names: Vec<_> = app.content_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["big.bin", "mid.bin", "small.bin"]);
+
+        app.sort_by_column(9);
+        assert_eq!(app.sort_column(), 1, "an unknown column is ignored");
+    }
+
+    #[test]
+    fn sorting_keeps_folders_first_and_holds_the_selection() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: detailed_entries(&[
+                    ("zeta.txt", false, 10, None),
+                    ("alpha", true, 0, None),
+                    ("beta.txt", false, 900, None),
+                ]),
+            }),
+        );
+        app.select_content(1); // beta.txt, after the folder.
+        assert_eq!(app.content_rows()[1].name, "beta.txt");
+
+        app.sort_by_column(1);
+
+        assert_eq!(
+            app.content_rows()[0].name,
+            "alpha/",
+            "the folder stays at the top whichever column is sorted on"
+        );
+        assert_eq!(
+            app.content_rows()[app.content_selected()].name,
+            "beta.txt",
+            "the selection follows its entry"
+        );
+    }
+
     #[test]
     fn applying_a_directory_result_populates_contents_and_tree() {
         let mut app = App::new(std::env::temp_dir());
@@ -1051,7 +1989,7 @@ mod tests {
 
         assert_eq!(
             app.content_labels(),
-            vec!["\u{25B8} sub/", "\u{25AA} note.txt"]
+            vec!["\u{25A0} sub/", "\u{25AA} note.txt"]
         );
         assert_eq!(app.folder_labels().len(), 2); // root + "sub"
     }
@@ -1307,9 +2245,9 @@ mod tests {
     }
 
     #[test]
-    fn r_key_prefills_the_rename_input_with_the_current_name() {
+    fn requesting_a_rename_prefills_the_input_with_the_current_name() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
         assert_eq!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
     }
 
@@ -1344,7 +2282,7 @@ mod tests {
     #[test]
     fn editing_the_rename_input_appends_and_backspaces() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.backspace();
         app.handle_key_text("!");
@@ -1355,7 +2293,7 @@ mod tests {
     #[test]
     fn returning_confirms_a_rename_and_sends_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.handle_return();
 
@@ -1366,7 +2304,7 @@ mod tests {
     #[test]
     fn escaping_a_rename_input_cancels_without_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.cancel_pending();
 
@@ -1375,16 +2313,16 @@ mod tests {
     }
 
     #[test]
-    fn c_key_prefills_the_copy_input_with_a_name_that_does_not_collide() {
+    fn requesting_a_copy_prefills_a_name_that_does_not_collide() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
         assert_eq!(app.status_text(), "Copy to: doomed.txt (2)_  (Enter/Esc)");
     }
 
     #[test]
     fn returning_confirms_a_copy_and_sends_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
 
         app.handle_return();
 
@@ -1404,16 +2342,16 @@ mod tests {
     }
 
     #[test]
-    fn x_key_prefills_the_extract_input_with_the_archive_stem() {
+    fn requesting_an_extract_prefills_the_archive_stem() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
         assert_eq!(app.status_text(), "Extract to: bundle_  (Enter/Esc)");
     }
 
     #[test]
     fn returning_confirms_an_extract_and_sends_a_request() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
 
         app.handle_return();
 
@@ -1424,7 +2362,7 @@ mod tests {
     #[test]
     fn returning_with_an_emptied_rename_input_does_not_send_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
         for _ in 0.."doomed.txt".len() {
             app.backspace();
         }
@@ -1435,9 +2373,9 @@ mod tests {
     }
 
     #[test]
-    fn typed_letters_that_are_also_hotkeys_are_appended_during_text_input() {
+    fn typed_letters_are_appended_during_text_input() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.handle_key_text("x");
 
@@ -1472,7 +2410,7 @@ mod tests {
     #[test]
     fn arrow_keys_are_ignored_while_a_name_is_being_typed() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.move_selection(1);
         app.cycle_focus(1);
@@ -1512,7 +2450,7 @@ mod tests {
             }),
         );
         app.select_content(1);
-        app.handle_key_text("c");
+        app.request_copy();
         for _ in 0.."b.txt (2)".len() {
             app.backspace();
         }
@@ -1538,7 +2476,7 @@ mod tests {
         assert_eq!(app.prompt_text(), "", "nothing pending to begin with");
         assert_eq!(app.prompt_row(), -1);
 
-        app.handle_key_text("r");
+        app.request_rename();
         assert_eq!(app.prompt_text(), "Rename to:  doomed.txt");
         assert_eq!(app.prompt_row(), 0);
         assert!(app.prompt_is_editable());
@@ -1611,7 +2549,7 @@ mod tests {
     #[test]
     fn returning_with_an_emptied_copy_input_does_not_send_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
         for _ in 0.."doomed.txt (2)".len() {
             app.backspace();
         }
@@ -1624,7 +2562,7 @@ mod tests {
     #[test]
     fn returning_with_an_emptied_extract_input_does_not_send_a_request() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
         for _ in 0.."bundle".len() {
             app.backspace();
         }
@@ -1637,7 +2575,7 @@ mod tests {
     #[test]
     fn cancel_pending_during_copy_input_returns_to_normal() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
 
         app.cancel_pending();
 
@@ -1648,7 +2586,7 @@ mod tests {
     #[test]
     fn cancel_pending_during_extract_input_returns_to_normal() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
 
         app.cancel_pending();
 
@@ -1778,7 +2716,7 @@ mod tests {
     #[test]
     fn content_glyph_marks_directories_distinctly_from_every_file_glyph() {
         let folder_glyph = content_glyph("anything", true);
-        assert_eq!(folder_glyph, "\u{25B8}");
+        assert_eq!(folder_glyph, "\u{25A0}");
         assert_ne!(folder_glyph, content_glyph("main.rs", false));
         assert_ne!(folder_glyph, content_glyph("photo.png", false));
         assert_ne!(folder_glyph, content_glyph("bundle.zip", false));

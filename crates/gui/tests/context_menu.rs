@@ -11,7 +11,7 @@
 //! windowing system, and assert the property that was violated: an item has
 //! to lie inside the popup that owns it to be reachable at all.
 
-use gui::MainWindow;
+use gui::{ContentRow, MainWindow};
 use i_slint_backend_testing::ElementHandle;
 use slint::platform::{PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, ModelRc, SharedString, VecModel};
@@ -22,12 +22,25 @@ const ROW_HEIGHT: f32 = 20.0;
 /// Menu width in `app.slint`, which is what an item has to fit inside.
 const MENU_WIDTH: f32 = 150.0;
 
+/// A details row with only its name filled in; the other columns play no
+/// part in what these tests measure.
+fn row(name: &str) -> ContentRow {
+    ContentRow {
+        glyph: SharedString::from("\u{25AA}"),
+        name: SharedString::from(name),
+        size: SharedString::new(),
+        kind: SharedString::new(),
+        modified: SharedString::new(),
+        selected: false,
+    }
+}
+
 /// A window with two contents rows, shown and ready for pointer events.
 fn shown_window() -> MainWindow {
     let ui = MainWindow::new().expect("the window should build");
     ui.set_content_rows(ModelRc::new(VecModel::from(vec![
-        SharedString::from("a.txt"),
-        SharedString::from("b.txt"),
+        row("a.txt"),
+        row("b.txt"),
     ])));
     ui.show().expect("the window should show");
     ui

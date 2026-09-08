@@ -91,6 +91,8 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_row_event!(on_folder_row_clicked, select_folder);
     on_row_event!(on_folder_row_double_clicked, toggle_folder);
     on_row_event!(on_content_row_clicked, select_content);
+    on_row_event!(on_content_row_ctrl_clicked, toggle_content);
+    on_row_event!(on_content_row_shift_clicked, extend_selection_to);
     on_row_event!(on_content_row_double_clicked, open_content);
 
     macro_rules! on_event {
@@ -112,6 +114,13 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_return_pressed, handle_return);
     on_event!(on_backspace_pressed, backspace);
     on_event!(on_parent_requested, navigate_to_parent);
+    on_event!(on_back_requested, go_back);
+    on_event!(on_forward_requested, go_forward);
+    on_event!(on_clipboard_copy_requested, copy_to_clipboard);
+    on_event!(on_clipboard_cut_requested, cut_to_clipboard);
+    on_event!(on_clipboard_paste_requested, paste_from_clipboard);
+    on_event!(on_refresh_requested, refresh);
+    on_event!(on_select_all_requested, select_all);
     on_event!(on_new_folder_requested, request_new_folder);
     on_event!(on_new_file_requested, request_new_file);
     macro_rules! on_delta_event {
@@ -132,6 +141,21 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
 
     on_delta_event!(on_selection_moved, move_selection);
     on_delta_event!(on_pane_cycled, cycle_focus);
+    on_delta_event!(on_content_sort_requested, sort_by_column);
+    on_delta_event!(on_breadcrumb_requested, navigate_to_breadcrumb);
+
+    {
+        // `edge-requested` carries 0 for Home and 1 for End.
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_edge_requested(move |last| {
+            let mut app = app.borrow_mut();
+            app.select_edge(last != 0);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
     on_event!(on_content_rename_requested, request_rename);
     on_event!(on_content_copy_requested, request_copy);
     on_event!(on_content_delete_requested, request_delete);
