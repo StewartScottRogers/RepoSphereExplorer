@@ -1,6 +1,6 @@
 //! OCaml file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -109,6 +109,17 @@ pub struct OCamlPresentation;
 impl PluginPresentation for OCamlPresentation {
     fn name(&self) -> &'static str {
         "ocaml"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "ML",
+            tint: 0x00ec_6813,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ml", "mli"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

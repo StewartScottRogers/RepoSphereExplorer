@@ -1,6 +1,6 @@
 //! Elixir file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -128,6 +128,17 @@ pub struct ElixirPresentation;
 impl PluginPresentation for ElixirPresentation {
     fn name(&self) -> &'static str {
         "elixir"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "EX",
+            tint: 0x004b_275f,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ex", "exs"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! Svelte component file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -107,6 +107,17 @@ pub struct SveltePresentation;
 impl PluginPresentation for SveltePresentation {
     fn name(&self) -> &'static str {
         "svelte"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SVLT",
+            tint: 0x00ff_3e00,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["svelte"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

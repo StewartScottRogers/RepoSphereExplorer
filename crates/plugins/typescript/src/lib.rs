@@ -1,6 +1,6 @@
 //! TypeScript file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -127,6 +127,17 @@ pub struct TypeScriptPresentation;
 impl PluginPresentation for TypeScriptPresentation {
     fn name(&self) -> &'static str {
         "typescript"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "TS",
+            tint: 0x0031_78c6,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ts", "tsx", "mts", "cts"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

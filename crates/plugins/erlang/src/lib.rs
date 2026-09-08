@@ -1,6 +1,6 @@
 //! Erlang file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -127,6 +127,17 @@ pub struct ErlangPresentation;
 impl PluginPresentation for ErlangPresentation {
     fn name(&self) -> &'static str {
         "erlang"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "ERL",
+            tint: 0x00a9_0533,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["erl", "hrl"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

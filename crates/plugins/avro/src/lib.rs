@@ -3,7 +3,7 @@
 use apache_avro::Reader;
 use apache_avro::schema::Schema;
 use apache_avro::types::Value as AvroValue;
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::File;
@@ -202,6 +202,17 @@ pub struct AvroPresentation;
 impl PluginPresentation for AvroPresentation {
     fn name(&self) -> &'static str {
         "avro"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "AVRO",
+            tint: 0x000e_a5e9,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["avro"]
     }
 
     fn present(&self, data: &Value) -> Vec<String> {

@@ -16,7 +16,7 @@
 //! header tags carry the same metadata, dependencies, and file list
 //! without needing to touch the compressed payload at all.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read as _};
 use std::path::Path;
@@ -270,6 +270,17 @@ pub struct PackageArchivePresentation;
 impl PluginPresentation for PackageArchivePresentation {
     fn name(&self) -> &'static str {
         "package-archive"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PKG",
+            tint: 0x00b4_5309,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["deb", "rpm", "apk", "nupkg"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

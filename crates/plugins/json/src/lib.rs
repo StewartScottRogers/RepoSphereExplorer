@@ -1,6 +1,6 @@
 //! JSON file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
@@ -153,6 +153,17 @@ pub struct JsonPresentation;
 impl PluginPresentation for JsonPresentation {
     fn name(&self) -> &'static str {
         "json"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "JSON",
+            tint: 0x0073_7373,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["json"]
     }
 
     fn present(&self, data: &Value) -> Vec<String> {

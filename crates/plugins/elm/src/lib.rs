@@ -1,6 +1,6 @@
 //! Elm file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -100,6 +100,17 @@ pub struct ElmPresentation;
 impl PluginPresentation for ElmPresentation {
     fn name(&self) -> &'static str {
         "elm"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "ELM",
+            tint: 0x0060_b5cc,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["elm"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

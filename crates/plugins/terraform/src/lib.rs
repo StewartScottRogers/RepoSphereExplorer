@@ -1,6 +1,6 @@
 //! Terraform (HCL) file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -118,6 +118,17 @@ pub struct TerraformPresentation;
 impl PluginPresentation for TerraformPresentation {
     fn name(&self) -> &'static str {
         "terraform"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "TF",
+            tint: 0x007b_42bc,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["tf", "tfvars"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

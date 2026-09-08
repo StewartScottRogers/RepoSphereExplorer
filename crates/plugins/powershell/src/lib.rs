@@ -1,6 +1,6 @@
 //! PowerShell file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -121,6 +121,17 @@ pub struct PowerShellPresentation;
 impl PluginPresentation for PowerShellPresentation {
     fn name(&self) -> &'static str {
         "powershell"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PS1",
+            tint: 0x001e_3a8a,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ps1", "psm1", "psd1"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

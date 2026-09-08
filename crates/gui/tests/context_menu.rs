@@ -14,7 +14,7 @@
 use gui::{ContentRow, MainWindow};
 use i_slint_backend_testing::ElementHandle;
 use slint::platform::{PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Image, LogicalPosition, ModelRc, SharedString, VecModel};
 
 /// Row height in `app.slint`'s panes, so a click can be aimed at a row.
 const ROW_HEIGHT: f32 = 20.0;
@@ -26,7 +26,7 @@ const MENU_WIDTH: f32 = 150.0;
 /// part in what these tests measure.
 fn row(name: &str) -> ContentRow {
     ContentRow {
-        glyph: SharedString::from("\u{25AA}"),
+        icon: Image::default(),
         name: SharedString::from(name),
         size: SharedString::new(),
         kind: SharedString::new(),

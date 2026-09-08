@@ -1,6 +1,6 @@
 //! TOML file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
@@ -202,6 +202,17 @@ pub struct TomlPresentation;
 impl PluginPresentation for TomlPresentation {
     fn name(&self) -> &'static str {
         "toml"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "TOML",
+            tint: 0x009c_4221,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["toml"]
     }
 
     fn present(&self, data: &Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! Python file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -114,6 +114,17 @@ pub struct PythonPresentation;
 impl PluginPresentation for PythonPresentation {
     fn name(&self) -> &'static str {
         "python"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PY",
+            tint: 0x0037_76ab,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["py", "pyw"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

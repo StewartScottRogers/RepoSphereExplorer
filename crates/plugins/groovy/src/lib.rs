@@ -1,6 +1,6 @@
 //! Groovy file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -154,6 +154,17 @@ pub struct GroovyPresentation;
 impl PluginPresentation for GroovyPresentation {
     fn name(&self) -> &'static str {
         "groovy"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "GRVY",
+            tint: 0x0042_98b8,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["groovy", "gradle"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

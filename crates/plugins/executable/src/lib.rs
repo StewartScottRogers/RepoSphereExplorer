@@ -8,7 +8,7 @@
 //! headers, sections, and symbols, not a raw hex dump, per the issue.
 
 use object::{Object, ObjectSection, ObjectSymbol};
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -129,6 +129,17 @@ pub struct ExecutablePresentation;
 impl PluginPresentation for ExecutablePresentation {
     fn name(&self) -> &'static str {
         "executable"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "EXE",
+            tint: 0x004b_5563,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["exe", "dll", "so", "dylib"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

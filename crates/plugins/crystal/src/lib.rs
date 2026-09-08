@@ -1,6 +1,6 @@
 //! Crystal file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -133,6 +133,17 @@ pub struct CrystalPresentation;
 impl PluginPresentation for CrystalPresentation {
     fn name(&self) -> &'static str {
         "crystal"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "CR",
+            tint: 0x001f_2937,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["cr"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

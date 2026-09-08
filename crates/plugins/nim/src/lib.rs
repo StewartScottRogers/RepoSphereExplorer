@@ -1,6 +1,6 @@
 //! Nim file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -111,6 +111,17 @@ pub struct NimPresentation;
 impl PluginPresentation for NimPresentation {
     fn name(&self) -> &'static str {
         "nim"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "NIM",
+            tint: 0x00a1_6207,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["nim", "nims"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

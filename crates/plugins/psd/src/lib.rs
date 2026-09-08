@@ -3,7 +3,7 @@
 //! Presents a layer panel (the document's layer names, in stacking order),
 //! distinct from the flat raster presentation of the existing image plugin.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -60,6 +60,17 @@ pub struct PsdPresentation;
 impl PluginPresentation for PsdPresentation {
     fn name(&self) -> &'static str {
         "psd"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PSD",
+            tint: 0x0031_a8ff,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["psd"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

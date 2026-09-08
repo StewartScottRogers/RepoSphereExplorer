@@ -1,6 +1,6 @@
 //! Swift file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -133,6 +133,17 @@ pub struct SwiftPresentation;
 impl PluginPresentation for SwiftPresentation {
     fn name(&self) -> &'static str {
         "swift"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SWFT",
+            tint: 0x00fa_7343,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["swift"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

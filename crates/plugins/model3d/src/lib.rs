@@ -9,7 +9,7 @@
 //! model onto all three, the same choice `word-document` made for its own
 //! unrelated container formats.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -280,6 +280,17 @@ pub struct Model3dPresentation;
 impl PluginPresentation for Model3dPresentation {
     fn name(&self) -> &'static str {
         "model3d"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "3D",
+            tint: 0x0008_91b2,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["obj", "stl", "ply", "gltf", "glb"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

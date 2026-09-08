@@ -9,7 +9,7 @@
 
 use matroska::Matroska;
 use mp4::{Mp4Reader, TrackType};
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
@@ -245,6 +245,17 @@ pub struct VideoPresentation;
 impl PluginPresentation for VideoPresentation {
     fn name(&self) -> &'static str {
         "video"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "VID",
+            tint: 0x007c_3aed,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["mp4", "mkv", "avi", "mov", "webm"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! Scala file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -132,6 +132,17 @@ pub struct ScalaPresentation;
 impl PluginPresentation for ScalaPresentation {
     fn name(&self) -> &'static str {
         "scala"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SC",
+            tint: 0x00dc_322f,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["scala", "sc"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

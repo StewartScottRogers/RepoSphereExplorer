@@ -1,6 +1,6 @@
 //! Assembly file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -144,6 +144,17 @@ pub struct AssemblyPresentation;
 impl PluginPresentation for AssemblyPresentation {
     fn name(&self) -> &'static str {
         "assembly"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "ASM",
+            tint: 0x006b_7280,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["s", "asm"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

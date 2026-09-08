@@ -4,7 +4,7 @@
 //! generic `json` plugin's indented tree view despite being JSON under the
 //! hood.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
@@ -326,6 +326,17 @@ pub struct GeoJsonPresentation;
 impl PluginPresentation for GeoJsonPresentation {
     fn name(&self) -> &'static str {
         "geojson"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "GEO",
+            tint: 0x0010_b981,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["geojson"]
     }
 
     fn present(&self, data: &Value) -> Vec<String> {

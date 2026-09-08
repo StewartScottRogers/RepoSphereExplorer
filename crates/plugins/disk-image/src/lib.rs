@@ -12,7 +12,7 @@
 //! plugin needed `crates/service`'s `SNIFF_PREFIX_LEN` raised to cover it,
 //! a project-wide change no earlier plugin's sniff needed.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read as _, Seek as _, SeekFrom};
 use std::path::Path;
@@ -142,6 +142,17 @@ pub struct DiskImagePresentation;
 impl PluginPresentation for DiskImagePresentation {
     fn name(&self) -> &'static str {
         "disk-image"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "ISO",
+            tint: 0x007c_3aed,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["iso", "img", "vhd", "vmdk"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

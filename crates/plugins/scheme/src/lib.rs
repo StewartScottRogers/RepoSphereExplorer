@@ -1,6 +1,6 @@
 //! Scheme/Lisp file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -112,6 +112,17 @@ pub struct SchemePresentation;
 impl PluginPresentation for SchemePresentation {
     fn name(&self) -> &'static str {
         "scheme"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SCM",
+            tint: 0x009f_1239,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["scm", "ss"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

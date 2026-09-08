@@ -7,7 +7,7 @@
 //! tag byte overlaps too much other binary content to serve as one.
 
 use pkcs8::PrivateKeyInfoRef;
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use spki::SubjectPublicKeyInfoRef;
 use std::io;
@@ -219,6 +219,17 @@ pub struct CertificatePresentation;
 impl PluginPresentation for CertificatePresentation {
     fn name(&self) -> &'static str {
         "certificate"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "CRT",
+            tint: 0x0005_9669,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["pem", "crt", "cer", "der"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

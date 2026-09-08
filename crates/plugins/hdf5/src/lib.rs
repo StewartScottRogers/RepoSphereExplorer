@@ -1,7 +1,7 @@
 //! HDF5 file type plugin: core and presentation halves.
 
 use hdf5_metno::Group;
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
@@ -107,6 +107,17 @@ pub struct Hdf5Presentation;
 impl PluginPresentation for Hdf5Presentation {
     fn name(&self) -> &'static str {
         "hdf5"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "HDF5",
+            tint: 0x000d_9488,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["h5", "hdf5"]
     }
 
     fn present(&self, data: &Value) -> Vec<String> {

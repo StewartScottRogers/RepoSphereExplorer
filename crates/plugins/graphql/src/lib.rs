@@ -1,6 +1,6 @@
 //! GraphQL schema file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -115,6 +115,17 @@ pub struct GraphQlPresentation;
 impl PluginPresentation for GraphQlPresentation {
     fn name(&self) -> &'static str {
         "graphql"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "GQL",
+            tint: 0x00e1_0098,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["graphql", "gql"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

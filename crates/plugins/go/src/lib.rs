@@ -1,6 +1,6 @@
 //! Go file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -144,6 +144,17 @@ pub struct GoPresentation;
 impl PluginPresentation for GoPresentation {
     fn name(&self) -> &'static str {
         "go"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "GO",
+            tint: 0x0000_add8,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["go"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

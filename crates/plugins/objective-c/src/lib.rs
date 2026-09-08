@@ -1,6 +1,6 @@
 //! Objective-C file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -134,6 +134,17 @@ pub struct ObjectiveCPresentation;
 impl PluginPresentation for ObjectiveCPresentation {
     fn name(&self) -> &'static str {
         "objective-c"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "OBJC",
+            tint: 0x0043_8eff,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["m", "mm"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
