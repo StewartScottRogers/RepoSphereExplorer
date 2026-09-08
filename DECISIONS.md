@@ -1,8 +1,8 @@
 # Architecture decisions
 
-One entry per decision that shaped the application, newest first. Each says
-what was decided, why, what it costs, and what would have to change to
-revisit it. [GUIDANCE.md](GUIDANCE.md) is the design the factory builds
+One entry per decision that shaped the application, in the order they were
+settled. Each says what was decided, why, what it costs, and what would
+have to change to revisit it. [GUIDANCE.md](GUIDANCE.md) is the design the factory builds
 from; this file is the record of how that design got the way it is.
 
 Decisions D1 to D6 predate this record and live in
@@ -159,3 +159,48 @@ need; the field exists and reports unknown until then.
 Operations sit behind the detection layer that D10 builds. Adding them means
 adding requests to the service and controls to the front ends, not
 rearranging how repositories are found.
+
+---
+
+## D11 — The factory merges with a user token, not `GITHUB_TOKEN`
+
+**Date:** 2026-09-08
+**Status:** Accepted
+
+### Decision
+
+`auto-merge.yml` merges with `AUTO_MERGE_TOKEN`, a fine-grained personal
+access token scoped to this repository, falling back to `GITHUB_TOKEN`
+when the secret is absent.
+
+### Why
+
+GitHub starts no workflow run from an event caused by `GITHUB_TOKEN`, and
+closes no linked issue for a merge performed with one. Both consequences
+were live here: every work order this factory shipped stayed open after
+its pull request merged, and `close-linked-issues.yml` - written to close
+them on the merge event - never ran at all. Pull request #292 merged and
+produced no run of it.
+
+The alternatives were to accept a two-to-five-hour closure window from the
+scheduled sweep, or to hang the closure off an event that fires slightly
+before the merge and would usually do nothing. Neither is a mechanism; both
+are a hope. A token that triggers workflows is the documented way to make
+an automated merge behave like a merge.
+
+### What it costs
+
+A credential to store, rotate and audit - the thing decision #286 was
+trying to avoid before it was known that avoiding it did not work. It is
+scoped to one repository and to three permissions. Merges will show as the
+token's owner rather than as `github-actions`, which is honest: a person
+owns this factory.
+
+It also un-suppresses the workflows that a merge to `main` should have been
+starting all along, so expect runs that were previously silent.
+
+### To revisit
+
+Remove the secret. The fallback in `auto-merge.yml` takes over, the factory
+keeps merging, and the sweep goes back to closing work orders in its own
+time. Nothing else has to change.

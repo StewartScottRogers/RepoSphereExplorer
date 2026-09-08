@@ -3,21 +3,26 @@ name: Close linked work orders
 # Closes the issues a pull request declared it closes, the moment that pull
 # request merges.
 #
-# GitHub's own auto-close does not fire in this repository. The linkage is
-# registered - `closingIssuesReferences` names the issue on every one of
-# these PRs - but the merge is performed by `app/github-actions`, the token
-# `auto-merge.yml` enables auto-merge with, and no `closed` event ever
-# reaches the issue. Four work orders shipped on 2026-09-08 and all four
-# were still open afterwards; the comment atop `floor-health-check.yml`
-# records seven found the same way before that.
+# Three mechanisms, and it is worth being exact about which does what,
+# because the first version of this file was wrong about it (#294).
 #
-# That health check sweeps for exactly this and stays the backstop, but it
-# is scheduled `*/30` and GitHub throttles cron on a repository with little
-# push activity: its runs that day were 20:44, 23:19, 01:19, 06:19, 11:36,
-# 16:11 - gaps of two to five hours. `factory-shift.yml` picks the oldest
-# open work order with no pull request each night, so that gap is a window
-# in which the factory can start rebuilding something it has already
-# shipped. This closes the loop on the merge event instead, in seconds.
+# 1. GitHub's own auto-close, from the `Closes #N` in a pull request's
+#    description. It fires when the merge is performed by a *user* token.
+#    It does not fire for a merge performed with `GITHUB_TOKEN`, which is
+#    what `auto-merge.yml` used until #294 gave it AUTO_MERGE_TOKEN.
+# 2. This workflow, on the `closed` event. The same rule applies to the
+#    trigger: GitHub starts no workflow run from an event caused by
+#    `GITHUB_TOKEN`, so with the fallback token this never runs at all -
+#    pull request #292 merged and produced no run of this file. With
+#    AUTO_MERGE_TOKEN set it does run, a second or two after the merge, and
+#    finds most issues already closed by mechanism 1. That is belt and
+#    braces, which is the point: it also covers a pull request merged by
+#    hand, and it can be pointed at one that slipped through.
+# 3. `floor-health-check.yml`, on its schedule, as the backstop for
+#    anything both of the above missed. It is the slowest - GitHub
+#    throttles cron on a quiet repository, measured at two to five hours
+#    against a thirty-minute schedule - and it is the one that has been
+#    quietly carrying this repository.
 
 on:
   pull_request_target:
