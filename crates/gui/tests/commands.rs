@@ -9,7 +9,7 @@
 
 use gui::{ContentRow, MainWindow};
 use i_slint_backend_testing::ElementHandle;
-use slint::platform::PointerEventButton;
+use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -305,4 +305,74 @@ fn a_breadcrumb_navigates_to_its_own_segment() {
     click_button(&ui, "repos");
 
     assert_eq!(clicked.get(), 1, "the second segment was clicked");
+}
+
+/// Presses `text` as a key, optionally with a modifier held. Slint tracks
+/// modifier state from the modifier key's own press, so holding one means
+/// pressing and releasing it around the key itself.
+fn press(ui: &MainWindow, text: &str, modifier: Option<Key>) {
+    let window = ui.window();
+    if let Some(modifier) = modifier {
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: char::from(modifier).into(),
+        });
+    }
+    window.dispatch_event(WindowEvent::KeyPressed { text: text.into() });
+    window.dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+    if let Some(modifier) = modifier {
+        window.dispatch_event(WindowEvent::KeyReleased {
+            text: char::from(modifier).into(),
+        });
+    }
+}
+
+#[test]
+fn f4_opens_the_address_bar_for_typing() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = ready_window();
+    let fired = flag();
+    watch!(ui, on_path_edit_requested, fired);
+
+    press(&ui, &char::from(Key::F4).to_string(), None);
+
+    assert!(fired.get(), "F4 should open the address bar");
+}
+
+#[test]
+fn ctrl_l_opens_the_address_bar_for_typing() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = ready_window();
+    let fired = flag();
+    watch!(ui, on_path_edit_requested, fired);
+
+    press(&ui, "l", Some(Key::Control));
+
+    assert!(fired.get(), "Ctrl+L should open the address bar");
+}
+
+#[test]
+fn the_windows_shortcuts_reach_their_callbacks() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = ready_window();
+    let (undo, all, refresh, copy, paste) = (flag(), flag(), flag(), flag(), flag());
+    watch!(ui, on_undo_requested, undo);
+    watch!(ui, on_select_all_requested, all);
+    watch!(ui, on_refresh_requested, refresh);
+    watch!(ui, on_clipboard_copy_requested, copy);
+    watch!(ui, on_clipboard_paste_requested, paste);
+
+    press(&ui, "z", Some(Key::Control));
+    assert!(undo.get(), "Ctrl+Z");
+
+    press(&ui, "a", Some(Key::Control));
+    assert!(all.get(), "Ctrl+A");
+
+    press(&ui, "c", Some(Key::Control));
+    assert!(copy.get(), "Ctrl+C");
+
+    press(&ui, "v", Some(Key::Control));
+    assert!(paste.get(), "Ctrl+V");
+
+    press(&ui, &char::from(Key::F5).to_string(), None);
+    assert!(refresh.get(), "F5");
 }

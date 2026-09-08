@@ -760,6 +760,19 @@ export component MainWindow inherits Window {
     in property <[string]> breadcrumbs;
     in property <bool> can-go-back;
     in property <bool> can-go-forward;
+    // The address bar as a text field, while a path is being typed.
+    in property <string> path-input;
+    in property <bool> editing-path;
+    in property <image> location-icon;
+    callback path-edit-requested();
+    // How much of a long path is shown. Explorer hides the middle behind a
+    // menu; this keeps the tail, which is the part that says where you are,
+    // and expands in place when asked.
+    property <int> max-crumbs: 5;
+    property <bool> crumbs-expanded: false;
+    property <int> first-crumb: crumbs-expanded || breadcrumbs.length <= max-crumbs
+        ? 0
+        : breadcrumbs.length - max-crumbs;
     callback back-requested();
     callback forward-requested();
     callback breadcrumb-requested(int);
@@ -817,6 +830,9 @@ export component MainWindow inherits Window {
                 clipboard-cut-requested();
             } else if (event.modifiers.control && (event.text == "v" || event.text == "V")) {
                 clipboard-paste-requested();
+            } else if (event.text == Key.F4
+                || (event.modifiers.control && (event.text == "l" || event.text == "L"))) {
+                path-edit-requested();
             } else if (event.text == Key.F5) {
                 refresh-requested();
             } else if (event.text == Key.Home) {
@@ -958,26 +974,76 @@ export component MainWindow inherits Window {
                     Rectangle {
                         width: 6px;
                     }
-                    // The address bar: one clickable segment per path
-                    // component, the last being the folder being browsed.
+                    // The address bar. Segments while browsing, a text field
+                    // while a path is being typed, the way Explorer's is.
                     Rectangle {
                         horizontal-stretch: 1;
                         background: Theme.field;
                         border-width: 1px;
-                        border-color: Theme.hover;
+                        border-color: editing-path ? Theme.accent : Theme.hover;
                         border-radius: 3px;
-                        HorizontalLayout {
-                            padding-left: 2px;
-                            padding-right: 2px;
+
+                        // Declared first so it sits under the segments: a
+                        // click that misses one lands here and starts
+                        // editing, as clicking past the path in Explorer
+                        // does. Later siblings take their own clicks.
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: text;
+                            clicked => { path-edit-requested(); }
+                        }
+
+                        if editing-path: HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 2px;
                             alignment: start;
+                            Text {
+                                text: path-input;
+                                color: Palette.foreground;
+                                vertical-alignment: center;
+                            }
+                            Rectangle {
+                                width: 1px;
+                                background: Theme.accent;
+                                y: 4px;
+                                height: parent.height - 8px;
+                            }
+                            Text {
+                                text: "  (Enter / Esc)";
+                                color: Theme.dim-text;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        if !editing-path: HorizontalLayout {
+                            padding-left: 4px;
+                            padding-right: 2px;
+                            spacing: 2px;
+                            alignment: start;
+                            Image {
+                                source: location-icon;
+                                width: 16px;
+                                height: 16px;
+                                image-fit: contain;
+                                y: (parent.height - 16px) / 2;
+                            }
+                            // A path longer than the bar collapses its
+                            // leading segments behind this, which expands
+                            // them rather than hiding them behind a menu.
+                            if first-crumb > 0: Crumb {
+                                label: "\u{2026}";
+                                activated => { crumbs-expanded = true; }
+                            }
                             for crumb[i] in breadcrumbs: HorizontalLayout {
-                                Crumb {
+                                if i >= first-crumb: Crumb {
                                     label: crumb;
                                     last: i == breadcrumbs.length - 1;
                                     activated => { breadcrumb-requested(i); }
                                 }
-                                Text {
-                                    text: i == breadcrumbs.length - 1 ? "" : "\u{203A}";
+                                if i >= first-crumb && i < breadcrumbs.length - 1: Text {
+                                    text: "\u{203A}";
                                     color: Theme.dim-text;
                                     vertical-alignment: center;
                                 }

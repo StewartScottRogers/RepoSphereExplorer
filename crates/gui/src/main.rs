@@ -188,6 +188,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_clipboard_cut_requested, cut_to_clipboard);
     on_event!(on_clipboard_paste_requested, paste_from_clipboard);
     on_event!(on_refresh_requested, refresh);
+    on_event!(on_path_edit_requested, begin_path_edit);
     on_event!(on_select_all_requested, select_all);
     on_event!(on_undo_requested, undo);
 

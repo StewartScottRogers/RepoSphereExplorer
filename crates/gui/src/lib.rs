@@ -136,6 +136,9 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_breadcrumbs(string_model(app.breadcrumbs()));
     ui.set_can_go_back(app.can_go_back());
     ui.set_can_go_forward(app.can_go_forward());
+    ui.set_path_input(app.path_input().into());
+    ui.set_editing_path(app.editing_path());
+    ui.set_location_icon(icon_image(app::icon_for("", true), true));
 }
 
 /// Converts a row index to the `i32` Slint properties expect, saturating
