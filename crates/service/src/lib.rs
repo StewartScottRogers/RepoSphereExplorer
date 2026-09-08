@@ -121,7 +121,10 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
 /// the path is a directory rather than through content sniffing.
 const DIRECTORY_PLUGIN: &dyn PluginCore = &plugin_directory::DirectoryCore;
 
-/// Lists the immediate contents of `path`, sorted by name.
+/// Lists the immediate contents of `path`, sorted by name without regard
+/// to case, so a capitalised entry sits among its neighbours rather than
+/// ahead of every lowercase one. Names differing only in case keep a
+/// stable order between them.
 ///
 /// # Errors
 /// Returns an error if `path` cannot be read as a directory.
@@ -145,7 +148,12 @@ pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
             modified,
         });
     }
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name))
+    });
     Ok(entries)
 }
 
@@ -493,6 +501,23 @@ mod tests {
             vec!["a.txt", "b.txt", "sub"]
         );
         assert!(entries.iter().find(|e| e.name == "sub").unwrap().is_dir);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sorts_a_listing_without_regard_to_case() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(dir.join("New folder")).unwrap();
+        fs::write(dir.join("alpha.txt"), b"").unwrap();
+        fs::write(dir.join("Zebra.txt"), b"").unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        assert_eq!(
+            entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["alpha.txt", "New folder", "Zebra.txt"]
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
