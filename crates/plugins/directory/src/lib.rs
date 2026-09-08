@@ -58,6 +58,11 @@ impl PluginCore for DirectoryCore {
     }
 }
 
+/// `"entry"` or `"entries"`, so a count of one does not read as "1 entries".
+fn entries_noun(count: u64) -> &'static str {
+    if count == 1 { "entry" } else { "entries" }
+}
+
 /// The directory-as-file plugin's presentation half.
 #[derive(Debug, Default)]
 pub struct DirectoryPresentation;
@@ -70,7 +75,7 @@ impl PluginPresentation for DirectoryPresentation {
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
         match serde_json::from_value::<DirectoryView>(data.clone()) {
             Ok(view) => vec![
-                format!("{} entries", view.entry_count),
+                format!("{} {}", view.entry_count, entries_noun(view.entry_count)),
                 format!("{} bytes total", view.total_size),
             ],
             Err(err) => vec![format!("could not read view data: {err}")],
@@ -121,5 +126,18 @@ mod tests {
         let lines = DirectoryPresentation.present(&data);
 
         assert_eq!(lines, vec!["4 entries", "1024 bytes total"]);
+    }
+
+    #[test]
+    fn presents_a_single_entry_in_the_singular() {
+        let view = DirectoryView {
+            entry_count: 1,
+            total_size: 10,
+        };
+        let data = serde_json::to_value(view).unwrap();
+
+        let lines = DirectoryPresentation.present(&data);
+
+        assert_eq!(lines, vec!["1 entry", "10 bytes total"]);
     }
 }
