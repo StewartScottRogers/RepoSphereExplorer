@@ -5,6 +5,8 @@
 //! static table would be structure with no second caller to justify it. Add
 //! it once enough plugins exist that hand-written registration is repetitive.
 
+pub mod thumbnail;
+
 use std::io;
 use std::path::Path;
 

@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+image = { version = "0.25", default-features = false }
 plugin-api = { path = "../../plugin-api" }
 psd = "0.3"
 serde = { version = "1", features = ["derive"] }

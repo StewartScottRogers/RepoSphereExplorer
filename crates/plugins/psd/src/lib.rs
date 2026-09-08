@@ -1,9 +1,11 @@
 //! Photoshop document file type plugin: core and presentation halves.
 //!
 //! Presents a layer panel (the document's layer names, in stacking order),
-//! distinct from the flat raster presentation of the existing image plugin.
+//! distinct from the flat raster presentation of the existing image plugin,
+//! and the composited document itself as a picture: a Photoshop file's whole
+//! point is the image it flattens to.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation, thumbnail};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -20,6 +22,18 @@ pub struct PsdView {
     pub height: u32,
     /// Layer names, in the document's stacking order (bottom to top).
     pub layers: Vec<String>,
+    /// The composited document as a bounded PNG thumbnail, base64-encoded.
+    /// `None` when it cannot be flattened - the layer panel is still worth
+    /// showing.
+    #[serde(default)]
+    pub composite: Option<String>,
+}
+
+/// The document flattened to a picture, scaled for the wire.
+fn composite_of(document: &psd::Psd) -> Option<String> {
+    let rgba = document.rgba();
+    let buffer = image::RgbaImage::from_raw(document.width(), document.height(), rgba)?;
+    thumbnail::encode(&image::DynamicImage::ImageRgba8(buffer))
 }
 
 /// The PSD plugin's core half.
@@ -48,6 +62,7 @@ impl PluginCore for PsdCore {
             width: document.width(),
             height: document.height(),
             layers,
+            composite: composite_of(&document),
         };
         serde_json::to_value(view).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
@@ -83,6 +98,11 @@ impl PluginPresentation for PsdPresentation {
             }
             Err(err) => vec![format!("could not read view data: {err}")],
         }
+    }
+
+    fn graphic(&self, data: &serde_json::Value) -> Option<Graphic> {
+        let view: PsdView = serde_json::from_value(data.clone()).ok()?;
+        thumbnail::decode(&view.composite?)
     }
 }
 
@@ -122,6 +142,7 @@ mod tests {
             width: 10,
             height: 20,
             layers: vec!["Background".to_owned(), "Text".to_owned()],
+            composite: None,
         })
         .unwrap();
 
@@ -215,5 +236,48 @@ mod tests {
         file.extend_from_slice(&[0, 0]); // blue plane
 
         file
+    }
+
+    #[test]
+    fn a_document_offers_its_composite_as_drawable_pixels() {
+        let bytes = include_bytes!("../../../../samples/psd/example.psd");
+        let path = unique_temp_file("composite.psd");
+        std::fs::write(&path, bytes).unwrap();
+
+        let data = PsdCore.view(&path).unwrap();
+        let graphic = PsdPresentation
+            .graphic(&data)
+            .expect("a psd composites to a picture");
+
+        match graphic {
+            plugin_api::Graphic::Rgba {
+                width,
+                height,
+                pixels,
+            } => {
+                assert!(width <= plugin_api::thumbnail::THUMBNAIL_EDGE);
+                assert!(height <= plugin_api::thumbnail::THUMBNAIL_EDGE);
+                assert_eq!(pixels.len(), width as usize * height as usize * 4);
+            }
+            plugin_api::Graphic::Svg(source) => panic!("expected pixels, got {source:.40}"),
+        }
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_document_that_cannot_be_composited_still_presents_its_layers() {
+        let data = serde_json::json!({
+            "width": 4,
+            "height": 4,
+            "layers": ["Background"],
+            "composite": serde_json::Value::Null,
+        });
+
+        assert!(PsdPresentation.graphic(&data).is_none());
+        assert!(
+            !PsdPresentation.present(&data).is_empty(),
+            "the layer panel is still worth showing"
+        );
     }
 }
