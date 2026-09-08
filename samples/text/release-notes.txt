@@ -1,0 +1,68 @@
+RepoSphereExplorer 0.6.0 - release notes
+========================================
+
+Released 2026-09-08. Built by CI from a green main; nothing was published
+by hand.
+
+WHAT CHANGED
+------------
+
+  * The File pane can edit the text file types. The plugin decides which
+    ones: a view carrying the file's own text is editable, a truncated
+    one never is, because saving part of a file back would discard the
+    rest.
+
+  * A file type can offer more than one view. Source files now show
+    either the plugin's rendering - the outline, then the source - or the
+    file's text on its own, and the pane switches between them.
+
+  * A file is attributed to the plugin that owns its type. Sniffing is
+    still content-based, but where several plugins recognise the same
+    text, the extension breaks the tie. Before this, a C file with a
+    top-level struct opened as Rust, and every Java file opened as Perl.
+
+  * The address bar behaves the way Explorer's does: breadcrumbs that
+    navigate, an editable path on F4 or Ctrl+L, and back/forward history.
+
+KNOWN LIMITS
+------------
+
+  * Thumbnails are only produced for the picture formats. A PDF previews
+    as its text, not as a rendered page - there is no pure-Rust renderer
+    mature enough to depend on.
+
+  * Network and cloud locations remain out of scope, per GUIDANCE.md §6.
+
+  * The undo stack is one operation deep. Undoing twice does not walk
+    back two operations; it does nothing the second time.
+
+UPGRADING
+---------
+
+The updater replaces the binary in place and keeps the previous version
+beside it for one release. Settings live in:
+
+    Windows   %LOCALAPPDATA%\RepoSphereExplorer\gui.json
+    macOS     ~/Library/Application Support/RepoSphereExplorer/gui.json
+    Linux     ~/.local/share/RepoSphereExplorer/gui.json
+
+Deleting that file resets the window layout and nothing else. The
+journal, which records every filesystem operation the service performed,
+sits beside it as journal.ndjson and is never rewritten - only appended
+to and rotated.
+
+CHECKSUMS
+---------
+
+    RepoSphereExplorer-win-x64.zip          sha256:9f2c...4ab1
+    RepoSphereExplorer-macos-arm64.tar.gz   sha256:0d71...c93e
+    RepoSphereExplorer-linux-x64.tar.gz     sha256:5a8e...1f60
+
+Verify before installing. The signing key fingerprint is published in
+SECURITY.md and has not changed since 0.1.0.
+
+THANKS
+------
+
+This release closes work orders #250 through #272. Every one of them was
+filed, built, reviewed and merged without a human on the floor.

@@ -2,9 +2,117 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Sample Page</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Release notes and downloads for RepoSphereExplorer.">
+  <meta property="og:title" content="RepoSphereExplorer 0.6.0">
+  <title>RepoSphereExplorer — Release 0.6.0</title>
+  <link rel="canonical" href="https://stewartscottrogers.github.io/RepoSphereExplorer/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/site.css">
+  <style>
+    :root { color-scheme: light dark; --accent: #0061b5; }
+    body { margin: 0 auto; max-width: 46rem; padding: 2rem 1rem; font-family: system-ui, sans-serif; line-height: 1.55; }
+    nav a { margin-right: 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.4rem 0.5rem; text-align: left; }
+    code { background: rgba(127, 127, 127, 0.15); padding: 0.1rem 0.3rem; border-radius: 3px; }
+  </style>
 </head>
 <body>
-  <p>Hello, World! This is a small sample HTML document.</p>
+  <header>
+    <h1>RepoSphereExplorer <small>0.6.0</small></h1>
+    <nav aria-label="Primary">
+      <a href="#what-changed">What changed</a>
+      <a href="#downloads">Downloads</a>
+      <a href="#plugins">Plugins</a>
+      <a href="https://github.com/StewartScottRogers/RepoSphereExplorer">Source</a>
+      <a href="https://github.com/StewartScottRogers/RepoSphereExplorer/issues">Issues</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="what-changed">
+      <h2>What changed</h2>
+      <ul>
+        <li>Text file types can be <strong>edited</strong> in the File pane.</li>
+        <li>A type may offer <em>several views</em>; the pane switches between them.</li>
+        <li>A file is attributed to its own plugin, using the extension to break ties.</li>
+      </ul>
+
+      <blockquote cite="https://github.com/StewartScottRogers/RepoSphereExplorer/blob/main/GUIDANCE.md">
+        <p>Work enters as a GitHub issue, machines do the rest, a signed release comes out.</p>
+      </blockquote>
+    </section>
+
+    <section id="downloads">
+      <h2>Downloads</h2>
+      <table>
+        <caption>Signed builds for 0.6.0</caption>
+        <thead>
+          <tr><th scope="col">Platform</th><th scope="col">File</th><th scope="col">Size</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Windows x64</td>
+            <td><a href="/releases/0.6.0/RepoSphereExplorer-win-x64.zip" download>RepoSphereExplorer-win-x64.zip</a></td>
+            <td>18.4 MB</td>
+          </tr>
+          <tr>
+            <td>macOS arm64</td>
+            <td><a href="/releases/0.6.0/RepoSphereExplorer-macos-arm64.tar.gz" download>RepoSphereExplorer-macos-arm64.tar.gz</a></td>
+            <td>17.1 MB</td>
+          </tr>
+          <tr>
+            <td>Linux x64</td>
+            <td><a href="/releases/0.6.0/RepoSphereExplorer-linux-x64.tar.gz" download>RepoSphereExplorer-linux-x64.tar.gz</a></td>
+            <td>16.8 MB</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="plugins">
+      <h2>Plugins</h2>
+      <p>
+        Eighty file types ship in the box; the registry lives in
+        <a href="https://github.com/StewartScottRogers/RepoSphereExplorer/blob/main/PLUGINS.md"><code>PLUGINS.md</code></a>.
+      </p>
+
+      <figure>
+        <img src="/assets/file-pane.png" width="640" height="360"
+             alt="The File pane showing a Rust source file with Preview and Text tabs">
+        <figcaption>The File pane, with a type that offers two views.</figcaption>
+      </figure>
+
+      <details>
+        <summary>Adding a type</summary>
+        <p>File a work order, add one crate under <code>crates/plugins/</code>, and a fixture under <code>samples/</code>.</p>
+      </details>
+    </section>
+
+    <form id="subscribe" action="/subscribe" method="post">
+      <fieldset>
+        <legend>Release notifications</legend>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required placeholder="you@example.com">
+        <button type="submit">Subscribe</button>
+      </fieldset>
+    </form>
+  </main>
+
+  <footer>
+    <p>
+      Built by a dark factory. <a href="/privacy.html">Privacy</a> ·
+      <a href="mailto:releases@example.com">Contact</a>
+    </p>
+  </footer>
+
+  <script type="module">
+    const table = document.querySelector('#downloads table');
+    table?.addEventListener('click', (event) => {
+      const row = event.target.closest('tr');
+      row?.classList.toggle('selected');
+    });
+  </script>
 </body>
 </html>

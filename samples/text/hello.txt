@@ -1,2 +1,0 @@
-A short example text file for the text plugin's sample fixture.
-It has no special markers any other content-sniffed plugin claims first.

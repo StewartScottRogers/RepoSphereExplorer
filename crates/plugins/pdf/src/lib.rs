@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn a_document_previews_its_page_text_with_a_marker_per_page() {
-        let bytes = include_bytes!("../../../../samples/pdf/example.pdf");
+        let bytes = include_bytes!("../../../../samples/pdf/plugin-handbook.pdf");
         let path = unique_temp_file("text.pdf");
         std::fs::write(&path, bytes).unwrap();
 

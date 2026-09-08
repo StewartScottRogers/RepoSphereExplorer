@@ -1,7 +1,0 @@
-[package]
-name = "example"
-version = "1.0.0"
-published = true
-
-[[authors]]
-name = "Alice"

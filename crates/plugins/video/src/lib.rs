@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn a_container_with_no_attachment_offers_no_picture() {
-        let bytes = include_bytes!("../../../../samples/video/example.avi");
+        let bytes = include_bytes!("../../../../samples/video/orbit.avi");
         let path = unique_temp_file("plain.avi");
         std::fs::write(&path, bytes).unwrap();
 

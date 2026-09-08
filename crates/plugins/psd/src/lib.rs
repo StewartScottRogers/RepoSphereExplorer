@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_document_offers_its_composite_as_drawable_pixels() {
-        let bytes = include_bytes!("../../../../samples/psd/example.psd");
+        let bytes = include_bytes!("../../../../samples/psd/sample-artwork.psd");
         let path = unique_temp_file("composite.psd");
         std::fs::write(&path, bytes).unwrap();
 

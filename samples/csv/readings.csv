@@ -1,0 +1,31 @@
+station_id,station_name,recorded_at,celsius,humidity_percent,wind_kph,conditions,notes
+LHR,"London Heathrow",2026-09-01T06:00:00Z,12.4,88,14.2,fog,"Visibility 300 m, delays expected"
+LHR,"London Heathrow",2026-09-01T12:00:00Z,18.9,61,21.7,cloudy,
+LHR,"London Heathrow",2026-09-01T18:00:00Z,16.2,70,18.0,rain,"3.2 mm in the hour"
+JFK,"New York, JFK",2026-09-01T06:00:00Z,21.1,74,9.6,clear,
+JFK,"New York, JFK",2026-09-01T12:00:00Z,27.8,52,17.4,clear,"Heat advisory"
+JFK,"New York, JFK",2026-09-01T18:00:00Z,24.3,63,12.9,cloudy,
+NRT,"Tokyo Narita",2026-09-01T06:00:00Z,25.6,81,6.1,rain,"Typhoon outer band"
+NRT,"Tokyo Narita",2026-09-01T12:00:00Z,29.4,69,33.8,rain,"Gusts to 52 kph"
+NRT,"Tokyo Narita",2026-09-01T18:00:00Z,26.0,85,28.4,rain,
+SYD,"Sydney Kingsford Smith",2026-09-01T06:00:00Z,11.8,66,15.3,clear,
+SYD,"Sydney Kingsford Smith",2026-09-01T12:00:00Z,19.7,48,24.1,clear,
+SYD,"Sydney Kingsford Smith",2026-09-01T18:00:00Z,15.5,59,19.8,cloudy,"Southerly change at 17:40"
+CPT,"Cape Town International",2026-09-01T06:00:00Z,9.2,72,11.0,cloudy,
+CPT,"Cape Town International",2026-09-01T12:00:00Z,17.4,55,29.6,clear,"Table Mountain ""tablecloth"" forming"
+CPT,"Cape Town International",2026-09-01T18:00:00Z,13.1,64,22.3,cloudy,
+YYZ,"Toronto Pearson",2026-09-01T06:00:00Z,8.7,79,7.4,fog,
+YYZ,"Toronto Pearson",2026-09-01T12:00:00Z,16.3,58,13.1,clear,
+YYZ,"Toronto Pearson",2026-09-01T18:00:00Z,14.0,66,10.8,cloudy,"First frost warning of the season"
+GRU,"São Paulo Guarulhos",2026-09-01T06:00:00Z,15.9,83,5.2,fog,"Naïve sensor reported -999, corrected"
+GRU,"São Paulo Guarulhos",2026-09-01T12:00:00Z,24.6,57,16.5,cloudy,
+GRU,"São Paulo Guarulhos",2026-09-01T18:00:00Z,20.2,71,9.9,rain,
+DXB,"Dubai International",2026-09-01T06:00:00Z,32.4,44,8.8,clear,
+DXB,"Dubai International",2026-09-01T12:00:00Z,41.7,21,15.6,clear,"Ground temperature 58 C"
+DXB,"Dubai International",2026-09-01T18:00:00Z,36.9,33,12.2,clear,
+KEF,"Keflavík",2026-09-01T06:00:00Z,4.1,91,42.7,rain,"Gale warning in force"
+KEF,"Keflavík",2026-09-01T12:00:00Z,6.8,86,51.3,rain,
+KEF,"Keflavík",2026-09-01T18:00:00Z,5.2,89,47.9,snow,"Sleet above 400 m"
+SIN,"Singapore Changi",2026-09-01T06:00:00Z,26.8,88,4.3,cloudy,
+SIN,"Singapore Changi",2026-09-01T12:00:00Z,31.2,74,7.1,rain,"Afternoon thunderstorm"
+SIN,"Singapore Changi",2026-09-01T18:00:00Z,28.4,82,5.9,cloudy,

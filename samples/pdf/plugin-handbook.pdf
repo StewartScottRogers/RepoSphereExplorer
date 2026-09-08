@@ -1,0 +1,221 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 3 /Kids [3 0 R 4 0 R 5 0 R] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> /Contents 7 0 R >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> /Contents 8 0 R >>
+endobj
+6 0 obj
+<< /Length 804 >>
+stream
+BT
+1 0 0 1 62 760 Tm
+16 TL
+/F2 20 Tf
+24 TL
+(The plugin handbook) Tj
+T*
+/F1 11 Tf
+16 TL
+/F2 13 Tf
+18 TL
+(RepoSphereExplorer 0.6.0, September 2026) Tj
+T*
+/F1 11 Tf
+16 TL
+T*
+/F1 11 Tf
+(Every file type in this application is a plugin, and every plugin is) Tj
+T*
+/F1 11 Tf
+(one crate with two halves. This handbook is three pages long so the) Tj
+T*
+/F1 11 Tf
+(PDF plugin has more than one page of real text to extract.) Tj
+T*
+T*
+/F1 11 Tf
+(Page two describes the two halves. Page three lists the rules a new) Tj
+T*
+/F1 11 Tf
+(plugin has to follow before its work order can close.) Tj
+T*
+T*
+/F2 13 Tf
+18 TL
+(Contents) Tj
+T*
+/F1 11 Tf
+16 TL
+/F1 11 Tf
+(1. Two halves, one crate . . . . . . . . . . . . . . . . . page 2) Tj
+T*
+/F1 11 Tf
+(2. Rules for a new plugin  . . . . . . . . . . . . . . . . page 3) Tj
+T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Length 1116 >>
+stream
+BT
+1 0 0 1 62 760 Tm
+16 TL
+/F2 20 Tf
+24 TL
+(1. Two halves, one crate) Tj
+T*
+/F1 11 Tf
+16 TL
+T*
+/F2 13 Tf
+18 TL
+(The core half) Tj
+T*
+/F1 11 Tf
+16 TL
+/F1 11 Tf
+(Linked into the service. It sniffs a bounded prefix, decides whether) Tj
+T*
+/F1 11 Tf
+(it recognises the format, and parses the file into structured data.) Tj
+T*
+/F1 11 Tf
+(It is the only half that ever sees a raw byte, and it runs under the) Tj
+T*
+/F1 11 Tf
+(read limits: no plugin may pull an unbounded file into memory.) Tj
+T*
+T*
+/F2 13 Tf
+18 TL
+(The presentation half) Tj
+T*
+/F1 11 Tf
+16 TL
+/F1 11 Tf
+(Linked into each front end. It turns that structured data into lines,) Tj
+T*
+/F1 11 Tf
+(an icon, a picture, an edit surface, or several named views. It never) Tj
+T*
+/F1 11 Tf
+(touches the filesystem and never sees the file itself.) Tj
+T*
+T*
+/F2 13 Tf
+18 TL
+(Why the split) Tj
+T*
+/F1 11 Tf
+16 TL
+/F1 11 Tf
+(A front end can be replaced without reimplementing eighty parsers,) Tj
+T*
+/F1 11 Tf
+(and parsing stays off the UI thread. The service is the only process) Tj
+T*
+/F1 11 Tf
+(that reads or writes the disk, so there is one place to audit.) Tj
+T*
+ET
+endstream
+endobj
+8 0 obj
+<< /Length 1058 >>
+stream
+BT
+1 0 0 1 62 760 Tm
+16 TL
+/F2 20 Tf
+24 TL
+(2. Rules for a new plugin) Tj
+T*
+/F1 11 Tf
+16 TL
+T*
+/F1 11 Tf
+(1. File the work order first. Every changed line traces back to one.) Tj
+T*
+/F1 11 Tf
+(2. State the acceptance checks. They are the definition of done, not) Tj
+T*
+/F1 11 Tf
+(   the code looking right.) Tj
+T*
+/F1 11 Tf
+(3. Land the behaviour with a test. A parser with no test is a guess.) Tj
+T*
+/F1 11 Tf
+(4. Add a fixture under samples/, and make it exercise every field) Tj
+T*
+/F1 11 Tf
+(   the plugin extracts. A hello-world proves nothing.) Tj
+T*
+/F1 11 Tf
+(5. Record the format in PLUGINS.md, built or rejected, before) Tj
+T*
+/F1 11 Tf
+(   anyone proposes it a second time.) Tj
+T*
+T*
+/F2 13 Tf
+18 TL
+(What a fixture is for) Tj
+T*
+/F1 11 Tf
+16 TL
+/F1 11 Tf
+(Two readers: a person checking the application by opening files, and) Tj
+T*
+/F1 11 Tf
+(a test suite checking that each file still opens through the plugin) Tj
+T*
+/F1 11 Tf
+(that owns it. A fixture too small to distinguish one plugin from) Tj
+T*
+/F1 11 Tf
+(another serves neither.) Tj
+T*
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+10 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+11 0 obj
+<< /Title (The plugin handbook) /Author (RepoSphereExplorer) /Subject (How a file-type plugin is built) /Keywords (plugins, fixtures, samples) /Creator (sample generator) /Producer (sample generator) /CreationDate (D:20260908093000Z) >>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000133 00000 n 
+0000000270 00000 n 
+0000000407 00000 n 
+0000000544 00000 n 
+0000001399 00000 n 
+0000002567 00000 n 
+0000003677 00000 n 
+0000003774 00000 n 
+0000003877 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R /Info 11 0 R >>
+startxref
+4130
+%%EOF
