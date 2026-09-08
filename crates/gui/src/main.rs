@@ -72,6 +72,13 @@ fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    wire_rows(ui, app);
+    wire_commands(ui, app);
+    wire_content_operations(ui, app);
+}
+
+/// Wires the callbacks that carry a row index or a signed delta.
+fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     let index = |i: i32| usize::try_from(i).unwrap_or(usize::MAX);
 
     macro_rules! on_row_event {
@@ -95,34 +102,6 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_row_event!(on_content_row_shift_clicked, extend_selection_to);
     on_row_event!(on_content_row_double_clicked, open_content);
 
-    macro_rules! on_event {
-        ($setter:ident, $method:ident) => {{
-            let app = app.clone();
-            let ui_weak = ui.as_weak();
-            ui.$setter(move || {
-                let mut app = app.borrow_mut();
-                app.$method();
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-
-    on_event!(on_cancel_requested, cancel_pending);
-    on_event!(on_delete_requested, request_delete);
-    on_event!(on_return_pressed, handle_return);
-    on_event!(on_backspace_pressed, backspace);
-    on_event!(on_parent_requested, navigate_to_parent);
-    on_event!(on_back_requested, go_back);
-    on_event!(on_forward_requested, go_forward);
-    on_event!(on_clipboard_copy_requested, copy_to_clipboard);
-    on_event!(on_clipboard_cut_requested, cut_to_clipboard);
-    on_event!(on_clipboard_paste_requested, paste_from_clipboard);
-    on_event!(on_refresh_requested, refresh);
-    on_event!(on_select_all_requested, select_all);
-    on_event!(on_new_folder_requested, request_new_folder);
-    on_event!(on_new_file_requested, request_new_file);
     macro_rules! on_delta_event {
         ($setter:ident, $method:ident) => {{
             // `on_row_event!` converts its argument to a row index; these
@@ -156,6 +135,79 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             }
         });
     }
+}
+
+/// Wires the menu-bar, command-bar and keyboard commands that take no
+/// argument.
+fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    macro_rules! on_event {
+        ($setter:ident, $method:ident) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.$method();
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+
+    on_event!(on_cancel_requested, cancel_pending);
+    on_event!(on_delete_requested, request_delete);
+    on_event!(on_return_pressed, handle_return);
+    on_event!(on_backspace_pressed, backspace);
+    on_event!(on_parent_requested, navigate_to_parent);
+    on_event!(on_back_requested, go_back);
+    on_event!(on_forward_requested, go_forward);
+    on_event!(on_clipboard_copy_requested, copy_to_clipboard);
+    on_event!(on_clipboard_cut_requested, cut_to_clipboard);
+    on_event!(on_clipboard_paste_requested, paste_from_clipboard);
+    on_event!(on_refresh_requested, refresh);
+    on_event!(on_select_all_requested, select_all);
+
+    ui.on_quit_requested(|| {
+        // The menu's File > Exit; the window's own close button goes through
+        // Slint rather than here.
+        let _ = slint::quit_event_loop();
+    });
+
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_about_requested(move || {
+            let mut app = app.borrow_mut();
+            app.report(concat!(
+                "RepoSphereExplorer ",
+                env!("CARGO_PKG_VERSION"),
+                " - a three-pane explorer over a plugin service"
+            ));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    on_event!(on_new_folder_requested, request_new_folder);
+    on_event!(on_new_file_requested, request_new_file);
+}
+
+/// Wires the operations that act on the selected contents row.
+fn wire_content_operations(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    macro_rules! on_event {
+        ($setter:ident, $method:ident) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.$method();
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+
     on_event!(on_content_rename_requested, request_rename);
     on_event!(on_content_copy_requested, request_copy);
     on_event!(on_content_delete_requested, request_delete);

@@ -1016,6 +1016,33 @@ impl App {
         self.focus = Pane::Contents;
     }
 
+    /// Whether the clipboard holds something a paste would act on, which
+    /// is what greys the Paste command out when it does not.
+    #[must_use]
+    pub const fn can_paste(&self) -> bool {
+        self.clipboard.is_some()
+    }
+
+    /// Whether any row is selected, which the commands acting on a
+    /// selection are enabled by.
+    #[must_use]
+    pub fn has_selection(&self) -> bool {
+        !self.selection.is_empty()
+    }
+
+    /// Whether exactly the archive plugin previewed the lead row, which is
+    /// the only case Extract can do anything in.
+    #[must_use]
+    pub fn can_extract(&self) -> bool {
+        self.selected_is_archive()
+    }
+
+    /// Puts a line in the status bar. Used by Help > About, which has
+    /// nothing else to report.
+    pub fn report(&mut self, message: &str) {
+        self.status = Some(message.to_owned());
+    }
+
     /// Every selected row, in listing order.
     fn selected_indices(&self) -> Vec<usize> {
         self.selection.iter().copied().collect()

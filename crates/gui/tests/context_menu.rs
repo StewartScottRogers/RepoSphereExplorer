@@ -1,25 +1,28 @@
-//! Geometry checks for the contents pane's right-click menus.
+//! The contents pane's right-click menus, driven through Slint's own
+//! hit-testing rather than the windowing system.
 //!
-//! Both `PopupWindow`s were declared without a size. A `PopupWindow` with no
-//! size of its own is laid out 0x0, and a child with no `x` is centred in its
-//! parent - so each menu's body was placed at `x: -75px`, its full width
-//! outside the popup that owns it. Nothing clipped it, so the menu looked
-//! perfectly normal on screen, but hit-testing is bounded by the popup, which
-//! left every item in both menus unhittable.
-//!
-//! These tests dispatch through Slint's own hit-testing rather than the
-//! windowing system, and assert the property that was violated: an item has
-//! to lie inside the popup that owns it to be reachable at all.
+//! These menus were `PopupWindow`s and nothing in them could be chosen. A
+//! popup cannot be positioned from its enclosing component; without an
+//! explicit size it is laid out 0x0, which leaves its contents drawn but
+//! outside the only region that can be hit; and its default close policy
+//! dismisses it on the press, before the item's `TouchArea` sees the
+//! release. They are ordinary elements of the pane now, so a click reaches
+//! them - which is what these tests assert.
 
 use gui::{ContentRow, MainWindow};
 use i_slint_backend_testing::ElementHandle;
 use slint::platform::{PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, Image, LogicalPosition, ModelRc, SharedString, VecModel};
+use std::cell::Cell;
+use std::rc::Rc;
 
 /// Row height in `app.slint`'s panes, so a click can be aimed at a row.
 const ROW_HEIGHT: f32 = 20.0;
 
-/// Menu width in `app.slint`, which is what an item has to fit inside.
+/// Context menu width in `app.slint`. The command bar carries buttons with
+/// the same labels as the menu items, so matches are narrowed to elements
+/// the width of a menu - otherwise a search for "Rename" finds the toolbar
+/// button first.
 const MENU_WIDTH: f32 = 150.0;
 
 /// A details row with only its name filled in; the other columns play no
@@ -69,61 +72,80 @@ fn right_click(ui: &MainWindow, rows_down: f32) {
     });
 }
 
-/// Asserts that the menu item labelled `label` is open and lies within the
-/// bounds of the popup that owns it, which is what makes it hittable.
-fn assert_item_is_inside_its_popup(ui: &MainWindow, label: &str) {
-    let item = ElementHandle::find_by_accessible_label(ui, label)
-        .next()
-        .unwrap_or_else(|| panic!("the open menu should offer a {label:?} item"));
-    let position = item.absolute_position();
-    let size = item.size();
+/// The open menu's items labelled `label`, ignoring same-named elements
+/// elsewhere in the window.
+fn menu_items(ui: &MainWindow, label: &str) -> Vec<ElementHandle> {
+    ElementHandle::find_by_accessible_label(ui, label)
+        .filter(|item| (item.size().width - MENU_WIDTH).abs() < f32::EPSILON)
+        .collect()
+}
+
+/// Clicks the open menu's item labelled `label`.
+fn choose(ui: &MainWindow, label: &str) {
+    let items = menu_items(ui, label);
+    assert_eq!(
+        items.len(),
+        1,
+        "exactly one open menu item should be labelled {label:?}"
+    );
+    items[0].mock_single_click(PointerEventButton::Left);
+}
+
+#[test]
+fn choosing_rename_from_the_row_menu_invokes_its_callback() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = shown_window();
+    let fired = Rc::new(Cell::new(false));
+    ui.on_content_rename_requested({
+        let fired = Rc::clone(&fired);
+        move || fired.set(true)
+    });
+
+    right_click(&ui, 0.0);
+    choose(&ui, "Rename");
 
     assert!(
-        position.x >= 0.0 && position.y >= 0.0,
-        "{label:?} is laid out at {position:?}, outside the popup that owns it"
-    );
-    // A popup with no size of its own collapses its child to nothing, which
-    // would satisfy a bounds check while leaving the item just as unhittable.
-    assert!(
-        (size.width - MENU_WIDTH).abs() < f32::EPSILON,
-        "{label:?} is {}px wide, not the menu's {MENU_WIDTH}px",
-        size.width
-    );
-    assert!(
-        position.x + size.width <= MENU_WIDTH,
-        "{label:?} runs from {} to {} across a {MENU_WIDTH}px menu",
-        position.x,
-        position.x + size.width
+        fired.get(),
+        "choosing Rename should reach content-rename-requested"
     );
 }
 
 #[test]
-fn a_right_click_on_a_row_opens_a_menu_whose_items_are_inside_it() {
+fn choosing_new_folder_from_the_empty_area_menu_invokes_its_callback() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = shown_window();
+    let fired = Rc::new(Cell::new(false));
+    ui.on_new_folder_requested({
+        let fired = Rc::clone(&fired);
+        move || fired.set(true)
+    });
+
+    // Well past the two rows, which is what opens the empty-area menu.
+    right_click(&ui, 20.0);
+    choose(&ui, "New Folder");
+
+    assert!(
+        fired.get(),
+        "choosing New Folder should reach new-folder-requested"
+    );
+}
+
+#[test]
+fn a_menu_opens_only_once_the_pane_is_right_clicked() {
     i_slint_backend_testing::init_no_event_loop();
     let ui = shown_window();
 
     assert_eq!(
-        ElementHandle::find_by_accessible_label(&ui, "Rename").count(),
+        menu_items(&ui, "Rename").len(),
         0,
         "no menu before the right-click"
     );
 
     right_click(&ui, 0.0);
 
-    for label in ["Open", "Rename", "Copy", "Delete", "Extract"] {
-        assert_item_is_inside_its_popup(&ui, label);
-    }
-}
-
-#[test]
-fn a_right_click_on_empty_space_opens_a_menu_whose_items_are_inside_it() {
-    i_slint_backend_testing::init_no_event_loop();
-    let ui = shown_window();
-
-    // Well past the two rows, which is what opens the empty-area menu.
-    right_click(&ui, 20.0);
-
-    for label in ["New Folder", "New File"] {
-        assert_item_is_inside_its_popup(&ui, label);
-    }
+    assert_eq!(
+        menu_items(&ui, "Rename").len(),
+        1,
+        "the row menu is open afterwards"
+    );
 }

@@ -224,8 +224,75 @@ component Splitter inherits Rectangle {
     }
 }
 
+// One title in the menu bar. Opening a menu is a property change rather
+// than a `PopupWindow`, so the dropdown is an ordinary element of the window
+// that can be sized, positioned and clicked like any other.
+component MenuTitle inherits Rectangle {
+    in property <string> label;
+    in property <bool> open;
+    callback activated();
+
+    width: title-text.preferred-width + 20px;
+    background: open ? Theme.accent : (title-touch.has-hover ? Theme.hover : transparent);
+
+    title-text := Text {
+        text: label;
+        color: open ? Theme.on-accent : Palette.foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    title-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { activated(); }
+    }
+}
+
+// A labelled button on the command bar, greyed out when its command has
+// nothing to act on.
+component CommandButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> button-enabled: true;
+    callback activated();
+
+    width: command-text.preferred-width + 16px;
+    border-radius: 3px;
+    background: button-enabled && command-touch.has-hover ? Theme.hover : transparent;
+
+    command-text := Text {
+        text: label;
+        color: button-enabled ? Palette.foreground : Theme.dim-text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    command-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: button-enabled;
+        clicked => { activated(); }
+    }
+}
+
+// A thin vertical rule between groups of command buttons.
+component CommandSeparator inherits Rectangle {
+    width: 9px;
+    Rectangle {
+        width: 1px;
+        height: 60%;
+        y: (parent.height - self.height) / 2;
+        background: Theme.border;
+    }
+}
+
 component ContextMenuItem inherits Rectangle {
     in property <string> label;
+    in property <string> shortcut;
     in property <bool> item-enabled: true;
     in property <length> item-height;
     callback activated();
@@ -238,11 +305,22 @@ component ContextMenuItem inherits Rectangle {
     accessible-label: label;
     accessible-enabled: item-enabled;
 
-    Text {
-        text: label;
-        color: item-enabled ? Palette.foreground : Theme.dim-text;
-        vertical-alignment: center;
-        x: 8px;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 16px;
+        Text {
+            text: label;
+            color: item-enabled ? Palette.foreground : Theme.dim-text;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: shortcut;
+            color: Theme.dim-text;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
     }
 
     touch := TouchArea {
@@ -301,6 +379,8 @@ component ContentsPane inherits Rectangle {
     // their size, which means stating the item height and count here.
     property <length> menu-width: 150px;
     property <length> menu-item-height: 24px;
+    // Which context menu is open: -1 none, 0 on a row, 1 on empty space.
+    property <int> open-context: -1;
     // Details-view columns. The three trailing ones are fixed and Name
     // stretches into the rest, in both the header and every row, so the two
     // line up without either deriving a width from the pane's own width -
@@ -473,6 +553,12 @@ component ContentsPane inherits Rectangle {
                         }
                     }
                     pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            // Any press dismisses an open context menu; the
+                            // item's own handler runs first when the press
+                            // landed on one.
+                            open-context = -1;
+                        }
                         if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
                             if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                                 if (event.modifiers.control) {
@@ -492,90 +578,81 @@ component ContentsPane inherits Rectangle {
                                 // top-left corner, half over the folders pane.
                                 menu-x = click-area.mouse-x;
                                 menu-y = click-area.mouse-y;
-                                row-menu.show();
+                                open-context = 0;
                             } else {
                                 menu-x = click-area.mouse-x;
                                 menu-y = click-area.mouse-y;
-                                empty-menu.show();
+                                open-context = 1;
                             }
                         }
                     }
                 }
 
-                empty-menu := PopupWindow {
+                // The context menus are ordinary elements rather than
+                // `PopupWindow`s: a popup cannot be positioned from its
+                // enclosing component, has to be sized by hand or it is laid
+                // out 0x0 with its contents unhittable, and its default close
+                // policy eats the click that chooses an item. An element in
+                // the pane has none of those problems.
+                if open-context == 1: Rectangle {
                     x: menu-x;
                     y: menu-y;
                     width: menu-width;
                     height: 2 * menu-item-height;
-                    // Without this the default `close-on-click` dismisses the
-                    // popup on the press, before the item's `TouchArea` ever
-                    // sees the release, so no item can be chosen at all.
-                    close-policy: close-on-click-outside;
-                    Rectangle {
-                        x: 0;
-                        y: 0;
-                        width: 100%;
-                        height: 100%;
-                        background: Theme.panel;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        VerticalLayout {
-                            ContextMenuItem {
-                                label: "New Folder";
-                                item-height: menu-item-height;
-                                activated => { empty-menu.close(); new-folder-requested(); }
-                            }
-                            ContextMenuItem {
-                                label: "New File";
-                                item-height: menu-item-height;
-                                activated => { empty-menu.close(); new-file-requested(); }
-                            }
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        ContextMenuItem {
+                            label: "New Folder";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; new-folder-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "New File";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; new-file-requested(); }
                         }
                     }
                 }
 
-                row-menu := PopupWindow {
+                if open-context == 0: Rectangle {
                     x: menu-x;
                     y: menu-y;
                     width: menu-width;
                     height: 5 * menu-item-height;
-                    // See `empty-menu`: the default policy eats the click.
-                    close-policy: close-on-click-outside;
-                    Rectangle {
-                        x: 0;
-                        y: 0;
-                        width: 100%;
-                        height: 100%;
-                        background: Theme.panel;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        VerticalLayout {
-                            ContextMenuItem {
-                                label: "Open";
-                                item-height: menu-item-height;
-                                activated => { row-menu.close(); open-requested(); }
-                            }
-                            ContextMenuItem {
-                                label: "Rename";
-                                item-height: menu-item-height;
-                                activated => { row-menu.close(); rename-requested(); }
-                            }
-                            ContextMenuItem {
-                                label: "Copy";
-                                item-height: menu-item-height;
-                                activated => { row-menu.close(); copy-requested(); }
-                            }
-                            ContextMenuItem {
-                                label: "Delete";
-                                item-height: menu-item-height;
-                                activated => { row-menu.close(); delete-requested(); }
-                            }
-                            ContextMenuItem {
-                                label: "Extract";
-                                item-height: menu-item-height;
-                                item-enabled: extract-enabled;
-                                activated => { row-menu.close(); extract-requested(); }
-                            }
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        ContextMenuItem {
+                            label: "Open";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; open-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Rename";
+                            shortcut: "F2";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; rename-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Copy";
+                            shortcut: "Ctrl+C";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; copy-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Delete";
+                            shortcut: "Del";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; delete-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Extract";
+                            item-height: menu-item-height;
+                            item-enabled: extract-enabled;
+                            activated => { open-context = -1; extract-requested(); }
                         }
                     }
                 }
@@ -628,6 +705,11 @@ export component MainWindow inherits Window {
     in property <string> content-prompt-text;
     in property <int> content-prompt-row: -1;
     in property <bool> content-prompt-editable;
+    // What the command bar and menus enable from.
+    in property <bool> has-selection;
+    in property <bool> can-paste;
+    callback quit-requested();
+    callback about-requested();
     // Which contents column is sorted on, and which way.
     in property <int> content-sort-column;
     in property <bool> content-sort-ascending;
@@ -649,6 +731,11 @@ export component MainWindow inherits Window {
     // whatever the other two leave.
     property <length> folders-width: 240px;
     property <length> contents-width: 470px;
+    // Which menu is open: -1 none, then File, Edit, View, Help. A menu is a
+    // property rather than a `PopupWindow` so it can be sized, placed and
+    // clicked like any other element.
+    property <int> open-menu: -1;
+    property <length> menu-item-h: 24px;
     callback edge-requested(int);
 
     forward-focus: key-scope;
@@ -708,6 +795,94 @@ export component MainWindow inherits Window {
         }
 
         VerticalLayout {
+            // Menu bar.
+            Rectangle {
+                height: 24px;
+                background: Theme.panel;
+                HorizontalLayout {
+                    alignment: start;
+                    MenuTitle {
+                        label: "File";
+                        open: open-menu == 0;
+                        activated => { open-menu = open-menu == 0 ? -1 : 0; }
+                    }
+                    MenuTitle {
+                        label: "Edit";
+                        open: open-menu == 1;
+                        activated => { open-menu = open-menu == 1 ? -1 : 1; }
+                    }
+                    MenuTitle {
+                        label: "View";
+                        open: open-menu == 2;
+                        activated => { open-menu = open-menu == 2 ? -1 : 2; }
+                    }
+                    MenuTitle {
+                        label: "Help";
+                        open: open-menu == 3;
+                        activated => { open-menu = open-menu == 3 ? -1 : 3; }
+                    }
+                }
+            }
+
+            // Command bar.
+            Rectangle {
+                height: 28px;
+                background: Theme.panel;
+                HorizontalLayout {
+                    padding-left: 4px;
+                    padding-top: 2px;
+                    padding-bottom: 2px;
+                    spacing: 1px;
+                    alignment: start;
+                    CommandButton {
+                        label: "New folder";
+                        activated => { new-folder-requested(); }
+                    }
+                    CommandButton {
+                        label: "New file";
+                        activated => { new-file-requested(); }
+                    }
+                    CommandSeparator { }
+                    CommandButton {
+                        label: "Cut";
+                        button-enabled: has-selection;
+                        activated => { clipboard-cut-requested(); }
+                    }
+                    CommandButton {
+                        label: "Copy";
+                        button-enabled: has-selection;
+                        activated => { clipboard-copy-requested(); }
+                    }
+                    CommandButton {
+                        label: "Paste";
+                        button-enabled: can-paste;
+                        activated => { clipboard-paste-requested(); }
+                    }
+                    CommandSeparator { }
+                    CommandButton {
+                        label: "Rename";
+                        button-enabled: has-selection;
+                        activated => { content-rename-requested(); }
+                    }
+                    CommandButton {
+                        label: "Delete";
+                        button-enabled: has-selection;
+                        activated => { delete-requested(); }
+                    }
+                    CommandButton {
+                        label: "Extract";
+                        button-enabled: content-is-archive;
+                        activated => { content-extract-requested(); }
+                    }
+                    CommandSeparator { }
+                    CommandButton {
+                        label: "Refresh";
+                        activated => { refresh-requested(); }
+                    }
+                }
+            }
+
+            // Navigation and address bar.
             Rectangle {
                 height: 30px;
                 background: Theme.panel;
@@ -838,6 +1013,164 @@ export component MainWindow inherits Window {
                 height: 22px;
                 x: 4px;
                 vertical-alignment: center;
+            }
+        }
+
+        // The open menu's dropdown, and a full-window catcher behind it so a
+        // click anywhere else closes the menu. Declared after the panes so
+        // they draw over them.
+        if open-menu >= 0: TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { open-menu = -1; }
+        }
+
+        if open-menu == 0: Rectangle {
+            x: 4px;
+            y: 24px;
+            width: 210px;
+            height: 6 * menu-item-h;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                ContextMenuItem {
+                    label: "New Folder";
+                    shortcut: "Ctrl+Shift+N";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; new-folder-requested(); }
+                }
+                ContextMenuItem {
+                    label: "New File";
+                    shortcut: "Ctrl+N";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; new-file-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Open";
+                    item-enabled: has-selection;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; content-open-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Rename";
+                    shortcut: "F2";
+                    item-enabled: has-selection;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; content-rename-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Delete";
+                    shortcut: "Del";
+                    item-enabled: has-selection;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; delete-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Exit";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; quit-requested(); }
+                }
+            }
+        }
+
+        if open-menu == 1: Rectangle {
+            x: 44px;
+            y: 24px;
+            width: 200px;
+            height: 4 * menu-item-h;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                ContextMenuItem {
+                    label: "Cut";
+                    shortcut: "Ctrl+X";
+                    item-enabled: has-selection;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; clipboard-cut-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Copy";
+                    shortcut: "Ctrl+C";
+                    item-enabled: has-selection;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; clipboard-copy-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Paste";
+                    shortcut: "Ctrl+V";
+                    item-enabled: can-paste;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; clipboard-paste-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Select All";
+                    shortcut: "Ctrl+A";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; select-all-requested(); }
+                }
+            }
+        }
+
+        if open-menu == 2: Rectangle {
+            x: 88px;
+            y: 24px;
+            width: 210px;
+            height: 6 * menu-item-h;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                ContextMenuItem {
+                    label: "Refresh";
+                    shortcut: "F5";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; refresh-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Up One Level";
+                    shortcut: "Backspace";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; parent-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Sort by Name";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; content-sort-requested(0); }
+                }
+                ContextMenuItem {
+                    label: "Sort by Size";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; content-sort-requested(1); }
+                }
+                ContextMenuItem {
+                    label: "Sort by Type";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; content-sort-requested(2); }
+                }
+                ContextMenuItem {
+                    label: "Sort by Modified";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; content-sort-requested(3); }
+                }
+            }
+        }
+
+        if open-menu == 3: Rectangle {
+            x: 136px;
+            y: 24px;
+            width: 200px;
+            height: 1 * menu-item-h;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                ContextMenuItem {
+                    label: "About RepoSphereExplorer";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; about-requested(); }
+                }
             }
         }
     }
