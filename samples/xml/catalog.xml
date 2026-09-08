@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A product catalogue with namespaces, attributes, CDATA, a processing
+  instruction and mixed content - the parts of XML a preview should cope
+  with, not just a flat list of elements.
+-->
+<?xml-stylesheet type="text/xsl" href="catalog.xsl"?>
+<catalog xmlns="https://example.com/schema/catalog/v2"
+         xmlns:dc="http://purl.org/dc/elements/1.1/"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns:inv="https://example.com/schema/inventory/v1"
+         xsi:schemaLocation="https://example.com/schema/catalog/v2 catalog.xsd"
+         generated="2026-09-08T09:20:00Z"
+         currency="GBP">
+
+  <dc:title>Autumn catalogue</dc:title>
+  <dc:creator>RepoSphereExplorer sample generator</dc:creator>
+  <dc:date>2026-09-08</dc:date>
+
+  <categories>
+    <category id="tools" label="Hand tools"/>
+    <category id="hardware" label="Fixings and hardware"/>
+    <category id="measuring" label="Measuring"/>
+  </categories>
+
+  <products>
+    <product sku="WID-1" category="tools" featured="true">
+      <name>Widget</name>
+      <description>A general purpose widget, <emphasis>lightly</emphasis> anodised.</description>
+      <price amount="4.50" vat="20"/>
+      <inv:stock quantity="12" reorderAt="5" location="A-14"/>
+      <dimensions unit="mm">
+        <length>120</length>
+        <width>45</width>
+        <height>18</height>
+      </dimensions>
+      <tags>
+        <tag>bestseller</tag>
+        <tag>uk-stock</tag>
+      </tags>
+    </product>
+
+    <product sku="GAD-7" category="hardware">
+      <name>Gadget</name>
+      <description><![CDATA[Fits any 3/8" fixing. Contains <no> markup at all.]]></description>
+      <price amount="19.99" vat="20"/>
+      <inv:stock quantity="2" reorderAt="4" location="C-02"/>
+      <compatibleWith>
+        <sku>WID-1</sku>
+        <sku>SPR-3</sku>
+      </compatibleWith>
+    </product>
+
+    <product sku="SPR-3" category="hardware">
+      <name>Sprocket</name>
+      <description>Replacement sprocket, 24 teeth.</description>
+      <price amount="0.75" vat="20"/>
+      <inv:stock quantity="0" reorderAt="20" location="C-05"/>
+      <discontinued on="2026-06-30">Superseded by SPR-4</discontinued>
+    </product>
+
+    <product sku="RUL-9" category="measuring">
+      <name>Steel rule, 300&#160;mm</name>
+      <description>Etched in both mm and inches. Reads to &#188;&#160;mm.</description>
+      <price amount="8.25" vat="20"/>
+      <inv:stock quantity="41" reorderAt="10" location="B-21"/>
+    </product>
+  </products>
+
+  <suppliers>
+    <supplier id="sup-1">
+      <name>Northern Fixings Ltd</name>
+      <contact email="orders@example.com" phone="+44 161 496 0000"/>
+      <supplies>
+        <sku>GAD-7</sku>
+        <sku>SPR-3</sku>
+      </supplies>
+    </supplier>
+    <supplier id="sup-2">
+      <name>Precision Measuring Co</name>
+      <contact email="sales@example.net"/>
+      <supplies>
+        <sku>RUL-9</sku>
+      </supplies>
+    </supplier>
+  </suppliers>
+
+  <summary productCount="4" supplierCount="2" outOfStock="1"/>
+</catalog>

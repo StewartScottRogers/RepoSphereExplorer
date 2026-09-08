@@ -1,0 +1,75 @@
+{
+  "$schema": "https://example.com/schemas/deployment-v3.json",
+  "name": "repo-sphere-explorer",
+  "version": "0.6.0",
+  "generatedAt": "2026-09-08T09:14:02Z",
+  "environments": {
+    "dev": {
+      "replicas": 1,
+      "autoscale": false,
+      "featureFlags": ["multi-view", "file-editor", "verbose-journal"],
+      "limits": { "cpuMillis": 500, "memoryMiB": 512 }
+    },
+    "staging": {
+      "replicas": 2,
+      "autoscale": true,
+      "featureFlags": ["multi-view", "file-editor"],
+      "limits": { "cpuMillis": 1000, "memoryMiB": 1024 }
+    },
+    "prod": {
+      "replicas": 6,
+      "autoscale": true,
+      "featureFlags": ["multi-view"],
+      "limits": { "cpuMillis": 2000, "memoryMiB": 2048 }
+    }
+  },
+  "service": {
+    "listen": "0.0.0.0:8080",
+    "metrics": "0.0.0.0:9090",
+    "readTimeoutMs": 5000,
+    "maxMessageBytes": 67108864,
+    "tls": {
+      "enabled": true,
+      "minimumVersion": "1.3",
+      "certificateRef": "secret://tls/repo-sphere-explorer",
+      "ciphers": [
+        "TLS_AES_256_GCM_SHA384",
+        "TLS_CHACHA20_POLY1305_SHA256"
+      ]
+    }
+  },
+  "plugins": [
+    { "name": "rust", "extensions": ["rs"], "enabled": true, "maxViewBytes": 262144 },
+    { "name": "image", "extensions": ["png", "jpg", "jpeg", "gif"], "enabled": true, "thumbnailEdge": 512 },
+    { "name": "pdf", "extensions": ["pdf"], "enabled": true, "maxPages": 200 },
+    { "name": "sqlite", "extensions": ["sqlite", "db"], "enabled": false, "reason": "read-only review pending" }
+  ],
+  "journal": {
+    "path": "${RSE_DATA_DIR}/journal.ndjson",
+    "rotate": { "everyMiB": 32, "keep": 10, "compress": true },
+    "redact": ["path", "content"]
+  },
+  "observability": {
+    "sampleRate": 0.05,
+    "exporters": [
+      { "kind": "otlp", "endpoint": "http://collector:4317", "insecure": true },
+      { "kind": "stdout", "pretty": false }
+    ],
+    "alerts": {
+      "errorRatePercent": 1.5,
+      "p99LatencyMs": 250,
+      "notify": ["releases@example.com"],
+      "quietHours": null
+    }
+  },
+  "unicode": {
+    "note": "Fixtures should carry text a naive parser trips on",
+    "samples": ["naïve café", "日本語のテキスト", "emoji 🧭 and a tab:\tdone", "quote \" and backslash \\"],
+    "escaped": "line one\nline two"
+  },
+  "emptyObject": {},
+  "emptyArray": [],
+  "deep": {
+    "level1": { "level2": { "level3": { "level4": { "leaf": true, "count": 4 } } } }
+  }
+}

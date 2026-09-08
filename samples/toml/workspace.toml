@@ -1,0 +1,106 @@
+# A workspace manifest in the shape Cargo produces, exercising the parts
+# of TOML that a naive reader misses: dotted keys, arrays of tables,
+# inline tables, multi-line strings, dates and typed numbers.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/cli",
+    "crates/protocol",
+    "crates/plugin-api",
+    "crates/service",
+    "crates/gui",
+    "crates/plugins/*",
+]
+exclude = ["target", "site"]
+
+[workspace.package]
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.84"
+license = "MIT"
+repository = "https://github.com/StewartScottRogers/RepoSphereExplorer"
+authors = ["The dark factory <releases@example.com>"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+slint = { version = "1.17.1", default-features = false, features = ["backend-winit", "renderer-skia"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+interprocess = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_crate_dependencies = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+too_many_lines = "warn"
+wildcard_enum_match_arm = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[release]
+tag-prefix = "v"
+signed = true
+notes = """
+Every release is built by CI from a green main.
+Nothing is published by hand.
+"""
+cut-on = 2026-09-08
+window = 1979-05-27T07:32:00Z
+
+[limits]
+max-message-bytes = 67_108_864
+prefix-bytes = 8192
+thumbnail-edge = 512
+sample-rate = 0.05
+enabled = true
+
+[[plugin]]
+name = "rust"
+extensions = ["rs"]
+priority = 1
+owner = { team = "languages", contact = "languages@example.com" }
+
+[[plugin]]
+name = "image"
+extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
+priority = 2
+owner = { team = "media", contact = "media@example.com" }
+
+[[plugin]]
+name = "sqlite"
+extensions = ["sqlite", "sqlite3", "db"]
+priority = 3
+owner = { team = "data", contact = "data@example.com" }
+
+[targets.windows]
+runner = "windows-2025"
+features = ["gui", "updater"]
+
+[targets.linux]
+runner = "ubuntu-24.04"
+features = ["gui", "tui"]
+
+[targets.macos]
+runner = "macos-15"
+features = ["gui"]
+
+[deploy.staging.environment]
+RUST_LOG = "info"
+RSE_DATA_DIR = "/var/lib/repo-sphere-explorer"
+
+[deploy.prod.environment]
+RUST_LOG = "warn"
+RSE_DATA_DIR = "/var/lib/repo-sphere-explorer"

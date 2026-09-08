@@ -1,8 +1,126 @@
-type Query {
-  greeting(name: String!): String
+"""
+The public schema for a small conference site: talks, speakers, rooms and
+the mutations an organiser needs. Written to exercise every declaration
+kind GraphQL has - object, input, interface, union, enum, scalar and
+directive - not just a Query type.
+"""
+
+scalar DateTime
+scalar Url
+
+directive @auth(requires: Role = ORGANISER) on FIELD_DEFINITION | OBJECT
+
+enum Role {
+  GUEST
+  SPEAKER
+  ORGANISER
 }
 
-type Person {
+enum Track {
+  PLATFORM
+  LANGUAGES
+  OPERATIONS
+  WILDCARD
+}
+
+interface Node {
+  id: ID!
+  createdAt: DateTime!
+}
+
+interface Timed {
+  startsAt: DateTime!
+  durationMinutes: Int!
+}
+
+type Speaker implements Node {
+  id: ID!
+  createdAt: DateTime!
   name: String!
-  age: Int
+  bio: String
+  website: Url
+  role: Role!
+  talks: [Talk!]!
+}
+
+type Room implements Node {
+  id: ID!
+  createdAt: DateTime!
+  name: String!
+  capacity: Int!
+  accessible: Boolean!
+}
+
+type Talk implements Node & Timed {
+  id: ID!
+  createdAt: DateTime!
+  startsAt: DateTime!
+  durationMinutes: Int!
+  title: String!
+  abstract: String
+  track: Track!
+  room: Room!
+  speakers: [Speaker!]!
+  recording: Url
+}
+
+type Break implements Timed {
+  startsAt: DateTime!
+  durationMinutes: Int!
+  label: String!
+}
+
+union ScheduleItem = Talk | Break
+
+type ValidationError {
+  field: String!
+  message: String!
+}
+
+type TalkPayload {
+  talk: Talk
+  errors: [ValidationError!]!
+}
+
+input TalkFilter {
+  track: Track
+  speakerId: ID
+  onOrAfter: DateTime
+  search: String
+}
+
+input TalkInput {
+  title: String!
+  abstract: String
+  track: Track! = WILDCARD
+  roomId: ID!
+  speakerIds: [ID!]!
+  startsAt: DateTime!
+  durationMinutes: Int! = 30
+}
+
+type Query {
+  talk(id: ID!): Talk
+  talks(filter: TalkFilter, first: Int = 20, after: String): [Talk!]!
+  speaker(id: ID!): Speaker
+  speakers(role: Role): [Speaker!]!
+  schedule(day: Int!): [ScheduleItem!]!
+  rooms: [Room!]!
+}
+
+type Mutation {
+  createTalk(input: TalkInput!): TalkPayload! @auth
+  rescheduleTalk(id: ID!, startsAt: DateTime!): TalkPayload! @auth
+  cancelTalk(id: ID!, reason: String): Boolean! @auth(requires: ORGANISER)
+  publishRecording(id: ID!, url: Url!): Talk! @auth(requires: SPEAKER)
+}
+
+type Subscription {
+  scheduleChanged(day: Int!): ScheduleItem!
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
 }

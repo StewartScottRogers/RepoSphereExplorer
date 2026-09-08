@@ -301,9 +301,11 @@ mod tests {
 
     #[test]
     fn a_file_with_no_artwork_offers_no_picture_and_keeps_its_metadata() {
-        let bytes = include_bytes!("../../../../samples/audio/example.flac");
+        // Built here rather than taken from `samples/`: that fixture now
+        // carries cover art on purpose, and a test about the absence of
+        // artwork should not depend on a fixture staying bare.
         let path = unique_temp_file("plain.flac");
-        std::fs::write(&path, bytes).unwrap();
+        write_test_flac(&path);
 
         let data = AudioCore.view(&path).unwrap();
         let lines = AudioPresentation.present(&data);

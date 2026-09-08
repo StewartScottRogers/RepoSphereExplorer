@@ -1,0 +1,124 @@
+{
+  "type": "FeatureCollection",
+  "name": "london-transport-sample",
+  "bbox": [-0.2416, 51.4623, -0.0242, 51.5405],
+  "crs": {
+    "type": "name",
+    "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "station-kings-cross",
+      "geometry": { "type": "Point", "coordinates": [-0.1240, 51.5308] },
+      "properties": {
+        "name": "King's Cross St. Pancras",
+        "kind": "station",
+        "lines": ["Circle", "Hammersmith & City", "Metropolitan", "Northern", "Piccadilly", "Victoria"],
+        "step_free": true,
+        "zone": 1
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "station-waterloo",
+      "geometry": { "type": "Point", "coordinates": [-0.1133, 51.5036] },
+      "properties": {
+        "name": "Waterloo",
+        "kind": "station",
+        "lines": ["Bakerloo", "Jubilee", "Northern", "Waterloo & City"],
+        "step_free": true,
+        "zone": 1
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "line-victoria-central",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-0.1240, 51.5308],
+          [-0.1180, 51.5250],
+          [-0.1416, 51.5142],
+          [-0.1433, 51.4966]
+        ]
+      },
+      "properties": { "name": "Victoria line (central section)", "kind": "line", "colour": "#0098D4" }
+    },
+    {
+      "type": "Feature",
+      "id": "zone-1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-0.1900, 51.4900],
+            [-0.0600, 51.4900],
+            [-0.0600, 51.5400],
+            [-0.1900, 51.5400],
+            [-0.1900, 51.4900]
+          ],
+          [
+            [-0.1400, 51.5050],
+            [-0.1100, 51.5050],
+            [-0.1100, 51.5200],
+            [-0.1400, 51.5200],
+            [-0.1400, 51.5050]
+          ]
+        ]
+      },
+      "properties": { "name": "Fare zone 1", "kind": "zone", "with_hole": true }
+    },
+    {
+      "type": "Feature",
+      "id": "river-thames-sample",
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [[-0.2416, 51.4700], [-0.1800, 51.4830], [-0.1200, 51.5080]],
+          [[-0.1200, 51.5080], [-0.0700, 51.5060], [-0.0242, 51.5020]]
+        ]
+      },
+      "properties": { "name": "River Thames (sampled)", "kind": "water" }
+    },
+    {
+      "type": "Feature",
+      "id": "airports",
+      "geometry": {
+        "type": "MultiPoint",
+        "coordinates": [[-0.4543, 51.4700], [0.0498, 51.5053]]
+      },
+      "properties": { "name": "Heathrow and City airports", "kind": "airport", "outside_bbox": true }
+    },
+    {
+      "type": "Feature",
+      "id": "parks",
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [[[-0.1760, 51.5020], [-0.1500, 51.5020], [-0.1500, 51.5130], [-0.1760, 51.5130], [-0.1760, 51.5020]]],
+          [[[-0.1560, 51.5240], [-0.1470, 51.5240], [-0.1470, 51.5330], [-0.1560, 51.5330], [-0.1560, 51.5240]]]
+        ]
+      },
+      "properties": { "name": "Hyde Park and Regent's Park", "kind": "park" }
+    },
+    {
+      "type": "Feature",
+      "id": "interchange-cluster",
+      "geometry": {
+        "type": "GeometryCollection",
+        "geometries": [
+          { "type": "Point", "coordinates": [-0.0886, 51.5133] },
+          { "type": "LineString", "coordinates": [[-0.0886, 51.5133], [-0.0810, 51.5155]] }
+        ]
+      },
+      "properties": { "name": "Bank / Monument", "kind": "interchange", "step_free": false }
+    },
+    {
+      "type": "Feature",
+      "id": "unnamed-null-geometry",
+      "geometry": null,
+      "properties": { "name": "Record with no geometry", "kind": "placeholder" }
+    }
+  ]
+}

@@ -1,3 +1,11 @@
-Meeting notes:
-- Discussed the sample fixtures work order.
-- Everything looks on track for the release.
+Standup, 8 September 2026
+-------------------------
+
+Yesterday: closed the attribution work order. A C file with a struct was
+opening as Rust, which nobody had noticed because every fixture in the
+sample set was a hello-world.
+
+Today: rewriting samples/ so it exercises the plugins instead of merely
+satisfying them. Eighty directories, one honest file in each.
+
+Blocked on: nothing.
