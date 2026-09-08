@@ -113,6 +113,12 @@ component ContentsPane inherits Rectangle {
     // Whether the selected row previewed as an archive; Extract is greyed
     // out otherwise, since extracting anything else only ever errors.
     in property <bool> extract-enabled;
+    // The prompt a pending operation is waiting on, drawn over the row it
+    // applies to. Without it the only sign that a menu action did anything
+    // is one line at the very bottom of the window.
+    in property <string> prompt-text;
+    in property <int> prompt-row;
+    in property <bool> prompt-editable;
     callback row-clicked(int);
     callback row-double-clicked(int);
     callback open-requested();
@@ -165,6 +171,38 @@ component ContentsPane inherits Rectangle {
                     height: row-height;
                     vertical-alignment: center;
                     x: 4px;
+                }
+
+                if prompt-row >= 0: Rectangle {
+                    y: prompt-row * row-height;
+                    height: row-height;
+                    width: 100%;
+                    background: #1e1e1e;
+                    border-width: 1px;
+                    border-color: #e5c07b;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        spacing: 2px;
+                        alignment: start;
+                        Text {
+                            text: prompt-text;
+                            color: #e5c07b;
+                            vertical-alignment: center;
+                        }
+                        // A caret, so a text prompt reads as one waiting for
+                        // typing rather than as a label.
+                        Rectangle {
+                            width: prompt-editable ? 1px : 0px;
+                            background: #e5c07b;
+                            y: 3px;
+                            height: row-height - 6px;
+                        }
+                        Text {
+                            text: prompt-editable ? "  (Enter / Esc)" : "";
+                            color: #777777;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
 
                 click-area := TouchArea {
@@ -320,6 +358,10 @@ export component MainWindow inherits Window {
     callback pane-cycled(int);
     // Whether the selected contents row previewed as an archive.
     in property <bool> content-is-archive;
+    // The prompt a pending operation is waiting on, and the row it applies to.
+    in property <string> content-prompt-text;
+    in property <int> content-prompt-row: -1;
+    in property <bool> content-prompt-editable;
 
     forward-focus: key-scope;
 
@@ -388,6 +430,9 @@ export component MainWindow inherits Window {
                     delete-requested => { content-delete-requested(); }
                     extract-requested => { content-extract-requested(); }
                     extract-enabled: content-is-archive;
+                    prompt-text: content-prompt-text;
+                    prompt-row: content-prompt-row;
+                    prompt-editable: content-prompt-editable;
                     new-folder-requested => { new-folder-requested(); }
                     new-file-requested => { new-file-requested(); }
                 }
