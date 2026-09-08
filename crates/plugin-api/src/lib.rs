@@ -105,4 +105,31 @@ pub trait PluginPresentation: Send + Sync {
         let _ = data;
         None
     }
+
+    /// The file's text, when this type can be edited as text. `None` for a
+    /// type that is not text, or for a view holding only part of one.
+    ///
+    /// GUIDANCE.md §3 gives every plugin a "viewer, editor"; this is the
+    /// editor half's input. The default reads the convention the whole
+    /// catalogue already follows on the wire - a `content` string holding
+    /// the file's text, and a `truncated` flag saying whether that is all
+    /// of it - so a text plugin is editable without writing anything, and a
+    /// plugin whose data is shaped differently overrides.
+    ///
+    /// **A truncated view is never editable.** Every text plugin caps what
+    /// it reads, and saving a capped view back would silently discard
+    /// everything past the cap. Absent means "not truncated", since a view
+    /// that never truncates has no reason to carry the flag.
+    fn editable_text(&self, data: &serde_json::Value) -> Option<String> {
+        let truncated = data
+            .get("truncated")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if truncated {
+            return None;
+        }
+        data.get("content")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    }
 }

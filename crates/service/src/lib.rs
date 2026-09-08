@@ -300,6 +300,8 @@ enum Undoable {
     /// Remove what an operation created: a copy's destination, a new file
     /// or folder, an extracted directory.
     Remove { path: PathBuf },
+    /// Put a file's previous text back, undoing an edit.
+    Restore { path: PathBuf, content: String },
 }
 
 thread_local! {
@@ -354,6 +356,11 @@ pub fn undo() -> io::Result<()> {
             let result = trash::delete(&path).map_err(|err| io::Error::other(err.to_string()));
             ("undo_create", targets, result)
         }
+        Undoable::Restore { path, content } => {
+            let targets = vec![path.display().to_string()];
+            let result = write_atomically(&path, &content);
+            ("undo_edit", targets, result)
+        }
     };
     journal(operation, &targets, &result);
     result
@@ -405,6 +412,53 @@ pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
         &[from.display().to_string(), to.display().to_string()],
         &result,
     );
+    result
+}
+
+/// Writes `content` to `path` by writing a temporary file beside it and
+/// renaming it into place, so an interrupted write leaves the original
+/// intact rather than a half-written file.
+fn write_atomically(path: &Path, content: &str) -> io::Result<()> {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".rse-write");
+    let temporary = PathBuf::from(temporary);
+    fs::write(&temporary, content)?;
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            // Leave nothing behind if the rename is the part that failed.
+            let _ = fs::remove_file(&temporary);
+            Err(err)
+        }
+    }
+}
+
+/// Replaces the text of the existing file at `path`, journaling the attempt.
+/// Refuses a path that is not already a file: an editor saves over something
+/// it opened, and creating one is `create_file`'s job.
+///
+/// # Errors
+/// Returns an error if `path` is not an existing file, or the write fails.
+pub fn write_file(path: &Path, content: &str) -> io::Result<()> {
+    let result = (|| {
+        if !fs::metadata(path)?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a file", path.display()),
+            ));
+        }
+        // Read the old text first: without it the edit cannot be undone, and
+        // an edit that cannot be undone is the one operation here that
+        // destroys work rather than moving it.
+        let previous = fs::read_to_string(path)?;
+        write_atomically(path, content)?;
+        remember_undo(Some(Undoable::Restore {
+            path: path.to_path_buf(),
+            content: previous,
+        }));
+        Ok(())
+    })();
+    journal("write_file", &[path.display().to_string()], &result);
     result
 }
 
@@ -529,6 +583,9 @@ pub fn handle_request(request: &Request) -> Response {
             respond_to_operation(create_directory(Path::new(path)))
         }
         Request::CreateFile { path } => respond_to_operation(create_file(Path::new(path))),
+        Request::WriteFile { path, content } => {
+            respond_to_operation(write_file(Path::new(path), content))
+        }
         Request::Undo => respond_to_operation(undo()),
     }
 }
@@ -571,7 +628,7 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 mod tests {
     use super::{
         bind, copy, create_directory, create_file, delete, extract, handle_request, journal_to,
-        list_directory, open, rename, serve_one, undo, view_file,
+        list_directory, open, rename, serve_one, undo, view_file, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -802,6 +859,56 @@ mod tests {
         rename(&path, &path).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn writing_replaces_a_file_s_text_and_the_edit_can_be_undone() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "before").unwrap();
+
+        write_file(&path, "after").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "after");
+
+        undo().unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "before",
+            "an edit is the one operation that destroys work, so it undoes"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn writing_refuses_a_path_that_is_not_an_existing_file() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+
+        // A directory, and a file that is not there at all.
+        assert!(write_file(&dir, "text").is_err());
+        assert!(write_file(&dir.join("absent.txt"), "text").is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_temporary_file_beside_the_original() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let absent = dir.join("absent.txt");
+
+        let _ = write_file(&absent, "text");
+
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(leftovers.is_empty(), "nothing left behind: {leftovers:?}");
 
         fs::remove_dir_all(&dir).unwrap();
     }

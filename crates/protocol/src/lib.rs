@@ -72,6 +72,14 @@ pub enum Request {
         /// The path of the directory to create.
         path: String,
     },
+    /// Replaces the text of an existing file. Journaled, and undoable: the
+    /// service keeps what was there before.
+    WriteFile {
+        /// The file to write. Must already exist; this never creates one.
+        path: String,
+        /// Its new contents.
+        content: String,
+    },
     /// Undoes the immediately preceding operation, if it can be undone.
     /// The service holds what that is; a front end only asks.
     Undo,
