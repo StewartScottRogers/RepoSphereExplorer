@@ -260,7 +260,7 @@ pub enum Pane {
 #[derive(Debug)]
 enum Mode {
     Normal,
-    ConfirmDelete { path: PathBuf, name: String },
+    ConfirmDelete { paths: Vec<PathBuf>, name: String },
     RenameInput { path: PathBuf, input: String },
     CopyInput { path: PathBuf, input: String },
     ExtractInput { path: PathBuf, input: String },
@@ -467,6 +467,12 @@ pub struct App {
     history_index: usize,
     /// What Ctrl+C or Ctrl+X put aside for the next Ctrl+V.
     clipboard: Option<(PathBuf, ClipboardMode)>,
+    /// Every selected contents row. `content_selected` is the lead row -
+    /// the one the preview and the rename/copy prompts act on - and is kept
+    /// inside this set whenever the set is non-empty.
+    selection: std::collections::BTreeSet<usize>,
+    /// The row a Shift range extends from.
+    anchor: usize,
     status: Option<String>,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
@@ -523,6 +529,8 @@ impl App {
             history: Vec::new(),
             history_index: 0,
             clipboard: None,
+            selection: std::collections::BTreeSet::new(),
+            anchor: 0,
             status: None,
             focus: Pane::Folders,
             pending_contents: None,
@@ -614,6 +622,11 @@ impl App {
                     .take()
                     .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
                     .unwrap_or(0);
+                self.anchor = self.content_selected;
+                self.selection.clear();
+                if !self.contents.is_empty() {
+                    self.selection.insert(self.content_selected);
+                }
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
@@ -650,19 +663,40 @@ impl App {
 
     /// Asks for confirmation before deleting the selected contents row.
     pub fn request_delete(&mut self) {
-        if let Some((path, name)) = self.selected_entry_path() {
-            self.mode = Mode::ConfirmDelete { path, name };
+        let indices = self.selected_indices();
+        if indices.is_empty() {
+            return;
         }
+        let dir = self.selected_dir_path();
+        let paths: Vec<PathBuf> = indices
+            .iter()
+            .filter_map(|index| self.contents.get(*index))
+            .map(|entry| dir.join(&entry.name))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let name = match indices.len() {
+            1 => self
+                .contents
+                .get(indices[0])
+                .map_or_else(String::new, |entry| entry.name.clone()),
+            count => format!("{count} items"),
+        };
+        self.mode = Mode::ConfirmDelete { paths, name };
     }
 
     /// Confirms a pending delete confirmation, sending the delete request.
     pub fn confirm_delete(&mut self) {
-        let Mode::ConfirmDelete { path, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
+        let Mode::ConfirmDelete { paths, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
         else {
             return;
         };
         let request = Request::Delete {
-            paths: vec![path.to_string_lossy().into_owned()],
+            paths: paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
         };
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("deleting...".to_owned());
@@ -931,9 +965,78 @@ impl App {
     pub fn select_content(&mut self, index: usize) {
         if index < self.contents.len() {
             self.content_selected = index;
+            self.anchor = index;
+            self.selection.clear();
+            self.selection.insert(index);
             self.focus = Pane::Contents;
             self.load_file_view();
         }
+    }
+
+    /// Ctrl+click: adds `index` to the selection, or takes it out again if it
+    /// was already in. The lead row moves onto whatever was clicked, or onto
+    /// another selected row when the lead itself is deselected.
+    pub fn toggle_content(&mut self, index: usize) {
+        if index >= self.contents.len() {
+            return;
+        }
+        self.focus = Pane::Contents;
+        self.anchor = index;
+        if self.selection.remove(&index) {
+            // Deselecting the lead row hands the lead to another selected
+            // one, so the preview keeps showing something that is selected.
+            if index == self.content_selected
+                && let Some(next) = self.selection.iter().next().copied()
+            {
+                self.content_selected = next;
+            }
+        } else {
+            self.selection.insert(index);
+            self.content_selected = index;
+        }
+        self.load_file_view();
+    }
+
+    /// Shift+click: selects every row between the anchor and `index`.
+    pub fn extend_selection_to(&mut self, index: usize) {
+        if index >= self.contents.len() {
+            return;
+        }
+        let (low, high) = if self.anchor <= index {
+            (self.anchor, index)
+        } else {
+            (index, self.anchor)
+        };
+        self.selection = (low..=high).collect();
+        self.content_selected = index;
+        self.focus = Pane::Contents;
+        self.load_file_view();
+    }
+
+    /// Ctrl+A: selects every row in the folder.
+    pub fn select_all(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
+            return;
+        }
+        self.selection = (0..self.contents.len()).collect();
+        self.focus = Pane::Contents;
+    }
+
+    /// Every selected row, in listing order.
+    fn selected_indices(&self) -> Vec<usize> {
+        self.selection.iter().copied().collect()
+    }
+
+    /// How many rows are selected.
+    #[must_use]
+    pub fn selected_count(&self) -> usize {
+        self.selection.len()
+    }
+
+    /// Whether contents row `index` is part of the selection.
+    #[must_use]
+    pub fn is_selected(&self, index: usize) -> bool {
+        self.selection.contains(&index)
     }
 
     /// Drills into contents row `index` if it is a directory, expanding and
@@ -1429,6 +1532,10 @@ impl App {
         let noun = if count == 1 { "item" } else { "items" };
         let total_size: u64 = self.contents.iter().map(|entry| entry.size).sum();
         let header = format!("{count} {noun}, {}", format_size(total_size));
+        let selected = self.selected_count();
+        if selected > 1 {
+            return format!("{header} — {selected} selected");
+        }
         match self.contents.get(self.content_selected) {
             Some(entry) => format!(
                 "{header} — selected: {} ({} of {count})",
@@ -1480,6 +1587,116 @@ mod tests {
                 modified: *modified,
             })
             .collect()
+    }
+
+    /// Four rows, with the second selected.
+    fn app_with_four_rows() -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[
+                    ("a.txt", false),
+                    ("b.txt", false),
+                    ("c.txt", false),
+                    ("d.txt", false),
+                ]),
+            }),
+        );
+        app.select_content(1);
+        app
+    }
+
+    #[test]
+    fn ctrl_click_adds_a_row_to_the_selection_and_clicking_it_again_removes_it() {
+        let mut app = app_with_four_rows();
+        assert_eq!(app.selected_count(), 1);
+
+        app.toggle_content(3);
+        assert_eq!(app.selected_count(), 2);
+        assert!(app.is_selected(1));
+        assert!(app.is_selected(3));
+
+        app.toggle_content(1);
+        assert_eq!(app.selected_count(), 1, "the first row drops out again");
+        assert!(!app.is_selected(1));
+        assert!(app.is_selected(3));
+    }
+
+    #[test]
+    fn shift_click_selects_the_range_from_the_anchor() {
+        let mut app = app_with_four_rows();
+
+        app.extend_selection_to(3);
+
+        assert_eq!(app.selected_count(), 3);
+        assert!(!app.is_selected(0));
+        for index in 1..=3 {
+            assert!(app.is_selected(index), "row {index} is in the range");
+        }
+    }
+
+    #[test]
+    fn shift_click_backwards_selects_the_range_the_other_way() {
+        let mut app = app_with_four_rows();
+        app.select_content(2);
+
+        app.extend_selection_to(0);
+
+        assert_eq!(app.selected_count(), 3);
+        for index in 0..=2 {
+            assert!(app.is_selected(index));
+        }
+        assert!(!app.is_selected(3));
+    }
+
+    #[test]
+    fn a_plain_click_drops_back_to_a_single_row() {
+        let mut app = app_with_four_rows();
+        app.extend_selection_to(3);
+        assert_eq!(app.selected_count(), 3);
+
+        app.select_content(0);
+
+        assert_eq!(app.selected_count(), 1);
+        assert!(app.is_selected(0));
+    }
+
+    #[test]
+    fn ctrl_a_selects_every_row_and_the_status_bar_counts_them() {
+        let mut app = app_with_four_rows();
+
+        app.select_all();
+
+        assert_eq!(app.selected_count(), 4);
+        assert!(
+            app.status_text().ends_with("4 selected"),
+            "{}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn deleting_a_multi_row_selection_confirms_once_and_sends_every_path() {
+        let mut app = app_with_four_rows();
+        app.extend_selection_to(3);
+
+        app.request_delete();
+        assert_eq!(app.prompt_text(), "Delete 3 items?  (y / n)");
+
+        app.confirm_delete();
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(app.status_text(), "deleting...");
+    }
+
+    #[test]
+    fn deleting_a_single_row_still_names_it() {
+        let mut app = app_with_four_rows();
+
+        app.request_delete();
+
+        assert_eq!(app.prompt_text(), "Delete b.txt?  (y / n)");
     }
 
     #[test]

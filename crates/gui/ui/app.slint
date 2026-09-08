@@ -106,6 +106,9 @@ export struct ContentRow {
     size: string,
     kind: string,
     modified: string,
+    // Whether this row is part of the selection. With Ctrl and Shift in play
+    // that is no longer "the one row whose index matches".
+    selected: bool,
 }
 
 // One column heading in the contents pane's details view: clickable to sort,
@@ -201,6 +204,26 @@ component ColumnHeader inherits Rectangle {
     }
 }
 
+// A draggable divider between two panes. Reports how far it was dragged so
+// the window can widen one pane and narrow the next.
+component Splitter inherits Rectangle {
+    callback dragged(length);
+
+    width: 5px;
+    background: split-touch.has-hover || split-touch.pressed ? Theme.accent : Theme.border;
+
+    split-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: ew-resize;
+        moved => {
+            if (self.pressed) {
+                dragged(self.mouse-x - self.pressed-x);
+            }
+        }
+    }
+}
+
 component ContextMenuItem inherits Rectangle {
     in property <string> label;
     in property <bool> item-enabled: true;
@@ -255,6 +278,8 @@ component ContentsPane inherits Rectangle {
     in property <int> prompt-row;
     in property <bool> prompt-editable;
     callback row-clicked(int);
+    callback row-ctrl-clicked(int);
+    callback row-shift-clicked(int);
     callback row-double-clicked(int);
     callback open-requested();
     callback rename-requested();
@@ -344,9 +369,10 @@ component ContentsPane inherits Rectangle {
                 width: 100%;
                 min-height: max(rows.length * row-height, root.height - 22px - header-height);
 
-                Rectangle {
-                    y: selected >= 0 ? selected * row-height : 0px;
-                    height: selected >= 0 ? row-height : 0px;
+                for row[i] in rows: Rectangle {
+                    y: i * row-height;
+                    height: row.selected ? row-height : 0px;
+                    width: 100%;
                     background: Theme.accent;
                 }
 
@@ -359,7 +385,7 @@ component ContentsPane inherits Rectangle {
                         padding-right: 4px;
                         Text {
                             text: row.glyph + " " + row.name;
-                            color: i == selected ? Theme.on-accent : Palette.foreground;
+                            color: row.selected ? Theme.on-accent : Palette.foreground;
                             overflow: elide;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
@@ -367,7 +393,7 @@ component ContentsPane inherits Rectangle {
                         }
                         Text {
                             text: row.size;
-                            color: i == selected ? Theme.on-accent : Theme.dim-text;
+                            color: row.selected ? Theme.on-accent : Theme.dim-text;
                             width: size-column;
                             horizontal-alignment: right;
                             vertical-alignment: center;
@@ -375,7 +401,7 @@ component ContentsPane inherits Rectangle {
                         }
                         Text {
                             text: row.kind;
-                            color: i == selected ? Theme.on-accent : Theme.dim-text;
+                            color: row.selected ? Theme.on-accent : Theme.dim-text;
                             width: kind-column;
                             overflow: elide;
                             horizontal-alignment: right;
@@ -384,7 +410,7 @@ component ContentsPane inherits Rectangle {
                         }
                         Text {
                             text: row.modified;
-                            color: i == selected ? Theme.on-accent : Theme.dim-text;
+                            color: row.selected ? Theme.on-accent : Theme.dim-text;
                             width: modified-column;
                             overflow: elide;
                             horizontal-alignment: right;
@@ -429,17 +455,23 @@ component ContentsPane inherits Rectangle {
                 click-area := TouchArea {
                     width: 100%;
                     height: 100%;
-                    clicked => {
-                        if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
-                            row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
-                        }
-                    }
                     double-clicked => {
                         if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                             row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
                         }
                     }
                     pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                            if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                                if (event.modifiers.control) {
+                                    row-ctrl-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                } else if (event.modifiers.shift) {
+                                    row-shift-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                } else {
+                                    row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                }
+                            }
+                        }
                         if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
                             if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                                 row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
@@ -560,6 +592,8 @@ export component MainWindow inherits Window {
     callback folder-row-clicked(int);
     callback folder-row-double-clicked(int);
     callback content-row-clicked(int);
+    callback content-row-ctrl-clicked(int);
+    callback content-row-shift-clicked(int);
     callback content-row-double-clicked(int);
     callback content-open-requested();
     callback content-rename-requested();
@@ -598,6 +632,11 @@ export component MainWindow inherits Window {
     callback clipboard-cut-requested();
     callback clipboard-paste-requested();
     callback refresh-requested();
+    callback select-all-requested();
+    // Pane widths, moved by the splitters between them. The file pane takes
+    // whatever the other two leave.
+    property <length> folders-width: 240px;
+    property <length> contents-width: 470px;
     callback edge-requested(int);
 
     forward-focus: key-scope;
@@ -624,6 +663,8 @@ export component MainWindow inherits Window {
                 back-requested();
             } else if (event.modifiers.alt && event.text == Key.RightArrow) {
                 forward-requested();
+            } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
+                select-all-requested();
             } else if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
                 clipboard-copy-requested();
             } else if (event.modifiers.control && (event.text == "x" || event.text == "X")) {
@@ -714,17 +755,26 @@ export component MainWindow inherits Window {
                     focused: focus-pane == 0;
                     rows: folder-rows;
                     selected: folder-selected;
-                    horizontal-stretch: 25;
+                    width: folders-width;
+                    horizontal-stretch: 0;
                     row-clicked(i) => { folder-row-clicked(i); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
+                }
+                Splitter {
+                    dragged(delta) => {
+                        folders-width = clamp(folders-width + delta, 120px, root.width - contents-width - 200px);
+                    }
                 }
                 ContentsPane {
                     title: "Contents";
                     focused: focus-pane == 1;
                     rows: content-rows;
                     selected: content-selected;
-                    horizontal-stretch: 35;
+                    width: contents-width;
+                    horizontal-stretch: 0;
                     row-clicked(i) => { content-row-clicked(i); }
+                    row-ctrl-clicked(i) => { content-row-ctrl-clicked(i); }
+                    row-shift-clicked(i) => { content-row-shift-clicked(i); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
                     open-requested => { content-open-requested(); }
                     rename-requested => { content-rename-requested(); }
@@ -741,8 +791,13 @@ export component MainWindow inherits Window {
                     new-folder-requested => { new-folder-requested(); }
                     new-file-requested => { new-file-requested(); }
                 }
+                Splitter {
+                    dragged(delta) => {
+                        contents-width = clamp(contents-width + delta, 200px, root.width - folders-width - 160px);
+                    }
+                }
                 Rectangle {
-                    horizontal-stretch: 40;
+                    horizontal-stretch: 1;
                     border-width: 1px;
                     border-color: focus-pane == 2 ? Theme.accent : Theme.border;
                     VerticalLayout {

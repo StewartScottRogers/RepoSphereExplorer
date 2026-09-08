@@ -21,12 +21,14 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_content_rows(ModelRc::new(VecModel::from(
         app.content_rows()
             .into_iter()
-            .map(|row| ContentRow {
+            .enumerate()
+            .map(|(index, row)| ContentRow {
                 glyph: row.glyph.into(),
                 name: row.name.into(),
                 size: row.size.into(),
                 kind: row.kind.into(),
                 modified: row.modified.into(),
+                selected: app.is_selected(index),
             })
             .collect::<Vec<_>>(),
     )));

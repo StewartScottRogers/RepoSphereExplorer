@@ -31,6 +31,7 @@ fn row(name: &str) -> ContentRow {
         size: SharedString::new(),
         kind: SharedString::new(),
         modified: SharedString::new(),
+        selected: false,
     }
 }
 
