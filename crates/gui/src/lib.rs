@@ -122,6 +122,10 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     let graphic = app.file_graphic().as_ref().and_then(graphic_image);
     ui.set_file_has_graphic(graphic.is_some());
     ui.set_file_graphic(graphic.unwrap_or_default());
+    ui.set_file_views(string_model(
+        app.file_views().into_iter().map(str::to_owned).collect(),
+    ));
+    ui.set_file_view_index(row_index(app.file_view_index()));
     ui.set_file_text(app.file_text().into());
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());

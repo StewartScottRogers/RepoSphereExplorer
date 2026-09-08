@@ -71,6 +71,13 @@ pub enum Graphic {
     Svg(String),
 }
 
+/// The view every type offers: the plugin's own rendering of the file.
+pub const PREVIEW_VIEW: &str = "Preview";
+
+/// The view a type carrying the file's text offers alongside its preview:
+/// that text, as the file holds it.
+pub const TEXT_VIEW: &str = "Text";
+
 /// The presentation half of a file-type plugin: turns the core half's view
 /// data into lines of text a front end can render, without ever touching
 /// raw file bytes.
@@ -106,6 +113,48 @@ pub trait PluginPresentation: Send + Sync {
         None
     }
 
+    /// The views this type offers for `data`, in the order a front end
+    /// should present them. Never empty: the first is what the pane shows
+    /// until the reader asks for another.
+    ///
+    /// GUIDANCE.md §2.4 makes the File pane "supplied entirely by the
+    /// file-type plugin", but a type could only ever offer one rendering,
+    /// so every source-language plugin prepends its outline to the file's
+    /// text: one list of lines is all it had. The default here reads the
+    /// same `content` convention [`Self::editable_text`] does, so a type
+    /// carrying its text also offers that text plainly, without the
+    /// plugin's commentary, at no per-plugin cost. A plugin with more to
+    /// show overrides both this and [`Self::present_view`].
+    ///
+    /// Truncation does not remove the plain view the way it removes the
+    /// editor: saving part of a file back would discard the rest, but
+    /// reading part of one is exactly what a long file needs.
+    fn views(&self, data: &serde_json::Value) -> Vec<&'static str> {
+        if data
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+        {
+            vec![PREVIEW_VIEW, TEXT_VIEW]
+        } else {
+            vec![PREVIEW_VIEW]
+        }
+    }
+
+    /// Renders the view named `view`, which is one of [`Self::views`].
+    ///
+    /// An unrecognised name falls back to [`Self::present`] rather than
+    /// erroring: a front end asking for a view this type does not offer is
+    /// a front-end bug, and a preview is a better answer than a blank pane.
+    fn present_view(&self, view: &str, data: &serde_json::Value) -> Vec<String> {
+        if view == TEXT_VIEW
+            && let Some(text) = data.get("content").and_then(serde_json::Value::as_str)
+        {
+            return text.lines().map(str::to_owned).collect();
+        }
+        self.present(data)
+    }
+
     /// The file's text, when this type can be edited as text. `None` for a
     /// type that is not text, or for a view holding only part of one.
     ///
@@ -131,5 +180,117 @@ pub trait PluginPresentation: Send + Sync {
         data.get("content")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PREVIEW_VIEW, PluginPresentation, TEXT_VIEW};
+
+    /// A type carrying its text on the wire, like the 56 that do.
+    struct Textish;
+
+    impl PluginPresentation for Textish {
+        fn name(&self) -> &'static str {
+            "textish"
+        }
+        fn present(&self, _data: &serde_json::Value) -> Vec<String> {
+            vec!["functions: main".to_owned(), "fn main() {}".to_owned()]
+        }
+    }
+
+    /// A type with nothing to read as text, like the 25 that carry none.
+    struct Binaryish;
+
+    impl PluginPresentation for Binaryish {
+        fn name(&self) -> &'static str {
+            "binaryish"
+        }
+        fn present(&self, _data: &serde_json::Value) -> Vec<String> {
+            vec!["3 pages".to_owned()]
+        }
+    }
+
+    /// A type that renders a view of its own rather than taking the default.
+    struct Tabular;
+
+    impl PluginPresentation for Tabular {
+        fn name(&self) -> &'static str {
+            "tabular"
+        }
+        fn present(&self, _data: &serde_json::Value) -> Vec<String> {
+            vec!["2 rows".to_owned()]
+        }
+        fn views(&self, _data: &serde_json::Value) -> Vec<&'static str> {
+            vec![PREVIEW_VIEW, "Table"]
+        }
+        fn present_view(&self, view: &str, data: &serde_json::Value) -> Vec<String> {
+            if view == "Table" {
+                return vec!["a | b".to_owned()];
+            }
+            self.present(data)
+        }
+    }
+
+    fn with_content(content: &str, truncated: bool) -> serde_json::Value {
+        serde_json::json!({ "content": content, "truncated": truncated })
+    }
+
+    #[test]
+    fn a_type_carrying_text_offers_that_text_as_a_second_view() {
+        let data = with_content("fn main() {}\n", false);
+        assert_eq!(Textish.views(&data), vec![PREVIEW_VIEW, TEXT_VIEW]);
+        assert_eq!(
+            Textish.present_view(TEXT_VIEW, &data),
+            vec!["fn main() {}".to_owned()],
+            "the file's own text, without the outline the preview prepends"
+        );
+    }
+
+    #[test]
+    fn a_type_carrying_no_text_offers_one_view() {
+        let data = serde_json::json!({ "pages": 3 });
+        assert_eq!(Binaryish.views(&data), vec![PREVIEW_VIEW]);
+    }
+
+    #[test]
+    fn a_truncated_view_still_reads_as_text_though_it_cannot_be_edited() {
+        let data = with_content("first half", true);
+        assert_eq!(Textish.views(&data), vec![PREVIEW_VIEW, TEXT_VIEW]);
+        assert_eq!(
+            Textish.present_view(TEXT_VIEW, &data),
+            vec!["first half".to_owned()]
+        );
+        assert_eq!(
+            Textish.editable_text(&data),
+            None,
+            "reading part of a file is fine; saving part of one back is not"
+        );
+    }
+
+    #[test]
+    fn the_first_view_is_the_plugins_own_rendering() {
+        let data = with_content("fn main() {}", false);
+        assert_eq!(
+            Textish.present_view(PREVIEW_VIEW, &data),
+            Textish.present(&data)
+        );
+    }
+
+    #[test]
+    fn a_view_this_type_does_not_offer_falls_back_to_its_preview() {
+        let data = with_content("fn main() {}", false);
+        assert_eq!(Textish.present_view("Hex", &data), Textish.present(&data));
+    }
+
+    #[test]
+    fn a_plugin_that_overrides_is_rendered_by_its_own_implementation() {
+        let data = with_content("a,b\n1,2\n", false);
+        assert_eq!(Tabular.views(&data), vec![PREVIEW_VIEW, "Table"]);
+        assert_eq!(
+            Tabular.present_view("Table", &data),
+            vec!["a | b".to_owned()],
+            "the override decides, not the content convention"
+        );
     }
 }

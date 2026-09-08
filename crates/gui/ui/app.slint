@@ -713,6 +713,15 @@ export component MainWindow inherits Window {
     in property <[ContentRow]> content-rows;
     in property <int> content-selected;
     in property <string> file-text;
+    // The views the previewed type offers, and which one is showing. A type
+    // offering one view gets no switcher, so it looks as it always did.
+    in property <[string]> file-views;
+    in property <int> file-view-index;
+    // Tab metrics, shared by what is drawn and what a click is mapped
+    // through, so the two cannot disagree.
+    private property <length> tab-w: 80px;
+    private property <length> tab-h: 24px;
+    callback file-view-selected(int);
     // A picture for the previewed file, when its type is one.
     in property <image> file-graphic;
     in property <bool> file-has-graphic;
@@ -1140,6 +1149,43 @@ export component MainWindow inherits Window {
                         if editing-file: TextEdit {
                             text <=> edit-text;
                             wrap: no-wrap;
+                        }
+
+                        // The type's own views, when it offers more than
+                        // one. A tab per view, in the plugin's order, at a
+                        // fixed width - one TouchArea over the strip maps a
+                        // click back to its tab, for the same Slint for-loop
+                        // bug the row panes work around: a TouchArea created
+                        // inside a for loop never reports a click.
+                        if !editing-file && file-views.length > 1: Rectangle {
+                            height: tab-h;
+                            background: Theme.panel;
+                            Rectangle {
+                                x: file-view-index * tab-w;
+                                y: 0;
+                                width: tab-w;
+                                height: tab-h;
+                                background: Theme.accent;
+                            }
+                            for name[i] in file-views: Text {
+                                text: name;
+                                x: i * tab-w;
+                                y: 0;
+                                width: tab-w;
+                                height: tab-h;
+                                color: i == file-view-index
+                                    ? Theme.on-accent
+                                    : Palette.foreground;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+                            tab-touch := TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => {
+                                    file-view-selected(clamp(floor(tab-touch.mouse-x / tab-w), 0, file-views.length - 1));
+                                }
+                            }
                         }
 
                         // A picture, for the types that are one, above the

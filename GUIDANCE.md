@@ -118,7 +118,10 @@ Windows Explorer-inspired, mouse-first, keyboard as a peer:
 2. **Folder contents view** — list / details / icons, sortable columns, marquee
    select, drag-and-drop, context menus, inline rename.
 3. **File pane** — supplied entirely by the file-type plugin: view, edit, and
-   the operations that type offers.
+   the operations that type offers. A type may offer more than one view of
+   the same file - its own rendering, and the file's plain text where it has
+   one - which the pane switches between; the plugin names them and decides
+   how many there are.
 
 Splitters are draggable and persisted. Everything reachable by mouse is also
 reachable by keyboard.
