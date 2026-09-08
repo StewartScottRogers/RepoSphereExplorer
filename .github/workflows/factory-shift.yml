@@ -43,9 +43,60 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # The action installs the agent runtime itself, at a version hard-coded
+      # inside it, and that install is intermittent: on 2026-09-08 the same
+      # build 2.1.265 installed cleanly at 22:13 and, at 22:23, reported
+      # "successfully installed" while leaving nothing at
+      # /home/runner/.local/bin/claude - which the agent only discovered
+      # after starting. Two re-runs failed the same way. See work order #298.
+      #
+      # So this installs the runtime, at a version this repository names,
+      # and refuses to continue unless the binary is actually there and
+      # runs. A station that cannot review is better than a station that
+      # says nothing and leaves a red mark for somebody to notice.
+      - name: Install the agent runtime
+        id: agent-runtime
+        env:
+          # Bump deliberately, together with the other workflows that pin it.
+          CLAUDE_CODE_VERSION: "2.1.265"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "Installing Claude Code ${CLAUDE_CODE_VERSION}, attempt ${attempt}..."
+            if curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_CODE_VERSION}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error::could not install the agent runtime after three attempts"
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
+
+          # Where the installer is expected to leave it, then the places it
+          # has been known to leave it instead. Finding it is better than
+          # being right about where it should have been.
+          binary=""
+          for candidate in "${HOME}/.local/bin/claude" "${HOME}/.claude/bin/claude" "$(command -v claude || true)"; do
+            if [ -n "${candidate}" ] && [ -x "${candidate}" ]; then
+              binary="${candidate}"
+              break
+            fi
+          done
+
+          if [ -z "${binary}" ]; then
+            echo "::error::the installer reported success but left no runnable binary (work order #298)"
+            ls -la "${HOME}/.local/bin" "${HOME}/.claude/bin" 2>/dev/null || true
+            exit 1
+          fi
+
+          "${binary}" --version
+          echo "path=${binary}" >> "${GITHUB_OUTPUT}"
+
       - uses: anthropics/claude-code-action@v1
         id: build
         with:
+          path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # day-shift.yml dispatches this workflow via `gh workflow run` using
           # the default GITHUB_TOKEN, so the triggering actor is
