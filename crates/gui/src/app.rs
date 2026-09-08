@@ -354,6 +354,28 @@ pub struct App {
     after_operation: Option<AfterOperation>,
 }
 
+/// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
+/// `fs::canonicalize` adds one there, and it then travels through every
+/// request into the messages the status bar shows, where `\\?\C:\dir\file`
+/// is noise the reader has to look past. Only a drive path is unwrapped: a
+/// verbatim UNC path (`\\?\UNC\server\share`) needs its prefix to keep
+/// resolving, and paths on other platforms never carry one.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let unwrapped = {
+        let text = path.to_string_lossy();
+        text.strip_prefix(r"\\?\")
+            .filter(|rest| {
+                let mut chars = rest.chars();
+                matches!(
+                    (chars.next(), chars.next(), chars.next()),
+                    (Some(drive), Some(':'), Some('\\')) if drive.is_ascii_alphabetic()
+                )
+            })
+            .map(str::to_owned)
+    };
+    unwrapped.map_or(path, PathBuf::from)
+}
+
 impl App {
     /// Starts a new explorer rooted at `root`, and kicks off loading its
     /// contents in the background.
@@ -366,7 +388,7 @@ impl App {
         // tree at "" and leaving every future request targeting a path
         // that resolves to nothing. Falls back to the given root if it
         // doesn't exist yet or canonicalization otherwise fails.
-        let root = std::fs::canonicalize(&root).unwrap_or(root);
+        let root = strip_verbatim_prefix(std::fs::canonicalize(&root).unwrap_or(root));
         let mut app = Self {
             root: FolderNode::root(root),
             folder_selected: 0,
@@ -886,7 +908,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, content_glyph};
+    use super::{App, PathBuf, content_glyph, strip_verbatim_prefix};
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -1067,6 +1089,24 @@ mod tests {
 
         assert!(app.pending_contents.is_none());
         assert_eq!(app.status_text(), status_before);
+    }
+
+    #[test]
+    fn strips_a_windows_verbatim_prefix_but_leaves_other_paths_alone() {
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\C:\dir\file.txt")),
+            PathBuf::from(r"C:\dir\file.txt")
+        );
+        // A verbatim UNC path needs its prefix to keep resolving, and a
+        // path from any other platform never carries one.
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share")),
+            PathBuf::from(r"\\?\UNC\server\share")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from("/home/user/file.txt")),
+            PathBuf::from("/home/user/file.txt")
+        );
     }
 
     #[test]
