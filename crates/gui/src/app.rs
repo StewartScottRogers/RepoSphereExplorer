@@ -948,6 +948,44 @@ impl App {
         }
     }
 
+    /// The prompt a pending operation is waiting on, or an empty string
+    /// when there is none. The status bar carries this too, but a line at
+    /// the very bottom of the window is easy to miss entirely: every menu
+    /// action except Open answers only there, so choosing one looks like
+    /// nothing happened. The contents pane shows this over the row the
+    /// operation applies to, where the user is already looking.
+    #[must_use]
+    pub fn prompt_text(&self) -> String {
+        match &self.mode {
+            Mode::ConfirmDelete { name, .. } => format!("Delete {name}?  (y / n)"),
+            Mode::RenameInput { input, .. } => format!("Rename to:  {input}"),
+            Mode::CopyInput { input, .. } => format!("Copy to:  {input}"),
+            Mode::ExtractInput { input, .. } => format!("Extract into:  {input}"),
+            Mode::Normal => String::new(),
+        }
+    }
+
+    /// The contents row [`Self::prompt_text`] applies to, or `-1` when no
+    /// prompt is pending.
+    #[must_use]
+    pub fn prompt_row(&self) -> i32 {
+        match &self.mode {
+            Mode::Normal => -1,
+            _ => i32::try_from(self.content_selected).unwrap_or(-1),
+        }
+    }
+
+    /// Whether the pending prompt takes typed text, as opposed to the
+    /// delete confirmation's single y/n keypress. The pane draws a caret
+    /// only for the former.
+    #[must_use]
+    pub fn prompt_is_editable(&self) -> bool {
+        matches!(
+            self.mode,
+            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. }
+        )
+    }
+
     /// Item count, total size, and current selection for the browsed
     /// folder, e.g. `"42 items, 1.2 MB — selected: notes.txt (3 of 42)"`.
     /// Falls back to a usage hint when the folder hasn't loaded any
@@ -1491,6 +1529,32 @@ mod tests {
         );
 
         assert_eq!(app.content_selected(), 2, "the copy, not the first row");
+    }
+
+    #[test]
+    fn a_pending_operation_offers_a_prompt_for_the_row_it_applies_to() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        assert_eq!(app.prompt_text(), "", "nothing pending to begin with");
+        assert_eq!(app.prompt_row(), -1);
+
+        app.handle_key_text("r");
+        assert_eq!(app.prompt_text(), "Rename to:  doomed.txt");
+        assert_eq!(app.prompt_row(), 0);
+        assert!(app.prompt_is_editable());
+
+        app.cancel_pending();
+        app.request_delete();
+        assert_eq!(app.prompt_text(), "Delete doomed.txt?  (y / n)");
+        assert_eq!(app.prompt_row(), 0);
+        assert!(
+            !app.prompt_is_editable(),
+            "a y/n confirmation takes no typing, so it draws no caret"
+        );
+
+        app.decline_delete();
+        assert_eq!(app.prompt_text(), "");
+        assert_eq!(app.prompt_row(), -1);
     }
 
     #[test]

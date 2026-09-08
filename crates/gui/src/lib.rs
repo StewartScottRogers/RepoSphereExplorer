@@ -24,6 +24,9 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());
     ui.set_content_is_archive(app.selected_is_archive());
+    ui.set_content_prompt_text(app.prompt_text().into());
+    ui.set_content_prompt_row(app.prompt_row());
+    ui.set_content_prompt_editable(app.prompt_is_editable());
 }
 
 /// Converts a row index to the `i32` Slint properties expect, saturating
