@@ -36,20 +36,67 @@ fn is_control_keyword(word: &str) -> bool {
     )
 }
 
-/// Extracts the method name from a line that looks like a top-level C#
-/// method definition, e.g. `public void Greet() {` or
-/// `public static void Main(string[] args) {`. Prototypes and calls (which
-/// do not end the line with `{`) and control-flow statements are not
-/// matched.
+/// Words that start a statement rather than a declaration. Without these,
+/// `await repository.SaveAsync(item, token);` reads as a method called
+/// `SaveAsync`.
+fn is_statement_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "await" | "return" | "throw" | "yield" | "var" | "new" | "base" | "this"
+    )
+}
+
+/// The keywords that introduce a type rather than a member.
+const TYPE_KEYWORDS: [&str; 5] = ["class", "record", "struct", "interface", "enum"];
+
+/// Extracts the method name from a line that declares one.
+///
+/// C# convention puts the opening brace on its own line, so requiring a
+/// trailing `{` missed every method written in the style the language's own
+/// guidelines use. A declaration is recognised instead by its shape: a
+/// parameter list, a name, and a return type before it - the whitespace in
+/// `public StockLevel Classify` is what a call like `Classify(item);` does
+/// not have.
 fn parse_method_name(line: &str) -> Option<&str> {
     let trimmed = line.trim();
-    let before_brace = trimmed.strip_suffix('{')?.trim_end();
-    let before_paren = before_brace.strip_suffix(')')?;
+    let head = trimmed
+        .strip_suffix('{')
+        .or_else(|| trimmed.strip_suffix(';'))
+        .unwrap_or(trimmed)
+        .trim_end();
+    // An expression-bodied member: `public int Count() => items.Count;`.
+    // Cutting at the arrow also drops a lambda's body, and what is left of
+    // a statement like `items.Sum(item => item.Total);` no longer ends in a
+    // parameter list, so it is not mistaken for a declaration.
+    let head = head.split("=>").next().unwrap_or(head).trim_end();
+    let before_paren = head.strip_suffix(')')?;
     let open = before_paren.rfind('(')?;
     let head = before_paren[..open].trim_end();
+
+    // An assignment is a call, not a declaration, and a type declaration
+    // belongs in `classes` even when it carries a parameter list, as a
+    // positional record does.
+    if head.contains('=')
+        || TYPE_KEYWORDS
+            .iter()
+            .any(|keyword| head.split_whitespace().any(|word| word == *keyword))
+    {
+        return None;
+    }
+
+    let first = head.split_whitespace().next()?;
+    if is_control_keyword(first) || is_statement_keyword(first) {
+        return None;
+    }
+    // A declaration names a return type before the method name; a call does
+    // not, so it has no whitespace left in its head.
+    if !head.contains(char::is_whitespace) {
+        return None;
+    }
+
     let name_start = head
         .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .map_or(0, |i| i + 1);
+        .map_or(0, |index| index + 1);
     let name = &head[name_start..];
     (!name.is_empty() && !is_control_keyword(name)).then_some(name)
 }
@@ -59,8 +106,20 @@ fn parse_method_name(line: &str) -> Option<&str> {
 /// `sealed`, `abstract`, ...) precede the `class` keyword.
 fn parse_class_name(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
-    let idx = trimmed.find("class ")?;
-    let rest = trimmed[idx + "class ".len()..].trim_start();
+    let (keyword, index) = TYPE_KEYWORDS
+        .iter()
+        .filter_map(|keyword| {
+            trimmed
+                .find(&format!("{keyword} "))
+                .map(|index| (*keyword, index))
+        })
+        .min_by_key(|(_keyword, index)| *index)?;
+    // Only as a declaration keyword: `record` and `class` also appear as
+    // ordinary words inside a line of prose or a string.
+    if index > 0 && !trimmed[..index].ends_with(char::is_whitespace) {
+        return None;
+    }
+    let rest = trimmed[index + keyword.len() + 1..].trim_start();
     let end = rest
         .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .unwrap_or(rest.len());
@@ -301,6 +360,50 @@ mod tests {
             plugin_api::PluginCore::extensions(&crate::CSharpCore),
             plugin_api::PluginPresentation::extensions(&crate::CSharpPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
+        );
+    }
+
+    #[test]
+    fn extracts_methods_written_in_the_brace_on_its_own_line_style() {
+        // C#'s own guidelines put the opening brace on the next line, so
+        // requiring a trailing `{` missed every method written the way the
+        // language recommends.
+        let source = concat!(
+            "public class InventoryService\n{\n",
+            "    public InventoryService(IStockRepository repository)\n    {\n    }\n\n",
+            "    public async Task<decimal> TotalValueAsync(CancellationToken token)\n",
+            "    {\n        var items = await _repository.ListAsync(token);\n",
+            "        return items.Sum(item => item.TotalValue);\n    }\n\n",
+            "    public StockLevel Classify(StockItem item) {\n    }\n\n",
+            "    public int Count() => _items.Count;\n",
+            "}\n",
+        );
+
+        let (methods, classes) = super::parse_definitions(source);
+
+        assert_eq!(
+            methods,
+            vec!["InventoryService", "TotalValueAsync", "Classify", "Count"],
+            "a call or an assignment is not a declaration"
+        );
+        assert_eq!(classes, vec!["InventoryService"]);
+    }
+
+    #[test]
+    fn a_record_or_struct_is_a_type_not_a_method() {
+        let source = concat!(
+            "public record StockItem(string Sku, int Quantity);\n",
+            "public struct Money\n{\n}\n",
+            "public interface IStockRepository\n{\n}\n",
+            "public enum StockLevel\n{\n}\n",
+        );
+
+        let (methods, classes) = super::parse_definitions(source);
+
+        assert!(methods.is_empty(), "got {methods:?}");
+        assert_eq!(
+            classes,
+            vec!["StockItem", "Money", "IStockRepository", "StockLevel"]
         );
     }
 }

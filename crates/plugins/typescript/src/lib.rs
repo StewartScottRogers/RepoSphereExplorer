@@ -29,10 +29,41 @@ pub struct TypeScriptView {
     pub interfaces: Vec<String>,
 }
 
+/// Words that may stand between the start of a line and the declaration it
+/// carries. A module that exports what it declares - which is most of them -
+/// puts at least one of these in front of every name worth listing.
+const MODIFIERS: [&str; 9] = [
+    "export",
+    "default",
+    "declare",
+    "abstract",
+    "async",
+    "public",
+    "private",
+    "protected",
+    "static",
+];
+
+/// `line` with its leading modifiers removed, so a declaration can be
+/// recognised by its keyword wherever the modifiers left it.
+fn without_modifiers(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    while let Some((word, tail)) = rest.split_once(char::is_whitespace) {
+        if MODIFIERS.contains(&word) {
+            rest = tail.trim_start();
+        } else {
+            break;
+        }
+    }
+    rest
+}
+
 /// Extracts the identifier following `keyword` (`"function"`, `"class"`, or
 /// `"interface"`) at the start of `line`, if present.
 fn top_level_name<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
-    let rest = line.strip_prefix(keyword)?.strip_prefix(' ')?;
+    let rest = without_modifiers(line)
+        .strip_prefix(keyword)?
+        .strip_prefix(' ')?;
     let end = rest
         .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .unwrap_or(rest.len());
@@ -313,5 +344,25 @@ mod tests {
             plugin_api::PluginPresentation::extensions(&crate::TypeScriptPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    #[test]
+    fn extracts_declarations_that_carry_modifiers() {
+        // A module that exports what it declares - which is most of them -
+        // reported nothing at all while this matched at line start only.
+        let source = concat!(
+            "export interface TaskSpec {\n  id: string;\n}\n\n",
+            "export type TaskId = string;\n\n",
+            "export abstract class Scheduler {\n}\n\n",
+            "export default class Runner {\n}\n\n",
+            "export async function run(): Promise<void> {}\n",
+            "function local(): void {}\n",
+        );
+
+        let (functions, classes, interfaces) = super::parse_definitions(source);
+
+        assert_eq!(functions, vec!["run", "local"]);
+        assert_eq!(classes, vec!["Scheduler", "Runner"]);
+        assert_eq!(interfaces, vec!["TaskSpec"]);
     }
 }

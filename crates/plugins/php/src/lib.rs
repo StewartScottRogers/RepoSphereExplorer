@@ -30,8 +30,36 @@ pub struct PhpView {
 /// Extracts the identifier that follows `keyword` at the start of `line`,
 /// e.g. `top_level_name("function greet(", "function")` returns
 /// `Some("greet")`.
+/// Words that may precede a declaration. A class member is written
+/// `public function handle(`, and every one of them was invisible while
+/// this matched only at the very start of a line.
+const MODIFIERS: [&str; 7] = [
+    "public",
+    "private",
+    "protected",
+    "static",
+    "final",
+    "abstract",
+    "readonly",
+];
+
+/// `line` with its indentation and leading modifiers removed.
+fn without_modifiers(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    while let Some((word, tail)) = rest.split_once(char::is_whitespace) {
+        if MODIFIERS.contains(&word) {
+            rest = tail.trim_start();
+        } else {
+            break;
+        }
+    }
+    rest
+}
+
 fn top_level_name<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
-    let rest = line.strip_prefix(keyword)?.strip_prefix(' ')?;
+    let rest = without_modifiers(line)
+        .strip_prefix(keyword)?
+        .strip_prefix(' ')?;
     let end = rest
         .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .unwrap_or(rest.len());
@@ -246,5 +274,23 @@ mod tests {
             plugin_api::PluginPresentation::extensions(&crate::PhpPresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    #[test]
+    fn extracts_members_that_carry_visibility_modifiers() {
+        let source = concat!(
+            "<?php\n\n",
+            "final class Router\n{\n",
+            "    public function dispatch(Request $request): Response\n    {\n    }\n\n",
+            "    private static function compile(string $pattern): string\n    {\n    }\n",
+            "}\n\n",
+            "abstract class Middleware\n{\n}\n",
+            "function helper() {}\n",
+        );
+
+        let (functions, classes) = super::parse_definitions(source);
+
+        assert_eq!(functions, vec!["dispatch", "compile", "helper"]);
+        assert_eq!(classes, vec!["Router", "Middleware"]);
     }
 }
