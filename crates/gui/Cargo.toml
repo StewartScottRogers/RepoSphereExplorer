@@ -104,6 +104,13 @@ updater = { path = "../updater" }
 [build-dependencies]
 slint-build = "1.17"
 
+# Slint's own UI-testing backend: simulates a windowing system so a test can
+# dispatch pointer events through Slint's hit-testing without a display. It
+# deliberately does not follow semver, so it is pinned with `=` to the exact
+# Slint version, as its README requires.
+[dev-dependencies]
+i-slint-backend-testing = "=1.17.1"
+
 # Not `[lints] workspace = true`: Slint's generated component code (from
 # build.rs, included into this crate) contains its own #[allow(unsafe_code)]
 # for FFI vtable plumbing. A crate-level `forbid` rejects that even though
