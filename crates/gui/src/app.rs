@@ -388,6 +388,15 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
+/// Whether a clipboard entry was copied or cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardMode {
+    /// Ctrl+C: paste leaves the original in place.
+    Copy,
+    /// Ctrl+X: paste moves it.
+    Cut,
+}
+
 /// Which column the contents pane is sorted by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
@@ -456,6 +465,8 @@ pub struct App {
     /// sits. Explorer's arrows walk this rather than the folder tree.
     history: Vec<PathBuf>,
     history_index: usize,
+    /// What Ctrl+C or Ctrl+X put aside for the next Ctrl+V.
+    clipboard: Option<(PathBuf, ClipboardMode)>,
     status: Option<String>,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
@@ -511,6 +522,7 @@ impl App {
             sort_ascending: true,
             history: Vec::new(),
             history_index: 0,
+            clipboard: None,
             status: None,
             focus: Pane::Folders,
             pending_contents: None,
@@ -822,12 +834,10 @@ impl App {
             Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
                 self.type_char(text);
             }
-            Mode::Normal => match text {
-                "r" => self.request_rename(),
-                "c" => self.request_copy(),
-                "x" => self.request_extract(),
-                _ => {}
-            },
+            // Explorer's type-ahead: a typed letter jumps to a name, it is
+            // not a command. Rename, copy and extract are on F2, Ctrl+C and
+            // the context menu.
+            Mode::Normal => self.type_ahead(text),
         }
     }
 
@@ -985,6 +995,106 @@ impl App {
         self.browse(parent);
     }
 
+    /// Ctrl+C: puts the selected entry aside for a later paste, leaving it
+    /// where it is.
+    pub fn copy_to_clipboard(&mut self) {
+        self.set_clipboard(ClipboardMode::Copy);
+    }
+
+    /// Ctrl+X: puts the selected entry aside to be moved by a later paste.
+    pub fn cut_to_clipboard(&mut self) {
+        self.set_clipboard(ClipboardMode::Cut);
+    }
+
+    fn set_clipboard(&mut self, mode: ClipboardMode) {
+        let Some((path, name)) = self.selected_entry_path() else {
+            return;
+        };
+        let verb = match mode {
+            ClipboardMode::Copy => "copied",
+            ClipboardMode::Cut => "cut",
+        };
+        self.clipboard = Some((path, mode));
+        self.status = Some(format!("{name} {verb}"));
+    }
+
+    /// Ctrl+V: copies or moves whatever the clipboard holds into the folder
+    /// being browsed. The destination name is de-duplicated, since both
+    /// operations refuse to replace an existing entry.
+    pub fn paste_from_clipboard(&mut self) {
+        let Some((source, mode)) = self.clipboard.clone() else {
+            return;
+        };
+        let Some(name) = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+        let destination_dir = self.selected_dir_path();
+        // Pasting back into the folder it came from has to land beside the
+        // original rather than on it.
+        let name = if source.parent() == Some(destination_dir.as_path()) {
+            dedup_name(&self.contents, &name)
+        } else {
+            name
+        };
+        let destination = destination_dir.join(&name);
+        let from = source.to_string_lossy().into_owned();
+        let to = destination.to_string_lossy().into_owned();
+        let request = match mode {
+            ClipboardMode::Copy => Request::Copy { from, to },
+            ClipboardMode::Cut => Request::Rename { from, to },
+        };
+        if mode == ClipboardMode::Cut {
+            self.clipboard = None;
+        }
+        self.reselect = Some(name);
+        self.pending_operation = Some(spawn_request(request));
+        self.status = Some("working...".to_owned());
+    }
+
+    /// F5: re-reads the folder being browsed.
+    pub fn refresh(&mut self) {
+        self.reselect = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
+        self.load_contents_for_selected();
+    }
+
+    /// Moves the contents selection to the first or last row.
+    pub fn select_edge(&mut self, last: bool) {
+        if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
+            return;
+        }
+        let index = if last { self.contents.len() - 1 } else { 0 };
+        self.select_content(index);
+    }
+
+    /// Jumps to the first entry whose name starts with `prefix`, matched
+    /// without regard to case, the way Explorer's type-ahead does. Search
+    /// starts after the current row so repeated presses cycle through the
+    /// matches.
+    pub fn type_ahead(&mut self, prefix: &str) {
+        if !matches!(self.mode, Mode::Normal) || prefix.is_empty() {
+            return;
+        }
+        let prefix = prefix.to_lowercase();
+        let count = self.contents.len();
+        let found = (1..=count)
+            .map(|step| (self.content_selected + step) % count)
+            .find(|index| {
+                self.contents[*index]
+                    .name
+                    .to_lowercase()
+                    .starts_with(&prefix)
+            });
+        if let Some(index) = found {
+            self.select_content(index);
+        }
+    }
+
     /// Re-roots the tree at `path` and browses it, without touching history.
     fn browse(&mut self, path: PathBuf) {
         self.root = FolderNode::root(path);
@@ -1070,7 +1180,7 @@ impl App {
                     // `Z:` and the separator after it name one place.
                     Some((label, target)) => {
                         label.push(std::path::MAIN_SEPARATOR);
-                        *target = so_far.clone();
+                        target.clone_from(&so_far);
                     }
                     None => crumbs.push((text, so_far.clone())),
                 },
@@ -1370,6 +1480,117 @@ mod tests {
                 modified: *modified,
             })
             .collect()
+    }
+
+    #[test]
+    fn typing_a_letter_jumps_to_the_next_name_starting_with_it() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[
+                    ("apple.txt", false),
+                    ("Banana.txt", false),
+                    ("blueberry.txt", false),
+                    ("cherry.txt", false),
+                ]),
+            }),
+        );
+        app.select_content(0);
+
+        app.handle_key_text("b");
+        assert_eq!(app.content_selected(), 1, "matched without regard to case");
+
+        app.handle_key_text("b");
+        assert_eq!(
+            app.content_selected(),
+            2,
+            "a repeat cycles to the next match"
+        );
+
+        app.handle_key_text("z");
+        assert_eq!(
+            app.content_selected(),
+            2,
+            "no match leaves the selection put"
+        );
+    }
+
+    #[test]
+    fn copying_then_pasting_in_the_same_folder_asks_for_a_name_beside_the_original() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+
+        app.copy_to_clipboard();
+        assert_eq!(app.status_text(), "doomed.txt copied");
+
+        app.paste_from_clipboard();
+
+        assert!(app.pending_operation.is_some(), "a copy request went out");
+        assert_eq!(app.status_text(), "working...");
+    }
+
+    #[test]
+    fn cutting_clears_the_clipboard_once_it_has_been_pasted() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.cut_to_clipboard();
+        assert_eq!(app.status_text(), "doomed.txt cut");
+
+        app.paste_from_clipboard();
+        assert!(app.pending_operation.is_some());
+
+        app.cancel_pending();
+        app.paste_from_clipboard();
+        assert!(
+            app.pending_operation.is_none(),
+            "a cut is spent by the paste that moved it"
+        );
+    }
+
+    #[test]
+    fn pasting_with_an_empty_clipboard_does_nothing() {
+        let mut app = app_with_one_content_entry();
+
+        app.paste_from_clipboard();
+
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn home_and_end_jump_to_the_first_and_last_row() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.select_content(1);
+
+        app.select_edge(true);
+        assert_eq!(app.content_selected(), 2);
+
+        app.select_edge(false);
+        assert_eq!(app.content_selected(), 0);
+    }
+
+    #[test]
+    fn page_movement_clamps_at_the_ends_of_the_list() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.select_content(0);
+
+        app.move_selection(10);
+        assert_eq!(app.content_selected(), 2);
+
+        app.move_selection(-10);
+        assert_eq!(app.content_selected(), 0);
     }
 
     #[test]
@@ -1807,9 +2028,9 @@ mod tests {
     }
 
     #[test]
-    fn r_key_prefills_the_rename_input_with_the_current_name() {
+    fn requesting_a_rename_prefills_the_input_with_the_current_name() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
         assert_eq!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
     }
 
@@ -1844,7 +2065,7 @@ mod tests {
     #[test]
     fn editing_the_rename_input_appends_and_backspaces() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.backspace();
         app.handle_key_text("!");
@@ -1855,7 +2076,7 @@ mod tests {
     #[test]
     fn returning_confirms_a_rename_and_sends_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.handle_return();
 
@@ -1866,7 +2087,7 @@ mod tests {
     #[test]
     fn escaping_a_rename_input_cancels_without_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.cancel_pending();
 
@@ -1875,16 +2096,16 @@ mod tests {
     }
 
     #[test]
-    fn c_key_prefills_the_copy_input_with_a_name_that_does_not_collide() {
+    fn requesting_a_copy_prefills_a_name_that_does_not_collide() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
         assert_eq!(app.status_text(), "Copy to: doomed.txt (2)_  (Enter/Esc)");
     }
 
     #[test]
     fn returning_confirms_a_copy_and_sends_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
 
         app.handle_return();
 
@@ -1904,16 +2125,16 @@ mod tests {
     }
 
     #[test]
-    fn x_key_prefills_the_extract_input_with_the_archive_stem() {
+    fn requesting_an_extract_prefills_the_archive_stem() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
         assert_eq!(app.status_text(), "Extract to: bundle_  (Enter/Esc)");
     }
 
     #[test]
     fn returning_confirms_an_extract_and_sends_a_request() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
 
         app.handle_return();
 
@@ -1924,7 +2145,7 @@ mod tests {
     #[test]
     fn returning_with_an_emptied_rename_input_does_not_send_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
         for _ in 0.."doomed.txt".len() {
             app.backspace();
         }
@@ -1935,9 +2156,9 @@ mod tests {
     }
 
     #[test]
-    fn typed_letters_that_are_also_hotkeys_are_appended_during_text_input() {
+    fn typed_letters_are_appended_during_text_input() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.handle_key_text("x");
 
@@ -1972,7 +2193,7 @@ mod tests {
     #[test]
     fn arrow_keys_are_ignored_while_a_name_is_being_typed() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("r");
+        app.request_rename();
 
         app.move_selection(1);
         app.cycle_focus(1);
@@ -2012,7 +2233,7 @@ mod tests {
             }),
         );
         app.select_content(1);
-        app.handle_key_text("c");
+        app.request_copy();
         for _ in 0.."b.txt (2)".len() {
             app.backspace();
         }
@@ -2038,7 +2259,7 @@ mod tests {
         assert_eq!(app.prompt_text(), "", "nothing pending to begin with");
         assert_eq!(app.prompt_row(), -1);
 
-        app.handle_key_text("r");
+        app.request_rename();
         assert_eq!(app.prompt_text(), "Rename to:  doomed.txt");
         assert_eq!(app.prompt_row(), 0);
         assert!(app.prompt_is_editable());
@@ -2111,7 +2332,7 @@ mod tests {
     #[test]
     fn returning_with_an_emptied_copy_input_does_not_send_a_request() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
         for _ in 0.."doomed.txt (2)".len() {
             app.backspace();
         }
@@ -2124,7 +2345,7 @@ mod tests {
     #[test]
     fn returning_with_an_emptied_extract_input_does_not_send_a_request() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
         for _ in 0.."bundle".len() {
             app.backspace();
         }
@@ -2137,7 +2358,7 @@ mod tests {
     #[test]
     fn cancel_pending_during_copy_input_returns_to_normal() {
         let mut app = app_with_one_content_entry();
-        app.handle_key_text("c");
+        app.request_copy();
 
         app.cancel_pending();
 
@@ -2148,7 +2369,7 @@ mod tests {
     #[test]
     fn cancel_pending_during_extract_input_returns_to_normal() {
         let mut app = app_with_one_archive_entry();
-        app.handle_key_text("x");
+        app.request_extract();
 
         app.cancel_pending();
 

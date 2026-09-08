@@ -565,6 +565,12 @@ export component MainWindow inherits Window {
     callback back-requested();
     callback forward-requested();
     callback breadcrumb-requested(int);
+    // Windows clipboard and list navigation keys.
+    callback clipboard-copy-requested();
+    callback clipboard-cut-requested();
+    callback clipboard-paste-requested();
+    callback refresh-requested();
+    callback edge-requested(int);
 
     forward-focus: key-scope;
 
@@ -586,6 +592,26 @@ export component MainWindow inherits Window {
                 new-folder-requested();
             } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
                 new-file-requested();
+            } else if (event.modifiers.alt && event.text == Key.LeftArrow) {
+                back-requested();
+            } else if (event.modifiers.alt && event.text == Key.RightArrow) {
+                forward-requested();
+            } else if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
+                clipboard-copy-requested();
+            } else if (event.modifiers.control && (event.text == "x" || event.text == "X")) {
+                clipboard-cut-requested();
+            } else if (event.modifiers.control && (event.text == "v" || event.text == "V")) {
+                clipboard-paste-requested();
+            } else if (event.text == Key.F5) {
+                refresh-requested();
+            } else if (event.text == Key.Home) {
+                edge-requested(0);
+            } else if (event.text == Key.End) {
+                edge-requested(1);
+            } else if (event.text == Key.PageUp) {
+                selection-moved(-10);
+            } else if (event.text == Key.PageDown) {
+                selection-moved(10);
             } else if (event.text == Key.UpArrow) {
                 selection-moved(-1);
             } else if (event.text == Key.DownArrow) {
