@@ -165,8 +165,10 @@ jobs:
 
           # Reviews on this exact head: an approval of an earlier push is
           # not a review of what is being merged now.
-          query='[.[] | select(.commit_id == $sha)] | length'
-          landed=$(gh api "repos/${REPO}/pulls/${PR}/reviews" --jq "${query}" --arg sha "${HEAD_SHA}")
+          # `gh api --jq` takes a filter, not jq's `--arg`, so the head goes
+          # into the filter itself.
+          filter="[.[] | select(.commit_id == \"${HEAD_SHA}\")] | length"
+          landed=$(gh api "repos/${REPO}/pulls/${PR}/reviews" --jq "${filter}")
 
           if [ "${landed}" -gt 0 ]; then
             echo "Reviewed: ${landed} review(s) on ${HEAD_SHA}."
