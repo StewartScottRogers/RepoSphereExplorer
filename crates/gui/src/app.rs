@@ -1007,6 +1007,23 @@ impl App {
         self.load_file_view();
     }
 
+    /// A rubber-band drag: selects every row the band covered, inclusive.
+    /// The lead row is the far end, where the pointer was released, so a
+    /// following Shift+click extends from there.
+    pub fn select_range(&mut self, from: usize, to: usize) {
+        if self.contents.is_empty() {
+            return;
+        }
+        let last = self.contents.len() - 1;
+        let (from, to) = (from.min(last), to.min(last));
+        let (low, high) = if from <= to { (from, to) } else { (to, from) };
+        self.selection = (low..=high).collect();
+        self.content_selected = to;
+        self.anchor = from;
+        self.focus = Pane::Contents;
+        self.load_file_view();
+    }
+
     /// Ctrl+A: selects every row in the folder.
     pub fn select_all(&mut self) {
         if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
@@ -1176,6 +1193,17 @@ impl App {
         self.reselect = Some(name);
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("working...".to_owned());
+    }
+
+    /// Ctrl+Z: asks the service to reverse the last operation. The service
+    /// holds what that is; this front end only asks, and reloads whatever
+    /// comes back.
+    pub fn undo(&mut self) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        self.pending_operation = Some(spawn_request(Request::Undo));
+        self.status = Some("undoing...".to_owned());
     }
 
     /// F5: re-reads the folder being browsed.
@@ -1681,6 +1709,52 @@ mod tests {
 
         assert_eq!(app.selected_count(), 1);
         assert!(app.is_selected(0));
+    }
+
+    #[test]
+    fn a_marquee_selects_every_row_it_covered() {
+        let mut app = app_with_four_rows();
+
+        app.select_range(1, 3);
+
+        assert_eq!(app.selected_count(), 3);
+        assert!(!app.is_selected(0));
+        for index in 1..=3 {
+            assert!(app.is_selected(index));
+        }
+        assert_eq!(
+            app.content_selected(),
+            3,
+            "the lead row is where the drag ended"
+        );
+    }
+
+    #[test]
+    fn a_marquee_dragged_upwards_covers_the_same_rows() {
+        let mut app = app_with_four_rows();
+
+        app.select_range(3, 1);
+
+        assert_eq!(app.selected_count(), 3);
+        for index in 1..=3 {
+            assert!(app.is_selected(index));
+        }
+        assert_eq!(
+            app.content_selected(),
+            1,
+            "the lead row is still where the drag ended"
+        );
+    }
+
+    #[test]
+    fn a_marquee_past_the_last_row_stops_at_it() {
+        let mut app = app_with_four_rows();
+
+        app.select_range(2, 99);
+
+        assert_eq!(app.selected_count(), 2);
+        assert!(app.is_selected(2));
+        assert!(app.is_selected(3));
     }
 
     #[test]

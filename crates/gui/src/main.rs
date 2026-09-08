@@ -36,6 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Rc::new(RefCell::new(App::new(root)));
     let ui = MainWindow::new()?;
+    if let Some(widths) = gui::settings::load_pane_widths() {
+        ui.set_folders_width(widths.folders);
+        ui.set_contents_width(widths.contents);
+    }
     sync_ui(&ui, &app.borrow());
 
     wire_callbacks(&ui, &app);
@@ -52,6 +56,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ui.run()?;
+    // Written on the way out rather than on every drag: a splitter moves a
+    // pixel at a time, and the layout only has to survive to the next run.
+    gui::settings::save_pane_widths(gui::settings::PaneWidths {
+        folders: ui.get_folders_width(),
+        contents: ui.get_contents_width(),
+    });
     Ok(())
 }
 
@@ -100,6 +110,19 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_row_event!(on_content_row_clicked, select_content);
     on_row_event!(on_content_row_ctrl_clicked, toggle_content);
     on_row_event!(on_content_row_shift_clicked, extend_selection_to);
+
+    {
+        // A marquee reports the first and last row it covered.
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_content_rows_marqueed(move |from, to| {
+            let mut app = app.borrow_mut();
+            app.select_range(index(from), index(to));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
     on_row_event!(on_content_row_double_clicked, open_content);
 
     macro_rules! on_delta_event {
@@ -166,6 +189,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_clipboard_paste_requested, paste_from_clipboard);
     on_event!(on_refresh_requested, refresh);
     on_event!(on_select_all_requested, select_all);
+    on_event!(on_undo_requested, undo);
 
     ui.on_quit_requested(|| {
         // The menu's File > Exit; the window's own close button goes through

@@ -72,6 +72,9 @@ pub enum Request {
         /// The path of the directory to create.
         path: String,
     },
+    /// Undoes the immediately preceding operation, if it can be undone.
+    /// The service holds what that is; a front end only asks.
+    Undo,
     /// Creates a new, empty file at `path`. Journaled.
     CreateFile {
         /// The path of the file to create.

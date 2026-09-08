@@ -358,6 +358,9 @@ component ContentsPane inherits Rectangle {
     callback row-clicked(int);
     callback row-ctrl-clicked(int);
     callback row-shift-clicked(int);
+    // A rubber-band drag, reported once on release as the row range it
+    // covered.
+    callback rows-marqueed(int, int);
     callback row-double-clicked(int);
     callback open-requested();
     callback rename-requested();
@@ -381,6 +384,12 @@ component ContentsPane inherits Rectangle {
     property <length> menu-item-height: 24px;
     // Which context menu is open: -1 none, 0 on a row, 1 on empty space.
     property <int> open-context: -1;
+    // The rubber band, while one is being dragged. `band-from` is where the
+    // press landed and `band-to` follows the pointer; a drag shorter than a
+    // row is treated as a click, not a marquee.
+    property <bool> banding;
+    property <length> band-from;
+    property <length> band-to;
     // Details-view columns. The three trailing ones are fixed and Name
     // stretches into the rest, in both the header and every row, so the two
     // line up without either deriving a width from the pane's own width -
@@ -544,9 +553,28 @@ component ContentsPane inherits Rectangle {
                     }
                 }
 
+                if banding: Rectangle {
+                    y: min(band-from, band-to);
+                    height: abs(band-to - band-from);
+                    width: 100%;
+                    background: Theme.accent.transparentize(0.75);
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                }
+
                 click-area := TouchArea {
                     width: 100%;
                     height: 100%;
+                    moved => {
+                        if (click-area.pressed) {
+                            band-to = click-area.mouse-y;
+                            // A press that has not travelled a row's height
+                            // is still a click; only past that is it a drag.
+                            if (abs(band-to - band-from) >= row-height) {
+                                banding = true;
+                            }
+                        }
+                    }
                     double-clicked => {
                         if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                             row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
@@ -558,8 +586,18 @@ component ContentsPane inherits Rectangle {
                             // item's own handler runs first when the press
                             // landed on one.
                             open-context = -1;
+                            band-from = click-area.mouse-y;
+                            band-to = click-area.mouse-y;
                         }
-                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                        if (event.kind == PointerEventKind.up && banding) {
+                            banding = false;
+                            if (rows.length > 0) {
+                                rows-marqueed(
+                                    clamp(floor(min(band-from, band-to) / row-height), 0, rows.length - 1),
+                                    clamp(floor(max(band-from, band-to) / row-height), 0, rows.length - 1));
+                            }
+                        }
+                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left && !banding) {
                             if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                                 if (event.modifiers.control) {
                                     row-ctrl-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
@@ -683,6 +721,7 @@ export component MainWindow inherits Window {
     callback content-row-clicked(int);
     callback content-row-ctrl-clicked(int);
     callback content-row-shift-clicked(int);
+    callback content-rows-marqueed(int, int);
     callback content-row-double-clicked(int);
     callback content-open-requested();
     callback content-rename-requested();
@@ -727,10 +766,13 @@ export component MainWindow inherits Window {
     callback clipboard-paste-requested();
     callback refresh-requested();
     callback select-all-requested();
+    callback undo-requested();
     // Pane widths, moved by the splitters between them. The file pane takes
     // whatever the other two leave.
-    property <length> folders-width: 240px;
-    property <length> contents-width: 470px;
+    // `in-out` so the widths can be restored at startup and read back when
+    // the window closes; the splitters move them in between.
+    in-out property <length> folders-width: 240px;
+    in-out property <length> contents-width: 470px;
     // Which menu is open: -1 none, then File, Edit, View, Help. A menu is a
     // property rather than a `PopupWindow` so it can be sized, placed and
     // clicked like any other element.
@@ -762,6 +804,8 @@ export component MainWindow inherits Window {
                 back-requested();
             } else if (event.modifiers.alt && event.text == Key.RightArrow) {
                 forward-requested();
+            } else if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
+                undo-requested();
             } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
                 select-all-requested();
             } else if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
@@ -876,6 +920,10 @@ export component MainWindow inherits Window {
                     }
                     CommandSeparator { }
                     CommandButton {
+                        label: "Undo";
+                        activated => { undo-requested(); }
+                    }
+                    CommandButton {
                         label: "Refresh";
                         activated => { refresh-requested(); }
                     }
@@ -962,6 +1010,7 @@ export component MainWindow inherits Window {
                     row-clicked(i) => { content-row-clicked(i); }
                     row-ctrl-clicked(i) => { content-row-ctrl-clicked(i); }
                     row-shift-clicked(i) => { content-row-shift-clicked(i); }
+                    rows-marqueed(from, to) => { content-rows-marqueed(from, to); }
                     row-double-clicked(i) => { content-row-double-clicked(i); }
                     open-requested => { content-open-requested(); }
                     rename-requested => { content-rename-requested(); }
@@ -1078,11 +1127,17 @@ export component MainWindow inherits Window {
             x: 44px;
             y: 24px;
             width: 200px;
-            height: 4 * menu-item-h;
+            height: 5 * menu-item-h;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
+                ContextMenuItem {
+                    label: "Undo";
+                    shortcut: "Ctrl+Z";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; undo-requested(); }
+                }
                 ContextMenuItem {
                     label: "Cut";
                     shortcut: "Ctrl+X";
