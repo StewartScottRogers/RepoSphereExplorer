@@ -40,6 +40,9 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_content_prompt_editable(app.prompt_is_editable());
     ui.set_content_sort_column(app.sort_column());
     ui.set_content_sort_ascending(app.sort_ascending());
+    ui.set_breadcrumbs(string_model(app.breadcrumbs()));
+    ui.set_can_go_back(app.can_go_back());
+    ui.set_can_go_forward(app.can_go_forward());
 }
 
 /// Converts a row index to the `i32` Slint properties expect, saturating

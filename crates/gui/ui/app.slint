@@ -81,6 +81,61 @@ export struct ContentRow {
 
 // One column heading in the contents pane's details view: clickable to sort,
 // showing the direction arrow when it is the active column.
+// A toolbar button: a square glyph button that greys out when it has nowhere
+// to go, the way Explorer's back and forward arrows do.
+component NavButton inherits Rectangle {
+    in property <string> glyph;
+    in property <bool> button-enabled: true;
+    callback activated();
+
+    width: 28px;
+    background: button-enabled && nav-touch.has-hover ? #3a3a3a : transparent;
+    border-radius: 3px;
+
+    Text {
+        text: glyph;
+        color: button-enabled ? #dddddd : #666666;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    nav-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: button-enabled;
+        clicked => { activated(); }
+    }
+}
+
+// One segment of the address bar's path, clickable to jump to that folder.
+component Crumb inherits Rectangle {
+    in property <string> label;
+    in property <bool> last;
+    callback activated();
+
+    background: crumb-touch.has-hover && !last ? #3a3a3a : transparent;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        Text {
+            text: label;
+            color: last ? #e5c07b : #dddddd;
+            vertical-alignment: center;
+        }
+    }
+
+    crumb-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: !last;
+        clicked => { activated(); }
+    }
+}
+
 component ColumnHeader inherits Rectangle {
     in property <string> label;
     in property <bool> active;
@@ -503,6 +558,13 @@ export component MainWindow inherits Window {
     in property <int> content-sort-column;
     in property <bool> content-sort-ascending;
     callback content-sort-requested(int);
+    // Address bar and history navigation.
+    in property <[string]> breadcrumbs;
+    in property <bool> can-go-back;
+    in property <bool> can-go-forward;
+    callback back-requested();
+    callback forward-requested();
+    callback breadcrumb-requested(int);
 
     forward-focus: key-scope;
 
@@ -539,11 +601,56 @@ export component MainWindow inherits Window {
         }
 
         VerticalLayout {
-            HorizontalLayout {
-                height: 28px;
-                Button {
-                    text: "Up";
-                    clicked => { parent-requested(); }
+            Rectangle {
+                height: 30px;
+                background: #262626;
+                HorizontalLayout {
+                    padding: 2px;
+                    spacing: 2px;
+                    NavButton {
+                        // U+2190 / U+2192 / U+2191: the plain arrows.
+                        glyph: "\u{2190}";
+                        button-enabled: can-go-back;
+                        activated => { back-requested(); }
+                    }
+                    NavButton {
+                        glyph: "\u{2192}";
+                        button-enabled: can-go-forward;
+                        activated => { forward-requested(); }
+                    }
+                    NavButton {
+                        glyph: "\u{2191}";
+                        activated => { parent-requested(); }
+                    }
+                    Rectangle {
+                        width: 6px;
+                    }
+                    // The address bar: one clickable segment per path
+                    // component, the last being the folder being browsed.
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: #1e1e1e;
+                        border-width: 1px;
+                        border-color: #3a3a3a;
+                        border-radius: 3px;
+                        HorizontalLayout {
+                            padding-left: 2px;
+                            padding-right: 2px;
+                            alignment: start;
+                            for crumb[i] in breadcrumbs: HorizontalLayout {
+                                Crumb {
+                                    label: crumb;
+                                    last: i == breadcrumbs.length - 1;
+                                    activated => { breadcrumb-requested(i); }
+                                }
+                                Text {
+                                    text: i == breadcrumbs.length - 1 ? "" : "\u{203A}";
+                                    color: #777777;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             HorizontalLayout {

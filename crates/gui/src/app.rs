@@ -452,6 +452,10 @@ pub struct App {
     /// Which column the contents pane is sorted by, and in which direction.
     sort_key: SortKey,
     sort_ascending: bool,
+    /// Folders visited, in order, and where in them Back/Forward currently
+    /// sits. Explorer's arrows walk this rather than the folder tree.
+    history: Vec<PathBuf>,
+    history_index: usize,
     status: Option<String>,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
@@ -505,6 +509,8 @@ impl App {
             reselect: None,
             sort_key: SortKey::Name,
             sort_ascending: true,
+            history: Vec::new(),
+            history_index: 0,
             status: None,
             focus: Pane::Folders,
             pending_contents: None,
@@ -963,6 +969,8 @@ impl App {
         let Some(parent) = self.selected_dir_path().parent().map(PathBuf::from) else {
             return;
         };
+        self.remember_current();
+        self.push_history(parent.clone());
         let rows = self.root.flatten();
         let Some((_, indices)) = rows.get(self.folder_selected).cloned() else {
             return;
@@ -974,9 +982,129 @@ impl App {
             }
             return;
         }
-        self.root = FolderNode::root(parent);
+        self.browse(parent);
+    }
+
+    /// Re-roots the tree at `path` and browses it, without touching history.
+    fn browse(&mut self, path: PathBuf) {
+        self.root = FolderNode::root(path);
         self.folder_selected = 0;
         self.load_contents_for_selected();
+    }
+
+    /// Records `path` as the newest history entry. Anything ahead of the
+    /// current position is dropped, the way a browser discards the forward
+    /// stack once you navigate somewhere new. A repeat of the current entry
+    /// is not recorded.
+    fn push_history(&mut self, path: PathBuf) {
+        if self.history.get(self.history_index) == Some(&path) {
+            return;
+        }
+        if !self.history.is_empty() {
+            self.history.truncate(self.history_index + 1);
+        }
+        self.history.push(path);
+        self.history_index = self.history.len() - 1;
+    }
+
+    /// Records wherever the app is now, so Back has somewhere to return to.
+    /// Called before any navigation that changes the browsed folder.
+    fn remember_current(&mut self) {
+        let current = self.selected_dir_path();
+        if self.history.is_empty() {
+            self.history.push(current);
+            self.history_index = 0;
+        } else {
+            self.push_history(current);
+        }
+    }
+
+    /// Whether Back has an earlier folder to return to.
+    #[must_use]
+    pub const fn can_go_back(&self) -> bool {
+        self.history_index > 0
+    }
+
+    /// Whether Forward has a folder to return to.
+    #[must_use]
+    pub fn can_go_forward(&self) -> bool {
+        self.history_index + 1 < self.history.len()
+    }
+
+    /// Goes back one folder in history.
+    pub fn go_back(&mut self) {
+        if !self.can_go_back() {
+            return;
+        }
+        self.remember_current();
+        self.history_index -= 1;
+        if let Some(path) = self.history.get(self.history_index).cloned() {
+            self.browse(path);
+        }
+    }
+
+    /// Goes forward one folder in history.
+    pub fn go_forward(&mut self) {
+        if !self.can_go_forward() {
+            return;
+        }
+        self.history_index += 1;
+        if let Some(path) = self.history.get(self.history_index).cloned() {
+            self.browse(path);
+        }
+    }
+
+    /// The browsed folder's path as address-bar segments, each paired with
+    /// the path that segment names. A Windows path starts with a prefix and
+    /// a root component (`Z:` then `\`); those are one place, so they are
+    /// one segment.
+    fn breadcrumb_paths(&self) -> Vec<(String, PathBuf)> {
+        let path = self.selected_dir_path();
+        let mut crumbs: Vec<(String, PathBuf)> = Vec::new();
+        let mut so_far = PathBuf::new();
+        for component in path.components() {
+            so_far.push(component);
+            let text = component.as_os_str().to_string_lossy().into_owned();
+            match component {
+                std::path::Component::RootDir => match crumbs.last_mut() {
+                    // `Z:` and the separator after it name one place.
+                    Some((label, target)) => {
+                        label.push(std::path::MAIN_SEPARATOR);
+                        *target = so_far.clone();
+                    }
+                    None => crumbs.push((text, so_far.clone())),
+                },
+                _ => crumbs.push((text, so_far.clone())),
+            }
+        }
+        crumbs
+    }
+
+    /// Labels for the address bar, root first and the browsed folder last.
+    #[must_use]
+    pub fn breadcrumbs(&self) -> Vec<String> {
+        self.breadcrumb_paths()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
+    }
+
+    /// Browses the folder named by breadcrumb `index`.
+    pub fn navigate_to_breadcrumb(&mut self, index: i32) {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let crumbs = self.breadcrumb_paths();
+        let Some((_, target)) = crumbs.get(index) else {
+            return;
+        };
+        if target == &self.selected_dir_path() {
+            return;
+        }
+        let target = target.clone();
+        self.remember_current();
+        self.push_history(target.clone());
+        self.browse(target);
     }
 
     /// Display labels for the folders pane, one per visible tree row.
@@ -1242,6 +1370,69 @@ mod tests {
                 modified: *modified,
             })
             .collect()
+    }
+
+    #[test]
+    fn breadcrumbs_name_each_folder_on_the_way_down_with_the_root_as_one() {
+        let app = App::new(PathBuf::from("/one/two/three"));
+
+        let crumbs = app.breadcrumbs();
+
+        assert_eq!(crumbs.last().map(String::as_str), Some("three"));
+        assert!(
+            crumbs.len() >= 3,
+            "root, then a segment per folder: {crumbs:?}"
+        );
+        assert!(
+            !crumbs.iter().any(String::is_empty),
+            "no blank segment for the root separator: {crumbs:?}"
+        );
+    }
+
+    #[test]
+    fn back_and_forward_walk_the_folders_that_were_visited() {
+        let mut app = App::new(PathBuf::from("/one/two/three"));
+        assert!(!app.can_go_back(), "nowhere to go back to yet");
+        assert!(!app.can_go_forward());
+
+        app.navigate_to_parent();
+        assert_eq!(app.breadcrumbs().last().map(String::as_str), Some("two"));
+        assert!(app.can_go_back());
+        assert!(!app.can_go_forward());
+
+        app.go_back();
+        assert_eq!(app.breadcrumbs().last().map(String::as_str), Some("three"));
+        assert!(app.can_go_forward(), "and forward returns");
+
+        app.go_forward();
+        assert_eq!(app.breadcrumbs().last().map(String::as_str), Some("two"));
+    }
+
+    #[test]
+    fn navigating_somewhere_new_discards_the_forward_stack() {
+        let mut app = App::new(PathBuf::from("/one/two/three"));
+        app.navigate_to_parent();
+        app.go_back();
+        assert!(app.can_go_forward());
+
+        app.navigate_to_breadcrumb(0);
+
+        assert!(
+            !app.can_go_forward(),
+            "a fresh navigation drops what was ahead"
+        );
+        assert!(app.can_go_back());
+    }
+
+    #[test]
+    fn clicking_the_folder_already_shown_in_the_address_bar_does_nothing() {
+        let mut app = App::new(PathBuf::from("/one/two/three"));
+        let before = app.breadcrumbs();
+
+        app.navigate_to_breadcrumb(i32::try_from(before.len()).unwrap() - 1);
+
+        assert_eq!(app.breadcrumbs(), before);
+        assert!(!app.can_go_back(), "and records no history for it");
     }
 
     #[test]
