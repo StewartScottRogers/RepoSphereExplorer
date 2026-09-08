@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["sol"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -74,6 +80,10 @@ fn has_solidity_syntax(text: &str) -> bool {
 pub struct SolidityCore;
 
 impl PluginCore for SolidityCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "solidity"
     }
@@ -117,7 +127,7 @@ impl PluginPresentation for SolidityPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["sol"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -231,5 +241,14 @@ mod tests {
         let lines = SolidityPresentation.present(&data);
 
         assert_eq!(lines, vec!["contracts: Token", "contract Token {", "}"]);
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::SolidityCore),
+            plugin_api::PluginPresentation::extensions(&crate::SolidityPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

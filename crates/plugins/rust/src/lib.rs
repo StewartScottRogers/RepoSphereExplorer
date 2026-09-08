@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["rs"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -81,6 +87,10 @@ fn has_rust_syntax(text: &str) -> bool {
 pub struct RustCore;
 
 impl PluginCore for RustCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "rust"
     }
@@ -126,7 +136,7 @@ impl PluginPresentation for RustPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["rs"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -250,6 +260,15 @@ mod tests {
                 "functions: greet",
                 "struct A;"
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::RustCore),
+            plugin_api::PluginPresentation::extensions(&crate::RustPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

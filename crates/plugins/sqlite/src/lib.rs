@@ -8,6 +8,12 @@ use serde_json::Value;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["sqlite", "sqlite3", "db"];
+
 /// Maximum number of rows read into the view per table; tables with more
 /// are truncated.
 const MAX_ROWS: usize = 200;
@@ -179,6 +185,10 @@ fn present_table(table: &SqliteTable) -> Vec<String> {
 pub struct SqliteCore;
 
 impl PluginCore for SqliteCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "sqlite"
     }
@@ -211,7 +221,7 @@ impl PluginPresentation for SqlitePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["sqlite", "sqlite3", "db"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &Value) -> Vec<String> {
@@ -375,6 +385,15 @@ mod tests {
                 "Alice | 30 ",
                 "Bob   | 25 ",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::SqliteCore),
+            plugin_api::PluginPresentation::extensions(&crate::SqlitePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

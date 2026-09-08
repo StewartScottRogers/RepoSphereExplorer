@@ -6,6 +6,12 @@ use serde_json::Value;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["json"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -123,6 +129,10 @@ fn push_tree_lines(value: &Value, depth: usize, label: &Label<'_>, lines: &mut V
 pub struct JsonCore;
 
 impl PluginCore for JsonCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "json"
     }
@@ -163,7 +173,7 @@ impl PluginPresentation for JsonPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["json"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &Value) -> Vec<String> {
@@ -309,6 +319,15 @@ mod tests {
                 "{ not json",
                 "… (truncated)",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::JsonCore),
+            plugin_api::PluginPresentation::extensions(&crate::JsonPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

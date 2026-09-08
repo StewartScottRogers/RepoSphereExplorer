@@ -6,6 +6,12 @@ use serde_json::Value;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["msgpack", "mpk"];
+
 /// A decoded `MessagePack` value, kept close to `rmpv::Value`'s own shape
 /// rather than converted to a JSON value, since `MessagePack` allows map keys
 /// and integer magnitudes (full `u64`) that JSON's object/number types
@@ -215,6 +221,10 @@ fn convert(value: &rmpv::Value) -> MsgpackValue {
 pub struct MsgpackCore;
 
 impl PluginCore for MsgpackCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "msgpack"
     }
@@ -253,7 +263,7 @@ impl PluginPresentation for MsgpackPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["msgpack", "mpk"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &Value) -> Vec<String> {
@@ -446,5 +456,14 @@ mod tests {
         let lines = MsgpackPresentation.present(&data);
 
         assert_eq!(lines, vec!["could not parse as MessagePack (1 bytes)"]);
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::MsgpackCore),
+            plugin_api::PluginPresentation::extensions(&crate::MsgpackPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

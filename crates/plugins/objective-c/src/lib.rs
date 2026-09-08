@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["m", "mm"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -100,6 +106,10 @@ fn has_objective_c_syntax(text: &str) -> bool {
 pub struct ObjectiveCCore;
 
 impl PluginCore for ObjectiveCCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "objective-c"
     }
@@ -144,7 +154,7 @@ impl PluginPresentation for ObjectiveCPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["m", "mm"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -281,6 +291,15 @@ mod tests {
                 "@interface A : NSObject",
                 "- (void)greet;"
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::ObjectiveCCore),
+            plugin_api::PluginPresentation::extensions(&crate::ObjectiveCPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

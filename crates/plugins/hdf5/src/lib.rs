@@ -7,6 +7,12 @@ use serde_json::Value;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["h5", "hdf5"];
+
 /// HDF5's fixed 8-byte superblock signature, present at the very start of
 /// every HDF5 file.
 const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
@@ -86,6 +92,10 @@ fn render_shape(shape: &[usize]) -> String {
 pub struct Hdf5Core;
 
 impl PluginCore for Hdf5Core {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "hdf5"
     }
@@ -117,7 +127,7 @@ impl PluginPresentation for Hdf5Presentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["h5", "hdf5"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &Value) -> Vec<String> {
@@ -249,5 +259,14 @@ mod tests {
         let lines = Hdf5Presentation.present(&data);
 
         assert_eq!(lines, vec!["no groups or datasets"]);
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::Hdf5Core),
+            plugin_api::PluginPresentation::extensions(&crate::Hdf5Presentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

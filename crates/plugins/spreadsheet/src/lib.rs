@@ -11,6 +11,12 @@ use std::io;
 use std::io::Cursor;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["xls", "xlsx", "ods"];
+
 /// Maximum number of rows read into the view per sheet; sheets with more
 /// are truncated.
 const MAX_ROWS: usize = 200;
@@ -143,6 +149,10 @@ fn present_sheet(sheet: &SpreadsheetSheet) -> Vec<String> {
 pub struct SpreadsheetCore;
 
 impl PluginCore for SpreadsheetCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "spreadsheet"
     }
@@ -176,7 +186,7 @@ impl PluginPresentation for SpreadsheetPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["xls", "xlsx", "ods"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -528,6 +538,15 @@ mod tests {
         assert_eq!(
             lines,
             vec!["Sheet1 (2 rows)", "name  | age", "Alice | 30 ",]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::SpreadsheetCore),
+            plugin_api::PluginPresentation::extensions(&crate::SpreadsheetPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

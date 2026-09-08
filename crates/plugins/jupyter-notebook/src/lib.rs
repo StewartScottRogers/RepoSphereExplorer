@@ -6,6 +6,12 @@ use serde_json::Value;
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["ipynb"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -169,6 +175,10 @@ fn present_cells(cells: &[NotebookCell]) -> Vec<String> {
 pub struct NotebookCore;
 
 impl PluginCore for NotebookCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "jupyter-notebook"
     }
@@ -209,7 +219,7 @@ impl PluginPresentation for NotebookPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["ipynb"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &Value) -> Vec<String> {
@@ -416,6 +426,15 @@ mod tests {
                 "{ \"not\": \"a notebook\" }",
                 "… (truncated)",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::NotebookCore),
+            plugin_api::PluginPresentation::extensions(&crate::NotebookPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

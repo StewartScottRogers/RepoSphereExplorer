@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["groovy", "gradle"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -120,6 +126,10 @@ fn has_groovy_syntax(text: &str) -> bool {
 pub struct GroovyCore;
 
 impl PluginCore for GroovyCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "groovy"
     }
@@ -164,7 +174,7 @@ impl PluginPresentation for GroovyPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["groovy", "gradle"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -297,6 +307,15 @@ mod tests {
         assert_eq!(
             lines,
             vec!["classes: A", "functions: greet", "class A {", "}"]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::GroovyCore),
+            plugin_api::PluginPresentation::extensions(&crate::GroovyPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

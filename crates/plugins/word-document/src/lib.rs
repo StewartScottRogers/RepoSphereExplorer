@@ -10,6 +10,12 @@ use std::io;
 use std::io::Read as _;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["doc", "docx", "odt"];
+
 /// The DOCX-specific internal part path, unique to Word documents (as
 /// opposed to `xl/workbook.xml` for a spreadsheet or `ppt/presentation.xml`
 /// for a presentation) — a marker not used by any sibling plugin. A ZIP
@@ -61,6 +67,10 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 pub struct WordDocumentCore;
 
 impl PluginCore for WordDocumentCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "word-document"
     }
@@ -256,7 +266,7 @@ impl PluginPresentation for WordDocumentPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["doc", "docx", "odt"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -438,5 +448,14 @@ mod tests {
         let lines = WordDocumentPresentation.present(&data);
 
         assert_eq!(lines, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::WordDocumentCore),
+            plugin_api::PluginPresentation::extensions(&crate::WordDocumentPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

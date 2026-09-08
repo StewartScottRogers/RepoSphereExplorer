@@ -16,6 +16,12 @@ use std::io;
 use std::path::Path;
 use wasmparser::{ExternalKind, Parser, Payload, TypeRef};
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["wasm", "wat"];
+
 /// Maximum number of imports/exports listed in the view; modules with more
 /// are truncated, matching the `executable` plugin's own `MAX_ENTRIES`.
 const MAX_ENTRIES: usize = 200;
@@ -96,6 +102,10 @@ pub struct WasmView {
 pub struct WasmCore;
 
 impl PluginCore for WasmCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "wasm"
     }
@@ -197,7 +207,7 @@ impl PluginPresentation for WasmPresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["wasm", "wat"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -395,6 +405,15 @@ mod tests {
                 "  run (func)",
                 "64 bytes on disk",
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::WasmCore),
+            plugin_api::PluginPresentation::extensions(&crate::WasmPresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }

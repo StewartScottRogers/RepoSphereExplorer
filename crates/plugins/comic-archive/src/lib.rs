@@ -11,6 +11,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["cbz", "cbr"];
+
 /// Maximum number of pages listed in the view; comics with more are
 /// truncated, matching `archive`'s own entry limit.
 const MAX_PAGES: usize = 200;
@@ -123,6 +129,10 @@ fn read_rar_pages(path: &Path) -> io::Result<Vec<ComicPage>> {
 pub struct ComicArchiveCore;
 
 impl PluginCore for ComicArchiveCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "comic-archive"
     }
@@ -177,7 +187,7 @@ impl PluginPresentation for ComicArchivePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["cbz", "cbr"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -410,5 +420,14 @@ mod tests {
 
         assert!(ComicArchivePresentation.graphic(&data).is_none());
         assert!(!ComicArchivePresentation.present(&data).is_empty());
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::ComicArchiveCore),
+            plugin_api::PluginPresentation::extensions(&crate::ComicArchivePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
+        );
     }
 }

@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 
+/// The lowercase extensions this type claims, without their dot.
+/// Both halves report these: the presentation half so a listing can
+/// mark the file, the core half so `service` can tell this type from
+/// another whose content heuristic matches the same text.
+pub const EXTENSIONS: &[&str] = &["dockerfile"];
+
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
 
@@ -103,6 +109,10 @@ fn has_dockerfile_syntax(text: &str) -> bool {
 pub struct DockerfileCore;
 
 impl PluginCore for DockerfileCore {
+    fn extensions(&self) -> &'static [&'static str] {
+        EXTENSIONS
+    }
+
     fn name(&self) -> &'static str {
         "dockerfile"
     }
@@ -147,7 +157,7 @@ impl PluginPresentation for DockerfilePresentation {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["dockerfile"]
+        EXTENSIONS
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
@@ -274,6 +284,15 @@ mod tests {
                 "FROM alpine",
                 "EXPOSE 8080"
             ]
+        );
+    }
+
+    #[test]
+    fn both_halves_claim_the_same_extensions() {
+        assert_eq!(
+            plugin_api::PluginCore::extensions(&crate::DockerfileCore),
+            plugin_api::PluginPresentation::extensions(&crate::DockerfilePresentation),
+            "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
 }
