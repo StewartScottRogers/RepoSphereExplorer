@@ -345,6 +345,9 @@ pub struct App {
     contents: Vec<DirectoryEntry>,
     content_selected: usize,
     file_view: Option<Response>,
+    /// The entry name to reselect after the next listing arrives, set
+    /// by whichever operation is about to change the folder in place.
+    reselect: Option<String>,
     status: Option<String>,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
@@ -352,6 +355,28 @@ pub struct App {
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
     after_operation: Option<AfterOperation>,
+}
+
+/// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
+/// `fs::canonicalize` adds one there, and it then travels through every
+/// request into the messages the status bar shows, where `\\?\C:\dir\file`
+/// is noise the reader has to look past. Only a drive path is unwrapped: a
+/// verbatim UNC path (`\\?\UNC\server\share`) needs its prefix to keep
+/// resolving, and paths on other platforms never carry one.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let unwrapped = {
+        let text = path.to_string_lossy();
+        text.strip_prefix(r"\\?\")
+            .filter(|rest| {
+                let mut chars = rest.chars();
+                matches!(
+                    (chars.next(), chars.next(), chars.next()),
+                    (Some(drive), Some(':'), Some('\\')) if drive.is_ascii_alphabetic()
+                )
+            })
+            .map(str::to_owned)
+    };
+    unwrapped.map_or(path, PathBuf::from)
 }
 
 impl App {
@@ -366,13 +391,14 @@ impl App {
         // tree at "" and leaving every future request targeting a path
         // that resolves to nothing. Falls back to the given root if it
         // doesn't exist yet or canonicalization otherwise fails.
-        let root = std::fs::canonicalize(&root).unwrap_or(root);
+        let root = strip_verbatim_prefix(std::fs::canonicalize(&root).unwrap_or(root));
         let mut app = Self {
             root: FolderNode::root(root),
             folder_selected: 0,
             contents: Vec::new(),
             content_selected: 0,
             file_view: None,
+            reselect: None,
             status: None,
             focus: Pane::Folders,
             pending_contents: None,
@@ -455,7 +481,14 @@ impl App {
                     node.set_children_from(&entries);
                 }
                 self.contents = entries;
-                self.content_selected = 0;
+                // A listing arriving after an operation is the same folder
+                // reloaded, so put the selection back on the entry that
+                // operation produced rather than dropping it to the top.
+                self.content_selected = self
+                    .reselect
+                    .take()
+                    .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+                    .unwrap_or(0);
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
@@ -574,6 +607,7 @@ impl App {
             }
         };
         self.pending_operation = Some(spawn_request(request));
+        self.reselect = Some(name.clone());
         self.after_operation = Some(AfterOperation::EnterRename { path, input: name });
         self.status = Some("working...".to_owned());
     }
@@ -590,22 +624,34 @@ impl App {
     /// Confirms a pending rename/copy/extract input, sending its request.
     pub fn confirm_text_input(&mut self) {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
+        // Each arm carries the name the folder will hold afterwards, so the
+        // reloaded listing can put the selection back on it.
         let request = match mode {
-            Mode::RenameInput { path, input } if !input.is_empty() => Some(Request::Rename {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
-            }),
-            Mode::CopyInput { path, input } if !input.is_empty() => Some(Request::Copy {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
-            }),
-            Mode::ExtractInput { path, input } if !input.is_empty() => Some(Request::Extract {
-                archive: path.to_string_lossy().into_owned(),
-                destination: sibling_path(&path, &input),
-            }),
+            Mode::RenameInput { path, input } if !input.is_empty() => Some((
+                Request::Rename {
+                    from: path.to_string_lossy().into_owned(),
+                    to: sibling_path(&path, &input),
+                },
+                input,
+            )),
+            Mode::CopyInput { path, input } if !input.is_empty() => Some((
+                Request::Copy {
+                    from: path.to_string_lossy().into_owned(),
+                    to: sibling_path(&path, &input),
+                },
+                input,
+            )),
+            Mode::ExtractInput { path, input } if !input.is_empty() => Some((
+                Request::Extract {
+                    archive: path.to_string_lossy().into_owned(),
+                    destination: sibling_path(&path, &input),
+                },
+                input,
+            )),
             _ => None,
         };
-        if let Some(request) = request {
+        if let Some((request, produced)) = request {
+            self.reselect = Some(produced);
             self.pending_operation = Some(spawn_request(request));
             self.status = Some("working...".to_owned());
         }
@@ -670,6 +716,60 @@ impl App {
                 _ => {}
             },
         }
+    }
+
+    /// Whether the selected contents row previewed as an archive. The
+    /// contents pane greys its Extract menu item out when this is false,
+    /// since extracting anything else only ever produces an error.
+    #[must_use]
+    pub fn selected_is_archive(&self) -> bool {
+        matches!(
+            &self.file_view,
+            Some(Response::FileView { plugin, .. }) if plugin == "archive"
+        )
+    }
+
+    /// Moves the selection in the focused pane by `delta` rows, clamped to
+    /// that pane's bounds. The file pane has no rows of its own, so an arrow
+    /// there moves the contents pane - the one whose selection it is
+    /// previewing. Ignored while a name is being typed, where the arrow keys
+    /// belong to the input.
+    pub fn move_selection(&mut self, delta: i32) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        let (len, current) = match self.focus {
+            Pane::Folders => (self.root.flatten().len(), self.folder_selected),
+            Pane::Contents | Pane::File => (self.contents.len(), self.content_selected),
+        };
+        let Some(last) = len.checked_sub(1) else {
+            return;
+        };
+        let next = if delta < 0 {
+            current.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            current
+                .saturating_add(delta.unsigned_abs() as usize)
+                .min(last)
+        };
+        match self.focus {
+            Pane::Folders => self.select_folder(next),
+            Pane::Contents | Pane::File => self.select_content(next),
+        }
+    }
+
+    /// Moves focus one pane to the right (`delta` positive) or left,
+    /// wrapping at either end. Ignored while a name is being typed, where
+    /// the arrow keys belong to the input.
+    pub fn cycle_focus(&mut self, delta: i32) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        self.focus = match (self.focus, delta < 0) {
+            (Pane::Folders, false) | (Pane::File, true) => Pane::Contents,
+            (Pane::Contents, false) | (Pane::Folders, true) => Pane::File,
+            (Pane::File, false) | (Pane::Contents, true) => Pane::Folders,
+        };
     }
 
     /// Cancels any pending request; a late result is simply discarded when
@@ -886,7 +986,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, content_glyph};
+    use super::{App, PathBuf, content_glyph, strip_verbatim_prefix};
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -1067,6 +1167,24 @@ mod tests {
 
         assert!(app.pending_contents.is_none());
         assert_eq!(app.status_text(), status_before);
+    }
+
+    #[test]
+    fn strips_a_windows_verbatim_prefix_but_leaves_other_paths_alone() {
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\C:\dir\file.txt")),
+            PathBuf::from(r"C:\dir\file.txt")
+        );
+        // A verbatim UNC path needs its prefix to keep resolving, and a
+        // path from any other platform never carries one.
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share")),
+            PathBuf::from(r"\\?\UNC\server\share")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from("/home/user/file.txt")),
+            PathBuf::from("/home/user/file.txt")
+        );
     }
 
     #[test]
@@ -1286,6 +1404,93 @@ mod tests {
         app.handle_key_text("x");
 
         assert_eq!(app.status_text(), "Rename to: doomed.txtx_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn arrow_keys_move_the_selection_within_the_focused_pane() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.select_content(0);
+
+        app.move_selection(1);
+        assert_eq!(app.content_selected(), 1);
+
+        app.move_selection(1);
+        app.move_selection(1);
+        assert_eq!(app.content_selected(), 2, "stops at the last row");
+
+        app.move_selection(-1);
+        assert_eq!(app.content_selected(), 1);
+
+        app.move_selection(-5);
+        assert_eq!(app.content_selected(), 0, "stops at the first row");
+    }
+
+    #[test]
+    fn arrow_keys_are_ignored_while_a_name_is_being_typed() {
+        let mut app = app_with_one_content_entry();
+        app.handle_key_text("r");
+
+        app.move_selection(1);
+        app.cycle_focus(1);
+
+        assert_eq!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
+        assert_eq!(app.focus_index(), 0, "focus did not move either");
+    }
+
+    #[test]
+    fn left_and_right_cycle_focus_through_the_three_panes() {
+        let mut app = App::new(std::env::temp_dir());
+        assert_eq!(app.focus_index(), 0);
+
+        app.cycle_focus(1);
+        assert_eq!(app.focus_index(), 1);
+
+        app.cycle_focus(1);
+        assert_eq!(app.focus_index(), 2);
+
+        app.cycle_focus(1);
+        assert_eq!(app.focus_index(), 0, "wraps past the last pane");
+
+        app.cycle_focus(-1);
+        assert_eq!(app.focus_index(), 2, "and wraps back the other way");
+
+        app.cycle_focus(-1);
+        assert_eq!(app.focus_index(), 1);
+    }
+
+    #[test]
+    fn a_reload_after_an_operation_keeps_the_selection_on_its_entry() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false)]),
+            }),
+        );
+        app.select_content(1);
+        app.handle_key_text("c");
+        for _ in 0.."b.txt (2)".len() {
+            app.backspace();
+        }
+        for c in "copy.txt".chars() {
+            app.handle_key_text(&c.to_string());
+        }
+        app.handle_return();
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("copy.txt", false)]),
+            }),
+        );
+
+        assert_eq!(app.content_selected(), 2, "the copy, not the first row");
     }
 
     #[test]

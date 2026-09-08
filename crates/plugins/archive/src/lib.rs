@@ -85,6 +85,11 @@ pub fn extract(archive_path: &Path, destination: &Path) -> io::Result<()> {
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
+/// `"entry"` or `"entries"`, so a count of one does not read as "1 entries".
+fn entries_noun(count: usize) -> &'static str {
+    if count == 1 { "entry" } else { "entries" }
+}
+
 /// The archive plugin's presentation half.
 #[derive(Debug, Default)]
 pub struct ArchivePresentation;
@@ -99,16 +104,21 @@ impl PluginPresentation for ArchivePresentation {
             Ok(view) => view,
             Err(err) => return vec![format!("could not read view data: {err}")],
         };
-        let mut lines = vec![format!("{} entries", view.entry_count)];
+        let mut lines = vec![format!(
+            "{} {}",
+            view.entry_count,
+            entries_noun(view.entry_count)
+        )];
         lines.extend(
             view.entries
                 .iter()
                 .map(|entry| format!("{} ({} bytes)", entry.name, entry.size)),
         );
         if view.entry_count > view.entries.len() {
+            let remaining = view.entry_count - view.entries.len();
             lines.push(format!(
-                "... {} more entries not shown",
-                view.entry_count - view.entries.len()
+                "... {remaining} more {} not shown",
+                entries_noun(remaining)
             ));
         }
         lines
@@ -191,7 +201,7 @@ mod tests {
 
         let lines = ArchivePresentation.present(&data);
 
-        assert_eq!(lines, vec!["1 entries", "a.txt (5 bytes)"]);
+        assert_eq!(lines, vec!["1 entry", "a.txt (5 bytes)"]);
     }
 
     #[test]

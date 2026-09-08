@@ -95,11 +95,6 @@ component ContextMenuItem inherits Rectangle {
 }
 
 // The contents pane's own variant of `Pane`, with a right-click context menu
-// added on top of the same row rendering: a menu on a row (Open/Rename/Copy/
-// Delete/Extract, mirroring the existing hotkeys) and a disabled "New
-// Folder" menu on empty space. Kept separate from `Pane` (rather than a
-// shared toggle) so the folders pane's behavior is untouched.
-// The contents pane's own variant of `Pane`, with a right-click context menu
 // added on top of the same row rendering. Uses the same Text-row / single
 // overlay TouchArea workaround as `Pane` (see its comment) for the Slint
 // for-loop TouchArea bug - a per-row TouchArea here would also lose right-
@@ -109,6 +104,9 @@ component ContentsPane inherits Rectangle {
     in property <bool> focused;
     in property <[string]> rows;
     in property <int> selected;
+    // Whether the selected row previewed as an archive; Extract is greyed
+    // out otherwise, since extracting anything else only ever errors.
+    in property <bool> extract-enabled;
     callback row-clicked(int);
     callback row-double-clicked(int);
     callback open-requested();
@@ -116,8 +114,15 @@ component ContentsPane inherits Rectangle {
     callback copy-requested();
     callback delete-requested();
     callback extract-requested();
+    callback new-folder-requested();
+    callback new-file-requested();
 
     property <length> row-height: 20px;
+    // Where the last right-click landed, which both popups place themselves
+    // at: a `PopupWindow` cannot be positioned from its enclosing component,
+    // so it has to read the coordinates out of a property instead.
+    property <length> menu-x;
+    property <length> menu-y;
 
     border-width: 1px;
     border-color: focused ? #e5c07b : #555555;
@@ -167,8 +172,15 @@ component ContentsPane inherits Rectangle {
                         if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
                             if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
                                 row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                // Open at the pointer: a `PopupWindow` with no
+                                // placement of its own lands at the pane's
+                                // top-left corner, half over the folders pane.
+                                menu-x = click-area.mouse-x;
+                                menu-y = click-area.mouse-y;
                                 row-menu.show();
                             } else {
+                                menu-x = click-area.mouse-x;
+                                menu-y = click-area.mouse-y;
                                 empty-menu.show();
                             }
                         }
@@ -176,6 +188,8 @@ component ContentsPane inherits Rectangle {
                 }
 
                 empty-menu := PopupWindow {
+                    x: menu-x;
+                    y: menu-y;
                     Rectangle {
                         background: #2b2b2b;
                         border-width: 1px;
@@ -184,13 +198,19 @@ component ContentsPane inherits Rectangle {
                         VerticalLayout {
                             ContextMenuItem {
                                 label: "New Folder";
-                                item-enabled: false;
+                                activated => { empty-menu.close(); new-folder-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "New File";
+                                activated => { empty-menu.close(); new-file-requested(); }
                             }
                         }
                     }
                 }
 
                 row-menu := PopupWindow {
+                    x: menu-x;
+                    y: menu-y;
                     Rectangle {
                         background: #2b2b2b;
                         border-width: 1px;
@@ -215,6 +235,7 @@ component ContentsPane inherits Rectangle {
                             }
                             ContextMenuItem {
                                 label: "Extract";
+                                item-enabled: extract-enabled;
                                 activated => { row-menu.close(); extract-requested(); }
                             }
                         }
@@ -260,6 +281,10 @@ export component MainWindow inherits Window {
     callback parent-requested();
     callback new-folder-requested();
     callback new-file-requested();
+    callback selection-moved(int);
+    callback pane-cycled(int);
+    // Whether the selected contents row previewed as an archive.
+    in property <bool> content-is-archive;
 
     forward-focus: key-scope;
 
@@ -281,6 +306,14 @@ export component MainWindow inherits Window {
                 new-folder-requested();
             } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
                 new-file-requested();
+            } else if (event.text == Key.UpArrow) {
+                selection-moved(-1);
+            } else if (event.text == Key.DownArrow) {
+                selection-moved(1);
+            } else if (event.text == Key.RightArrow) {
+                pane-cycled(1);
+            } else if (event.text == Key.LeftArrow) {
+                pane-cycled(-1);
             } else {
                 key-text(event.text);
             }
@@ -319,6 +352,9 @@ export component MainWindow inherits Window {
                     copy-requested => { content-copy-requested(); }
                     delete-requested => { content-delete-requested(); }
                     extract-requested => { content-extract-requested(); }
+                    extract-enabled: content-is-archive;
+                    new-folder-requested => { new-folder-requested(); }
+                    new-file-requested => { new-file-requested(); }
                 }
                 Rectangle {
                     horizontal-stretch: 40;

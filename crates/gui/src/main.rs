@@ -114,6 +114,24 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_parent_requested, navigate_to_parent);
     on_event!(on_new_folder_requested, request_new_folder);
     on_event!(on_new_file_requested, request_new_file);
+    macro_rules! on_delta_event {
+        ($setter:ident, $method:ident) => {{
+            // `on_row_event!` converts its argument to a row index; these
+            // carry a signed delta instead.
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move |delta| {
+                let mut app = app.borrow_mut();
+                app.$method(delta);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+
+    on_delta_event!(on_selection_moved, move_selection);
+    on_delta_event!(on_pane_cycled, cycle_focus);
     on_event!(on_content_rename_requested, request_rename);
     on_event!(on_content_copy_requested, request_copy);
     on_event!(on_content_delete_requested, request_delete);
