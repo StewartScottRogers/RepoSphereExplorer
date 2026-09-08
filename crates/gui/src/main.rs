@@ -124,6 +124,7 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         });
     }
     on_row_event!(on_content_row_double_clicked, open_content);
+    on_row_event!(on_file_view_selected, select_file_view);
 
     macro_rules! on_delta_event {
         ($setter:ident, $method:ident) => {{

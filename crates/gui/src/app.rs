@@ -149,6 +149,19 @@ pub fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
     }
 }
 
+/// Renders the view named `view` of `data`, via whichever registered
+/// presentation plugin matches `plugin`.
+#[must_use]
+pub fn present_view(plugin: &str, view: &str, data: &serde_json::Value) -> Vec<String> {
+    match PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+    {
+        Some(candidate) => candidate.present_view(view, data),
+        None => vec![format!("no presentation for plugin `{plugin}`")],
+    }
+}
+
 /// A directory node in the folders pane's tree. Only directories appear
 /// here; files live in the contents pane.
 #[derive(Debug)]
@@ -476,6 +489,10 @@ pub struct App {
     contents: Vec<DirectoryEntry>,
     content_selected: usize,
     file_view: Option<Response>,
+    /// Which of the previewed type's views the pane is showing, as an index
+    /// into [`App::file_views`]. Reset whenever a new view arrives, so a
+    /// choice made for one file does not carry to the next.
+    file_view_index: usize,
     /// The text being edited in the file pane, and the file it belongs to.
     /// `None` when the pane is showing a preview rather than an editor.
     editing_file: Option<(PathBuf, String)>,
@@ -547,6 +564,7 @@ impl App {
             contents: Vec::new(),
             content_selected: 0,
             file_view: None,
+            file_view_index: 0,
             editing_file: None,
             reselect: None,
             sort_key: SortKey::Name,
@@ -591,9 +609,17 @@ impl App {
         self.status = Some(format!("loading {}...", path.display()));
     }
 
+    /// Shows `view` in the file pane, back at the type's first view. A view
+    /// chosen for one file says nothing about the next, which may not even
+    /// offer it.
+    fn show_file_view(&mut self, view: Option<Response>) {
+        self.file_view = view;
+        self.file_view_index = 0;
+    }
+
     fn load_file_view(&mut self) {
         let Some(entry) = self.contents.get(self.content_selected) else {
-            self.file_view = None;
+            self.show_file_view(None);
             self.pending_file = None;
             return;
         };
@@ -618,9 +644,9 @@ impl App {
             && let Ok(result) = rx.try_recv()
         {
             self.pending_file = None;
-            self.file_view = Some(result.unwrap_or_else(|err| Response::Error {
+            self.show_file_view(Some(result.unwrap_or_else(|err| Response::Error {
                 message: err.to_string(),
-            }));
+            })));
         }
         if let Some(rx) = &self.pending_operation
             && let Ok(result) = rx.try_recv()
@@ -1252,10 +1278,10 @@ impl App {
     /// the real path arrives through [`Self::tick`].
     #[cfg(test)]
     fn set_file_view(&mut self, plugin: &str, data: serde_json::Value) {
-        self.file_view = Some(Response::FileView {
+        self.show_file_view(Some(Response::FileView {
             plugin: plugin.to_owned(),
             data,
-        });
+        }));
     }
 
     /// The previewed file's text, when its plugin can edit it. `None` for a
@@ -1690,11 +1716,47 @@ impl App {
         }
     }
 
-    /// Display text for the file pane.
+    /// The views the previewed file's type offers, in the plugin's order.
+    /// Empty when nothing is previewed, or when the preview is an error
+    /// rather than a file - there is nothing there to look at two ways.
+    #[must_use]
+    pub fn file_views(&self) -> Vec<&'static str> {
+        match &self.file_view {
+            Some(Response::FileView { plugin, data }) => PRESENTATION_PLUGINS
+                .iter()
+                .find(|candidate| candidate.name() == plugin)
+                .map(|candidate| candidate.views(data))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Which view the pane is showing, as an index into [`Self::file_views`].
+    #[must_use]
+    pub const fn file_view_index(&self) -> usize {
+        self.file_view_index
+    }
+
+    /// Shows the view at `index`, ignoring an index the type does not offer:
+    /// a switcher click can only arrive for a view that was on screen, so a
+    /// stale one is worth ignoring rather than reporting.
+    pub fn select_file_view(&mut self, index: usize) {
+        if index < self.file_views().len() {
+            self.file_view_index = index;
+        }
+    }
+
+    /// Display text for the file pane, in whichever view is selected.
     #[must_use]
     pub fn file_text(&self) -> String {
         match &self.file_view {
-            Some(Response::FileView { plugin, data }) => present(plugin, data).join("\n"),
+            Some(Response::FileView { plugin, data }) => {
+                let views = self.file_views();
+                let Some(view) = views.get(self.file_view_index) else {
+                    return present(plugin, data).join("\n");
+                };
+                present_view(plugin, view, data).join("\n")
+            }
             Some(Response::Error { message }) => message.clone(),
             Some(Response::Directory { .. } | Response::Done) | None => String::new(),
         }
@@ -1801,6 +1863,7 @@ mod tests {
     use super::{
         App, PathBuf, UNKNOWN_ICON, format_kind, format_timestamp, icon_for, strip_verbatim_prefix,
     };
+    use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -2105,6 +2168,101 @@ mod tests {
 second", "truncated": false }),
         );
         app
+    }
+
+    #[test]
+    fn a_text_type_offers_its_own_text_as_a_second_view() {
+        // A source plugin, whose preview prepends an outline to the text -
+        // which is the commentary the second view exists to leave out.
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "rust",
+            serde_json::json!({
+                "content": "fn main() {}",
+                "truncated": false,
+                "functions": ["main"],
+                "structs": [],
+                "traits": [],
+            }),
+        );
+
+        assert_eq!(app.file_views(), vec![PREVIEW_VIEW, TEXT_VIEW]);
+        assert_eq!(app.file_view_index(), 0);
+        let preview = app.file_text();
+        assert!(
+            preview.contains("functions: main"),
+            "the preview is the plugin's own rendering: {preview}"
+        );
+
+        app.select_file_view(1);
+        assert_eq!(
+            app.file_text(),
+            "fn main() {}",
+            "the file's own text, with none of the outline the preview adds"
+        );
+    }
+
+    #[test]
+    fn a_type_carrying_no_text_offers_a_single_view() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view("image", serde_json::json!({ "width": 4, "height": 4 }));
+
+        assert_eq!(app.file_views(), vec![PREVIEW_VIEW]);
+    }
+
+    #[test]
+    fn a_truncated_view_still_reads_as_text() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "the first half", "truncated": true }),
+        );
+
+        assert_eq!(app.file_views(), vec![PREVIEW_VIEW, TEXT_VIEW]);
+        app.select_file_view(1);
+        assert_eq!(app.file_text(), "the first half");
+        assert_eq!(
+            app.editable_text(),
+            None,
+            "reading part of a long file is the point; saving part of one back is not"
+        );
+    }
+
+    #[test]
+    fn switching_views_leaves_the_contents_selection_alone() {
+        let mut app = app_with_editable_file();
+        let before = (app.content_selected(), app.selected_entry_path());
+
+        app.select_file_view(1);
+
+        assert_eq!(app.content_selected(), before.0);
+        assert_eq!(app.selected_entry_path(), before.1);
+    }
+
+    #[test]
+    fn a_new_preview_goes_back_to_the_types_first_view() {
+        let mut app = app_with_editable_file();
+        app.select_file_view(1);
+
+        app.set_file_view("image", serde_json::json!({ "width": 4, "height": 4 }));
+
+        assert_eq!(
+            app.file_view_index(),
+            0,
+            "a view chosen for one file may not exist for the next"
+        );
+    }
+
+    #[test]
+    fn a_view_the_type_does_not_offer_is_ignored() {
+        let mut app = app_with_editable_file();
+
+        app.select_file_view(7);
+
+        assert_eq!(app.file_view_index(), 0);
     }
 
     #[test]
