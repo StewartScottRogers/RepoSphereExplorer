@@ -190,6 +190,10 @@ component ContentsPane inherits Rectangle {
                 empty-menu := PopupWindow {
                     x: menu-x;
                     y: menu-y;
+                    // Without this the default `close-on-click` dismisses the
+                    // popup on the press, before the item's `TouchArea` ever
+                    // sees the release, so no item can be chosen at all.
+                    close-policy: close-on-click-outside;
                     Rectangle {
                         background: #2b2b2b;
                         border-width: 1px;
@@ -211,6 +215,8 @@ component ContentsPane inherits Rectangle {
                 row-menu := PopupWindow {
                     x: menu-x;
                     y: menu-y;
+                    // See `empty-menu`: the default policy eats the click.
+                    close-policy: close-on-click-outside;
                     Rectangle {
                         background: #2b2b2b;
                         border-width: 1px;
