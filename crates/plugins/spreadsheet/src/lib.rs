@@ -5,7 +5,7 @@
 //! plugin per container format.
 
 use calamine::{Data, Ods, Reader, Xlsx};
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::io::Cursor;
@@ -166,6 +166,17 @@ pub struct SpreadsheetPresentation;
 impl PluginPresentation for SpreadsheetPresentation {
     fn name(&self) -> &'static str {
         "spreadsheet"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "XLS",
+            tint: 0x0021_7346,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["xls", "xlsx", "ods"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

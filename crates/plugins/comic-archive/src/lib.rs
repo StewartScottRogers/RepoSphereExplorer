@@ -6,7 +6,7 @@
 //! listing - the shape a page-by-page comic reader needs, per the issue's
 //! direction.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -128,6 +128,17 @@ pub struct ComicArchivePresentation;
 impl PluginPresentation for ComicArchivePresentation {
     fn name(&self) -> &'static str {
         "comic-archive"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "CBZ",
+            tint: 0x00f9_7316,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["cbz", "cbr"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

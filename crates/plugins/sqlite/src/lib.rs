@@ -1,6 +1,6 @@
 //! SQLite database file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
@@ -201,6 +201,17 @@ pub struct SqlitePresentation;
 impl PluginPresentation for SqlitePresentation {
     fn name(&self) -> &'static str {
         "sqlite"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SQLI",
+            tint: 0x0000_3b57,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["sqlite", "sqlite3", "db"]
     }
 
     fn present(&self, data: &Value) -> Vec<String> {

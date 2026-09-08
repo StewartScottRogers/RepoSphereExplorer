@@ -1,6 +1,6 @@
 //! XML file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -143,6 +143,17 @@ pub struct XmlPresentation;
 impl PluginPresentation for XmlPresentation {
     fn name(&self) -> &'static str {
         "xml"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "XML",
+            tint: 0x00f9_7316,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["xml", "xsd", "xsl"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

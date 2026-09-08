@@ -10,7 +10,7 @@
 use lofty::file::FileType;
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::io;
@@ -110,6 +110,17 @@ pub struct AudioPresentation;
 impl PluginPresentation for AudioPresentation {
     fn name(&self) -> &'static str {
         "audio"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "AUD",
+            tint: 0x00d9_46ef,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["mp3", "wav", "flac", "ogg", "m4a", "aac"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! Haskell file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -132,6 +132,17 @@ pub struct HaskellPresentation;
 impl PluginPresentation for HaskellPresentation {
     fn name(&self) -> &'static str {
         "haskell"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "HS",
+            tint: 0x005e_5086,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["hs", "lhs"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

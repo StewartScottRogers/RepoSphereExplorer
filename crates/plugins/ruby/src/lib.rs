@@ -1,6 +1,6 @@
 //! Ruby file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -142,6 +142,17 @@ pub struct RubyPresentation;
 impl PluginPresentation for RubyPresentation {
     fn name(&self) -> &'static str {
         "ruby"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "RB",
+            tint: 0x00cc_342d,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["rb"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

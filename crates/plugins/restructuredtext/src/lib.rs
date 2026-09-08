@@ -1,6 +1,6 @@
 //! reStructuredText file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -130,6 +130,17 @@ pub struct RestructuredTextPresentation;
 impl PluginPresentation for RestructuredTextPresentation {
     fn name(&self) -> &'static str {
         "restructuredtext"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "RST",
+            tint: 0x004b_5563,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["rst"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

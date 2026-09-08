@@ -1,6 +1,6 @@
 //! PHP file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -99,6 +99,17 @@ pub struct PhpPresentation;
 impl PluginPresentation for PhpPresentation {
     fn name(&self) -> &'static str {
         "php"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PHP",
+            tint: 0x0077_7bb4,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["php"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

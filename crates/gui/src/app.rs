@@ -4,7 +4,7 @@
 //! presentation half, so the two are separate, not shared, despite the
 //! similar shape.
 
-use plugin_api::PluginPresentation;
+use plugin_api::{Icon, PluginPresentation, UNKNOWN_ICON};
 use protocol::{DirectoryEntry, Request, Response};
 use std::collections::HashMap;
 use std::io;
@@ -100,39 +100,31 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_directory::DirectoryPresentation,
 ];
 
-/// A small, fixed glyph set for the contents pane, keyed only by file
-/// extension (or the folder bucket for directories) - not a
-/// `plugin_api::PluginPresentation` concept, since dozens of plugins each
-/// getting a distinct icon is explicitly out of scope for this glyph set.
+/// The icon for an entry, from whichever presentation plugin claims its
+/// extension. GUIDANCE.md §3 makes the icon a plugin's own property, so the
+/// front end looks one up instead of keeping a table of its own: a name no
+/// plugin claims gets `UNKNOWN_ICON`, and a directory gets the directory
+/// plugin's icon.
 ///
-/// Glyphs are drawn from the Geometric Shapes block rather than pictographic
-/// emoji: the latter render as blank boxes without a colour-emoji font,
-/// which most Linux font setups (including CI's) don't install by default.
-fn content_glyph(name: &str, is_dir: bool) -> &'static str {
+/// Matching is by name, never by content. A listing marks hundreds of rows
+/// at once and Explorer picks its icons the same way; content sniffing stays
+/// in the service, choosing which viewer opens a file once one is picked.
+#[must_use]
+pub fn icon_for(name: &str, is_dir: bool) -> Icon {
     if is_dir {
-        // U+25A0. The pointing triangle U+25B8 this used renders as tofu in
-        // the GUI's default font.
-        return "\u{25A0}";
+        return plugin_directory::DirectoryPresentation.icon();
     }
     let extension = std::path::Path::new(name)
         .extension()
         .and_then(std::ffi::OsStr::to_str)
         .map(str::to_lowercase);
-    match extension.as_deref() {
-        Some(
-            "rs" | "py" | "js" | "jsx" | "ts" | "tsx" | "java" | "kt" | "go" | "rb" | "php" | "pl"
-            | "c" | "h" | "cpp" | "hpp" | "cs" | "swift" | "scala" | "sh" | "ps1" | "sql" | "html"
-            | "css" | "json" | "yaml" | "yml" | "toml" | "xml" | "md" | "txt",
-        ) => "\u{25AA}", // ▪
-        Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" | "psd") => {
-            "\u{25C6}" // ◆
-        }
-        Some("zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "iso") => "\u{25B2}", // ▲
-        Some("pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "epub" | "odt") => {
-            "\u{25CF}" // ●
-        }
-        _ => "\u{25CB}", // ○
-    }
+    // A format named rather than suffixed - `Dockerfile`, `Makefile` - is
+    // matched on the whole name instead.
+    let key = extension.unwrap_or_else(|| name.to_lowercase());
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|plugin| plugin.extensions().contains(&key.as_str()))
+        .map_or(UNKNOWN_ICON, |plugin| plugin.icon())
 }
 
 /// Turns a plugin's view data into displayable lines, via whichever
@@ -436,8 +428,10 @@ impl SortKey {
 /// One contents row, as the details view renders it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentRow {
-    /// Type marker shown ahead of the name.
-    pub glyph: String,
+    /// The type's icon, from its plugin.
+    pub icon: Icon,
+    /// Whether the row is a directory, which the icon is drawn as.
+    pub is_dir: bool,
     /// Entry name, with a trailing `/` for a directory.
     pub name: String,
     /// Formatted size, empty for a directory.
@@ -1355,11 +1349,10 @@ impl App {
         self.contents
             .iter()
             .map(|entry| {
-                let glyph = content_glyph(&entry.name, entry.is_dir);
                 if entry.is_dir {
-                    format!("{glyph} {}/", entry.name)
+                    format!("{}/", entry.name)
                 } else {
-                    format!("{glyph} {}", entry.name)
+                    entry.name.clone()
                 }
             })
             .collect()
@@ -1432,7 +1425,8 @@ impl App {
         self.contents
             .iter()
             .map(|entry| ContentRow {
-                glyph: content_glyph(&entry.name, entry.is_dir).to_owned(),
+                icon: icon_for(&entry.name, entry.is_dir),
+                is_dir: entry.is_dir,
                 name: if entry.is_dir {
                     format!("{}/", entry.name)
                 } else {
@@ -1561,7 +1555,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, PathBuf, content_glyph, format_kind, format_timestamp, strip_verbatim_prefix,
+        App, PathBuf, UNKNOWN_ICON, format_kind, format_timestamp, icon_for, strip_verbatim_prefix,
     };
     use protocol::{DirectoryEntry, Response};
 
@@ -1874,6 +1868,74 @@ mod tests {
     }
 
     #[test]
+    fn each_file_type_takes_its_icon_from_its_own_plugin() {
+        assert_eq!(icon_for("main.rs", false).label, "RS");
+        assert_eq!(icon_for("photo.PNG", false).label, "IMG");
+        assert_eq!(icon_for("bundle.zip", false).label, "ZIP");
+        assert_eq!(icon_for("report.pdf", false).label, "PDF");
+        assert_eq!(icon_for("index.html", false).label, "HTML");
+    }
+
+    #[test]
+    fn a_format_named_rather_than_suffixed_is_matched_on_the_whole_name() {
+        assert_eq!(icon_for("Dockerfile", false).label, "DOCK");
+        assert_eq!(icon_for("Makefile", false).label, "MAKE");
+    }
+
+    #[test]
+    fn a_directory_takes_the_directory_plugin_s_icon() {
+        let folder = icon_for("anything", true);
+        assert_eq!(folder.label, "DIR");
+        assert_ne!(folder, icon_for("main.rs", false));
+    }
+
+    #[test]
+    fn an_unclaimed_extension_falls_back_to_the_unknown_icon() {
+        assert_eq!(icon_for("mystery.xyz123", false), UNKNOWN_ICON);
+        assert_eq!(icon_for("no_extension_at_all", false), UNKNOWN_ICON);
+    }
+
+    #[test]
+    fn no_two_plugins_claim_the_same_extension() {
+        let mut seen: std::collections::BTreeMap<&str, &str> = std::collections::BTreeMap::new();
+        let mut clashes = Vec::new();
+        for plugin in super::PRESENTATION_PLUGINS {
+            for extension in plugin.extensions() {
+                assert_eq!(
+                    *extension,
+                    extension.to_lowercase(),
+                    "{}'s {extension:?} should be lowercase",
+                    plugin.name()
+                );
+                if let Some(other) = seen.insert(extension, plugin.name()) {
+                    clashes.push(format!("{extension:?}: {other} and {}", plugin.name()));
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "{clashes:?}");
+        assert!(seen.len() > 100, "only {} extensions claimed", seen.len());
+    }
+
+    #[test]
+    fn every_plugin_states_an_icon_of_its_own() {
+        for plugin in super::PRESENTATION_PLUGINS {
+            let icon = plugin.icon();
+            assert_ne!(
+                icon,
+                UNKNOWN_ICON,
+                "{} still has the fallback icon",
+                plugin.name()
+            );
+            assert!(
+                !icon.label.is_empty() && icon.label.chars().count() <= 4,
+                "{}'s label {:?} should be one to four characters",
+                plugin.name(),
+                icon.label
+            );
+        }
+    }
+
+    #[test]
     fn the_type_column_names_folders_and_extensions_the_way_explorer_does() {
         assert_eq!(format_kind("src", true), "File folder");
         assert_eq!(format_kind("main.rs", false), "RS file");
@@ -1987,10 +2049,7 @@ mod tests {
             }),
         );
 
-        assert_eq!(
-            app.content_labels(),
-            vec!["\u{25A0} sub/", "\u{25AA} note.txt"]
-        );
+        assert_eq!(app.content_labels(), vec!["sub/", "note.txt"]);
         assert_eq!(app.folder_labels().len(), 2); // root + "sub"
     }
 
@@ -2078,7 +2137,7 @@ mod tests {
         app.tick();
 
         assert!(app.pending_contents.is_none());
-        assert_eq!(app.content_labels(), vec!["\u{25AA} only.txt"]);
+        assert_eq!(app.content_labels(), vec!["only.txt"]);
     }
 
     #[test]
@@ -2646,20 +2705,6 @@ mod tests {
     }
 
     #[test]
-    fn content_glyph_distinguishes_representative_extensions() {
-        assert_eq!(content_glyph("main.rs", false), "\u{25AA}");
-        assert_eq!(content_glyph("photo.png", false), "\u{25C6}");
-        assert_eq!(content_glyph("bundle.zip", false), "\u{25B2}");
-        assert_eq!(content_glyph("report.pdf", false), "\u{25CF}");
-    }
-
-    #[test]
-    fn content_glyph_falls_back_to_a_default_marker_for_an_unrecognized_extension() {
-        assert_eq!(content_glyph("mystery.xyz123", false), "\u{25CB}");
-        assert_eq!(content_glyph("no_extension_at_all", false), "\u{25CB}");
-    }
-
-    #[test]
     fn requesting_a_new_folder_sends_a_create_directory_request_and_prefills_rename() {
         let mut app = App::new(std::env::temp_dir());
 
@@ -2711,16 +2756,5 @@ mod tests {
         app.apply_operation_result(Ok(Response::Done));
 
         assert_eq!(app.status_text(), "Rename to: New folder (2)_  (Enter/Esc)");
-    }
-
-    #[test]
-    fn content_glyph_marks_directories_distinctly_from_every_file_glyph() {
-        let folder_glyph = content_glyph("anything", true);
-        assert_eq!(folder_glyph, "\u{25A0}");
-        assert_ne!(folder_glyph, content_glyph("main.rs", false));
-        assert_ne!(folder_glyph, content_glyph("photo.png", false));
-        assert_ne!(folder_glyph, content_glyph("bundle.zip", false));
-        assert_ne!(folder_glyph, content_glyph("report.pdf", false));
-        assert_ne!(folder_glyph, content_glyph("mystery.xyz123", false));
     }
 }

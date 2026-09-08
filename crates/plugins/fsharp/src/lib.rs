@@ -1,6 +1,6 @@
 //! F# file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -105,6 +105,17 @@ pub struct FSharpPresentation;
 impl PluginPresentation for FSharpPresentation {
     fn name(&self) -> &'static str {
         "fsharp"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "F#",
+            tint: 0x0037_8bba,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["fs", "fsi", "fsx"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

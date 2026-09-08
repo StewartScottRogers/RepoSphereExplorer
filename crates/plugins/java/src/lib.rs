@@ -1,6 +1,6 @@
 //! Java file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -132,6 +132,17 @@ pub struct JavaPresentation;
 impl PluginPresentation for JavaPresentation {
     fn name(&self) -> &'static str {
         "java"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "JAVA",
+            tint: 0x00e7_6f00,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["java"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

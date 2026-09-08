@@ -1,6 +1,6 @@
 //! Text file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -49,6 +49,17 @@ pub struct TextPresentation;
 impl PluginPresentation for TextPresentation {
     fn name(&self) -> &'static str {
         "text"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "TXT",
+            tint: 0x006b_7280,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["txt", "log", "md", "markdown", "text"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

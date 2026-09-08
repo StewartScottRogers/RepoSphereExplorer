@@ -10,7 +10,7 @@
 //! rendered glyph preview: per `plugin-api`'s presentation half, a front end
 //! gets lines of text, not toolkit-specific glyph outlines.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -142,6 +142,17 @@ pub struct FontPresentation;
 impl PluginPresentation for FontPresentation {
     fn name(&self) -> &'static str {
         "font"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "FONT",
+            tint: 0x00ea_580c,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ttf", "otf", "woff", "woff2"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

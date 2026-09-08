@@ -1,7 +1,7 @@
 //! Parquet file type plugin: core and presentation halves.
 
 use parquet::file::reader::{FileReader, SerializedFileReader};
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::File;
@@ -140,6 +140,17 @@ pub struct ParquetPresentation;
 impl PluginPresentation for ParquetPresentation {
     fn name(&self) -> &'static str {
         "parquet"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PARQ",
+            tint: 0x001d_4ed8,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["parquet"]
     }
 
     fn present(&self, data: &Value) -> Vec<String> {

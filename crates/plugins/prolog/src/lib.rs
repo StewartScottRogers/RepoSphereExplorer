@@ -1,6 +1,6 @@
 //! Prolog file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -123,6 +123,17 @@ pub struct PrologPresentation;
 impl PluginPresentation for PrologPresentation {
     fn name(&self) -> &'static str {
         "prolog"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PRO",
+            tint: 0x0074_283c,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["pro", "plg"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! Perl file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -123,6 +123,17 @@ pub struct PerlPresentation;
 impl PluginPresentation for PerlPresentation {
     fn name(&self) -> &'static str {
         "perl"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PL",
+            tint: 0x0000_73a1,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["pl", "pm"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

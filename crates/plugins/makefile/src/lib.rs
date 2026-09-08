@@ -1,6 +1,6 @@
 //! Makefile file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -176,6 +176,17 @@ pub struct MakefilePresentation;
 impl PluginPresentation for MakefilePresentation {
     fn name(&self) -> &'static str {
         "makefile"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "MAKE",
+            tint: 0x006b_7280,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["mk", "makefile"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

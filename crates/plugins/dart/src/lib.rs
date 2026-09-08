@@ -1,6 +1,6 @@
 //! Dart file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -133,6 +133,17 @@ pub struct DartPresentation;
 impl PluginPresentation for DartPresentation {
     fn name(&self) -> &'static str {
         "dart"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "DART",
+            tint: 0x0001_75c2,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["dart"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! VB.NET file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -125,6 +125,17 @@ pub struct VbNetPresentation;
 impl PluginPresentation for VbNetPresentation {
     fn name(&self) -> &'static str {
         "vbnet"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "VB",
+            tint: 0x0051_2bd4,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["vb"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

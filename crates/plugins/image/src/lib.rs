@@ -7,7 +7,7 @@
 //! carry richer, toolkit-specific data - deferred until a plugin actually
 //! needs it.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -64,6 +64,17 @@ pub struct ImagePresentation;
 impl PluginPresentation for ImagePresentation {
     fn name(&self) -> &'static str {
         "image"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "IMG",
+            tint: 0x00db_2777,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tiff"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

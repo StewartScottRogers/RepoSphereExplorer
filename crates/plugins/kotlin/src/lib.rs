@@ -1,6 +1,6 @@
 //! Kotlin file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -129,6 +129,17 @@ pub struct KotlinPresentation;
 impl PluginPresentation for KotlinPresentation {
     fn name(&self) -> &'static str {
         "kotlin"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "KT",
+            tint: 0x007f_52ff,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["kt", "kts"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

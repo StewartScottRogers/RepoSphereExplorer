@@ -1,6 +1,6 @@
 //! Solidity file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -107,6 +107,17 @@ pub struct SolidityPresentation;
 impl PluginPresentation for SolidityPresentation {
     fn name(&self) -> &'static str {
         "solidity"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SOL",
+            tint: 0x0036_3636,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["sol"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! Shell script file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -125,6 +125,17 @@ pub struct ShellPresentation;
 impl PluginPresentation for ShellPresentation {
     fn name(&self) -> &'static str {
         "shell"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SH",
+            tint: 0x004e_aa25,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["sh", "bash", "zsh"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

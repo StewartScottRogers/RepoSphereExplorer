@@ -6,7 +6,7 @@
 //! attempting `sniff`; [`DirectoryCore::sniff`] always returns `false` and
 //! exists only to satisfy the trait.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -70,6 +70,17 @@ pub struct DirectoryPresentation;
 impl PluginPresentation for DirectoryPresentation {
     fn name(&self) -> &'static str {
         "directory"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "DIR",
+            tint: 0x00dc_b67a,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &[]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

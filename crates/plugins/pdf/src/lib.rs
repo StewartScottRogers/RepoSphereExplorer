@@ -1,6 +1,6 @@
 //! PDF file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -52,6 +52,17 @@ pub struct PdfPresentation;
 impl PluginPresentation for PdfPresentation {
     fn name(&self) -> &'static str {
         "pdf"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PDF",
+            tint: 0x00dc_2626,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["pdf"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

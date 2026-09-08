@@ -4,7 +4,7 @@
 //! direction that this document family renders as a single paginated
 //! word-processing view rather than a plugin per container format.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::io::Read as _;
@@ -246,6 +246,17 @@ pub struct WordDocumentPresentation;
 impl PluginPresentation for WordDocumentPresentation {
     fn name(&self) -> &'static str {
         "word-document"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "DOC",
+            tint: 0x002b_579a,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["doc", "docx", "odt"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

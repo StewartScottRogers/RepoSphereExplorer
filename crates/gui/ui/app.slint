@@ -101,7 +101,7 @@ component Pane inherits Rectangle {
 }
 
 export struct ContentRow {
-    glyph: string,
+    icon: image,
     name: string,
     size: string,
     kind: string,
@@ -383,13 +383,25 @@ component ContentsPane inherits Rectangle {
                     HorizontalLayout {
                         padding-left: 4px;
                         padding-right: 4px;
-                        Text {
-                            text: row.glyph + " " + row.name;
-                            color: row.selected ? Theme.on-accent : Palette.foreground;
-                            overflow: elide;
-                            vertical-alignment: center;
+                        HorizontalLayout {
                             horizontal-stretch: 1;
-                            min-width: 40px;
+                            spacing: 5px;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+                            Image {
+                                source: row.icon;
+                                width: 16px;
+                                image-fit: contain;
+                                horizontal-stretch: 0;
+                            }
+                            Text {
+                                text: row.name;
+                                color: row.selected ? Theme.on-accent : Palette.foreground;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                min-width: 24px;
+                            }
                         }
                         Text {
                             text: row.size;

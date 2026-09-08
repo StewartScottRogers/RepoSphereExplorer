@@ -1,6 +1,6 @@
 //! C file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -165,6 +165,17 @@ pub struct CPresentation;
 impl PluginPresentation for CPresentation {
     fn name(&self) -> &'static str {
         "c"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "C",
+            tint: 0x005c_6bc0,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["c", "h"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

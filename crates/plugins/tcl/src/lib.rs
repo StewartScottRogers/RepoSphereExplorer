@@ -1,6 +1,6 @@
 //! Tcl file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -128,6 +128,17 @@ pub struct TclPresentation;
 impl PluginPresentation for TclPresentation {
     fn name(&self) -> &'static str {
         "tcl"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "TCL",
+            tint: 0x00c3_984f,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["tcl"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

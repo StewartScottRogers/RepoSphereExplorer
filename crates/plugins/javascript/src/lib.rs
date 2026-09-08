@@ -1,6 +1,6 @@
 //! JavaScript file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -176,6 +176,17 @@ pub struct JavaScriptPresentation;
 impl PluginPresentation for JavaScriptPresentation {
     fn name(&self) -> &'static str {
         "javascript"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "JS",
+            tint: 0x00ca_8a04,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["js", "mjs", "cjs", "jsx"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

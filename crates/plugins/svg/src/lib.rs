@@ -5,7 +5,7 @@
 //! own width/height when explicit attributes are absent) rather than pixel
 //! dimensions, and the presentation half labels it a vector image.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -156,6 +156,17 @@ pub struct SvgPresentation;
 impl PluginPresentation for SvgPresentation {
     fn name(&self) -> &'static str {
         "svg"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "SVG",
+            tint: 0x00ca_8a04,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["svg"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

@@ -1,6 +1,6 @@
 //! Fortran file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -122,6 +122,17 @@ pub struct FortranPresentation;
 impl PluginPresentation for FortranPresentation {
     fn name(&self) -> &'static str {
         "fortran"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "F90",
+            tint: 0x0073_4f96,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["f", "f90", "f95", "for"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

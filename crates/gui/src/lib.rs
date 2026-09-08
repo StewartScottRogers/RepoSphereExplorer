@@ -12,7 +12,71 @@ pub use generated::{ContentRow, MainWindow};
 pub mod app;
 
 use app::App;
-use slint::{ModelRc, SharedString, VecModel};
+use plugin_api::Icon;
+use slint::{Image, ModelRc, SharedString, VecModel};
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+thread_local! {
+    /// Rendered icons, keyed by the label and tint they were drawn from.
+    /// A folder of a thousand files holds a handful of distinct types, so
+    /// this turns per-row rasterisation into per-type.
+    static ICON_CACHE: RefCell<HashMap<(&'static str, u32), Image>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Draws `icon` as a document sheet with a folded corner and a coloured
+/// band carrying the type's label, or as a folder for the directory plugin.
+/// The plugin owns the label and the colour (GUIDANCE.md §3); the shape is
+/// shared, so a listing reads as one set rather than eighty-one drawings.
+fn icon_svg(icon: Icon, folder: bool) -> String {
+    let (r, g, b) = (
+        (icon.tint >> 16) & 0xff,
+        (icon.tint >> 8) & 0xff,
+        icon.tint & 0xff,
+    );
+    let tint = format!("#{r:02x}{g:02x}{b:02x}");
+    if folder {
+        return format!(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'>             <path d='M2 7a2 2 0 0 1 2-2h8l3 3h11a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z'              fill='{tint}'/>             <path d='M2 12h28v13a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z' fill='{tint}'              fill-opacity='0.75'/></svg>"
+        );
+    }
+    // A type with no label is the generic document: a plain sheet, no band.
+    let band = if icon.label.is_empty() {
+        String::new()
+    } else {
+        // The label has to fit the band, so it shrinks as it lengthens.
+        let font = match icon.label.chars().count() {
+            0..=2 => 11,
+            3 => 9,
+            _ => 7,
+        };
+        let label = icon
+            .label
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        format!(
+            "<rect x='5' y='17' width='21' height='10' rx='1.5' fill='{tint}'/>             <text x='15.5' y='24.4' font-family='Segoe UI, sans-serif' font-size='{font}'              font-weight='700' fill='#ffffff' text-anchor='middle'>{label}</text>"
+        )
+    };
+    format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'>         <path d='M6 2h13l7 7v21a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z'          fill='#ffffff' stroke='#9ca3af' stroke-width='1.2'/>         <path d='M19 2l7 7h-7z' fill='#d1d5db'/>{band}</svg>"
+    )
+}
+
+/// The rendered image for `icon`, drawing it the first time it is asked for.
+fn icon_image(icon: Icon, folder: bool) -> Image {
+    ICON_CACHE.with_borrow_mut(|cache| {
+        cache
+            .entry((icon.label, icon.tint))
+            .or_insert_with(|| {
+                let svg = icon_svg(icon, folder);
+                Image::load_from_svg_data(svg.as_bytes()).unwrap_or_default()
+            })
+            .clone()
+    })
+}
 
 /// Copies `app`'s current state into `ui`'s bound properties.
 pub fn sync_ui(ui: &MainWindow, app: &App) {
@@ -23,7 +87,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             .into_iter()
             .enumerate()
             .map(|(index, row)| ContentRow {
-                glyph: row.glyph.into(),
+                icon: icon_image(row.icon, row.is_dir),
                 name: row.name.into(),
                 size: row.size.into(),
                 kind: row.kind.into(),

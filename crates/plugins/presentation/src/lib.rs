@@ -4,7 +4,7 @@
 //! this document family renders as a single slide-deck view rather than a
 //! plugin per container format.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::io::{Cursor, Read as _};
@@ -220,6 +220,17 @@ pub struct PresentationPresentation;
 impl PluginPresentation for PresentationPresentation {
     fn name(&self) -> &'static str {
         "presentation"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "PPT",
+            tint: 0x00d2_4726,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["ppt", "pptx", "odp"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

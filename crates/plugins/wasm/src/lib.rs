@@ -10,7 +10,7 @@
 //! disassembly, matching `font`/`executable`'s own precedent that the
 //! presentation half is lines of text, not toolkit-specific output.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -187,6 +187,17 @@ pub struct WasmPresentation;
 impl PluginPresentation for WasmPresentation {
     fn name(&self) -> &'static str {
         "wasm"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "WASM",
+            tint: 0x0065_4ff0,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["wasm", "wat"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

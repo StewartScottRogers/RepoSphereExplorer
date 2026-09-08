@@ -1,6 +1,6 @@
 //! EPUB file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io;
@@ -231,6 +231,17 @@ pub struct EpubPresentation;
 impl PluginPresentation for EpubPresentation {
     fn name(&self) -> &'static str {
         "epub"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "EPUB",
+            tint: 0x0085_be47,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["epub"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

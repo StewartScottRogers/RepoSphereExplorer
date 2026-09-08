@@ -1,6 +1,6 @@
 //! Ada file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -111,6 +111,17 @@ pub struct AdaPresentation;
 impl PluginPresentation for AdaPresentation {
     fn name(&self) -> &'static str {
         "ada"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "ADA",
+            tint: 0x002c_6e49,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["adb", "ads"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

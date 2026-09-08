@@ -1,6 +1,6 @@
 //! Julia file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -123,6 +123,17 @@ pub struct JuliaPresentation;
 impl PluginPresentation for JuliaPresentation {
     fn name(&self) -> &'static str {
         "julia"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "JL",
+            tint: 0x0095_58b2,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["jl"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

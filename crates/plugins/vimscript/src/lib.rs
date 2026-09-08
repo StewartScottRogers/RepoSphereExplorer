@@ -1,6 +1,6 @@
 //! Vim script file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -131,6 +131,17 @@ pub struct VimscriptPresentation;
 impl PluginPresentation for VimscriptPresentation {
     fn name(&self) -> &'static str {
         "vimscript"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "VIM",
+            tint: 0x0001_9833,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["vim"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

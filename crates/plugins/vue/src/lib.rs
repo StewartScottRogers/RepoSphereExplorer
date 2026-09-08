@@ -1,6 +1,6 @@
 //! Vue single-file component file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -91,6 +91,17 @@ pub struct VuePresentation;
 impl PluginPresentation for VuePresentation {
     fn name(&self) -> &'static str {
         "vue"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "VUE",
+            tint: 0x0042_b883,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["vue"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {

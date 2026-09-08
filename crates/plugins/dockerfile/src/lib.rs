@@ -1,6 +1,6 @@
 //! Dockerfile file type plugin: core and presentation halves.
 
-use plugin_api::{PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
@@ -137,6 +137,17 @@ pub struct DockerfilePresentation;
 impl PluginPresentation for DockerfilePresentation {
     fn name(&self) -> &'static str {
         "dockerfile"
+    }
+
+    fn icon(&self) -> Icon {
+        Icon {
+            label: "DOCK",
+            tint: 0x0024_96ed,
+        }
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["dockerfile"]
     }
 
     fn present(&self, data: &serde_json::Value) -> Vec<String> {
