@@ -45,6 +45,22 @@ component Pane inherits Rectangle {
     // overlay `TouchArea` that derives the clicked row from `mouse-y`.
     property <length> row-height: 20px;
 
+    // Keeps the selected row on screen, however it got selected - a click,
+    // type-ahead, an arrow key, Home/End, paging, or a reselect after an
+    // operation all just change `selected`, so one callback here covers
+    // every case. Moves by the smallest amount that brings the row fully
+    // into the viewport: to the top if it sits above, to the bottom if it
+    // sits below, not at all if it is already visible.
+    changed selected => {
+        if (selected >= 0) {
+            if (selected * row-height < -scroll.viewport-y) {
+                scroll.viewport-y = -(selected * row-height);
+            } else if (selected * row-height + row-height > -scroll.viewport-y + scroll.visible-height) {
+                scroll.viewport-y = scroll.visible-height - (selected * row-height + row-height);
+            }
+        }
+    }
+
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
 
@@ -56,7 +72,7 @@ component Pane inherits Rectangle {
             height: 22px;
             horizontal-alignment: center;
         }
-        ScrollView {
+        scroll := ScrollView {
             // `ScrollView` vertically centers a child shorter than its
             // viewport rather than pinning it to the top, so the row
             // container needs an explicit top-aligned layout around it.
@@ -399,6 +415,18 @@ component ContentsPane inherits Rectangle {
     property <length> modified-column: 118px;
     property <length> header-height: 20px;
 
+    // See `Pane`'s callback of the same name: same reasoning, same formula,
+    // duplicated because `Pane` and `ContentsPane` are separate components.
+    changed selected => {
+        if (selected >= 0) {
+            if (selected * row-height < -scroll.viewport-y) {
+                scroll.viewport-y = -(selected * row-height);
+            } else if (selected * row-height + row-height > -scroll.viewport-y + scroll.visible-height) {
+                scroll.viewport-y = scroll.visible-height - (selected * row-height + row-height);
+            }
+        }
+    }
+
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
 
@@ -453,7 +481,7 @@ component ContentsPane inherits Rectangle {
                 }
             }
         }
-        ScrollView {
+        scroll := ScrollView {
             body := Rectangle {
                 width: 100%;
                 min-height: max(rows.length * row-height, root.height - 22px - header-height);
