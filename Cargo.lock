@@ -2676,6 +2676,7 @@ checksum = "b40ca9252762c466af32d0b1002e91e4e1bc5398f77455e55474deb466355ff5"
 name = "gui"
 version = "0.6.0"
 dependencies = [
+ "dirs",
  "i-slint-backend-testing",
  "interprocess",
  "plugin-ada",

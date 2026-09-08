@@ -10,6 +10,7 @@ mod generated {
 pub use generated::{ContentRow, MainWindow};
 
 pub mod app;
+pub mod settings;
 
 use app::App;
 use plugin_api::Icon;
