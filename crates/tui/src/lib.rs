@@ -132,6 +132,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_helmchart::HelmchartPresentation,
     &plugin_gitlabci::GitlabciPresentation,
     &plugin_jsonschema::JsonschemaPresentation,
+    &plugin_antlr::AntlrPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

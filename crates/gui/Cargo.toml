@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 dirs = "6"
 interprocess = "2.4"
+plugin-antlr = { path = "../plugins/antlr" }
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
 plugin-archive = { path = "../plugins/archive" }

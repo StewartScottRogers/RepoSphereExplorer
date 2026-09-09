@@ -2680,6 +2680,7 @@ dependencies = [
  "i-slint-backend-testing",
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -5424,6 +5425,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-antlr"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-api"
 version = "0.6.0"
 dependencies = [
@@ -7511,6 +7521,7 @@ dependencies = [
  "dirs",
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -8626,6 +8637,7 @@ version = "0.6.0"
 dependencies = [
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
