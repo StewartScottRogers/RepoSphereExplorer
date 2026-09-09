@@ -93,6 +93,31 @@ jobs:
           "${binary}" --version
           echo "path=${binary}" >> "${GITHUB_OUTPUT}"
 
+      # What the floor looks like before the shift starts, so afterwards we
+      # can tell whether it did anything at all. Two runs on 2026-09-09 each
+      # spent seven minutes and over a dollar, reported success, and left no
+      # branch, no pull request, no comment and no closed issue - and every
+      # guard on this floor keys on `failure`, so both chained the next run
+      # regardless. See work order #420.
+      - name: Record the floor before the shift
+        id: before
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          {
+            echo "branches<<EOF"
+            git ls-remote --heads origin | awk '{print $2}' | sort
+            echo "EOF"
+            echo "prs<<EOF"
+            gh pr list --repo "$REPO" --state all --limit 200 --json number --jq '.[].number' | sort -n
+            echo "EOF"
+            echo "orders<<EOF"
+            gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq '.[].number' | sort -n
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: anthropics/claude-code-action@v1
         id: build
         with:
@@ -151,6 +176,50 @@ jobs:
                (matching this repo's no-human-review policy on main). Do not
                merge it yourself.
 
+      # The transcript the action leaves on the runner, which is the only
+      # record of what the agent actually did. Nothing uploaded it before,
+      # so a silent run left `permission_denials_count: 6` behind and no way
+      # to learn what was denied (#420).
+      - name: Keep the transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shift-transcript-${{ github.run_id }}
+          path: /home/runner/work/_temp/claude-execution-output.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # A station that produces nothing must not report success. This is
+      # #300's lesson - a skipped review reported success, so an unreviewed
+      # pull request looked reviewed - in a second workflow, which is why it
+      # is now a rule in GUIDANCE.md section 4 and not only a fix here.
+      - name: Refuse to call a shift that produced nothing a success
+        id: produced
+        if: always() && steps.build.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BEFORE_BRANCHES: ${{ steps.before.outputs.branches }}
+          BEFORE_PRS: ${{ steps.before.outputs.prs }}
+          BEFORE_ORDERS: ${{ steps.before.outputs.orders }}
+        run: |
+          set -euo pipefail
+          after_branches=$(git ls-remote --heads origin | awk '{print $2}' | sort)
+          after_prs=$(gh pr list --repo "$REPO" --state all --limit 200 --json number --jq '.[].number' | sort -n)
+          after_orders=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq '.[].number' | sort -n)
+
+          changed=no
+          if [ "$after_branches" != "$BEFORE_BRANCHES" ]; then changed=yes; fi
+          if [ "$after_prs" != "$BEFORE_PRS" ]; then changed=yes; fi
+          if [ "$after_orders" != "$BEFORE_ORDERS" ]; then changed=yes; fi
+
+          if [ "$changed" = "no" ]; then
+            echo "::error::The shift pushed no branch, opened no pull request and closed no work order."
+            echo "::error::It reported success and produced nothing. Its transcript is in this run's artifacts (#420)."
+            exit 1
+          fi
+          echo "The shift moved the floor: branches, pull requests or the backlog changed."
+
       # Self-chains the next build via workflow_dispatch rather than relying
       # on day-shift.yml's schedule/workflow_run triggers: observed
       # repeatedly in this repo, GitHub's `schedule` trigger can run hours
@@ -182,7 +251,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
+          PRODUCED: ${{ steps.produced.outcome }}
         run: |
+          # A run that produced nothing is not a run to chain from. Retrying
+          # with a bigger turn budget would spend more to learn the same
+          # nothing, so this halts and leaves the transcript for a human.
+          if [ "$BUILD_OUTCOME" = "success" ] && [ "$PRODUCED" != "success" ]; then
+            echo "The shift produced nothing (#420); halting rather than paying to repeat it."
+            exit 0
+          fi
           if [ "$BUILD_OUTCOME" != "success" ]; then
             # `gh run list --limit 3` returns this run (still in progress -
             # its conclusion isn't set yet, so it never matches "failure"
