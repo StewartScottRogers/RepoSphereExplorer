@@ -139,6 +139,9 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_protobuf::ProtobufPresentation,
     &plugin_thrift::ThriftPresentation,
     &plugin_flatbuffers::FlatbuffersPresentation,
+    &plugin_antlr::AntlrPresentation,
+    &plugin_yacc::YaccPresentation,
+    &plugin_lex::LexPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

@@ -127,6 +127,9 @@ it.
 | Protocol Buffers | `crates/plugins/protobuf` | #353 | Syntax, package, imports, nested messages, enums, services with streaming, reserved numbers |
 | Apache Thrift IDL | `crates/plugins/thrift` | #354 | Namespaces, includes, typedefs, structs and exceptions with numbered fields, services |
 | FlatBuffers schema | `crates/plugins/flatbuffers` | #355 | Namespace, root type, file identifier, tables and unions, deprecated slots |
+| ANTLR grammar | `crates/plugins/antlr` | #358 | Grammar kind, options, tokens, channels, parser and lexer rules, undefined references |
+| Yacc grammar | `crates/plugins/yacc` | #359 | Tokens, start symbol, precedence, union, rules with empty alternatives, error rule |
+| Lex scanner | `crates/plugins/lex` | #360 | Options, start conditions, definitions, pattern-action rules, catch-all |
 
 ## Folder plugins
 

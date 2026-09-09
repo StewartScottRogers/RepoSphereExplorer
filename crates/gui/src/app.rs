@@ -128,6 +128,9 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_protobuf::ProtobufPresentation,
     &plugin_thrift::ThriftPresentation,
     &plugin_flatbuffers::FlatbuffersPresentation,
+    &plugin_antlr::AntlrPresentation,
+    &plugin_yacc::YaccPresentation,
+    &plugin_lex::LexPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

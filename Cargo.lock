@@ -2680,6 +2680,7 @@ dependencies = [
  "i-slint-backend-testing",
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -2737,6 +2738,7 @@ dependencies = [
  "plugin-kotlin",
  "plugin-kubernetes",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-maven",
@@ -2791,6 +2793,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "serde_json",
@@ -5431,6 +5434,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-antlr"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-api"
 version = "0.6.0"
 dependencies = [
@@ -5964,6 +5976,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-lex"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-makefile"
 version = "0.6.0"
 dependencies = [
@@ -6463,6 +6484,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-xml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-yacc"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7581,6 +7611,7 @@ dependencies = [
  "dirs",
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -7638,6 +7669,7 @@ dependencies = [
  "plugin-kotlin",
  "plugin-kubernetes",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-maven",
@@ -7692,6 +7724,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "serde",
@@ -8703,6 +8736,7 @@ version = "0.6.0"
 dependencies = [
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -8760,6 +8794,7 @@ dependencies = [
  "plugin-kotlin",
  "plugin-kubernetes",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-maven",
@@ -8814,6 +8849,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "ratatui",
