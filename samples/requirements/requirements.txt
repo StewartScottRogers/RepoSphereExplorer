@@ -1,0 +1,18 @@
+# Production requirements.
+# Regenerate with: pip-compile requirements.in
+
+-r base.txt
+-c constraints.txt
+
+--index-url https://pypi.example.com/simple
+--extra-index-url https://pypi.org/simple
+
+requests[security,socks]==2.31.0 ; python_version >= "3.8"
+urllib3==2.2.1 \
+    --hash=sha256:450b20ec296a467077128bff42dbaaf20a5ea2ecc5b1c81a4bcd228b17c8b1e2 \
+    --hash=sha256:d0570876c61ab9e520d776c38acbbb5b05a776d3f9ff98a5c8fd5162a444cf19
+certifi==2024.2.2
+flask>=2.0
+pytest~=8.0 ; python_version < "3.13"
+black
+-e ./tools/local-checker

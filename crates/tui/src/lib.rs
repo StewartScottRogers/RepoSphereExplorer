@@ -142,6 +142,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_antlr::AntlrPresentation,
     &plugin_yacc::YaccPresentation,
     &plugin_lex::LexPresentation,
+    &plugin_openapi::OpenapiPresentation,
+    &plugin_requirements::RequirementsPresentation,
+    &plugin_yarnlock::YarnlockPresentation,
+    &plugin_pnpmlock::PnpmlockPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

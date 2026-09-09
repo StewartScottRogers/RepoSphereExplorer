@@ -1,0 +1,80 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Orders",
+    "version": "1.4.0",
+    "description": "Placing, reading and cancelling orders.",
+    "license": { "name": "MIT" }
+  },
+  "servers": [
+    { "url": "https://api.example.com/v1", "description": "Production" },
+    { "url": "https://staging.api.example.com/v1", "description": "Staging" }
+  ],
+  "paths": {
+    "/orders": {
+      "get": {
+        "operationId": "listOrders",
+        "summary": "Every order the caller may see.",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "A page of orders." },
+          "401": { "description": "Not authenticated." },
+          "default": { "description": "Anything else." }
+        }
+      },
+      "post": {
+        "summary": "Place an order.",
+        "requestBody": { "required": true },
+        "responses": {
+          "201": { "description": "Placed." }
+        }
+      }
+    },
+    "/orders/{id}": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "get": {
+        "operationId": "getOrder",
+        "summary": "One order.",
+        "security": [ { "bearerAuth": [] } ],
+        "responses": {
+          "200": { "description": "The order." },
+          "404": { "description": "No such order." }
+        }
+      },
+      "delete": {
+        "operationId": "cancelOrder",
+        "summary": "Cancel it.",
+        "security": [ { "bearerAuth": [] } ],
+        "responses": {
+          "204": { "description": "Cancelled." },
+          "404": { "description": "No such order." },
+          "409": { "description": "Already shipped." }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Whether the service is up.",
+        "responses": {
+          "200": { "description": "Up." }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Order": { "type": "object" },
+      "Line": { "type": "object" },
+      "Problem": { "type": "object" }
+    },
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" },
+      "apiKey": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+    }
+  }
+}

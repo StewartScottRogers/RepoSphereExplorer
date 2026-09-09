@@ -2749,12 +2749,14 @@ dependencies = [
  "plugin-npmlock",
  "plugin-objective-c",
  "plugin-ocaml",
+ "plugin-openapi",
  "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
@@ -2764,6 +2766,7 @@ dependencies = [
  "plugin-psd",
  "plugin-python",
  "plugin-r",
+ "plugin-requirements",
  "plugin-restructuredtext",
  "plugin-roff",
  "plugin-ruby",
@@ -2795,6 +2798,7 @@ dependencies = [
  "plugin-xml",
  "plugin-yacc",
  "plugin-yaml",
+ "plugin-yarnlock",
  "protocol",
  "serde_json",
  "service",
@@ -6076,6 +6080,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-openapi"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-orgmode"
 version = "0.6.0"
 dependencies = [
@@ -6129,6 +6142,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-php"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-pnpmlock"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6214,6 +6236,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-r"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-requirements"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6502,6 +6533,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-yaml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-yarnlock"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7680,12 +7720,14 @@ dependencies = [
  "plugin-npmlock",
  "plugin-objective-c",
  "plugin-ocaml",
+ "plugin-openapi",
  "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
@@ -7695,6 +7737,7 @@ dependencies = [
  "plugin-psd",
  "plugin-python",
  "plugin-r",
+ "plugin-requirements",
  "plugin-restructuredtext",
  "plugin-roff",
  "plugin-ruby",
@@ -7726,6 +7769,7 @@ dependencies = [
  "plugin-xml",
  "plugin-yacc",
  "plugin-yaml",
+ "plugin-yarnlock",
  "protocol",
  "serde",
  "serde_json",
@@ -8805,12 +8849,14 @@ dependencies = [
  "plugin-npmlock",
  "plugin-objective-c",
  "plugin-ocaml",
+ "plugin-openapi",
  "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
@@ -8820,6 +8866,7 @@ dependencies = [
  "plugin-psd",
  "plugin-python",
  "plugin-r",
+ "plugin-requirements",
  "plugin-restructuredtext",
  "plugin-roff",
  "plugin-ruby",
@@ -8851,6 +8898,7 @@ dependencies = [
  "plugin-xml",
  "plugin-yacc",
  "plugin-yaml",
+ "plugin-yarnlock",
  "protocol",
  "ratatui",
  "serde_json",
