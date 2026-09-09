@@ -1,0 +1,13 @@
+{application, supervisor_demo, [
+    {description, "A worker pool behind a gen_server, with statistics."},
+    {vsn, "1.1.0"},
+    {registered, [supervisor_demo]},
+    {applications, [
+        kernel,
+        stdlib
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, ["MIT"]},
+    {links, [{"GitHub", "https://github.com/example/supervisor_demo"}]}
+]}.

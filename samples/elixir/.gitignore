@@ -1,0 +1,13 @@
+# Build output.
+/_build/
+/cover/
+/deps/
+/doc/
+*.ez
+rate_limiter-*.tar
+
+# Tool state.
+/.elixir_ls/
+erl_crash.dump
+
+.DS_Store

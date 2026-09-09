@@ -1,0 +1,9 @@
+# Build output.
+_build/
+*.install
+
+# Editor and tool state.
+.merlin
+_opam/
+
+.DS_Store

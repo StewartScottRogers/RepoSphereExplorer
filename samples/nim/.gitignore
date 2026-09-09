@@ -1,0 +1,8 @@
+# Build output.
+/nimcache/
+csvstats
+csvstats.exe
+tests/test_csvstats
+tests/test_csvstats.exe
+
+.DS_Store

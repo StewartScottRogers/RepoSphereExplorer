@@ -1,0 +1,11 @@
+# Build output.
+bin/
+obj/
+/artifacts/
+
+# Tool and editor state.
+.vs/
+*.user
+*.suo
+
+.DS_Store

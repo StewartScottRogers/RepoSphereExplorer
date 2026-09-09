@@ -1,0 +1,12 @@
+# Build output.
+target/
+project/target/
+project/project/
+
+# Tool state.
+.bsp/
+.metals/
+.bloop/
+.idea/
+
+.DS_Store

@@ -1,0 +1,6 @@
+packages: .
+
+tests: True
+
+package interpreter
+  ghc-options: -Werror

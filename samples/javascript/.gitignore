@@ -1,0 +1,10 @@
+# Dependencies and build output.
+node_modules/
+/dist/
+/coverage/
+
+# Logs.
+npm-debug.log*
+*.tsbuildinfo
+
+.DS_Store

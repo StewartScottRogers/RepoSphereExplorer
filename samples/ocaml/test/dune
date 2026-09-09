@@ -1,0 +1,9 @@
+; The demo exercises the cache and prints what it kept, its size and its
+; hit rate. Running it is the test: it raises if an invariant it asserts
+; is broken, and a cram test pinning its exact output would fail every
+; time somebody changed a message rather than a behaviour.
+(rule
+ (alias runtest)
+ (deps %{bin:lru})
+ (action
+  (run %{bin:lru})))

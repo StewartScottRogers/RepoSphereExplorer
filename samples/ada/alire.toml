@@ -1,0 +1,20 @@
+name = "stack_demo"
+description = "A bounded generic stack with its own exceptions."
+version = "1.0.0"
+
+authors = ["Example"]
+maintainers = ["Example <engineering@example.com>"]
+maintainers-logins = ["example"]
+licenses = "MIT"
+website = "https://github.com/example/stack_demo"
+tags = ["data-structures", "stack", "generic"]
+
+executables = ["stack_demo"]
+
+[[depends-on]]
+gnat = ">=13 & <2000"
+
+[build-switches]
+development.contracts = "Yes"
+development.runtime_checks = "Everything"
+release.optimization = "Performance"

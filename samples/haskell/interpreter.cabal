@@ -1,0 +1,37 @@
+cabal-version:      3.0
+name:               interpreter
+version:            0.4.0
+synopsis:           A tiny stack machine, its assembler and its disassembler.
+description:
+  A stack machine with a bounded step count, an assembler that reports where
+  it gave up, and a disassembler that round-trips.
+
+license:            MIT
+author:             Example
+maintainer:         engineering@example.com
+homepage:           https://github.com/example/interpreter
+category:           Language
+build-type:         Simple
+extra-doc-files:    README.md
+
+common warnings
+    ghc-options: -Wall -Wcompat -Widentities -Wredundant-constraints
+
+library
+    import:           warnings
+    exposed-modules:  Interpreter
+    hs-source-dirs:   src
+    build-depends:    base >=4.18 && <5
+                    , containers >=0.6 && <0.8
+    default-language: GHC2021
+
+test-suite interpreter-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    build-depends:    base >=4.18 && <5
+                    , hspec >=2.11 && <2.12
+                    , interpreter
+    build-tool-depends: hspec-discover:hspec-discover
+    default-language: GHC2021

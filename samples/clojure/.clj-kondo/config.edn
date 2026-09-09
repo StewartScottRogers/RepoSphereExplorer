@@ -1,0 +1,8 @@
+{:linters
+ {:unused-binding {:level :warning}
+  :unused-namespace {:level :warning}
+  :unresolved-symbol {:level :error}
+  :missing-docstring {:level :warning}
+  :shadowed-var {:level :warning}}
+
+ :output {:exclude-files ["target/.*"]}}

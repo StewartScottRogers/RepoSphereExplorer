@@ -1,0 +1,15 @@
+<Project>
+
+  <!-- `Option Strict On` is set here as well as in the project file, so a
+       project added later cannot quietly opt out of it. Late binding in a
+       payroll calculation is how a rounding bug reaches a payslip. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <OptionStrict>On</OptionStrict>
+    <OptionExplicit>On</OptionExplicit>
+    <Nullable>enable</Nullable>
+    <Company>Example</Company>
+    <Product>Payroll</Product>
+  </PropertyGroup>
+
+</Project>

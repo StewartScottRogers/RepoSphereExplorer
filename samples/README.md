@@ -108,11 +108,58 @@ samples/rust/
 That also gives the folder plugins something to recognise: opening
 `samples/rust/` shows the Cargo project lines below the folder's own.
 
+Thirty-seven directories are projects, each using its own ecosystem's
+conventions rather than a shape invented here:
+
+| ecosystem | what marks it | where the source lives |
+| --- | --- | --- |
+| Rust | `Cargo.toml`, `Cargo.lock` | `src/`, `tests/` |
+| Go | `go.mod` | package root, `cmd/` |
+| Python | `pyproject.toml` | `src/<package>/`, `tests/` |
+| JavaScript, TypeScript | `package.json`, lock file | `src/`, `test/` |
+| Vue, Svelte | `package.json`, `vite.config.js` | `src/` |
+| Java | `pom.xml` | `src/main/java/`, `src/test/java/` |
+| Kotlin, Groovy | `build.gradle[.kts]` | `src/main/<lang>/` |
+| Scala | `build.sbt`, `project/` | `src/main/scala/` |
+| C#, F#, Visual Basic .NET | `.sln`, `.csproj`/`.fsproj`/`.vbproj` | `src/`, `tests/` |
+| Ruby | `.gemspec`, `Gemfile` | `lib/`, `spec/` |
+| PHP | `composer.json` | `src/`, `tests/` |
+| Elixir | `mix.exs`, `mix.lock` | `lib/`, `test/` |
+| Erlang | `rebar.config`, `.app.src` | `src/`, `test/` |
+| Dart | `pubspec.yaml`, `pubspec.lock` | `lib/`, `test/` |
+| Swift | `Package.swift` | `Sources/`, `Tests/` |
+| Objective-C | `.podspec`, `Podfile` | `Classes/` |
+| Haskell | `.cabal`, `cabal.project` | `src/`, `test/` |
+| OCaml | `dune-project`, `.opam` | `bin/`, `test/` |
+| Clojure | `deps.edn`, `build.clj` | `src/`, `test/` |
+| Crystal | `shard.yml`, `shard.lock` | `src/`, `spec/` |
+| Elm | `elm.json` | `src/`, `tests/` |
+| Julia | `Project.toml`, `Manifest.toml` | `src/`, `test/` |
+| Nim | `.nimble`, `nim.cfg` | `src/`, `tests/` |
+| C, C++ | `CMakeLists.txt` | `src/`, `include/` |
+| Ada | `alire.toml`, `.gpr` | `src/` |
+| Fortran | `fpm.toml` | `src/`, `test/` |
+| R | `DESCRIPTION`, `NAMESPACE` | `R/`, `tests/testthat/` |
+| Perl | `Makefile.PL`, `cpanfile` | `lib/`, `t/` |
+| PowerShell | `build.ps1`, analyzer settings | root, `Tests/` |
+| Solidity | `foundry.toml`, `remappings.txt` | `src/`, `test/` |
+| Terraform | `versions.tf`, `.terraform.lock.hcl` | root, split by concern |
+| Docker | `compose.yaml`, `.dockerignore` | root |
+
+Every one of them keeps its original fixture — the file the plugin is
+tested against — moved to wherever that ecosystem puts source. Nothing was
+duplicated: `samples/terraform/main.tf` was **split** into `versions.tf`,
+`variables.tf` and `outputs.tf` rather than gaining files that redeclared
+the same blocks, because two `variable "region"` blocks do not parse and a
+project whose files contradict each other is not a project.
+
 **These are plausible, not built.** The syntax is real, the versions exist,
-and a lock file matches its manifest — but this factory has a Rust
-toolchain and not forty others, so no pipeline compiles a Go module or
-installs a Ruby gem here. A green pipeline is not evidence that any of
-these would build. Do not read it as one.
+a lock file matches its manifest, and every README and test was written
+against the fixture's *actual* API — checked by reading it, not assumed.
+But this factory has a Rust toolchain and not thirty-seven others, so no
+pipeline compiles a Go module or installs a Ruby gem here. **A green
+pipeline is not evidence that any of these would build.** Do not read it
+as one.
 
 Any manifest that cargo would otherwise adopt is named in the root
 `Cargo.toml`'s `workspace.exclude`. A sample project is a fixture to open,

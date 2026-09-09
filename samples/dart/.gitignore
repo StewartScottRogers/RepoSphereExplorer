@@ -1,0 +1,10 @@
+# Build output.
+/build/
+/doc/api/
+
+# Tool state.
+.dart_tool/
+.packages
+pubspec_overrides.yaml
+
+.DS_Store

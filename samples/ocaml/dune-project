@@ -1,0 +1,27 @@
+(lang dune 3.17)
+
+(name lru)
+
+(generate_opam_files true)
+
+(source
+ (github example/lru))
+
+(license MIT)
+
+(authors "Example")
+
+(maintainers "engineering@example.com")
+
+(package
+ (name lru)
+ (synopsis "A least-recently-used cache, functorised over its key")
+ (description
+  "A bounded cache that evicts the least recently used entry, built as a\nfunctor so the key type and its comparison come from the caller.")
+ (depends
+  (ocaml
+   (>= 5.1))
+  (alcotest
+   (and
+    (>= 1.8)
+    :with-test))))

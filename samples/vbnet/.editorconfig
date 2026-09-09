@@ -1,0 +1,16 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.vb]
+dotnet_style_qualification_for_field = true:warning
+dotnet_diagnostic.BC42104.severity = error
+
+[*.{vbproj,props,json}]
+indent_size = 2

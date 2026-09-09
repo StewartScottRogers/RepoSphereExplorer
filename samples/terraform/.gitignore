@@ -1,0 +1,14 @@
+# State, which never belongs in the repository.
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+
+# Variables, which are somebody's settings and sometimes their secrets.
+terraform.tfvars
+*.auto.tfvars
+
+# Plans, which are point-in-time and go stale immediately.
+*.tfplan
+
+.DS_Store

@@ -1,0 +1,25 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+solc_version = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+bytecode_hash = "none"
+
+# A test that passes because an assertion was never reached is worse than
+# a failing one.
+fuzz = { runs = 512 }
+invariant = { runs = 128, depth = 32 }
+
+[profile.ci]
+fuzz = { runs = 4096 }
+verbosity = 3
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false
+int_types = "long"

@@ -1,0 +1,15 @@
+Style/VerboseBlock:
+  Enabled: true
+
+Documentation/DocumentationAdmonition:
+  Enabled: false
+
+Metrics/CyclomaticComplexity:
+  MaxComplexity: 12
+
+Lint/NotNil:
+  Enabled: true
+
+Excluded:
+  - lib
+  - bin
