@@ -2682,6 +2682,7 @@ dependencies = [
  "plugin-ada",
  "plugin-api",
  "plugin-archive",
+ "plugin-asciidoc",
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
@@ -2694,6 +2695,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-csv",
  "plugin-dart",
+ "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
@@ -2713,6 +2715,7 @@ dependencies = [
  "plugin-hdf5",
  "plugin-html",
  "plugin-image",
+ "plugin-ini",
  "plugin-java",
  "plugin-javascript",
  "plugin-json",
@@ -2720,11 +2723,13 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-markdown",
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-objective-c",
  "plugin-ocaml",
+ "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
@@ -2734,6 +2739,7 @@ dependencies = [
  "plugin-presentation",
  "plugin-project-cargo",
  "plugin-prolog",
+ "plugin-properties",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -2762,6 +2768,7 @@ dependencies = [
  "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yaml",
  "protocol",
  "serde_json",
  "service",
@@ -5420,6 +5427,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-asciidoc"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-assembly"
 version = "0.6.0"
 dependencies = [
@@ -5532,6 +5548,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-dart"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-diff"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -5718,6 +5743,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-ini"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-java"
 version = "0.6.0"
 dependencies = [
@@ -5781,6 +5815,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-markdown"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-model3d"
 version = "0.6.0"
 dependencies = [
@@ -5819,6 +5862,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-ocaml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-orgmode"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -5909,6 +5961,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-prolog"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-properties"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6172,6 +6233,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-xml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-yaml"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7283,6 +7353,7 @@ dependencies = [
  "plugin-ada",
  "plugin-api",
  "plugin-archive",
+ "plugin-asciidoc",
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
@@ -7295,6 +7366,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-csv",
  "plugin-dart",
+ "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
@@ -7314,6 +7386,7 @@ dependencies = [
  "plugin-hdf5",
  "plugin-html",
  "plugin-image",
+ "plugin-ini",
  "plugin-java",
  "plugin-javascript",
  "plugin-json",
@@ -7321,11 +7394,13 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-markdown",
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-objective-c",
  "plugin-ocaml",
+ "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
@@ -7335,6 +7410,7 @@ dependencies = [
  "plugin-presentation",
  "plugin-project-cargo",
  "plugin-prolog",
+ "plugin-properties",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -7363,6 +7439,7 @@ dependencies = [
  "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yaml",
  "protocol",
  "serde",
  "serde_json",
@@ -8375,6 +8452,7 @@ dependencies = [
  "plugin-ada",
  "plugin-api",
  "plugin-archive",
+ "plugin-asciidoc",
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
@@ -8387,6 +8465,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-csv",
  "plugin-dart",
+ "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
@@ -8406,6 +8485,7 @@ dependencies = [
  "plugin-hdf5",
  "plugin-html",
  "plugin-image",
+ "plugin-ini",
  "plugin-java",
  "plugin-javascript",
  "plugin-json",
@@ -8413,11 +8493,13 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-makefile",
+ "plugin-markdown",
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-objective-c",
  "plugin-ocaml",
+ "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pdf",
@@ -8427,6 +8509,7 @@ dependencies = [
  "plugin-presentation",
  "plugin-project-cargo",
  "plugin-prolog",
+ "plugin-properties",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -8455,6 +8538,7 @@ dependencies = [
  "plugin-wasm",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yaml",
  "protocol",
  "ratatui",
  "serde_json",

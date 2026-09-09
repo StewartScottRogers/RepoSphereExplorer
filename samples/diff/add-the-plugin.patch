@@ -1,0 +1,49 @@
+From 4a1f2c8e9b7d6a5c4e3f2a1b0c9d8e7f6a5b4c3d Mon Sep 17 00:00:00 2001
+From: Example Engineering <engineering@example.com>
+Date: Wed, 9 Sep 2026 06:00:00 +0000
+Subject: [PATCH] Add the guide plugin, and rename the old fixture
+
+Three files, so this fixture carries a modification with two hunks, a
+rename, and a binary file the patch reports rather than diffs.
+---
+ src/lib.rs          | 12 +++++++++---
+ docs/old-notes.md   |  0
+ assets/logo.png     | Bin 0 -> 1024 bytes
+ 3 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 1a2b3c4..5d6e7f8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,9 @@
+ //! The guide plugin.
+
+-use plugin_api::PluginCore;
++use plugin_api::{Icon, PluginCore, PluginPresentation};
++use serde::{Deserialize, Serialize};
++
++/// The extensions this type claims.
++pub const EXTENSIONS: &[&str] = &["guide"];
+
+ /// The core half.
+ pub struct GuideCore;
+@@ -20,7 +23,9 @@ impl PluginCore for GuideCore {
+     }
+
+     fn sniff(&self, prefix: &[u8]) -> bool {
+-        prefix.starts_with(b"GUIDE")
++        // A four-byte marker no sibling claims.
++        prefix.starts_with(b"GUIDE\x00")
+     }
+
+     fn view(&self, path: &Path) -> io::Result<Value> {
+diff --git a/docs/notes.md b/docs/old-notes.md
+similarity index 100%
+rename from a/docs/notes.md
+rename to b/docs/old-notes.md
+diff --git a/assets/logo.png b/assets/logo.png
+new file mode 100644
+index 0000000..9f8e7d6
+Binary files a/assets/logo.png and b/assets/logo.png differ
+--
+2.55.0

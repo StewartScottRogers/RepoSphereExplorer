@@ -1,0 +1,51 @@
+= The Plugin Handbook
+:author: Example Engineering
+:revnumber: 2.1
+:toc: left
+:source-highlighter: rouge
+
+An AsciiDoc fixture carrying a document header with attributes, nested
+sections, an include, source blocks in two languages, a table and two
+admonitions.
+
+include::shared/preamble.adoc[]
+
+== What a plugin is
+
+A plugin is one crate with two halves.
+
+NOTE: The core half never touches a toolkit, and the presentation half
+never touches raw bytes.
+
+=== The core half
+
+[source,rust]
+----
+impl PluginCore for HandbookCore {
+    fn name(&self) -> &'static str {
+        "handbook"
+    }
+}
+----
+
+=== The presentation half
+
+[source,sh]
+----
+cargo test -p plugin-handbook
+----
+
+== Checks before opening a pull request
+
+|===
+| Check | Why
+
+| Both halves agree on extensions
+| Or a listing marks a file its viewer refuses to open
+
+| The fixture fills every field
+| Or `sample_coverage.rs` fails
+|===
+
+WARNING: A plugin that claims too much is how a C file came to open as
+Rust.
