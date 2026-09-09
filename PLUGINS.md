@@ -120,6 +120,8 @@ it.
 | Helm chart metadata | `crates/plugins/helmchart` | #350 | Chart and application versions, type, dependencies with conditions, maintainers |
 | GitLab CI configuration | `crates/plugins/gitlabci` | #347 | Stages, jobs, templates, images, includes, and jobs whose stage never runs |
 | JSON Schema | `crates/plugins/jsonschema` | #356 | Draft, identity, properties with types and requiredness, definitions, references, composition |
+| Maven POM | `crates/plugins/maven` | #343 | Coordinates, parent, modules, dependencies with scopes, properties, plugins |
+| MSBuild project | `crates/plugins/msbuild` | #344 | Kit, target frameworks, output type, packages, project references, imports |
 
 ## Folder plugins
 
