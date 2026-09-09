@@ -45,9 +45,12 @@ plugin-markdown = { path = "../plugins/markdown" }
 plugin-maven = { path = "../plugins/maven" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-npmlock = { path = "../plugins/npmlock" }
+plugin-openapi = { path = "../plugins/openapi" }
 plugin-orgmode = { path = "../plugins/orgmode" }
+plugin-pnpmlock = { path = "../plugins/pnpmlock" }
 plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
+plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-thrift = { path = "../plugins/thrift" }
@@ -131,6 +134,7 @@ plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
 plugin-yacc = { path = "../plugins/yacc" }
 plugin-yaml = { path = "../plugins/yaml" }
+plugin-yarnlock = { path = "../plugins/yarnlock" }
 protocol = { path = "../protocol" }
 serde_json = "1"
 slint = "1.17"

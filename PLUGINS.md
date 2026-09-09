@@ -119,17 +119,21 @@ it.
 | Git attributes | `crates/plugins/gitattributes` | #329 | Rules, binary markings, diff/merge drivers, filters, language overrides |
 | Helm chart metadata | `crates/plugins/helmchart` | #350 | Chart and application versions, type, dependencies with conditions, maintainers |
 | GitLab CI configuration | `crates/plugins/gitlabci` | #347 | Stages, jobs, templates, images, includes, and jobs whose stage never runs |
-| JSON Schema | `crates/plugins/jsonschema` | #356 | Draft, identity, properties with types and requiredness, definitions, references, composition |
+| JSON Schema | `crates/plugins/jsonschema` | #371 | Draft, identity, properties with types and requiredness, definitions, references, composition |
 | GitHub Actions workflow | `crates/plugins/githubactions` | #346 | Name, triggers, jobs, actions, unpinned references, permissions, secrets |
 | Kubernetes manifest | `crates/plugins/kubernetes` | #349 | Resources, kinds, namespaces, images, unpinned tags, resource limits |
 | Maven POM | `crates/plugins/maven` | #343 | Coordinates, parent, modules, dependencies with scopes, properties, plugins |
 | MSBuild project | `crates/plugins/msbuild` | #344 | Kit, target frameworks, output type, packages, project references, imports |
-| Protocol Buffers | `crates/plugins/protobuf` | #353 | Syntax, package, imports, nested messages, enums, services with streaming, reserved numbers |
-| Apache Thrift IDL | `crates/plugins/thrift` | #354 | Namespaces, includes, typedefs, structs and exceptions with numbered fields, services |
-| FlatBuffers schema | `crates/plugins/flatbuffers` | #355 | Namespace, root type, file identifier, tables and unions, deprecated slots |
-| ANTLR grammar | `crates/plugins/antlr` | #358 | Grammar kind, options, tokens, channels, parser and lexer rules, undefined references |
-| Yacc grammar | `crates/plugins/yacc` | #359 | Tokens, start symbol, precedence, union, rules with empty alternatives, error rule |
-| Lex scanner | `crates/plugins/lex` | #360 | Options, start conditions, definitions, pattern-action rules, catch-all |
+| Protocol Buffers | `crates/plugins/protobuf` | #368 | Syntax, package, imports, nested messages, enums, services with streaming, reserved numbers |
+| Apache Thrift IDL | `crates/plugins/thrift` | #369 | Namespaces, includes, typedefs, structs and exceptions with numbered fields, services |
+| FlatBuffers schema | `crates/plugins/flatbuffers` | #370 | Namespace, root type, file identifier, tables and unions, deprecated slots |
+| ANTLR grammar | `crates/plugins/antlr` | #373 | Grammar kind, options, tokens, channels, parser and lexer rules, undefined references |
+| Yacc grammar | `crates/plugins/yacc` | #374 | Tokens, start symbol, precedence, union, rules with empty alternatives, error rule |
+| Lex scanner | `crates/plugins/lex` | #375 | Options, start conditions, definitions, pattern-action rules, catch-all |
+| OpenAPI description | `crates/plugins/openapi` | #372 | Version, servers, operations, schemas, security schemes, missing identifiers and failures |
+| pip requirements file | `crates/plugins/requirements` | #342 | Names, specifiers, extras, markers, includes, constraints, index addresses, hash pins, unpinned lines |
+| Yarn lock file | `crates/plugins/yarnlock` | #336 | Generation, requested ranges against resolved versions, patched packages, entries with no checksum |
+| pnpm lock file | `crates/plugins/pnpmlock` | #337 | Format version, workspace projects, locked packages, development-only packages, peer resolutions, patches |
 
 ## Folder plugins
 
