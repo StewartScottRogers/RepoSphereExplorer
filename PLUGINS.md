@@ -98,6 +98,20 @@ it.
 | VB.NET source | `crates/plugins/vbnet` | #90 | Sniffs by VB.NET's own two-word block closers (`End Sub`, `End Function`, `End Module`, `End Class` — no sibling plugin's language closes a block this way), the `Imports System` module-level import (distinct from C#'s semicolon-terminated `using System;` and Java's lowercase `import java.`), the ` As New ` object-instantiation operator, or a bare `Dim ` variable declaration — markers not used by any sibling plugin; placed just after `csharp` in `CORE_PLUGINS` as another .NET-hosted language, no ordering constraint against a specific sibling since it has no overlapping markers. Extracts each top-level `Sub`/`Function` procedure name in source order alongside the raw content, mirroring this project's other source-language plugins' own declaration-extraction pattern |
 | Terraform (HCL) | `crates/plugins/terraform` | #91 | Sniffs by a top-level HCL block header ending its line in a bare `{`, preceded by one of Terraform's reserved block keywords: two quoted labels for `resource`/`data` (e.g. `resource "aws_instance" "example" {`), one quoted label for `variable`/`output`/`module`/`provider`, or no label for `terraform`/`locals` — markers not used by any sibling plugin. A plain `key = "value"` attribute line (which every one of these blocks' bodies contains) also satisfies the TOML plugin's own key/value check, so this plugin is placed just ahead of `toml` in `CORE_PLUGINS`, right after `json`, so a real `.tf` file's block header claims it first by this plugin's own stronger marker. A `.tfvars` file consisting only of flat assignments and no block header carries none of these markers and is indistinguishable by content alone from TOML's own syntax — an accepted content-sniffing limitation, matching this project's precedent for other structurally-ambiguous formats. Extracts each top-level block's dotted descriptor (e.g. `resource.aws_instance.example`, `variable.region`) in source order alongside the raw content, mirroring this project's other source-language plugins' own declaration-extraction pattern |
 
+## Folder plugins
+
+A separate registry, and a separate rule: every folder plugin that recognises
+a folder contributes, because a folder is several things at once. See
+GUIDANCE.md §3.4 and DECISIONS.md D12.
+
+| Kind | Crate | Issue | Notes |
+| --- | --- | --- | --- |
+| Directory | `crates/plugins/directory` | — | The folder itself: contents, and the source control facts of a working copy |
+| Cargo project | `crates/plugins/project-cargo` | #308 | Workspace or package, name, version, edition, members, dependency counts |
+
+Node, Python, Go, .NET and Java project plugins are follow-up work, not
+rejected.
+
 ## Rejected / infeasible
 
 | Format | Issue | Reason |

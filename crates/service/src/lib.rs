@@ -4,8 +4,8 @@ pub mod repos;
 
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream};
-use plugin_api::PluginCore;
-use protocol::{DirectoryEntry, Request, Response};
+use plugin_api::{FolderCore, PluginCore};
+use protocol::{DirectoryEntry, PluginView, Request, Response};
 use serde::Serialize;
 use std::fs;
 use std::io;
@@ -122,6 +122,56 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
 /// The directory-as-file plugin, dispatched directly by [`view_file`] when
 /// the path is a directory rather than through content sniffing.
 const DIRECTORY_PLUGIN: &dyn PluginCore = &plugin_directory::DirectoryCore;
+
+/// The folder plugins, which say what kind of programming project a folder
+/// holds.
+///
+/// Every one that recognises a folder contributes, which is the difference
+/// between these and [`CORE_PLUGINS`]. A file has one type, and two
+/// plugins claiming one file is a defect. A folder is several things at
+/// once: this repository's own root is a source control working copy and a
+/// Cargo workspace, and neither description is the wrong one.
+const FOLDER_PLUGINS: &[&dyn FolderCore] = &[&plugin_project_cargo::CargoProjectCore];
+
+/// Every folder plugin that recognises the folder at `path`, in
+/// registration order.
+///
+/// One directory read, for the selected folder only. A listing does not
+/// call this: a `.git` check is a single `metadata` call per row, but this
+/// is a full directory read per row, and a Repos Directory holding two
+/// hundred folders would pay it two hundred times before a row drew. See
+/// GUIDANCE.md section 2.5.
+fn folder_plugins_for(path: &Path) -> Vec<&'static dyn FolderCore> {
+    let Ok(entries) = fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+
+    folder_plugins_among(FOLDER_PLUGINS, &names)
+}
+
+/// Every plugin in `plugins` that recognises a folder holding `names`.
+///
+/// Split from the directory read so the rule it carries - *all* of them,
+/// not the first - is testable against more than one matching plugin.
+/// There is one folder plugin registered today, so a `find` here would
+/// pass every test that only used the real registry, and would then
+/// silently drop the second description the moment a second plugin
+/// existed.
+fn folder_plugins_among(
+    plugins: &[&'static dyn FolderCore],
+    names: &[&str],
+) -> Vec<&'static dyn FolderCore> {
+    plugins
+        .iter()
+        .filter(|plugin| plugin.sniff(names))
+        .copied()
+        .collect()
+}
 
 /// Lists the immediate contents of `path`, sorted by name without regard
 /// to case, so a capitalised entry sits among its neighbours rather than
@@ -275,9 +325,23 @@ fn claimed_by_extension<'a>(
 pub fn view_file(path: &Path) -> io::Result<Response> {
     if fs::metadata(path)?.is_dir() {
         let name = DIRECTORY_PLUGIN.name();
+        let mut also = Vec::new();
+        for plugin in folder_plugins_for(path) {
+            let project = plugin.name();
+            // A folder plugin that panics or cannot read its manifest
+            // costs the folder that one description and nothing else: the
+            // folder is still a folder, and the rest of the pane stands.
+            if let Ok(Ok(data)) = guarded(project, path, || plugin.view(path)) {
+                also.push(PluginView {
+                    plugin: project.to_owned(),
+                    data,
+                });
+            }
+        }
         return Ok(Response::FileView {
             plugin: name.to_owned(),
             data: guarded(name, path, || DIRECTORY_PLUGIN.view(path))??,
+            also,
         });
     }
     Ok(match sniff(path)? {
@@ -287,6 +351,7 @@ pub fn view_file(path: &Path) -> io::Result<Response> {
                 Ok(data) => Response::FileView {
                     plugin: name.to_owned(),
                     data: data?,
+                    also: Vec::new(),
                 },
                 // A panicking plugin costs this file its preview and
                 // nothing else: the caller can go straight on to the next.
@@ -740,9 +805,9 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CORE_PLUGINS, bind, copy, create_directory, create_file, delete, extract, guarded,
-        handle_request, journal_to, list_directory, open, rename, serve_one, sniff_among, undo,
-        view_file, write_file,
+        CORE_PLUGINS, FolderCore, Path, bind, copy, create_directory, create_file, delete, extract,
+        folder_plugins_among, guarded, handle_request, journal_to, list_directory, open, rename,
+        serve_one, sniff_among, undo, view_file, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -1100,7 +1165,7 @@ public class OrderBook {
         let response = view_file(&path).unwrap();
 
         match response {
-            Response::FileView { plugin, data } => {
+            Response::FileView { plugin, data, .. } => {
                 assert_eq!(plugin, "text");
                 assert_eq!(data["content"], "hello\nworld\n");
             }
@@ -1119,7 +1184,7 @@ public class OrderBook {
         let response = view_file(&dir).unwrap();
 
         match response {
-            Response::FileView { plugin, data } => {
+            Response::FileView { plugin, data, .. } => {
                 assert_eq!(plugin, "directory");
                 assert_eq!(data["entry_count"], 1);
             }
@@ -1647,7 +1712,7 @@ public class OrderBook {
         });
 
         match response {
-            Response::FileView { plugin, data } => {
+            Response::FileView { plugin, data, .. } => {
                 assert_eq!(plugin, "text");
                 assert_eq!(data["content"], "hello over the wire");
             }
@@ -1757,5 +1822,127 @@ public class OrderBook {
         });
 
         assert!(matches!(response, Response::Error { .. }));
+    }
+    /// Two folder plugins that both recognise anything, so the collecting
+    /// rule has something to collect. A registry with one real entry in it
+    /// cannot tell "all of them" from "the first of them".
+    struct AlwaysOne;
+    struct AlwaysTwo;
+
+    impl FolderCore for AlwaysOne {
+        fn name(&self) -> &'static str {
+            "always-one"
+        }
+        fn sniff(&self, _entries: &[&str]) -> bool {
+            true
+        }
+        fn view(&self, _path: &Path) -> io::Result<serde_json::Value> {
+            Ok(serde_json::json!({ "from": "one" }))
+        }
+    }
+
+    impl FolderCore for AlwaysTwo {
+        fn name(&self) -> &'static str {
+            "always-two"
+        }
+        fn sniff(&self, _entries: &[&str]) -> bool {
+            true
+        }
+        fn view(&self, _path: &Path) -> io::Result<serde_json::Value> {
+            Ok(serde_json::json!({ "from": "two" }))
+        }
+    }
+
+    /// One that never matches, so filtering is shown to filter.
+    struct NeverAny;
+
+    impl FolderCore for NeverAny {
+        fn name(&self) -> &'static str {
+            "never-any"
+        }
+        fn sniff(&self, _entries: &[&str]) -> bool {
+            false
+        }
+        fn view(&self, _path: &Path) -> io::Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    #[test]
+    fn every_matching_folder_plugin_contributes_not_just_the_first() {
+        // A folder is several things at once - this repository's own root
+        // is a source control working copy and a Cargo workspace - so the
+        // dispatch collects. Replace the `filter` with a `find` and this
+        // is the test that fails.
+        let plugins: &[&'static dyn FolderCore] = &[&AlwaysOne, &NeverAny, &AlwaysTwo];
+
+        let found = folder_plugins_among(plugins, &["Cargo.toml"]);
+
+        assert_eq!(
+            found.iter().map(|plugin| plugin.name()).collect::<Vec<_>>(),
+            vec!["always-one", "always-two"],
+            "both matching plugins should be collected, in registration order"
+        );
+    }
+
+    #[test]
+    fn a_folder_no_plugin_recognises_collects_nothing() {
+        let plugins: &[&'static dyn FolderCore] = &[&NeverAny];
+
+        assert!(folder_plugins_among(plugins, &["Cargo.toml"]).is_empty());
+    }
+
+    #[test]
+    fn this_repository_is_a_working_copy_and_a_cargo_workspace_at_once() {
+        // The case the whole design exists for. The folder answers as the
+        // directory plugin, and carries the Cargo project beside it -
+        // neither description replacing the other.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+
+        let response = view_file(&root).unwrap();
+
+        let Response::FileView { plugin, also, .. } = response else {
+            panic!("a folder should view as a file view");
+        };
+        assert_eq!(plugin, "directory", "the folder is still a folder");
+        assert!(
+            also.iter().any(|view| view.plugin == "project-cargo"),
+            "and it is also a Cargo workspace: {:?}",
+            also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_folder_that_is_no_kind_of_project_carries_nothing_extra() {
+        let dir = std::env::temp_dir().join(format!("rse-plain-folder-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), b"nothing to build here").unwrap();
+
+        let response = view_file(&dir).unwrap();
+
+        let Response::FileView { also, .. } = response else {
+            panic!("a folder should view as a file view");
+        };
+        assert!(also.is_empty(), "a plain folder gains no project lines");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_never_carries_folder_views() {
+        let file = std::env::temp_dir().join(format!("rse-plain-file-{}.txt", std::process::id()));
+        std::fs::write(&file, b"a file has exactly one type").unwrap();
+
+        let response = view_file(&file).unwrap();
+
+        let Response::FileView { also, .. } = response else {
+            panic!("a text file should view as a file view");
+        };
+        assert!(
+            also.is_empty(),
+            "only a folder can be several things at once"
+        );
+
+        std::fs::remove_file(&file).unwrap();
     }
 }

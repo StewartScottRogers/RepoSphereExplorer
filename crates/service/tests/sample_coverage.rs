@@ -18,6 +18,12 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+/// Sample directories belonging to a plugin whose subject is the folder
+/// rather than a file in it. The files inside them are ordinary files that
+/// other plugins own, so the per-file checks skip these directories and
+/// ask about the folder instead.
+const FOLDER_PLUGIN_SAMPLES: &[&str] = &["directory", "project-cargo"];
+
 /// Fields that a fixture legitimately leaves empty or absent, because the
 /// format itself has no way to carry them. Each entry is
 /// `("<plugin>/<file>", "<field>")`, and every one of them is a statement
@@ -64,9 +70,9 @@ fn sample_files() -> Vec<(String, PathBuf)> {
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_owned();
-        // The directory plugin's fixture is the directory itself; the files
+        // A folder plugin's fixture is the directory itself; the files
         // inside it are ordinary files belonging to other plugins.
-        if plugin == "directory" {
+        if FOLDER_PLUGIN_SAMPLES.contains(&plugin.as_str()) {
             continue;
         }
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)

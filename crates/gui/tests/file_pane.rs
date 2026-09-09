@@ -47,7 +47,7 @@ fn sample_files() -> Vec<(String, PathBuf)> {
 /// The picture the File pane would draw for `path`, if its type is one.
 fn graphic(path: &Path) -> Option<plugin_api::Graphic> {
     match service::view_file(path) {
-        Ok(protocol::Response::FileView { plugin, data }) => {
+        Ok(protocol::Response::FileView { plugin, data, .. }) => {
             gui::app::present_graphic(&plugin, &data)
         }
         _ => None,
@@ -57,7 +57,9 @@ fn graphic(path: &Path) -> Option<plugin_api::Graphic> {
 /// The lines the File pane would show for `path`, or the reason it cannot.
 fn preview(path: &Path) -> Result<Vec<String>, String> {
     match service::view_file(path) {
-        Ok(protocol::Response::FileView { plugin, data }) => Ok(gui::app::present(&plugin, &data)),
+        Ok(protocol::Response::FileView { plugin, data, .. }) => {
+            Ok(gui::app::present(&plugin, &data))
+        }
         Ok(protocol::Response::Error { message }) => Err(format!("not recognised: {message}")),
         Ok(other) => Err(format!("unexpected response: {other:?}")),
         Err(err) => Err(format!("could not view: {err}")),

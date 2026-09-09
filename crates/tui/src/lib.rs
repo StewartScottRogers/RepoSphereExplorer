@@ -4,7 +4,7 @@ pub mod app;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
-use plugin_api::PluginPresentation;
+use plugin_api::{FolderPresentation, PluginPresentation};
 use protocol::{Request, Response};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -113,6 +113,25 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
 
 /// Turns a plugin's view data into displayable lines, via whichever
 /// registered presentation plugin matches `plugin`.
+/// Every folder presentation plugin linked into this front end.
+///
+/// Separate from [`PRESENTATION_PLUGINS`] because a folder can be several
+/// things at once - a working copy that is also a Cargo workspace - and
+/// each plugin that recognises it contributes its own lines.
+const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] =
+    &[&plugin_project_cargo::CargoProjectPresentation];
+
+/// Turns a folder plugin's view data into displayable lines.
+fn present_folder(plugin: &str, data: &serde_json::Value) -> Vec<String> {
+    match FOLDER_PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+    {
+        Some(candidate) => candidate.present(data),
+        None => vec![format!("no presentation for folder plugin `{plugin}`")],
+    }
+}
+
 fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
     match PRESENTATION_PLUGINS
         .iter()
@@ -146,8 +165,14 @@ pub(crate) fn render_with_block(
                 .collect();
             frame.render_widget(List::new(items).block(block), area);
         }
-        Response::FileView { plugin, data } => {
-            let lines = present(plugin, data);
+        Response::FileView { plugin, data, also } => {
+            let mut lines = present(plugin, data);
+            // A folder is several things at once, and each folder plugin
+            // that recognises it adds its lines below the folder's own.
+            for extra in also {
+                lines.push(String::new());
+                lines.extend(present_folder(&extra.plugin, &extra.data));
+            }
             frame.render_widget(Paragraph::new(lines.join("\n")).block(block), area);
         }
         Response::Error { message } => {
@@ -258,6 +283,7 @@ mod tests {
         let response = Response::FileView {
             plugin: "text".to_owned(),
             data: serde_json::json!({ "content": "hi", "truncated": false }),
+            also: Vec::new(),
         };
 
         terminal
@@ -300,5 +326,51 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(contents.contains("src/"));
+    }
+    #[test]
+    fn renders_a_folder_and_the_project_it_holds() {
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let response = Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::json!({ "content": "folder", "truncated": false }),
+            also: vec![protocol::PluginView {
+                plugin: "project-cargo".to_owned(),
+                data: serde_json::json!({
+                    "kind": "package",
+                    "package": {
+                        "name": "instrument-log",
+                        "version": "2.3.0",
+                        "edition": "2024",
+                        "rust_version": null,
+                        "description": null
+                    },
+                    "members": [],
+                    "dependencies": 3,
+                    "dev_dependencies": 0,
+                    "build_dependencies": 0
+                }),
+            }],
+        };
+
+        terminal
+            .draw(|frame| render(frame, frame.area(), &response))
+            .unwrap();
+
+        let contents: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(
+            contents.contains("folder"),
+            "the folder keeps its own lines"
+        );
+        assert!(
+            contents.contains("instrument-log"),
+            "and the project lines are added: {contents}"
+        );
     }
 }

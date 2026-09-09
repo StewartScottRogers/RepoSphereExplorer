@@ -41,6 +41,56 @@ pub trait PluginCore: Send + Sync {
     }
 }
 
+/// The core half of a folder plugin: decides whether a folder is a
+/// programming project of some kind, and reads its manifest.
+///
+/// Separate from [`PluginCore`] because folders answer a different
+/// question. A file has exactly one type - two plugins claiming one file
+/// is a defect, which is why [`PluginCore::extensions`] exists to settle
+/// it. A folder is several things at once and honestly so: this
+/// repository's own root is a source control working copy *and* a Cargo
+/// workspace, and a reader wants both facts. So every folder plugin that
+/// recognises a folder contributes, and the pane shows the union.
+///
+/// Sniffing takes the names of the entries directly inside the folder
+/// rather than a prefix of bytes. A folder has no bytes, and every
+/// project marker there is - `Cargo.toml`, `package.json`, `go.mod`,
+/// `pom.xml` - is a file name.
+pub trait FolderCore: Send + Sync {
+    /// The project kind's identifier, shared with its presentation half.
+    fn name(&self) -> &'static str;
+
+    /// Whether this plugin recognises a folder holding entries named
+    /// `entries`, which are the names directly inside it and not a
+    /// recursive walk.
+    fn sniff(&self, entries: &[&str]) -> bool;
+
+    /// Reads the folder at `path` and returns its view data, ready to
+    /// serialize onto the wire.
+    ///
+    /// Reading means reading. Per decision D10 a folder plugin never runs
+    /// the project's build tool, and never writes to the folder.
+    ///
+    /// # Errors
+    /// Returns an error if the folder's manifest cannot be read or does
+    /// not parse.
+    fn view(&self, path: &Path) -> io::Result<serde_json::Value>;
+}
+
+/// The presentation half of a folder plugin: turns the core half's view
+/// data into the lines a front end appends to a folder's details.
+///
+/// The lines are added to what the folder already reports, never
+/// substituted for it. A folder that is a Cargo workspace is still a
+/// folder, and a reader still wants to see what is inside it.
+pub trait FolderPresentation: Send + Sync {
+    /// The project kind's identifier, shared with its core half.
+    fn name(&self) -> &'static str;
+
+    /// Turns `data` (as produced by the matching core half) into lines.
+    fn present(&self, data: &serde_json::Value) -> Vec<String>;
+}
+
 /// How a file type is marked in a listing: a short label and the colour it
 /// is drawn in. GUIDANCE.md §3 makes the icon the plugin's own property, so
 /// the plugin states these two facts and each front end draws them the way

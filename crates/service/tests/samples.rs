@@ -10,6 +10,12 @@ use protocol::Response;
 use service::view_file;
 use std::path::{Path, PathBuf};
 
+/// Sample directories belonging to a plugin whose subject is the folder
+/// rather than a file in it. The files inside them are ordinary files that
+/// other plugins own, so the per-file checks skip these directories and
+/// ask about the folder instead.
+const FOLDER_PLUGIN_SAMPLES: &[&str] = &["directory", "project-cargo"];
+
 fn samples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples")
 }
@@ -41,9 +47,12 @@ fn every_sample_is_recognised_by_its_own_plugin() {
             .and_then(|name| name.to_str())
             .unwrap();
 
-        // The `directory` plugin has no file of its own to sniff: the
-        // sample directory itself is the "file" it recognises.
-        if expected_plugin == "directory" {
+        // A folder plugin has no file of its own to sniff: the sample
+        // directory itself is what it recognises, and the files inside it
+        // belong to whichever file plugin owns each one. `project-cargo`'s
+        // fixture is a real crate, so its `Cargo.toml` is the `toml`
+        // plugin's and its `src/lib.rs` is `rust`'s.
+        if FOLDER_PLUGIN_SAMPLES.contains(&expected_plugin) {
             check_recognised_as(&plugin_dir, expected_plugin, &mut failures);
             continue;
         }
@@ -72,6 +81,11 @@ fn every_sample_is_recognised_by_its_own_plugin() {
 fn check_recognised_as(path: &Path, expected_plugin: &str, failures: &mut Vec<String>) {
     match view_file(path) {
         Ok(Response::FileView { plugin, .. }) if plugin == expected_plugin => {}
+        // A folder answers as the directory plugin and carries the folder
+        // plugins that also recognise it, because a folder is several
+        // things at once. Either place counts as recognition.
+        Ok(Response::FileView { ref also, .. })
+            if also.iter().any(|view| view.plugin == expected_plugin) => {}
         Ok(Response::FileView { plugin, .. }) => failures.push(format!(
             "{} was recognised by the {plugin:?} plugin, not {expected_plugin:?}",
             path.display()

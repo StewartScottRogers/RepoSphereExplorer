@@ -42,6 +42,7 @@ Every one of them needed a file with something in it.
 | `text/access.log` | 96 KiB, past the 64 KiB read cap, so `truncated` is exercised by a real file. It is the only fixture that is deliberately long. |
 | `certificate/chain.pem` | A leaf certificate, the root that signed it, and the leaf's key. The key protects nothing and is safe to publish. |
 | `directory/` | The `directory` plugin has no file to sniff: the folder itself is what it recognises, so this one holds ordinary files of assorted types. |
+| `project-cargo/` | Same again, for a folder plugin: a real crate, with a manifest that declares a workspace *and* a package, which is the case that proves the plugin does not stop at the first section it understands. Its files belong to the `toml` and `rust` plugins, so the per-file checks skip this directory and ask about the folder. |
 | `model3d/` | Two fixtures, because OBJ and glTF carry different halves of the view: geometry counts from one, scene and generator from the other. |
 | `image/`, `audio/`, `video/` | Generated, and genuinely playable and viewable. Open them. |
 
