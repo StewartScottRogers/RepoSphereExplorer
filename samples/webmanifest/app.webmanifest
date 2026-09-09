@@ -1,0 +1,53 @@
+{
+  "name": "Repos Explorer",
+  "short_name": "Repos",
+  "description": "A front door to the working directories source control checks out.",
+  "start_url": "/?source=installed",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#1f2933",
+  "background_color": "#ffffff",
+  "lang": "en-GB",
+  "categories": ["developer", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Open the Repos Directory",
+      "short_name": "Repos",
+      "url": "/roots",
+      "icons": [{ "src": "/icons/roots-96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Recent repositories",
+      "url": "/recent"
+    }
+  ],
+  "share_target": {
+    "action": "/open",
+    "method": "GET",
+    "params": { "url": "path" }
+  }
+}

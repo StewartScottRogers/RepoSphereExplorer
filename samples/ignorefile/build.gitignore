@@ -1,0 +1,23 @@
+# Build output.
+target/
+dist/
+*.tsbuildinfo
+
+# Caches and editor leavings.
+__pycache__/
+.DS_Store
+*.swp
+
+# Anchored to this directory, so a `logs` folder deeper in the tree is kept.
+/logs
+
+# A re-inclusion that works: the exclusion above it is a glob, not a
+# directory, so the walk still reaches this file.
+*.log
+!important.log
+
+# A re-inclusion that does NOT work, and this is the commonest mistake
+# there is: `vendor/` excludes the directory, the walk never descends into
+# it, and nothing inside is ever reconsidered.
+vendor/
+!vendor/keep-this.txt

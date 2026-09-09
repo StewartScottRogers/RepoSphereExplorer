@@ -111,6 +111,10 @@ it.
 | CODEOWNERS | `crates/plugins/codeowners` | #331 | Rules, users, teams, e-mail owners and patterns owned by nobody |
 | Cargo lock file | `crates/plugins/cargolock` | #334 | Format version, packages, sources, workspace members, duplicated versions |
 | npm lock file | `crates/plugins/npmlock` | #335 | Lock version, root package, packages, development-only, registries, scopes |
+| roff manual page | `crates/plugins/roff` | #322 | Title macro, sections, synopsis and cross-references |
+| Ignore file | `crates/plugins/ignorefile` | #327 | Patterns, negations, anchoring, and re-inclusions that can never fire |
+| Web application manifest | `crates/plugins/webmanifest` | #332 | Name, start address, display, colours, icons, shortcuts |
+| Source map | `crates/plugins/sourcemap` | #333 | Version, generated file, sources, embedded content, names, segments |
 
 ## Folder plugins
 
