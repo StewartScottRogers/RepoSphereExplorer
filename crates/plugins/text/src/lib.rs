@@ -9,7 +9,11 @@ use std::path::Path;
 /// Both halves report these: the presentation half so a listing can
 /// mark the file, the core half so `service` can tell this type from
 /// another whose content heuristic matches the same text.
-pub const EXTENSIONS: &[&str] = &["txt", "log", "md", "markdown", "text"];
+// `md` and `markdown` moved to the `markdown` plugin, which reads them
+// as documents rather than as characters. Each extension belongs to
+// exactly one plugin, which `no_two_plugins_claim_the_same_extension`
+// enforces.
+pub const EXTENSIONS: &[&str] = &["txt", "log", "text"];
 
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;

@@ -1,0 +1,41 @@
+#+TITLE: Factory plan
+#+AUTHOR: Example Engineering
+#+STARTUP: overview
+#+FILETAGS: :factory:
+
+An Org fixture carrying a title, keywords, nested headlines with TODO
+states and tags, a properties drawer, a source block and a table.
+
+* TODO Convert the samples                                      :samples:work:
+:PROPERTIES:
+:ID: plan-samples
+:EFFORT: 4h
+:END:
+
+Every language directory becomes a project.
+
+** DONE Rust                                                          :done:
+** TODO Go
+** TODO Python
+
+* DONE Read the working tree                                    :status:work:
+:PROPERTIES:
+:ID: plan-status
+:END:
+
+The index tells us what changed without running a command.
+
+#+BEGIN_SRC rust
+pub fn working_tree(git_dir: &Path, work_tree: &Path) -> Option<WorkingTree> {
+    let index = git_dir.join("index");
+    parse_index(&std::fs::read(index).ok()?)
+}
+#+END_SRC
+
+* WAITING Set the merge token                                        :blocked:
+
+| step | who | state |
+|------+-----+-------|
+| file the work order | factory | done |
+| set the secret | the user | waiting |
+| close by hand | factory | ongoing |

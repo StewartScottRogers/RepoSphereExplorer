@@ -18,9 +18,15 @@ interprocess = "2.4"
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
 plugin-archive = { path = "../plugins/archive" }
+plugin-asciidoc = { path = "../plugins/asciidoc" }
 plugin-audio = { path = "../plugins/audio" }
 plugin-avro = { path = "../plugins/avro" }
 plugin-assembly = { path = "../plugins/assembly" }
+plugin-diff = { path = "../plugins/diff" }
+plugin-ini = { path = "../plugins/ini" }
+plugin-markdown = { path = "../plugins/markdown" }
+plugin-orgmode = { path = "../plugins/orgmode" }
+plugin-properties = { path = "../plugins/properties" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }
 plugin-certificate = { path = "../plugins/certificate" }
@@ -98,6 +104,7 @@ plugin-vue = { path = "../plugins/vue" }
 plugin-wasm = { path = "../plugins/wasm" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
+plugin-yaml = { path = "../plugins/yaml" }
 protocol = { path = "../protocol" }
 serde_json = "1"
 slint = "1.17"

@@ -109,6 +109,13 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_package_archive::PackageArchivePresentation,
     &plugin_certificate::CertificatePresentation,
     &plugin_directory::DirectoryPresentation,
+    &plugin_markdown::MarkdownPresentation,
+    &plugin_yaml::YamlPresentation,
+    &plugin_ini::IniPresentation,
+    &plugin_properties::PropertiesPresentation,
+    &plugin_diff::DiffPresentation,
+    &plugin_asciidoc::AsciidocPresentation,
+    &plugin_orgmode::OrgmodePresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever
