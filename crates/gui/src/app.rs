@@ -121,6 +121,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_helmchart::HelmchartPresentation,
     &plugin_gitlabci::GitlabciPresentation,
     &plugin_jsonschema::JsonschemaPresentation,
+    &plugin_flatbuffers::FlatbuffersPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its
