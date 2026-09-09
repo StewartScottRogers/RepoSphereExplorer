@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 interprocess = "2.4"
+plugin-antlr = { path = "../plugins/antlr" }
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
 plugin-archive = { path = "../plugins/archive" }
@@ -26,6 +27,7 @@ plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dotenv = { path = "../plugins/dotenv" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
+plugin-flatbuffers = { path = "../plugins/flatbuffers" }
 plugin-gitattributes = { path = "../plugins/gitattributes" }
 plugin-gitconfig = { path = "../plugins/gitconfig" }
 plugin-gitlabci = { path = "../plugins/gitlabci" }
@@ -33,13 +35,20 @@ plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
 plugin-jsonschema = { path = "../plugins/jsonschema" }
+plugin-githubactions = { path = "../plugins/githubactions" }
+plugin-kubernetes = { path = "../plugins/kubernetes" }
 plugin-latex = { path = "../plugins/latex" }
+plugin-lex = { path = "../plugins/lex" }
 plugin-markdown = { path = "../plugins/markdown" }
+plugin-maven = { path = "../plugins/maven" }
+plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-properties = { path = "../plugins/properties" }
+plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
+plugin-thrift = { path = "../plugins/thrift" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }
 plugin-certificate = { path = "../plugins/certificate" }
@@ -118,6 +127,7 @@ plugin-wasm = { path = "../plugins/wasm" }
 plugin-webmanifest = { path = "../plugins/webmanifest" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
+plugin-yacc = { path = "../plugins/yacc" }
 plugin-yaml = { path = "../plugins/yaml" }
 protocol = { path = "../protocol" }
 ratatui = "0.30"

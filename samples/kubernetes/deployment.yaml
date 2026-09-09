@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: repo-sphere
+  labels:
+    app.kubernetes.io/name: repo-sphere
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: repo-sphere-app
+  namespace: repo-sphere
+  labels:
+    app: repo-sphere
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: repo-sphere
+  template:
+    metadata:
+      labels:
+        app: repo-sphere
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: example/repo-sphere@sha256:9f2c1b8a7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f00
+          ports:
+            - containerPort: 8080
+          env:
+            - name: RUST_LOG
+              value: info
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: repo-sphere
+  namespace: repo-sphere
+spec:
+  selector:
+    app: repo-sphere
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: repo-sphere-sweep
+  namespace: repo-sphere
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: sweep
+              image: example/repo-sphere-tools:2.1
+              command: ["/usr/local/bin/sweep"]

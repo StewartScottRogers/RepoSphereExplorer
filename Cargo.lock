@@ -2680,6 +2680,7 @@ dependencies = [
  "i-slint-backend-testing",
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -2709,12 +2710,14 @@ dependencies = [
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
+ "plugin-flatbuffers",
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
+ "plugin-githubactions",
  "plugin-gitlabci",
  "plugin-go",
  "plugin-graphql",
@@ -2733,10 +2736,14 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-kubernetes",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-maven",
  "plugin-model3d",
+ "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-npmlock",
@@ -2753,6 +2760,7 @@ dependencies = [
  "plugin-project-cargo",
  "plugin-prolog",
  "plugin-properties",
+ "plugin-protobuf",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -2774,6 +2782,7 @@ dependencies = [
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
+ "plugin-thrift",
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
@@ -2784,6 +2793,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "serde_json",
@@ -5424,6 +5434,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-antlr"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-api"
 version = "0.6.0"
 dependencies = [
@@ -5701,6 +5720,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-flatbuffers"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-font"
 version = "0.6.0"
 dependencies = [
@@ -5749,6 +5777,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-gitconfig"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-githubactions"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -5921,7 +5958,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-kubernetes"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-latex"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-lex"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -5948,7 +6003,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-maven"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-model3d"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-msbuild"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6103,6 +6176,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-properties"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-protobuf"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6305,6 +6387,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-thrift"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-toml"
 version = "0.6.0"
 dependencies = [
@@ -6393,6 +6484,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-xml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-yacc"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7511,6 +7611,7 @@ dependencies = [
  "dirs",
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -7540,12 +7641,14 @@ dependencies = [
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
+ "plugin-flatbuffers",
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
+ "plugin-githubactions",
  "plugin-gitlabci",
  "plugin-go",
  "plugin-graphql",
@@ -7564,10 +7667,14 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-kubernetes",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-maven",
  "plugin-model3d",
+ "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-npmlock",
@@ -7584,6 +7691,7 @@ dependencies = [
  "plugin-project-cargo",
  "plugin-prolog",
  "plugin-properties",
+ "plugin-protobuf",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -7605,6 +7713,7 @@ dependencies = [
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
+ "plugin-thrift",
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
@@ -7615,6 +7724,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "serde",
@@ -8626,6 +8736,7 @@ version = "0.6.0"
 dependencies = [
  "interprocess",
  "plugin-ada",
+ "plugin-antlr",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -8655,12 +8766,14 @@ dependencies = [
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
+ "plugin-flatbuffers",
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
+ "plugin-githubactions",
  "plugin-gitlabci",
  "plugin-go",
  "plugin-graphql",
@@ -8679,10 +8792,14 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-kubernetes",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-maven",
  "plugin-model3d",
+ "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-npmlock",
@@ -8699,6 +8816,7 @@ dependencies = [
  "plugin-project-cargo",
  "plugin-prolog",
  "plugin-properties",
+ "plugin-protobuf",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -8720,6 +8838,7 @@ dependencies = [
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
+ "plugin-thrift",
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
@@ -8730,6 +8849,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "ratatui",

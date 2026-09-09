@@ -1,0 +1,56 @@
+// The orders schema, in FlatBuffers. Written to exercise every field the
+// plugin extracts: a namespace, an include, an enumeration, a struct, two
+// tables, a union, defaults, a deprecated slot, and the root type with its
+// file identifier and extension.
+
+include "common.fbs";
+
+namespace Example.Orders;
+
+enum State : byte {
+  Draft = 0,
+  Placed = 1,
+  Shipped = 2,
+  Cancelled = 3,
+}
+
+// A struct is fixed-size and inline; every field is required by
+// construction, and none of them may ever be added to or removed.
+struct Money {
+  pennies: long;
+  currency: ubyte;
+}
+
+table Line {
+  sku: string (required);
+  quantity: int = 1;
+  unit_price: Money;
+  // Retired. The slot stays for ever: removing it would shift every
+  // field after it onto a different identifier, and every buffer already
+  // written would be read wrongly.
+  legacy_price: long (deprecated);
+}
+
+table Card {
+  last_four: string (required);
+}
+
+table Account {
+  account_id: string (required);
+}
+
+union Payment { Card, Account }
+
+table Order {
+  id: string (required);
+  customer_id: string;
+  lines: [Line];
+  state: State = Draft;
+  note: string;
+  payment: Payment;
+  placed_at: long = 0;
+}
+
+root_type Order;
+file_identifier "ORDR";
+file_extension "ord";

@@ -85,6 +85,8 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_svg::SvgCore,
     &plugin_vue::VueCore,
     &plugin_html::HtmlCore,
+    &plugin_maven::MavenCore,
+    &plugin_msbuild::MsbuildCore,
     &plugin_xml::XmlCore,
     &plugin_restructuredtext::RestructuredTextCore,
     &plugin_jupyter_notebook::NotebookCore,
@@ -105,6 +107,8 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_markdown::MarkdownCore,
     &plugin_helmchart::HelmchartCore,
     &plugin_gitlabci::GitlabciCore,
+    &plugin_githubactions::GithubactionsCore,
+    &plugin_kubernetes::KubernetesCore,
     &plugin_yaml::YamlCore,
     &plugin_gitconfig::GitconfigCore,
     &plugin_ini::IniCore,
@@ -119,6 +123,12 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_roff::RoffCore,
     &plugin_gitattributes::GitattributesCore,
     &plugin_ignorefile::IgnorefileCore,
+    &plugin_protobuf::ProtobufCore,
+    &plugin_thrift::ThriftCore,
+    &plugin_flatbuffers::FlatbuffersCore,
+    &plugin_antlr::AntlrCore,
+    &plugin_yacc::YaccCore,
+    &plugin_lex::LexCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_psd::PsdCore,
@@ -315,23 +325,37 @@ fn sniff_among<'a>(
     claimed_by_extension(path, &matches).or_else(|| matches.first().copied())
 }
 
-/// `matches` with every plugin another match specialises removed.
+/// The matches that refine another match, or all of them when none does.
 ///
 /// An npm lock file is JSON, so both plugins recognise it - and `json`
 /// owns the extension, which [`claimed_by_extension`] would otherwise
-/// settle it on. Dropping the general plugin first leaves the hint
-/// choosing between siblings, which is what it is for, rather than
-/// between a format and a narrower reading of the same format.
+/// settle it on.
+///
+/// This *keeps* the specialisations rather than merely dropping what they
+/// refine, and the difference is not academic. Removing the general plugin
+/// alone promoted whatever unrelated plugin happened to match earliest: a
+/// Kubernetes manifest went to `sql`, which reads a `---` document marker
+/// as a comment, because dropping `yaml` left `sql` first in the list. A
+/// plugin that recognised the file *and* says it is a narrower reading of
+/// another plugin that also recognised it is strictly the better answer,
+/// so that is what survives.
 fn most_specific<'a>(matches: &[&'a dyn PluginCore]) -> Vec<&'a dyn PluginCore> {
-    let refined: Vec<&'static str> = matches
+    let names: Vec<&'static str> = matches.iter().map(|plugin| plugin.name()).collect();
+    let specialisations: Vec<&'a dyn PluginCore> = matches
         .iter()
-        .flat_map(|plugin| plugin.specialises().iter().copied())
-        .collect();
-    matches
-        .iter()
-        .filter(|plugin| !refined.contains(&plugin.name()))
+        .filter(|plugin| {
+            plugin
+                .specialises()
+                .iter()
+                .any(|refined| names.contains(refined))
+        })
         .copied()
-        .collect()
+        .collect();
+    if specialisations.is_empty() {
+        matches.to_vec()
+    } else {
+        specialisations
+    }
 }
 
 /// Whichever of `matches` claims `path`'s extension, if one does.
@@ -2045,8 +2069,21 @@ public class OrderBook {
 
     #[test]
     fn a_plugin_nothing_refines_is_kept() {
-        let kept = most_specific(&[&Sibling, &Special]);
+        let kept = most_specific(&[&Sibling, &General]);
 
         assert_eq!(kept.len(), 2, "neither refines the other");
+    }
+
+    #[test]
+    fn an_unrelated_earlier_match_is_not_promoted_by_setting_the_general_one_aside() {
+        // Merely dropping the refined plugin sent a Kubernetes manifest to
+        // `sql`, which reads `---` as a comment: with `yaml` gone, `sql`
+        // was simply first. The specialisation has to survive, not just
+        // the general plugin disappear.
+        let plugins: &[&dyn PluginCore] = &[&Sibling, &Special, &General];
+
+        let chosen = sniff_among(plugins, Path::new("a.gen"), b"anything");
+
+        assert_eq!(chosen.map(PluginCore::name), Some("special"));
     }
 }

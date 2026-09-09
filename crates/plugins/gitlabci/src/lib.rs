@@ -1,4 +1,4 @@
-//! GitLab CI configuration file type plugin: core and presentation halves.
+//! `GitLab` CI configuration file type plugin: core and presentation halves.
 //!
 //! A specialisation of YAML: a `stages:` list, or jobs carrying a
 //! `script:` key, is a pipeline. GitHub's workflows use `jobs:` and `on:`
@@ -87,7 +87,7 @@ pub struct GitlabciView {
     pub truncated: bool,
 }
 
-/// The keys GitLab reserves, which are configuration rather than jobs.
+/// The keys `GitLab` reserves, which are configuration rather than jobs.
 const RESERVED: &[&str] = &[
     "stages",
     "variables",
@@ -245,7 +245,7 @@ fn parse(text: &str) -> GitlabciView {
     view
 }
 
-/// Whether `text` is a GitLab pipeline.
+/// Whether `text` is a `GitLab` pipeline.
 fn looks_like_it(text: &str) -> bool {
     let lines: Vec<&str> = text.lines().collect();
     let top = |wanted: &str| {
@@ -265,7 +265,7 @@ fn looks_like_it(text: &str) -> bool {
     (top("stages") && scripts >= 1) || scripts >= 2
 }
 
-/// The GitLab CI configuration plugin's core half.
+/// The `GitLab` CI configuration plugin's core half.
 #[derive(Debug, Default)]
 pub struct GitlabciCore;
 
@@ -299,7 +299,7 @@ impl PluginCore for GitlabciCore {
     }
 }
 
-/// The GitLab CI configuration plugin's presentation half.
+/// The `GitLab` CI configuration plugin's presentation half.
 #[derive(Debug, Default)]
 pub struct GitlabciPresentation;
 

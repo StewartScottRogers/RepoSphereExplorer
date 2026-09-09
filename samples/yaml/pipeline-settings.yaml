@@ -1,0 +1,40 @@
+# A multi-document stream that is YAML and nothing narrower. It exercises
+# every field the plugin extracts - documents, top-level keys, anchors,
+# aliases, a merge key, an explicit tag, a sequence document, block and
+# flow styles, and a multi-line scalar - without being a Kubernetes
+# manifest, a workflow or a chart, each of which has its own plugin now.
+---
+defaults: &defaults
+  retries: 3
+  timeout_seconds: 30
+  notify:
+    on_failure: true
+    on_success: false
+
+---
+pipeline:
+  name: nightly
+  <<: *defaults
+  stages:
+    - name: fetch
+      command: cargo fetch --locked
+    - name: check
+      command: cargo clippy --all-targets -- -D warnings
+      allow_failure: false
+    - name: test
+      command: cargo test --all-features
+      matrix: [linux, windows, macos]
+  window:
+    opens_at: !!timestamp 2026-09-09T03:00:00Z
+    closes_at: !!timestamp 2026-09-09T05:00:00Z
+  banner: |
+    A multi-line scalar, kept exactly as written.
+    The second line belongs to the same value.
+  summary: >
+    A folded scalar, whose lines are joined
+    into one on the way out.
+
+---
+- first item of a sequence document
+- second item
+- third item
