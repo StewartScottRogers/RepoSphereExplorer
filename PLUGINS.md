@@ -109,6 +109,8 @@ it.
 | EditorConfig | `crates/plugins/editorconfig` | #326 | Root declaration, glob rules and the properties each sets |
 | dotenv | `crates/plugins/dotenv` | #330 | Variable names only, never values; quoting, interpolation, secret-looking names |
 | CODEOWNERS | `crates/plugins/codeowners` | #331 | Rules, users, teams, e-mail owners and patterns owned by nobody |
+| Cargo lock file | `crates/plugins/cargolock` | #334 | Format version, packages, sources, workspace members, duplicated versions |
+| npm lock file | `crates/plugins/npmlock` | #335 | Lock version, root package, packages, development-only, registries, scopes |
 
 ## Folder plugins
 

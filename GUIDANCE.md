@@ -222,7 +222,23 @@ rather than a lookup, and unused plugins can be feature-gated out of a build.
 - Nothing blocks the user interface thread. Every long operation is
   cancellable from the user interface.
 
-### 3.4 Folder plugins
+### 3.4 One format inside another
+
+Some formats are a narrower reading of a format already built. An npm lock
+file is JSON. A Kubernetes manifest is YAML. A Java archive is a zip.
+
+Both plugins recognise such a file, and the general one almost always owns
+the extension — so §3.3's hint hands the file to the general plugin
+whatever order they are registered in. That is the hint doing its job in a
+case it was not written for: it exists to settle a tie between *siblings*
+that have no magic bytes and genuinely overlap, which is what a C file
+opening as Rust needed (#272).
+
+So a plugin names what it refines, and the dispatch drops the refined
+plugin before the hint is applied. A specialisation beats the format it
+specialises; siblings are still settled by extension.
+
+### 3.5 Folder plugins
 
 A folder is a subject too, and it answers a different question from a file.
 

@@ -2688,6 +2688,7 @@ dependencies = [
  "plugin-avro",
  "plugin-bibtex",
  "plugin-c",
+ "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
  "plugin-codeowners",
@@ -2732,6 +2733,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-nim",
+ "plugin-npmlock",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-orgmode",
@@ -5489,6 +5491,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-cargolock"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-certificate"
 version = "0.6.0"
 dependencies = [
@@ -5894,6 +5905,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-nim"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-npmlock"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7409,6 +7429,7 @@ dependencies = [
  "plugin-avro",
  "plugin-bibtex",
  "plugin-c",
+ "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
  "plugin-codeowners",
@@ -7453,6 +7474,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-nim",
+ "plugin-npmlock",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-orgmode",
@@ -8513,6 +8535,7 @@ dependencies = [
  "plugin-avro",
  "plugin-bibtex",
  "plugin-c",
+ "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
  "plugin-codeowners",
@@ -8557,6 +8580,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msgpack",
  "plugin-nim",
+ "plugin-npmlock",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-orgmode",

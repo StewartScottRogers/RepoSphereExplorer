@@ -90,9 +90,11 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_jupyter_notebook::NotebookCore,
     &plugin_model3d::Model3dCore,
     &plugin_geojson::GeoJsonCore,
+    &plugin_npmlock::NpmlockCore,
     &plugin_json::JsonCore,
     &plugin_terraform::TerraformCore,
     &plugin_editorconfig::EditorconfigCore,
+    &plugin_cargolock::CargolockCore,
     &plugin_toml::TomlCore,
     &plugin_csv::CsvCore,
     &plugin_msgpack::MsgpackCore,
@@ -300,7 +302,27 @@ fn sniff_among<'a>(
         .filter(|plugin| guarded(plugin.name(), path, || plugin.sniff(prefix)).unwrap_or(false))
         .copied()
         .collect();
+    let matches = most_specific(&matches);
     claimed_by_extension(path, &matches).or_else(|| matches.first().copied())
+}
+
+/// `matches` with every plugin another match specialises removed.
+///
+/// An npm lock file is JSON, so both plugins recognise it - and `json`
+/// owns the extension, which [`claimed_by_extension`] would otherwise
+/// settle it on. Dropping the general plugin first leaves the hint
+/// choosing between siblings, which is what it is for, rather than
+/// between a format and a narrower reading of the same format.
+fn most_specific<'a>(matches: &[&'a dyn PluginCore]) -> Vec<&'a dyn PluginCore> {
+    let refined: Vec<&'static str> = matches
+        .iter()
+        .flat_map(|plugin| plugin.specialises().iter().copied())
+        .collect();
+    matches
+        .iter()
+        .filter(|plugin| !refined.contains(&plugin.name()))
+        .copied()
+        .collect()
 }
 
 /// Whichever of `matches` claims `path`'s extension, if one does.
@@ -818,8 +840,8 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 mod tests {
     use super::{
         CORE_PLUGINS, FolderCore, Path, bind, copy, create_directory, create_file, delete, extract,
-        folder_plugins_among, guarded, handle_request, journal_to, list_directory, open, rename,
-        serve_one, sniff_among, undo, view_file, write_file,
+        folder_plugins_among, guarded, handle_request, journal_to, list_directory, most_specific,
+        open, rename, serve_one, sniff_among, undo, view_file, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -1956,5 +1978,66 @@ public class OrderBook {
         );
 
         std::fs::remove_file(&file).unwrap();
+    }
+    /// A general format that owns the extension.
+    struct General;
+    /// A narrower reading of the same format.
+    struct Special;
+    /// A sibling that overlaps but refines nothing, which is the case the
+    /// extension hint was added for.
+    struct Sibling;
+
+    macro_rules! stub {
+        ($ty:ty, $name:literal, $exts:expr, $refines:expr) => {
+            impl PluginCore for $ty {
+                fn name(&self) -> &'static str {
+                    $name
+                }
+                fn extensions(&self) -> &'static [&'static str] {
+                    $exts
+                }
+                fn specialises(&self) -> &'static [&'static str] {
+                    $refines
+                }
+                fn sniff(&self, _prefix: &[u8]) -> bool {
+                    true
+                }
+                fn view(&self, _path: &Path) -> io::Result<serde_json::Value> {
+                    Ok(serde_json::Value::Null)
+                }
+            }
+        };
+    }
+    stub!(General, "general", &["gen"], &[]);
+    stub!(Special, "special", &[], &["general"]);
+    stub!(Sibling, "sibling", &[], &[]);
+
+    #[test]
+    fn a_specialisation_beats_the_plugin_that_owns_the_extension() {
+        // Without the drop, `claimed_by_extension` hands `a.gen` to
+        // `general` however the list is ordered, because it owns `gen`.
+        let plugins: &[&dyn PluginCore] = &[&Special, &General];
+
+        let chosen = sniff_among(plugins, Path::new("a.gen"), b"anything");
+
+        assert_eq!(chosen.map(PluginCore::name), Some("special"));
+    }
+
+    #[test]
+    fn a_sibling_that_refines_nothing_does_not_displace_the_extension_owner() {
+        // The hint still settles a genuine tie between siblings, which is
+        // what a C file opening as Rust needed (#272).
+        let plugins: &[&dyn PluginCore] = &[&Sibling, &General];
+
+        let chosen = sniff_among(plugins, Path::new("a.gen"), b"anything");
+
+        assert_eq!(chosen.map(PluginCore::name), Some("general"));
+    }
+
+    #[test]
+    fn a_plugin_nothing_refines_is_kept() {
+        let kept = most_specific(&[&Sibling, &Special]);
+
+        assert_eq!(kept.len(), 2, "neither refines the other");
     }
 }
