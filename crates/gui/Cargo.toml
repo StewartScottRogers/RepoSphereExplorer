@@ -28,6 +28,8 @@ plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dotenv = { path = "../plugins/dotenv" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
+plugin-gitattributes = { path = "../plugins/gitattributes" }
+plugin-gitconfig = { path = "../plugins/gitconfig" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
 plugin-latex = { path = "../plugins/latex" }

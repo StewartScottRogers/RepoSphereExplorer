@@ -2713,6 +2713,8 @@ dependencies = [
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
+ "plugin-gitattributes",
+ "plugin-gitconfig",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -5734,6 +5736,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gitattributes"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-gitconfig"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-go"
 version = "0.6.0"
 dependencies = [
@@ -7494,6 +7514,8 @@ dependencies = [
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
+ "plugin-gitattributes",
+ "plugin-gitconfig",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -8604,6 +8626,8 @@ dependencies = [
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
+ "plugin-gitattributes",
+ "plugin-gitconfig",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",

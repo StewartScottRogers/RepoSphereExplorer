@@ -116,6 +116,8 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_ignorefile::IgnorefilePresentation,
     &plugin_webmanifest::WebmanifestPresentation,
     &plugin_sourcemap::SourcemapPresentation,
+    &plugin_gitconfig::GitconfigPresentation,
+    &plugin_gitattributes::GitattributesPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

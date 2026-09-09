@@ -1,0 +1,33 @@
+# Line endings. Normalise text in the repository, and let the checkout
+# decide what to write on disk.
+* text=auto
+
+# Rust, and everything else that must never gain a carriage return.
+*.rs text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+
+# Binary. This is not decoration: a PDF's cross-reference table is a list
+# of byte offsets, and a checkout that rewrote one newline inside it
+# produced a file that no longer parsed - on Windows only, and never in
+# the pipeline.
+*.pdf -text -diff
+*.png binary
+*.parquet binary
+*.h5 binary
+*.woff2 binary
+
+# A custom driver, so `git diff` shows headings rather than hunks.
+*.md diff=markdown
+
+# Take ours on a lock file: a merged lock file is not a lock file.
+Cargo.lock merge=ours
+package-lock.json merge=ours
+
+# A clean/smudge filter for anything encrypted at rest.
+*.enc filter=crypt
+
+# What the host counts as this repository's languages.
+samples/* linguist-vendored
+docs/* linguist-documentation
+*.slint linguist-language=Slint

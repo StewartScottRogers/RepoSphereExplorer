@@ -115,6 +115,8 @@ it.
 | Ignore file | `crates/plugins/ignorefile` | #327 | Patterns, negations, anchoring, and re-inclusions that can never fire |
 | Web application manifest | `crates/plugins/webmanifest` | #332 | Name, start address, display, colours, icons, shortcuts |
 | Source map | `crates/plugins/sourcemap` | #333 | Version, generated file, sources, embedded content, names, segments |
+| Git configuration | `crates/plugins/gitconfig` | #328 | Remotes, tracking branches, identity, aliases and includes |
+| Git attributes | `crates/plugins/gitattributes` | #329 | Rules, binary markings, diff/merge drivers, filters, language overrides |
 
 ## Folder plugins
 
