@@ -33,7 +33,9 @@ const WASM_MAGIC: &[u8; 4] = b"\0asm";
 /// [`ExportInfo::kind`].
 fn type_ref_kind(ty: &TypeRef) -> &'static str {
     match ty {
-        TypeRef::Func(_) => "func",
+        // `FuncExact` is a function whose type must match exactly, from
+        // the custom descriptors proposal. Still a function to a reader.
+        TypeRef::Func(_) | TypeRef::FuncExact(_) => "func",
         TypeRef::Table(_) => "table",
         TypeRef::Memory(_) => "memory",
         TypeRef::Global(_) => "global",
@@ -44,7 +46,7 @@ fn type_ref_kind(ty: &TypeRef) -> &'static str {
 /// The kind of an export, named for [`ExportInfo::kind`].
 fn external_kind_name(kind: ExternalKind) -> &'static str {
     match kind {
-        ExternalKind::Func => "func",
+        ExternalKind::Func | ExternalKind::FuncExact => "func",
         ExternalKind::Table => "table",
         ExternalKind::Memory => "memory",
         ExternalKind::Global => "global",
@@ -133,11 +135,15 @@ impl PluginCore for WasmCore {
             match payload {
                 Payload::Version { num, .. } => version = num,
                 Payload::ImportSection(reader) => {
-                    for import in reader {
+                    // Imports arrive grouped: several that share a module
+                    // name, or a module name and a type, are encoded once.
+                    // `into_imports` unpacks a group back into the one
+                    // import per line a reader expects to see.
+                    for import in reader.into_imports() {
                         let import = import
                             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
                         match import.ty {
-                            TypeRef::Func(_) => function_count += 1,
+                            TypeRef::Func(_) | TypeRef::FuncExact(_) => function_count += 1,
                             TypeRef::Table(_) => table_count += 1,
                             TypeRef::Memory(_) => memory_count += 1,
                             TypeRef::Global(_) => global_count += 1,
