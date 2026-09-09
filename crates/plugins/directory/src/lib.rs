@@ -7,6 +7,7 @@
 //! exists only to satisfy the trait.
 
 pub mod repository;
+pub mod status;
 
 use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
@@ -60,7 +61,10 @@ impl PluginCore for DirectoryCore {
         let view = DirectoryView {
             entry_count,
             total_size,
-            repository: repository::describe(path),
+            // The full description, status included: `view` runs for the
+            // one directory a reader selected, which is the moment the
+            // extra pass over its tracked files is worth making.
+            repository: repository::describe_with_status(path),
         };
         serde_json::to_value(view).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
@@ -115,6 +119,12 @@ impl PluginPresentation for DirectoryPresentation {
                 lines.push(format!("Remote: {remote}"));
             } else {
                 lines.push("Remote: none configured".to_owned());
+            }
+            // Never the bare word "clean": untracked files are not counted,
+            // and a checkout full of new files should not wear it.
+            match &repository.status {
+                Some(status) => lines.push(format!("Working tree: {}", status.summary())),
+                None => lines.push("Working tree: could not read the index".to_owned()),
             }
             lines.push(String::new());
         }
@@ -198,7 +208,7 @@ mod tests {
                 provider: Some("github.com".to_owned()),
                 branch: Some("main".to_owned()),
                 remote: Some("https://github.com/owner/name.git".to_owned()),
-                dirty: None,
+                status: None,
             }),
         })
         .unwrap();
@@ -212,6 +222,7 @@ mod tests {
                 "Provider: github.com",
                 "Branch: main",
                 "Remote: https://github.com/owner/name.git",
+                "Working tree: could not read the index",
                 "",
                 "12 entries",
                 "4096 bytes total",
@@ -247,5 +258,59 @@ mod tests {
         let lines = DirectoryPresentation.present(&data);
 
         assert_eq!(lines, vec!["2 entries", "15 bytes total"]);
+    }
+
+    #[test]
+    fn a_working_copy_reports_what_its_tracked_files_look_like() {
+        let data = serde_json::to_value(DirectoryView {
+            entry_count: 12,
+            total_size: 4096,
+            repository: Some(super::repository::Repository {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: None,
+                status: Some(super::status::WorkingTree {
+                    changed: 2,
+                    examined: 130,
+                    partial: false,
+                }),
+            }),
+        })
+        .unwrap();
+
+        let lines = DirectoryPresentation.present(&data);
+
+        assert!(
+            lines.contains(&"Working tree: 2 tracked files changed".to_owned()),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_clean_working_copy_never_reads_as_simply_clean() {
+        let data = serde_json::to_value(DirectoryView {
+            entry_count: 3,
+            total_size: 90,
+            repository: Some(super::repository::Repository {
+                provider: None,
+                branch: None,
+                remote: None,
+                status: Some(super::status::WorkingTree {
+                    changed: 0,
+                    examined: 40,
+                    partial: false,
+                }),
+            }),
+        })
+        .unwrap();
+
+        let lines = DirectoryPresentation.present(&data);
+
+        // Untracked files are not counted, so the word "clean" would be a
+        // claim this cannot make.
+        assert!(
+            lines.contains(&"Working tree: no uncommitted changes to tracked files".to_owned()),
+            "{lines:?}"
+        );
     }
 }

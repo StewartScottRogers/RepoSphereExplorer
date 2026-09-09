@@ -29,10 +29,11 @@ pub struct Repository {
     pub branch: Option<String>,
     /// The address the checkout tracks, as written in its own configuration.
     pub remote: Option<String>,
-    /// Whether the working tree has uncommitted changes. Always `None` for
-    /// now: answering it needs a walk of the work tree, deferred with the
-    /// operations that will need the same walk (decision D10).
-    pub dirty: Option<bool>,
+    /// What the working tree looks like against what was last staged.
+    /// `None` when nothing asked - a listing does not, since the answer
+    /// costs a pass over every tracked file - or when the checkout's index
+    /// could not be read.
+    pub status: Option<crate::status::WorkingTree>,
 }
 
 /// What `path` is as a working copy, or `None` if it is not one.
@@ -41,26 +42,51 @@ pub struct Repository {
 /// never by its name, and never by asking a source control tool. The marker
 /// is a directory in an ordinary clone and a file in a worktree or
 /// submodule, and both count.
+///
+/// This is the cheap half: the marker, the remote, the branch, all of it a
+/// few small file reads. It is what a *listing* can afford for every row.
+/// For the working tree, which costs a pass over the tracked files, see
+/// [`describe_with_status`].
 #[must_use]
 pub fn describe(path: &Path) -> Option<Repository> {
-    let marker = path.join(".git");
-    let git_dir = if marker.is_dir() {
-        marker
-    } else if marker.is_file() {
-        worktree_git_dir(&marker)?
-    } else {
-        return None;
-    };
-
+    let git_dir = git_dir_of(path)?;
     let remote = remote_url(&git_dir);
     Some(Repository {
         provider: remote.as_deref().and_then(provider_of),
         branch: branch_at(&git_dir),
         remote,
-        // Deferred with the operations that need the same walk of the work
-        // tree; see decision D10.
-        dirty: None,
+        // The listing asks about forty folders at once and can afford none
+        // of this; `describe_with_status` answers it for the one the reader
+        // selected.
+        status: None,
     })
+}
+
+/// As [`describe`], and also whether the working tree has uncommitted
+/// changes to the files it tracks.
+///
+/// For the *selected* repository only. A workspace of forty checkouts is
+/// forty passes over forty sets of tracked files that nobody asked for; the
+/// one a reader is looking at is a pass they did ask for.
+#[must_use]
+pub fn describe_with_status(path: &Path) -> Option<Repository> {
+    let git_dir = git_dir_of(path)?;
+    let mut found = describe(path)?;
+    found.status = crate::status::working_tree(&git_dir, path);
+    Some(found)
+}
+
+/// The directory holding the checkout's own files, following a worktree or
+/// submodule marker to wherever it points.
+fn git_dir_of(path: &Path) -> Option<PathBuf> {
+    let marker = path.join(".git");
+    if marker.is_dir() {
+        Some(marker)
+    } else if marker.is_file() {
+        worktree_git_dir(&marker)
+    } else {
+        None
+    }
 }
 
 /// The real git directory a worktree or submodule's `.git` file points at.
@@ -164,7 +190,7 @@ fn provider_of(remote: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{describe, provider_of};
+    use super::{describe, describe_with_status, provider_of};
     use std::path::Path;
 
     /// A directory holding a `.git` directory with the files a clone has.
@@ -206,7 +232,10 @@ mod tests {
             found.remote.as_deref(),
             Some("https://github.com/owner/name.git")
         );
-        assert_eq!(found.dirty, None, "status is deferred with the operations");
+        assert_eq!(
+            found.status, None,
+            "a plain description costs a few reads; status is asked for separately"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -342,5 +371,40 @@ mod tests {
             "a local path came from no provider"
         );
         assert_eq!(provider_of(""), None);
+    }
+
+    #[test]
+    fn asking_for_status_reads_the_working_tree_as_well() {
+        let dir = temp_dir("with-status");
+        write_checkout(
+            &dir,
+            "ref: refs/heads/main
+",
+            "[remote \"origin\"]
+	url = https://github.com/owner/name.git
+",
+        );
+        // An index listing one file that is not there: a deleted tracked
+        // file, which is the cheapest change to stage for a test.
+        let git = dir.join(".git");
+        let mut index = b"DIRC".to_vec();
+        index.extend_from_slice(&2u32.to_be_bytes());
+        index.extend_from_slice(&1u32.to_be_bytes());
+        let start = index.len();
+        index.extend_from_slice(&[0u8; 40]);
+        index.extend_from_slice(&[0u8; 20]);
+        index.extend_from_slice(&5u16.to_be_bytes());
+        index.extend_from_slice(b"a.txt");
+        let written = index.len() - start;
+        index.resize(start + written.div_ceil(8) * 8, 0);
+        std::fs::write(git.join("index"), index).unwrap();
+
+        let found = describe_with_status(&dir).expect("still a working copy");
+
+        let status = found.status.expect("an index it could read");
+        assert_eq!(status.changed, 1, "a tracked file that is not there");
+        assert_eq!(found.provider.as_deref(), Some("github.com"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

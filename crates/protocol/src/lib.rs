@@ -127,6 +127,11 @@ pub struct DirectoryEntry {
 ///
 /// Per decision D10 this describes; it never drives. Nothing here runs a
 /// source control command.
+///
+/// This is what a *listing* can afford for every row: a few small reads per
+/// folder. Whether the working tree has uncommitted changes costs a pass
+/// over every tracked file, so it is answered for the selected repository
+/// only, in that repository's own view data, and is not on the wire here.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepositoryInfo {
     /// The host the checkout came from - `github.com`, `gitlab.com`,
@@ -140,10 +145,6 @@ pub struct RepositoryInfo {
     /// The address the checkout tracks, as written in its own
     /// configuration.
     pub remote: Option<String>,
-    /// Whether the working tree has uncommitted changes. Always `None` for
-    /// now: answering it needs a walk of the work tree, which is deferred
-    /// with the operations that will need the same walk (D10).
-    pub dirty: Option<bool>,
 }
 
 /// A response sent from the service back to a front end.
@@ -337,7 +338,6 @@ mod tests {
                     provider: Some("github.com".to_owned()),
                     branch: Some("main".to_owned()),
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
-                    dirty: None,
                 }),
             },
             DirectoryEntry {
