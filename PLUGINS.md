@@ -124,6 +124,7 @@ it.
 | Kubernetes manifest | `crates/plugins/kubernetes` | #349 | Resources, kinds, namespaces, images, unpinned tags, resource limits |
 | Maven POM | `crates/plugins/maven` | #343 | Coordinates, parent, modules, dependencies with scopes, properties, plugins |
 | MSBuild project | `crates/plugins/msbuild` | #344 | Kit, target frameworks, output type, packages, project references, imports |
+| Protocol Buffers | `crates/plugins/protobuf` | #353 | Syntax, package, imports, nested messages, enums, services with streaming, reserved numbers |
 
 ## Folder plugins
 

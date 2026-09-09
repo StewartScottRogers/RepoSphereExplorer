@@ -1,0 +1,81 @@
+// The orders service. Written to exercise every field the plugin
+// extracts: nested messages, an enumeration, a map, a oneof, reserved
+// numbers, file options, and streaming on both sides of a method.
+
+syntax = "proto3";
+
+package example.orders.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/example/orders/v1;ordersv1";
+option java_package = "com.example.orders.v1";
+option java_multiple_files = true;
+
+// An order, and everything that hangs off one.
+message Order {
+  // 4 and 7 to 9 held quantities before the schema changed. A wire number
+  // may never be reused, so they are retired rather than freed.
+  reserved 4, 7 to 9;
+  reserved "quantity", "unit_price";
+
+  string id = 1;
+  string customer_id = 2;
+  repeated Line lines = 3;
+  optional string note = 5;
+  map<string, string> labels = 6;
+  google.protobuf.Timestamp placed_at = 10;
+  State state = 11;
+
+  oneof payment {
+    CardPayment card = 20;
+    AccountPayment account = 21;
+  }
+
+  message Line {
+    string sku = 1;
+    int32 quantity = 2;
+    int64 unit_price_pennies = 3;
+  }
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    DRAFT = 1;
+    PLACED = 2;
+    SHIPPED = 3;
+    CANCELLED = 4;
+  }
+}
+
+message CardPayment {
+  string last_four = 1;
+  string scheme = 2;
+}
+
+message AccountPayment {
+  string account_id = 1;
+}
+
+message GetOrderRequest {
+  string id = 1;
+}
+
+message WatchOrdersRequest {
+  string customer_id = 1;
+}
+
+message UploadChunk {
+  bytes data = 1;
+}
+
+message UploadResult {
+  int64 accepted = 1;
+}
+
+service Orders {
+  rpc GetOrder (GetOrderRequest) returns (Order);
+  rpc WatchOrders (WatchOrdersRequest) returns (stream Order);
+  rpc UploadOrders (stream UploadChunk) returns (UploadResult);
+  rpc Sync (stream UploadChunk) returns (stream Order);
+}
