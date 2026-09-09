@@ -35,6 +35,7 @@ plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
 plugin-jsonschema = { path = "../plugins/jsonschema" }
 plugin-latex = { path = "../plugins/latex" }
+plugin-lex = { path = "../plugins/lex" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-orgmode = { path = "../plugins/orgmode" }
@@ -119,6 +120,7 @@ plugin-wasm = { path = "../plugins/wasm" }
 plugin-webmanifest = { path = "../plugins/webmanifest" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
+plugin-yacc = { path = "../plugins/yacc" }
 plugin-yaml = { path = "../plugins/yaml" }
 protocol = { path = "../protocol" }
 ratatui = "0.30"
