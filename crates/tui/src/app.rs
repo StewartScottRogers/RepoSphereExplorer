@@ -9,7 +9,7 @@
 //! streaming itself.
 
 use crate::render_with_block;
-use protocol::{DirectoryEntry, Request, Response};
+use protocol::{DirectoryEntry, ReposRoot, Request, Response};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -150,6 +150,72 @@ impl Focus {
     }
 }
 
+/// Where the terminal front end opens, and what it should say about it.
+///
+/// Decision D7 puts every launch at the configured Repos Directory, and
+/// that applies to both front ends: this asks the service the same question
+/// the graphical one does, rather than defaulting to wherever the shell
+/// happened to be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opening {
+    /// The directory to open at.
+    pub root: PathBuf,
+    /// A line for the status bar when the Repos Directory is not set, so
+    /// the reader knows this is the platform's suggestion rather than their
+    /// choice. `None` once one is configured.
+    pub notice: Option<String>,
+}
+
+/// Decides where to open, given what the service reports and what the
+/// command line asked for.
+///
+/// Split from the asking so the rule is testable without a service: an
+/// explicit path wins, then the configured root, then the platform default
+/// with a notice.
+#[must_use]
+pub fn opening_from(explicit: Option<PathBuf>, reply: Option<(Vec<ReposRoot>, String)>) -> Opening {
+    if let Some(root) = explicit {
+        // An explicit instruction now, not a memory of where somebody was.
+        return Opening { root, notice: None };
+    }
+
+    match reply {
+        Some((roots, default)) => match roots.into_iter().find(|root| root.active) {
+            Some(active) => Opening {
+                root: PathBuf::from(active.path),
+                notice: None,
+            },
+            None => Opening {
+                root: PathBuf::from(&default),
+                notice: Some(format!(
+                    "No Repos Directory set - showing {default}. Set one in the graphical front end, under File."
+                )),
+            },
+        },
+        None => Opening {
+            root: PathBuf::from("."),
+            notice: Some(
+                "Could not ask the service where the Repos Directory is - showing the current directory."
+                    .to_owned(),
+            ),
+        },
+    }
+}
+
+/// Asks the service where this machine's Repos Directory is, and decides
+/// where to open.
+#[must_use]
+pub fn opening(explicit: Option<PathBuf>) -> Opening {
+    let reply = protocol::socket_name()
+        .and_then(|name| crate::send_request(name, &Request::ReposRoots))
+        .ok()
+        .and_then(|response| match response {
+            Response::ReposRoots { roots, default } => Some((roots, default)),
+            _ => None,
+        });
+    opening_from(explicit, reply)
+}
+
 /// Sends `request` to the service on a background thread, returning a
 /// receiver for its eventual result. Dropping the receiver without reading
 /// it discards the result when it arrives: that is what cancelling a
@@ -248,6 +314,16 @@ impl App {
             should_quit: false,
         };
         app.load_contents_for_selected();
+        app
+    }
+
+    /// As [`App::new`], but starting with something on the status line -
+    /// used to say that the Repos Directory is not set and the platform's
+    /// default is being shown instead.
+    #[must_use]
+    pub fn new_with_notice(root: PathBuf, notice: Option<String>) -> Self {
+        let mut app = Self::new(root);
+        app.status = notice;
         app
     }
 
@@ -690,18 +766,28 @@ fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+/// How one entry reads in the contents pane.
+///
+/// A working copy is what somebody opening their workspace is looking for,
+/// so it says it is one and names the provider it came from. A folder that
+/// is not one stays listed, with the trailing slash it always had - visible,
+/// and plainly different (GUIDANCE.md 2.5).
+fn contents_label(entry: &DirectoryEntry) -> String {
+    match &entry.repository {
+        Some(repository) => match &repository.provider {
+            Some(provider) => format!("{}/  [{provider}]", entry.name),
+            None => format!("{}/  [repository]", entry.name),
+        },
+        None if entry.is_dir => format!("{}/", entry.name),
+        None => entry.name.clone(),
+    }
+}
+
 fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let items: Vec<ListItem<'_>> = app
         .contents
         .iter()
-        .map(|entry| {
-            let label = if entry.is_dir {
-                format!("{}/", entry.name)
-            } else {
-                entry.name.clone()
-            };
-            ListItem::new(label)
-        })
+        .map(|entry| ListItem::new(contents_label(entry)))
         .collect();
 
     let mut state = ListState::default();
@@ -726,7 +812,7 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::{App, Focus, FolderNode};
-    use protocol::{DirectoryEntry, Response};
+    use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::crossterm::event::KeyCode;
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -1053,5 +1139,120 @@ mod tests {
         app.handle_key(KeyCode::Enter);
 
         assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn a_path_on_the_command_line_wins() {
+        let opening = super::opening_from(
+            Some(std::path::PathBuf::from("/somewhere/else")),
+            Some((
+                vec![ReposRoot {
+                    path: "/home/ada/repos".to_owned(),
+                    active: true,
+                }],
+                "/home/ada/repos".to_owned(),
+            )),
+        );
+
+        assert_eq!(opening.root, std::path::PathBuf::from("/somewhere/else"));
+        assert_eq!(
+            opening.notice, None,
+            "an explicit instruction needs no explaining"
+        );
+    }
+
+    #[test]
+    fn with_nothing_on_the_command_line_it_opens_at_the_configured_root() {
+        let opening = super::opening_from(
+            None,
+            Some((
+                vec![
+                    ReposRoot {
+                        path: "/mnt/work/repos".to_owned(),
+                        active: false,
+                    },
+                    ReposRoot {
+                        path: "/home/ada/repos".to_owned(),
+                        active: true,
+                    },
+                ],
+                "/home/ada/repos".to_owned(),
+            )),
+        );
+
+        assert_eq!(opening.root, std::path::PathBuf::from("/home/ada/repos"));
+        assert_eq!(opening.notice, None);
+    }
+
+    #[test]
+    fn with_no_root_configured_it_offers_the_default_and_says_so() {
+        let opening = super::opening_from(None, Some((Vec::new(), "/home/ada/repos".to_owned())));
+
+        assert_eq!(opening.root, std::path::PathBuf::from("/home/ada/repos"));
+        let notice = opening.notice.expect("an unset root should be explained");
+        assert!(notice.contains("No Repos Directory set"), "{notice}");
+        assert!(
+            notice.contains("/home/ada/repos"),
+            "and it should name what it is showing instead: {notice}"
+        );
+    }
+
+    #[test]
+    fn with_no_service_it_falls_back_and_says_why() {
+        let opening = super::opening_from(None, None);
+
+        assert_eq!(opening.root, std::path::PathBuf::from("."));
+        assert!(
+            opening
+                .notice
+                .expect("a front end that cannot ask should say so")
+                .contains("Could not ask the service")
+        );
+    }
+
+    #[test]
+    fn a_working_copy_is_labelled_apart_from_a_plain_folder() {
+        let checkout = DirectoryEntry {
+            name: "explorer".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: Some("https://github.com/owner/explorer.git".to_owned()),
+                dirty: None,
+            }),
+        };
+        let folder = DirectoryEntry {
+            name: "scratch".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: None,
+        };
+
+        assert_eq!(super::contents_label(&checkout), "explorer/  [github.com]");
+        assert_eq!(
+            super::contents_label(&folder),
+            "scratch/",
+            "a folder that is not a checkout stays listed, and stays plain"
+        );
+    }
+
+    #[test]
+    fn a_working_copy_with_no_remote_still_says_it_is_one() {
+        let checkout = DirectoryEntry {
+            name: "local-only".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo::default()),
+        };
+
+        assert_eq!(
+            super::contents_label(&checkout),
+            "local-only/  [repository]"
+        );
     }
 }
