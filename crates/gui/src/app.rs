@@ -118,6 +118,8 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_sourcemap::SourcemapPresentation,
     &plugin_gitconfig::GitconfigPresentation,
     &plugin_gitattributes::GitattributesPresentation,
+    &plugin_helmchart::HelmchartPresentation,
+    &plugin_gitlabci::GitlabciPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

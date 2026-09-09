@@ -102,6 +102,8 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_msgpack::MsgpackCore,
     &plugin_certificate::CertificateCore,
     &plugin_markdown::MarkdownCore,
+    &plugin_helmchart::HelmchartCore,
+    &plugin_gitlabci::GitlabciCore,
     &plugin_yaml::YamlCore,
     &plugin_gitconfig::GitconfigCore,
     &plugin_ini::IniCore,

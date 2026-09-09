@@ -117,6 +117,8 @@ it.
 | Source map | `crates/plugins/sourcemap` | #333 | Version, generated file, sources, embedded content, names, segments |
 | Git configuration | `crates/plugins/gitconfig` | #328 | Remotes, tracking branches, identity, aliases and includes |
 | Git attributes | `crates/plugins/gitattributes` | #329 | Rules, binary markings, diff/merge drivers, filters, language overrides |
+| Helm chart metadata | `crates/plugins/helmchart` | #350 | Chart and application versions, type, dependencies with conditions, maintainers |
+| GitLab CI configuration | `crates/plugins/gitlabci` | #347 | Stages, jobs, templates, images, includes, and jobs whose stage never runs |
 
 ## Folder plugins
 

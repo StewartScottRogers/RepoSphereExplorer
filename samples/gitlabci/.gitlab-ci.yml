@@ -1,0 +1,74 @@
+# A pipeline exercising every field the plugin extracts: stages, an
+# include, a hidden template, jobs with images, artifacts, rules and a
+# matrix, and a job whose stage the pipeline does not declare.
+
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+include:
+  - local: /ci/shared-rules.yml
+  - template: Security/SAST.gitlab-ci.yml
+
+default:
+  image: rust:1.87
+  interruptible: true
+
+# A template. It never runs on its own; jobs extend it.
+.cargo:
+  image: rust:1.87
+  cache:
+    key: cargo-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cargo/
+      - target/
+  before_script:
+    - rustc --version
+
+build:
+  extends: .cargo
+  stage: build
+  script:
+    - cargo build --release --locked
+  artifacts:
+    paths:
+      - target/release/
+    expire_in: 1 week
+
+test:
+  extends: .cargo
+  stage: test
+  script:
+    - cargo fmt --all -- --check
+    - cargo clippy --all-targets -- -D warnings
+    - cargo test --all-features
+  parallel:
+    matrix:
+      - TOOLCHAIN: [stable, beta]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+pages:
+  stage: deploy
+  image: alpine:3.21
+  script:
+    - apk add --no-cache rsync
+    - rsync -a docs/ public/
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# Names a stage that is not in `stages:`, so it never runs at all - the
+# commonest way a pipeline quietly stops doing something.
+audit:
+  stage: security
+  script:
+    - cargo audit
