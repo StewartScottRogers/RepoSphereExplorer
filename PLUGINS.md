@@ -125,6 +125,7 @@ it.
 | Maven POM | `crates/plugins/maven` | #343 | Coordinates, parent, modules, dependencies with scopes, properties, plugins |
 | MSBuild project | `crates/plugins/msbuild` | #344 | Kit, target frameworks, output type, packages, project references, imports |
 | Protocol Buffers | `crates/plugins/protobuf` | #353 | Syntax, package, imports, nested messages, enums, services with streaming, reserved numbers |
+| Apache Thrift IDL | `crates/plugins/thrift` | #354 | Namespaces, includes, typedefs, structs and exceptions with numbered fields, services |
 
 ## Folder plugins
 

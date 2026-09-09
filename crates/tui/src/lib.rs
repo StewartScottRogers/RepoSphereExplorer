@@ -137,6 +137,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_maven::MavenPresentation,
     &plugin_msbuild::MsbuildPresentation,
     &plugin_protobuf::ProtobufPresentation,
+    &plugin_thrift::ThriftPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever
