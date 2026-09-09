@@ -1,0 +1,28 @@
+# A standalone crate, so `samples/rust/` is a Rust project and not a loose
+# file. Excluded from this repository's own workspace in the root
+# `Cargo.toml`: it is a fixture to look at, not a crate to build here.
+
+[package]
+name = "tree-indexer"
+version = "1.2.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A bounded, cancellable directory indexer."
+license = "MIT"
+repository = "https://github.com/example/tree-indexer"
+keywords = ["filesystem", "indexing", "walk"]
+categories = ["filesystem"]
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.20.0"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1

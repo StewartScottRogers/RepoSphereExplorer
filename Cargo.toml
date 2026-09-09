@@ -10,6 +10,14 @@ members = [
     "crates/plugins/*",
     "crates/updater",
 ]
+# The sample projects under `samples/` are fixtures to open, not crates to
+# build here. Excluded so cargo does not try to make members of them, and
+# so a person running cargo inside one gets that project rather than this
+# workspace.
+exclude = [
+    "samples/project-cargo",
+    "samples/rust",
+]
 
 [workspace.package]
 version = "0.6.0"

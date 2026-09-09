@@ -6,8 +6,12 @@ test suite.
 
 Three tests hold this set to its job:
 
-- `service`'s `samples.rs` — every file is recognised by the plugin whose
-  directory it sits in, and by no other.
+- `service`'s `samples.rs` — two rules. **No orphans:** every file anywhere
+  under `samples/`, at any depth, is recognised by *some* plugin. **Every
+  directory proves its own plugin:** at least one file in
+  `samples/<plugin>/` is recognised by `<plugin>`. The second is what
+  catches misattribution — if a C file started opening as Rust,
+  `samples/c/` would hold no C file at all and would fail.
 - `service`'s `sample_coverage.rs` — every list a plugin puts on the wire
   has something in it, and every optional field is filled, unless the
   format cannot carry it. Those exceptions are named in `ALLOWED_GAPS`,
@@ -81,6 +85,43 @@ They are marked `binary` in the repository's `.gitattributes`. This is
 not decoration: a PDF's cross-reference table is a list of byte offsets,
 and a checkout that rewrote one newline inside it produced a file that no
 longer parsed — on Windows only, and never in CI.
+
+## Language directories are projects
+
+A lone `cache.go` proves the Go plugin parses a file. It proves nothing
+about what the application does in front of a Go *project*, which is what
+a person browsing a Repos Directory actually meets. So a language
+directory holds the project, not just the file: the manifest, the lock
+file, the build configuration, the source tree, a test, a README and an
+ignore file.
+
+`samples/rust/` is the shape:
+
+```
+samples/rust/
+  Cargo.toml      Cargo.lock      rustfmt.toml
+  .gitignore      README.md
+  src/lib.rs      src/main.rs     src/indexer.rs
+  tests/walks_a_tree.rs
+```
+
+That also gives the folder plugins something to recognise: opening
+`samples/rust/` shows the Cargo project lines below the folder's own.
+
+**These are plausible, not built.** The syntax is real, the versions exist,
+and a lock file matches its manifest — but this factory has a Rust
+toolchain and not forty others, so no pipeline compiles a Go module or
+installs a Ruby gem here. A green pipeline is not evidence that any of
+these would build. Do not read it as one.
+
+Any manifest that cargo would otherwise adopt is named in the root
+`Cargo.toml`'s `workspace.exclude`. A sample project is a fixture to open,
+not a crate to build here.
+
+Some languages deliberately stay a single file, because they have no
+project convention worth inventing: SQL, GraphQL, assembly, vimscript,
+Prolog, Scheme, Tcl. That is a statement about those languages, not a gap
+in this set.
 
 ## Adding a fixture
 
