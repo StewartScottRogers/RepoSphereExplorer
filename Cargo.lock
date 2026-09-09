@@ -2729,6 +2729,7 @@ dependencies = [
  "plugin-java",
  "plugin-javascript",
  "plugin-json",
+ "plugin-jsonschema",
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
@@ -5884,6 +5885,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-jsonschema"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-julia"
 version = "0.6.0"
 dependencies = [
@@ -7550,6 +7560,7 @@ dependencies = [
  "plugin-java",
  "plugin-javascript",
  "plugin-json",
+ "plugin-jsonschema",
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
@@ -8664,6 +8675,7 @@ dependencies = [
  "plugin-java",
  "plugin-javascript",
  "plugin-json",
+ "plugin-jsonschema",
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",

@@ -93,6 +93,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_npmlock::NpmlockCore,
     &plugin_webmanifest::WebmanifestCore,
     &plugin_sourcemap::SourcemapCore,
+    &plugin_jsonschema::JsonschemaCore,
     &plugin_json::JsonCore,
     &plugin_terraform::TerraformCore,
     &plugin_editorconfig::EditorconfigCore,
