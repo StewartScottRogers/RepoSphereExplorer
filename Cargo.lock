@@ -2752,6 +2752,7 @@ dependencies = [
  "plugin-project-cargo",
  "plugin-prolog",
  "plugin-properties",
+ "plugin-protobuf",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -6101,6 +6102,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-protobuf"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-psd"
 version = "0.6.0"
 dependencies = [
@@ -7573,6 +7583,7 @@ dependencies = [
  "plugin-project-cargo",
  "plugin-prolog",
  "plugin-properties",
+ "plugin-protobuf",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
@@ -8687,6 +8698,7 @@ dependencies = [
  "plugin-project-cargo",
  "plugin-prolog",
  "plugin-properties",
+ "plugin-protobuf",
  "plugin-psd",
  "plugin-python",
  "plugin-r",
