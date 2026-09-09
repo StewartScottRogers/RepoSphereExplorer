@@ -21,9 +21,7 @@ fn main() -> ExitCode {
         return self_update();
     }
 
-    let root = env::args()
-        .nth(1)
-        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let explicit = env::args().nth(1).map(PathBuf::from);
 
     if let Err(err) = ensure_service_running() {
         eprintln!(
@@ -34,7 +32,12 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if let Err(err) = run(root) {
+    // Where to open: the path given on the command line, or this machine's
+    // Repos Directory, or - with none configured - the platform default,
+    // with a line saying so. Decision D7 applies to both front ends.
+    let opening = tui::app::opening(explicit);
+
+    if let Err(err) = run(opening) {
         eprintln!("terminal error: {err}");
         return ExitCode::FAILURE;
     }
@@ -124,8 +127,8 @@ fn self_update() -> ExitCode {
 }
 
 /// Runs the three-pane explorer's event loop until the user quits.
-fn run(root: PathBuf) -> io::Result<()> {
-    let mut app = App::new(root);
+fn run(opening: tui::app::Opening) -> io::Result<()> {
+    let mut app = App::new_with_notice(opening.root, opening.notice);
     let mut terminal = ratatui::init();
     while !app.should_quit {
         terminal.draw(|frame| render_app(frame, frame.area(), &app))?;
