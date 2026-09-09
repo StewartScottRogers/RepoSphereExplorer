@@ -55,15 +55,25 @@ fn starts_with_ci(line: &str, keyword: &str) -> bool {
     strip_ci_prefix(line.trim_start(), keyword).is_some()
 }
 
+/// Whether a (trimmed) line is a SQL line comment: `--` followed by some
+/// text. A line of nothing but dashes - `---`, `----`, a forty-dash rule -
+/// is a YAML document marker, a Markdown setext underline or a banner, not
+/// a comment, so it is excluded even though it starts with `--` too.
+fn is_sql_comment_line(line: &str) -> bool {
+    line.trim()
+        .strip_prefix("--")
+        .is_some_and(|rest| !rest.chars().all(|ch| ch == '-'))
+}
+
 /// Whether `text` looks like SQL source: a line starting with one of
-/// [`STATEMENT_KEYWORDS`], or a `PRIMARY KEY`/`FOREIGN KEY` constraint
-/// anywhere. None of these markers are used by this project's other
-/// source-language plugins.
+/// [`STATEMENT_KEYWORDS`], a `PRIMARY KEY`/`FOREIGN KEY` constraint
+/// anywhere, or a `--` line comment. None of these markers are used by
+/// this project's other source-language plugins.
 fn has_sql_syntax(text: &str) -> bool {
     let upper = text.to_ascii_uppercase();
-    text.lines()
-        .any(|line| STATEMENT_KEYWORDS.iter().any(|kw| starts_with_ci(line, kw)))
-        || upper.contains("PRIMARY KEY")
+    text.lines().any(|line| {
+        STATEMENT_KEYWORDS.iter().any(|kw| starts_with_ci(line, kw)) || is_sql_comment_line(line)
+    }) || upper.contains("PRIMARY KEY")
         || upper.contains("FOREIGN KEY")
 }
 
@@ -190,6 +200,27 @@ mod tests {
         assert!(SqlCore.sniff(
             b"CREATE TABLE users (\n  id INTEGER,\n  FOREIGN KEY (id) REFERENCES other(id)\n);\n"
         ));
+    }
+
+    #[test]
+    fn sniffs_a_line_comment_with_no_other_sql_syntax_as_sql() {
+        assert!(SqlCore.sniff(b"-- like this\n"));
+    }
+
+    #[test]
+    fn does_not_sniff_a_yaml_document_stream_as_sql() {
+        // `---` separates YAML documents; it is not a SQL comment, even
+        // though a genuine comment also starts with two dashes.
+        assert!(!SqlCore.sniff(
+            b"---\ndefaults: &defaults\n  replicas: 2\n---\nname: repo-sphere\n---\n- one\n- two\n"
+        ));
+    }
+
+    #[test]
+    fn does_not_sniff_a_dashes_only_line_as_a_sql_comment() {
+        assert!(!SqlCore.sniff(b"---\n"));
+        assert!(!SqlCore.sniff(b"----\n"));
+        assert!(!SqlCore.sniff(b"----------------------------------------\n"));
     }
 
     #[test]
