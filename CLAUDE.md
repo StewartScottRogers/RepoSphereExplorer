@@ -102,7 +102,10 @@ and what it would take to revisit them.
     crate must also add its `samples/<name>/` entry with a real, valid example
     file, in the same pull request. Make the fixture exercise every field the
     plugin extracts: `sample_coverage.rs` fails when a fixture stops proving
-    anything.
+    anything. A programming language's directory holds a whole project — the
+    manifest, the lock file, the source tree, a test — because a project is
+    what a reader meets. The files are plausible, never toolchain-verified;
+    see [samples/README.md](samples/README.md).
 13. **Spell out an acronym before using it.** First use gives the full term,
     with the acronym in parentheses after it. This applies to documentation,
     commit messages, work orders and user-facing strings.
