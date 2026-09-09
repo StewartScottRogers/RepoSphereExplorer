@@ -228,15 +228,19 @@ fn parse_index(bytes: &[u8]) -> Option<Vec<Entry>> {
             object_id,
         });
 
+        // Padded to a multiple of eight, with at least one NUL byte after
+        // the path: `div_ceil` alone is wrong whenever the unpadded length
+        // already lands on a multiple of eight, since it then adds no
+        // padding at all rather than a full eight bytes.
         let entry_len = name_start - offset + name_len;
-        offset += entry_len.div_ceil(8) * 8;
+        offset += (entry_len + 8) & !7;
     }
     Some(entries)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkingTree, blob_id, working_tree};
+    use super::{WorkingTree, blob_id, parse_index, working_tree};
     use std::path::{Path, PathBuf};
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -288,8 +292,15 @@ mod tests {
             bytes.extend_from_slice(&u16::try_from(name.len()).unwrap().to_be_bytes());
             bytes.extend_from_slice(name.as_bytes());
 
+            // Padding is deliberately computed differently from
+            // `parse_index`'s arithmetic, so a shared mistake cannot make
+            // the fixture and the parser agree on a wrong answer: at least
+            // one NUL byte always, and a full eight when `written` already
+            // lands on a multiple of eight.
             let written = bytes.len() - start;
-            bytes.resize(start + written.div_ceil(8) * 8, 0);
+            let remainder = written % 8;
+            let padding = if remainder == 0 { 8 } else { 8 - remainder };
+            bytes.resize(start + written + padding, 0);
         }
 
         std::fs::create_dir_all(git_dir).unwrap();
@@ -438,6 +449,46 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&work_tree).unwrap();
+    }
+
+    #[test]
+    fn a_boundary_path_length_does_not_corrupt_the_following_entry() {
+        // Sixty-two fixed bytes plus a ten byte path land exactly on a
+        // multiple of eight - the case the old `div_ceil` arithmetic
+        // treated as needing no padding at all, which then read the next
+        // entry from eight bytes short of where it actually starts.
+        let (git_dir, work_tree) =
+            checkout("boundary", &[("boundary10", "ten"), ("after.txt", "after")]);
+
+        let status = working_tree(&git_dir, &work_tree).expect("an index to read");
+
+        assert_eq!(status.examined, 2, "the second entry must still be found");
+        assert_eq!(status.changed, 0);
+
+        std::fs::remove_dir_all(&work_tree).unwrap();
+    }
+
+    #[test]
+    fn parses_this_repositorys_own_index() {
+        // No fixture written by this crate can prove the format was read
+        // right, since the fixture writer and the parser could share the
+        // same mistake. A real index, written by git itself, can.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let index_path = repo_root.join(".git").join("index");
+        let Ok(bytes) = std::fs::read(&index_path) else {
+            eprintln!(
+                "skipping: no {} to read in this checkout",
+                index_path.display()
+            );
+            return;
+        };
+
+        let entries = parse_index(&bytes).expect("this repository's own index to parse");
+
+        assert!(
+            !entries.is_empty(),
+            "expected at least one tracked file in this repository's own index"
+        );
     }
 
     #[test]
