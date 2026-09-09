@@ -119,6 +119,8 @@ it.
 | Git attributes | `crates/plugins/gitattributes` | #329 | Rules, binary markings, diff/merge drivers, filters, language overrides |
 | Helm chart metadata | `crates/plugins/helmchart` | #350 | Chart and application versions, type, dependencies with conditions, maintainers |
 | GitLab CI configuration | `crates/plugins/gitlabci` | #347 | Stages, jobs, templates, images, includes, and jobs whose stage never runs |
+| Maven POM | `crates/plugins/maven` | #343 | Coordinates, parent, modules, dependencies with scopes, properties, plugins |
+| MSBuild project | `crates/plugins/msbuild` | #344 | Kit, target frameworks, output type, packages, project references, imports |
 
 ## Folder plugins
 
