@@ -2709,6 +2709,7 @@ dependencies = [
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
+ "plugin-flatbuffers",
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
@@ -5700,6 +5701,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-flatbuffers"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-font"
 version = "0.6.0"
 dependencies = [
@@ -7530,6 +7540,7 @@ dependencies = [
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
+ "plugin-flatbuffers",
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
@@ -8644,6 +8655,7 @@ dependencies = [
  "plugin-epub",
  "plugin-erlang",
  "plugin-executable",
+ "plugin-flatbuffers",
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",

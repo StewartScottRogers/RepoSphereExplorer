@@ -118,6 +118,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_roff::RoffCore,
     &plugin_gitattributes::GitattributesCore,
     &plugin_ignorefile::IgnorefileCore,
+    &plugin_flatbuffers::FlatbuffersCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_psd::PsdCore,
