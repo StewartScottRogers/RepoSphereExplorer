@@ -269,4 +269,58 @@ mod tests {
             "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
+    /// The fixture in `samples/`, which is where a person checking the
+    /// application - and quality assurance after them - meets this plugin.
+    fn repository_fixture() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../samples/hdf5/instrument-run.h5")
+    }
+
+    #[test]
+    fn the_repository_fixture_nests_groups_and_varies_its_datasets() {
+        // The fixture this replaced had one group, one level down, and two
+        // datasets of the same element type. A walk that stopped after the
+        // first descent would have passed it.
+        let data = Hdf5Core.view(&repository_fixture()).unwrap();
+        let view: Hdf5View = serde_json::from_value(data).unwrap();
+
+        assert!(
+            view.groups
+                .contains(&"/session/instrument/faults".to_owned()),
+            "a group three levels down should be listed: {:?}",
+            view.groups
+        );
+
+        let calibration = view
+            .datasets
+            .iter()
+            .find(|dataset| dataset.path == "/session/instrument/calibration")
+            .expect("a dataset two levels down should be listed");
+        assert_eq!(calibration.shape, vec![4, 3], "rank two, not flattened");
+
+        let scalar = view
+            .datasets
+            .iter()
+            .find(|dataset| dataset.path == "/metadata/schema_version")
+            .expect("a scalar dataset should be listed");
+        assert!(
+            scalar.shape.is_empty(),
+            "a scalar has no dimensions, and must not be dressed up as a one-element array: {:?}",
+            scalar.shape
+        );
+
+        let kinds: std::collections::BTreeSet<&str> = view
+            .datasets
+            .iter()
+            .map(|dataset| dataset.dtype.as_str())
+            .collect();
+        assert!(
+            kinds.len() >= 4,
+            "the fixture should carry several element types, so a descriptor that failed to read              would show: {kinds:?}"
+        );
+        assert!(
+            !kinds.iter().any(|kind| kind.starts_with("unknown")),
+            "every element type in the fixture should describe itself: {kinds:?}"
+        );
+    }
 }

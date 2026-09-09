@@ -39,7 +39,9 @@ Every one of them needed a file with something in it.
 
 | fixture | why it is there |
 | --- | --- |
-| `text/access.log` | 96 KiB, past the 64 KiB read cap, so `truncated` is exercised by a real file. It is the only fixture that is deliberately long. |
+| `text/access.log` | 96 KiB, past the 64 KiB read cap, so `truncated` is exercised by a real file. |
+| `parquet/pipeline-runs.parquet` | 264 rows against a 200-row view, so `truncated` is exercised in a second plugin, and nine columns covering text, integers, a floating point number, a boolean, a timestamp and a column with missing values in it. |
+| `hdf5/instrument-run.h5` | Groups three levels deep, and datasets that are scalar, one-dimensional and two-dimensional, across five element types. The walk has to descend, and the type descriptor has to hold up. |
 | `certificate/chain.pem` | A leaf certificate, the root that signed it, and the leaf's key. The key protects nothing and is safe to publish. |
 | `directory/` | The `directory` plugin has no file to sniff: the folder itself is what it recognises, so this one holds ordinary files of assorted types. |
 | `model3d/` | Two fixtures, because OBJ and glTF carry different halves of the view: geometry counts from one, scene and generator from the other. |
@@ -49,6 +51,30 @@ Every one of them needed a file with something in it.
 
 The binary fixtures are generated rather than downloaded, so the set
 carries no third-party licences and every byte is accounted for.
+
+Two need libraries this workspace does not carry, so they are built from
+Python with `pyarrow` and `h5py` in a throwaway virtual environment:
+
+```bash
+python -m venv .fixtures && .fixtures/bin/pip install pyarrow h5py
+```
+
+- `parquet/pipeline-runs.parquet` — a table of factory pipeline runs:
+  `run_id` (64-bit integer), `commit`, `branch`, `stage` (text),
+  `started_at` (millisecond timestamp), `duration_seconds` (double),
+  `exit_code` (32-bit integer), `passed` (boolean) and `runner` (text,
+  left empty for a run that never got a machine). 264 rows, written with
+  Snappy compression in row groups of 64.
+- `hdf5/instrument-run.h5` — one instrument run: `/elapsed_seconds` at the
+  root, a `/session` group holding `readings` and `channel_names`, a
+  `/session/instrument` group holding `calibration`, `gain_matrix` and
+  `serial`, a `/session/instrument/faults` group holding `codes`, and a
+  `/metadata` group holding the scalar `schema_version` and
+  `sample_rate_hz`.
+
+Each plugin has a test that reads its own fixture out of this directory
+and asserts that shape, so a fixture rebuilt to something thinner fails
+rather than passing quietly.
 
 They are marked `binary` in the repository's `.gitattributes`. This is
 not decoration: a PDF's cross-reference table is a list of byte offsets,
