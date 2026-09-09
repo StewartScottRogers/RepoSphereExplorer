@@ -127,6 +127,8 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_ignorefile::IgnorefilePresentation,
     &plugin_webmanifest::WebmanifestPresentation,
     &plugin_sourcemap::SourcemapPresentation,
+    &plugin_githubactions::GithubactionsPresentation,
+    &plugin_kubernetes::KubernetesPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

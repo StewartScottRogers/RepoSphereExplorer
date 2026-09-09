@@ -2713,6 +2713,7 @@ dependencies = [
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
+ "plugin-githubactions",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -2728,6 +2729,7 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-kubernetes",
  "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
@@ -5734,6 +5736,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-githubactions"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-go"
 version = "0.6.0"
 dependencies = [
@@ -5863,6 +5874,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-kotlin"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-kubernetes"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7494,6 +7514,7 @@ dependencies = [
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
+ "plugin-githubactions",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -7509,6 +7530,7 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-kubernetes",
  "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
@@ -8604,6 +8626,7 @@ dependencies = [
  "plugin-fortran",
  "plugin-fsharp",
  "plugin-geojson",
+ "plugin-githubactions",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -8619,6 +8642,7 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-kubernetes",
  "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",

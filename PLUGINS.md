@@ -115,6 +115,8 @@ it.
 | Ignore file | `crates/plugins/ignorefile` | #327 | Patterns, negations, anchoring, and re-inclusions that can never fire |
 | Web application manifest | `crates/plugins/webmanifest` | #332 | Name, start address, display, colours, icons, shortcuts |
 | Source map | `crates/plugins/sourcemap` | #333 | Version, generated file, sources, embedded content, names, segments |
+| GitHub Actions workflow | `crates/plugins/githubactions` | #346 | Name, triggers, jobs, actions, unpinned references, permissions, secrets |
+| Kubernetes manifest | `crates/plugins/kubernetes` | #349 | Resources, kinds, namespaces, images, unpinned tags, resource limits |
 
 ## Folder plugins
 

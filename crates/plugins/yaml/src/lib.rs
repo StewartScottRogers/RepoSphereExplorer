@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn the_repository_fixture_fills_every_field() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../samples/yaml/deployment.yaml");
+            .join("../../../samples/yaml/pipeline-settings.yaml");
 
         let data = YamlCore.view(&path).unwrap();
         let view: YamlView = serde_json::from_value(data).unwrap();

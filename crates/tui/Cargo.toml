@@ -26,8 +26,10 @@ plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dotenv = { path = "../plugins/dotenv" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
+plugin-githubactions = { path = "../plugins/githubactions" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
+plugin-kubernetes = { path = "../plugins/kubernetes" }
 plugin-latex = { path = "../plugins/latex" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-npmlock = { path = "../plugins/npmlock" }
