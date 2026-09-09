@@ -150,9 +150,16 @@ came from, is the point of the application.
 ### What it costs
 
 The application will be asked for a "pull" button, and the answer for now is
-no. Working-tree status is deferred with the operations, because reporting
-whether a clone is dirty needs the same walk of the work tree that they
-need; the field exists and reports unknown until then.
+no.
+
+**Amended 2026-09-08 by work order #304.** This entry deferred working-tree
+status along with the operations, on the grounds that reporting whether a
+clone is dirty needs the same walk of the work tree. That was true of the
+listing and not of the selected repository: read from the checkout's own
+index, for one repository at a time, the answer costs a pass over its
+tracked files and nothing more. Status is now reported in the File pane.
+What D10 still settles is unchanged - this application reads and never
+drives, and clone, fetch, pull and commit remain out of scope.
 
 ### To revisit
 

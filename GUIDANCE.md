@@ -175,8 +175,12 @@ epos` on Windows, `~/repos` elsewhere. When
   source control working directories. A real clone is detected by its `.git`
   marker — never guessed from a name — and the provider is read from the
   remote address in the repository's own configuration. Branch comes from the
-  same place. Working-tree status is designed for and not yet reported, since
-  it needs a walk of the tree that the operations in D10 will need too.
+  same place. Whether the working tree has uncommitted changes is read from
+  the checkout's own index, for the **selected** repository only: a listing
+  of forty checkouts cannot afford a pass over forty sets of tracked files,
+  and the one a reader is looking at is a pass they asked for. Tracked files
+  only - deciding whether an untracked file is ignored needs the ignore
+  rules - so the wording says "tracked" and never "clean".
 - **The boundary is soft.** The root is home base, not a cage: navigating above
   or outside it is allowed. Soft against hard is one setting in one place
   (D8), so it can be reconsidered without hunting through the code.

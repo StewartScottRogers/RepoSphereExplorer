@@ -138,7 +138,6 @@ pub fn describe(path: &Path) -> Option<RepositoryInfo> {
         provider: found.provider,
         branch: found.branch,
         remote: found.remote,
-        dirty: found.dirty,
     })
 }
 

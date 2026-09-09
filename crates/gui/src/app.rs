@@ -3543,7 +3543,6 @@ third",
                     provider: Some("github.com".to_owned()),
                     branch: Some("main".to_owned()),
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
-                    dirty: None,
                 }),
             },
             DirectoryEntry {
