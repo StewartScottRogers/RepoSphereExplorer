@@ -1,0 +1,45 @@
+.\" Manual page for explore(1). Written to exercise every field the roff
+.\" plugin extracts: a full title macro, several sections, a synopsis, an
+.\" options list, an example and cross-references.
+.TH EXPLORE 1 "September 2026" "Repos Explorer 0.6.0" "User Commands"
+.SH NAME
+explore \- a front door to the working directories source control checks out
+.SH SYNOPSIS
+.B explore
+[\fB\-\-root\fR \fIDIRECTORY\fR]
+[\fB\-\-no\-status\fR]
+[\fIPATH\fR]
+.SH DESCRIPTION
+.B explore
+opens at the configured Repos Directory and lists the repositories inside
+it, reading each one's provider, branch and working-tree state from the
+checkout's own files.
+.PP
+It never runs a source control command. Clone, fetch, pull and commit are
+deliberately out of scope.
+.SH OPTIONS
+.TP
+.BR \-\-root " " \fIDIRECTORY\fR
+Open at \fIDIRECTORY\fR instead of the configured Repos Directory. An
+explicit instruction, not a remembered location.
+.TP
+.B \-\-no\-status
+Skip the working-tree comparison, which reads the index of the selected
+repository.
+.SH EXIT STATUS
+.TP
+.B 0
+The window closed normally.
+.TP
+.B 2
+The Repos Directory could not be read.
+.SH FILES
+.TP
+.I ~/.local/share/RepoSphereExplorer/repos.json
+The configured roots, with exactly one marked active.
+.SH SEE ALSO
+.BR git (1),
+.BR ls (1),
+.BR find (1)
+.SH AUTHOR
+Written by the dark factory.

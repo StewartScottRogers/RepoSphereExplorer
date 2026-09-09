@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "file": "bundle.js",
+  "sourceRoot": "/src",
+  "sources": [
+    "scheduler.ts",
+    "store.js",
+    "index.ts"
+  ],
+  "sourcesContent": [
+    "export class Scheduler {\n  add(spec) { return this; }\n}\n",
+    "export class Store {\n  dispatch(action) {}\n}\n",
+    null
+  ],
+  "names": [
+    "Scheduler",
+    "add",
+    "spec",
+    "Store",
+    "dispatch",
+    "action",
+    "main"
+  ],
+  "mappings": "AAAA,MAAMA,UAAU;EACdC,IAAIC,MAAM;IACR,OAAO,IAAI;;;ACFf,MAAMC,MAAM;EACVC,SAASC,QAAQ;;;ACDnB,SAASC,OAAO;EACd,OAAO,IAAIL,UAAU;;",
+  "ignoreList": [1]
+}

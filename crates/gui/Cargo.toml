@@ -28,12 +28,15 @@ plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dotenv = { path = "../plugins/dotenv" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
+plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
 plugin-latex = { path = "../plugins/latex" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-properties = { path = "../plugins/properties" }
+plugin-roff = { path = "../plugins/roff" }
+plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }
 plugin-certificate = { path = "../plugins/certificate" }
@@ -109,6 +112,7 @@ plugin-typescript = { path = "../plugins/typescript" }
 plugin-video = { path = "../plugins/video" }
 plugin-vue = { path = "../plugins/vue" }
 plugin-wasm = { path = "../plugins/wasm" }
+plugin-webmanifest = { path = "../plugins/webmanifest" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
 plugin-yaml = { path = "../plugins/yaml" }

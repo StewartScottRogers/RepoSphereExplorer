@@ -123,6 +123,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_codeowners::CodeownersPresentation,
     &plugin_cargolock::CargolockPresentation,
     &plugin_npmlock::NpmlockPresentation,
+    &plugin_roff::RoffPresentation,
+    &plugin_ignorefile::IgnorefilePresentation,
+    &plugin_webmanifest::WebmanifestPresentation,
+    &plugin_sourcemap::SourcemapPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

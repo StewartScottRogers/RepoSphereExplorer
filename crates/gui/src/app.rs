@@ -112,6 +112,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_codeowners::CodeownersPresentation,
     &plugin_cargolock::CargolockPresentation,
     &plugin_npmlock::NpmlockPresentation,
+    &plugin_roff::RoffPresentation,
+    &plugin_ignorefile::IgnorefilePresentation,
+    &plugin_webmanifest::WebmanifestPresentation,
+    &plugin_sourcemap::SourcemapPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

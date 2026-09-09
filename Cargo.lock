@@ -2719,6 +2719,7 @@ dependencies = [
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-html",
+ "plugin-ignorefile",
  "plugin-image",
  "plugin-ini",
  "plugin-java",
@@ -2751,12 +2752,14 @@ dependencies = [
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
+ "plugin-roff",
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
+ "plugin-sourcemap",
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
@@ -2773,6 +2776,7 @@ dependencies = [
  "plugin-vimscript",
  "plugin-vue",
  "plugin-wasm",
+ "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
  "plugin-yaml",
@@ -5785,6 +5789,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-ignorefile"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-image"
 version = "0.6.0"
 dependencies = [
@@ -6086,6 +6099,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-roff"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-ruby"
 version = "0.6.0"
 dependencies = [
@@ -6132,6 +6154,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-solidity"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-sourcemap"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6289,6 +6320,15 @@ dependencies = [
  "serde",
  "serde_json",
  "wasmparser",
+]
+
+[[package]]
+name = "plugin-webmanifest"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7460,6 +7500,7 @@ dependencies = [
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-html",
+ "plugin-ignorefile",
  "plugin-image",
  "plugin-ini",
  "plugin-java",
@@ -7492,12 +7533,14 @@ dependencies = [
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
+ "plugin-roff",
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
+ "plugin-sourcemap",
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
@@ -7514,6 +7557,7 @@ dependencies = [
  "plugin-vimscript",
  "plugin-vue",
  "plugin-wasm",
+ "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
  "plugin-yaml",
@@ -8566,6 +8610,7 @@ dependencies = [
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-html",
+ "plugin-ignorefile",
  "plugin-image",
  "plugin-ini",
  "plugin-java",
@@ -8598,12 +8643,14 @@ dependencies = [
  "plugin-python",
  "plugin-r",
  "plugin-restructuredtext",
+ "plugin-roff",
  "plugin-ruby",
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
+ "plugin-sourcemap",
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
@@ -8620,6 +8667,7 @@ dependencies = [
  "plugin-vimscript",
  "plugin-vue",
  "plugin-wasm",
+ "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
  "plugin-yaml",
