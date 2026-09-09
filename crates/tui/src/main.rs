@@ -1,5 +1,9 @@
 //! Command line entry point for the Ratatui front end: the three-pane
-//! explorer, rooted at an optional path argument (default `.`).
+//! explorer, opening at this machine's Repos Directory.
+//!
+//! A path given on the command line still wins, exactly as in the graphical
+//! front end (see `gui`'s `main.rs`): an explicit instruction now is not a
+//! memory of where somebody was.
 
 use interprocess::local_socket::Stream;
 use interprocess::local_socket::traits::Stream as _;
@@ -9,7 +13,7 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
-use tui::app::{App, render_app};
+use tui::app::{App, Opening, render_app};
 
 /// How long to wait for a freshly spawned service to come up, and how often
 /// to poll it while waiting.
@@ -21,9 +25,7 @@ fn main() -> ExitCode {
         return self_update();
     }
 
-    let root = env::args()
-        .nth(1)
-        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let explicit = env::args().nth(1).map(PathBuf::from);
 
     if let Err(err) = ensure_service_running() {
         eprintln!(
@@ -34,7 +36,13 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if let Err(err) = run(root) {
+    // Where to open: the path given on the command line, or the configured
+    // Repos Directory, or - on a first run - the platform's default, said in
+    // the status line rather than asked for (a terminal has no dialog to
+    // hold the point in front of somebody).
+    let opening = tui::app::resolve_opening(explicit, tui::app::opening());
+
+    if let Err(err) = run(opening) {
         eprintln!("terminal error: {err}");
         return ExitCode::FAILURE;
     }
@@ -124,8 +132,11 @@ fn self_update() -> ExitCode {
 }
 
 /// Runs the three-pane explorer's event loop until the user quits.
-fn run(root: PathBuf) -> io::Result<()> {
-    let mut app = App::new(root);
+fn run(opening: Opening) -> io::Result<()> {
+    let mut app = App::new(opening.root);
+    if opening.unset {
+        app.mark_repos_root_unset();
+    }
     let mut terminal = ratatui::init();
     while !app.should_quit {
         terminal.draw(|frame| render_app(frame, frame.area(), &app))?;

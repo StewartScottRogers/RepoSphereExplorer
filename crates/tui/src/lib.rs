@@ -5,7 +5,7 @@ pub mod app;
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
 use plugin_api::PluginPresentation;
-use protocol::{Request, Response};
+use protocol::{DirectoryEntry, Request, Response};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
@@ -123,6 +123,25 @@ fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
     }
 }
 
+/// The label for one directory entry: a working copy is marked as one and
+/// names the provider it came from (GUIDANCE.md §2.4.2); a plain folder or
+/// file is left as its name alone, plainly visible and plainly different
+/// (GUIDANCE.md §2.5).
+pub(crate) fn content_label(entry: &DirectoryEntry) -> String {
+    let name = if entry.is_dir {
+        format!("{}/", entry.name)
+    } else {
+        entry.name.clone()
+    };
+    match &entry.repository {
+        Some(repository) => {
+            let provider = repository.provider.as_deref().unwrap_or("repository");
+            format!("[{provider}] {name}")
+        }
+        None => name,
+    }
+}
+
 /// Renders a directory listing, a file view, or an error, into `area` of
 /// `frame`, inside `block`.
 pub(crate) fn render_with_block(
@@ -135,14 +154,7 @@ pub(crate) fn render_with_block(
         Response::Directory { entries } => {
             let items: Vec<ListItem<'_>> = entries
                 .iter()
-                .map(|entry| {
-                    let label = if entry.is_dir {
-                        format!("{}/", entry.name)
-                    } else {
-                        entry.name.clone()
-                    };
-                    ListItem::new(label)
-                })
+                .map(|entry| ListItem::new(content_label(entry)))
                 .collect();
             frame.render_widget(List::new(items).block(block), area);
         }
@@ -156,9 +168,9 @@ pub(crate) fn render_with_block(
         Response::Done => {
             frame.render_widget(Paragraph::new("done").block(block), area);
         }
-        // The terminal front end keeps its own path argument until its own
-        // realignment work order; it has no reason to ask for the roots, and
-        // renders the reply as what it is if it somehow receives one.
+        // Only [`crate::app::opening`] asks for the roots, at startup,
+        // before the File pane exists to show anything in. This arm renders
+        // the reply as what it is, on the chance one arrives here anyway.
         Response::ReposRoots { roots, default } => {
             let text = roots.iter().map(|root| root.path.as_str()).fold(
                 format!("Repos Directory (default {default}):"),
@@ -187,10 +199,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, response: &Response) {
 
 #[cfg(test)]
 mod tests {
-    use super::{render, send_request};
+    use super::{content_label, render, send_request};
     use interprocess::local_socket::traits::Listener as _;
     use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream, ToNsName};
-    use protocol::{DirectoryEntry, Request, Response};
+    use protocol::{DirectoryEntry, RepositoryInfo, Request, Response};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -300,5 +312,86 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(contents.contains("src/"));
+    }
+
+    #[test]
+    fn a_working_copy_is_labelled_with_its_provider() {
+        let entry = DirectoryEntry {
+            name: "checked-out".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                ..RepositoryInfo::default()
+            }),
+        };
+        assert_eq!(content_label(&entry), "[github.com] checked-out/");
+    }
+
+    #[test]
+    fn a_working_copy_with_no_provider_is_still_marked() {
+        let entry = DirectoryEntry {
+            name: "checked-out".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(RepositoryInfo::default()),
+        };
+        assert_eq!(content_label(&entry), "[repository] checked-out/");
+    }
+
+    #[test]
+    fn a_plain_folder_is_left_unmarked() {
+        let entry = DirectoryEntry {
+            name: "plain".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: None,
+        };
+        assert_eq!(content_label(&entry), "plain/");
+    }
+
+    #[test]
+    fn renders_a_working_copy_row_marked_and_naming_its_provider() {
+        let backend = TestBackend::new(40, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let response = Response::Directory {
+            entries: vec![
+                DirectoryEntry {
+                    name: "checked-out".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(RepositoryInfo {
+                        provider: Some("github.com".to_owned()),
+                        ..RepositoryInfo::default()
+                    }),
+                },
+                DirectoryEntry {
+                    name: "plain".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: None,
+                },
+            ],
+        };
+
+        terminal
+            .draw(|frame| render(frame, frame.area(), &response))
+            .unwrap();
+
+        let contents: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(contents.contains("[github.com] checked-out/"), "{contents}");
+        assert!(contents.contains("plain/"), "{contents}");
+        assert!(!contents.contains("[repository] plain/"), "{contents}");
     }
 }

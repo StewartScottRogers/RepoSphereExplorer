@@ -163,6 +163,60 @@ fn spawn_request(request: Request) -> Receiver<io::Result<Response>> {
     rx
 }
 
+/// Where the application opens, and whether the Repos Directory that
+/// produced it is unset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opening {
+    /// The directory to open at.
+    pub root: PathBuf,
+    /// Whether nothing is configured, so `root` is the platform's default
+    /// rather than something the user chose.
+    pub unset: bool,
+}
+
+/// Asks the service where this machine's Repos Directory is.
+///
+/// The service owns the configuration, as it owns everything else that
+/// outlives a window - the same decision `gui::app::opening` makes for the
+/// graphical front end. A front end that cannot reach it falls back to the
+/// platform default and reports it unset, which is what a first run is.
+#[must_use]
+pub fn opening() -> Opening {
+    let response =
+        protocol::socket_name().and_then(|name| crate::send_request(name, &Request::ReposRoots));
+    match response {
+        Ok(Response::ReposRoots { roots, default }) => {
+            let active = roots
+                .into_iter()
+                .find(|root| root.active)
+                .map(|root| PathBuf::from(root.path));
+            match active {
+                Some(root) => Opening { root, unset: false },
+                None => Opening {
+                    root: PathBuf::from(default),
+                    unset: true,
+                },
+            }
+        }
+        _ => Opening {
+            root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            unset: true,
+        },
+    }
+}
+
+/// Decides where to open: `explicit` (a path given on the command line)
+/// always wins, exactly as in the graphical front end - it is an
+/// instruction given now, not a memory of where anybody was. Otherwise,
+/// whatever the service reported.
+#[must_use]
+pub fn resolve_opening(explicit: Option<PathBuf>, from_service: Opening) -> Opening {
+    match explicit {
+        Some(root) => Opening { root, unset: false },
+        None => from_service,
+    }
+}
+
 /// Resolves `name` against `path`'s parent directory, as a string suitable
 /// for a request's `to`/`destination` field.
 fn sibling_path(path: &std::path::Path, name: &str) -> String {
@@ -224,6 +278,12 @@ pub struct App {
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
     pending_file: Option<Receiver<io::Result<Response>>>,
     pending_operation: Option<Receiver<io::Result<Response>>>,
+    /// Whether the Repos Directory is unset, so the status line keeps saying
+    /// so instead of falling back to the usual key-binding help - a
+    /// terminal has no dialog to hold the point in front of somebody, so the
+    /// line that is always visible is where it says so (see
+    /// [`App::mark_repos_root_unset`]).
+    repos_root_unset: bool,
     /// Set once the user has asked to quit.
     pub should_quit: bool,
 }
@@ -245,10 +305,18 @@ impl App {
             pending_contents: None,
             pending_file: None,
             pending_operation: None,
+            repos_root_unset: false,
             should_quit: false,
         };
         app.load_contents_for_selected();
         app
+    }
+
+    /// Notes that the Repos Directory is unset, so the status line keeps
+    /// saying so - naming what to do about it - instead of the usual
+    /// key-binding help, until something else needs the line more.
+    pub fn mark_repos_root_unset(&mut self) {
+        self.repos_root_unset = true;
     }
 
     fn selected_dir_path(&self) -> PathBuf {
@@ -514,9 +582,15 @@ impl App {
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
             Mode::Normal => self.status.clone().unwrap_or_else(|| {
-                "Tab: switch pane  Up/Down: move  Enter/Right: open  Left: collapse  \
-                 Delete: delete  r: rename  c: copy  x: extract  Esc: cancel/quit  q: quit"
-                    .to_owned()
+                if self.repos_root_unset {
+                    "Repos Directory is unset; opened at the platform default. Set one from \
+                     the graphical front end, or pass a path here."
+                        .to_owned()
+                } else {
+                    "Tab: switch pane  Up/Down: move  Enter/Right: open  Left: collapse  \
+                     Delete: delete  r: rename  c: copy  x: extract  Esc: cancel/quit  q: quit"
+                        .to_owned()
+                }
             }),
         }
     }
@@ -694,14 +768,7 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let items: Vec<ListItem<'_>> = app
         .contents
         .iter()
-        .map(|entry| {
-            let label = if entry.is_dir {
-                format!("{}/", entry.name)
-            } else {
-                entry.name.clone()
-            };
-            ListItem::new(label)
-        })
+        .map(|entry| ListItem::new(crate::content_label(entry)))
         .collect();
 
     let mut state = ListState::default();
@@ -725,9 +792,10 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Focus, FolderNode};
+    use super::{App, Focus, FolderNode, Opening, resolve_opening};
     use protocol::{DirectoryEntry, Response};
     use ratatui::crossterm::event::KeyCode;
+    use std::path::PathBuf;
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
         names
@@ -1053,5 +1121,75 @@ mod tests {
         app.handle_key(KeyCode::Enter);
 
         assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn an_explicit_path_overrides_a_configured_repos_directory() {
+        let from_service = Opening {
+            root: PathBuf::from("/configured"),
+            unset: false,
+        };
+
+        let resolved = resolve_opening(Some(PathBuf::from("/explicit")), from_service);
+
+        assert_eq!(resolved.root, PathBuf::from("/explicit"));
+        assert!(!resolved.unset);
+    }
+
+    #[test]
+    fn an_explicit_path_overrides_an_unset_repos_directory_too() {
+        let from_service = Opening {
+            root: PathBuf::from("/default"),
+            unset: true,
+        };
+
+        let resolved = resolve_opening(Some(PathBuf::from("/explicit")), from_service);
+
+        assert_eq!(resolved.root, PathBuf::from("/explicit"));
+        assert!(!resolved.unset);
+    }
+
+    #[test]
+    fn with_no_explicit_path_a_configured_repos_directory_is_opened_as_is() {
+        let from_service = Opening {
+            root: PathBuf::from("/configured"),
+            unset: false,
+        };
+
+        let resolved = resolve_opening(None, from_service.clone());
+
+        assert_eq!(resolved, from_service);
+    }
+
+    #[test]
+    fn with_nothing_configured_and_no_explicit_path_the_default_stays_marked_unset() {
+        let from_service = Opening {
+            root: PathBuf::from("/default"),
+            unset: true,
+        };
+
+        let resolved = resolve_opening(None, from_service.clone());
+
+        assert_eq!(resolved, from_service);
+    }
+
+    #[test]
+    fn the_status_line_says_the_repos_directory_is_unset_once_idle() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: vec![] }));
+
+        app.mark_repos_root_unset();
+
+        let status = app.status_line();
+        assert!(status.contains("Repos Directory"), "{status}");
+        assert!(status.contains("unset"), "{status}");
+    }
+
+    #[test]
+    fn the_status_line_keeps_its_usual_help_text_when_the_repos_directory_is_set() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: vec![] }));
+
+        assert!(!app.status_line().contains("unset"));
     }
 }
