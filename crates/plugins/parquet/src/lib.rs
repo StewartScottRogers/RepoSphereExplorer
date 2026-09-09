@@ -324,6 +324,34 @@ mod tests {
     }
 
     #[test]
+    fn the_repository_fixture_is_truncated_and_names_every_column() {
+        let bytes = include_bytes!("../../../../samples/parquet/inventory.parquet");
+        let path = unique_temp_file("inventory.parquet");
+        std::fs::write(&path, bytes).unwrap();
+
+        let data = ParquetCore.view(&path).unwrap();
+        let view: ParquetView = serde_json::from_value(data).unwrap();
+
+        assert!(
+            view.truncated,
+            "the fixture should carry more rows than MAX_ROWS: {view:?}"
+        );
+        assert_eq!(
+            view.table.headers,
+            vec![
+                "item",
+                "quantity",
+                "unit_price",
+                "in_stock",
+                "restocked_at",
+                "notes"
+            ]
+        );
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
     fn both_halves_claim_the_same_extensions() {
         assert_eq!(
             plugin_api::PluginCore::extensions(&crate::ParquetCore),

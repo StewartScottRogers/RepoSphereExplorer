@@ -262,6 +262,34 @@ mod tests {
     }
 
     #[test]
+    fn the_repository_fixture_has_a_dataset_two_levels_deep_and_more_than_one_element_type() {
+        let bytes = include_bytes!("../../../../samples/hdf5/sensor-readings.h5");
+        let path = unique_temp_file("sensor-readings.h5");
+        std::fs::write(&path, bytes).unwrap();
+
+        let data = Hdf5Core.view(&path).unwrap();
+        let view: Hdf5View = serde_json::from_value(data).unwrap();
+
+        assert!(
+            view.datasets
+                .iter()
+                .any(|dataset| dataset.path == "/experiment/sensors/temperature"),
+            "expected a dataset nested two group levels deep: {view:?}"
+        );
+        let element_types: std::collections::BTreeSet<&str> = view
+            .datasets
+            .iter()
+            .map(|dataset| dataset.dtype.as_str())
+            .collect();
+        assert!(
+            element_types.len() > 1,
+            "expected more than one element type: {element_types:?}"
+        );
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
     fn both_halves_claim_the_same_extensions() {
         assert_eq!(
             plugin_api::PluginCore::extensions(&crate::Hdf5Core),

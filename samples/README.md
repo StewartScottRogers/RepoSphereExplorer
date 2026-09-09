@@ -44,6 +44,8 @@ Every one of them needed a file with something in it.
 | `directory/` | The `directory` plugin has no file to sniff: the folder itself is what it recognises, so this one holds ordinary files of assorted types. |
 | `model3d/` | Two fixtures, because OBJ and glTF carry different halves of the view: geometry counts from one, scene and generator from the other. |
 | `image/`, `audio/`, `video/` | Generated, and genuinely playable and viewable. Open them. |
+| `parquet/inventory.parquet` | Six columns spanning text, a 64-bit integer, a floating point number, a boolean, a timestamp and a nullable text column, over 250 rows so `ParquetView.truncated` fires. Rebuild with `cargo run -p plugin-parquet --example generate_fixture -- samples/parquet/inventory.parquet`. |
+| `hdf5/sensor-readings.h5` | Groups nested two levels deep (`/experiment`, `/experiment/sensors`) holding a scalar, a one-dimensional and a two-dimensional dataset across two element types. Rebuild with `cargo run -p plugin-hdf5 --example generate_fixture -- samples/hdf5/sensor-readings.h5`. |
 
 ## Binary fixtures and line endings
 
