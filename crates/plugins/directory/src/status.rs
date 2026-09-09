@@ -198,8 +198,9 @@ fn parse_index(bytes: &[u8]) -> Option<Vec<Entry>> {
     let mut entries = Vec::with_capacity(count.min(MAX_ENTRIES));
     let mut offset = 12usize;
     for _ in 0..count {
-        // Each entry: ten four-byte fields, a twenty-byte object identifier,
-        // two bytes of flags, then the path, padded to a multiple of eight.
+        // Each entry: ten four-byte fields, a twenty-byte object
+        // identifier, two bytes of flags, then the path, then one to eight
+        // NUL bytes bringing the entry to a multiple of eight.
         if offset + 62 > bytes.len() {
             return None;
         }
@@ -228,8 +229,13 @@ fn parse_index(bytes: &[u8]) -> Option<Vec<Entry>> {
             object_id,
         });
 
+        // One to eight NUL bytes follow, so the entry is a multiple of
+        // eight long and the path is always terminated. At least one, and
+        // that is the whole point: rounding up instead adds nothing when
+        // the entry already lands on eight, which puts every later entry
+        // eight bytes out and fails the parse on any real checkout (#310).
         let entry_len = name_start - offset + name_len;
-        offset += entry_len.div_ceil(8) * 8;
+        offset += entry_len + (8 - entry_len % 8);
     }
     Some(entries)
 }
@@ -288,8 +294,14 @@ mod tests {
             bytes.extend_from_slice(&u16::try_from(name.len()).unwrap().to_be_bytes());
             bytes.extend_from_slice(name.as_bytes());
 
+            // Padded the way the format describes it - one to eight NUL
+            // bytes - rather than by the parser's arithmetic. The two
+            // sharing a formula is how #310 got in: nine tests passed
+            // against fixtures that were wrong in exactly the same way the
+            // reader was.
             let written = bytes.len() - start;
-            bytes.resize(start + written.div_ceil(8) * 8, 0);
+            let padding = 8 - written % 8;
+            bytes.resize(bytes.len() + padding, 0);
         }
 
         std::fs::create_dir_all(git_dir).unwrap();
@@ -457,5 +469,56 @@ mod tests {
         let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
         file.set_modified(later).unwrap();
+    }
+    #[test]
+    fn a_path_landing_exactly_on_the_padding_boundary_does_not_lose_the_next_entry() {
+        // An entry is 62 fixed bytes plus the path. A path whose length is
+        // two more than a multiple of eight brings that to a multiple of
+        // eight, and the format still writes a NUL after it. A reader that
+        // rounds up rather than always padding reads every later entry
+        // eight bytes out - which is why #310 failed on every real
+        // checkout and on none of these fixtures.
+        let name = "abcdefghij"; // ten characters: 62 + 10 = 72
+        assert_eq!(
+            (62 + name.len()) % 8,
+            0,
+            "the fixture has to sit on the boundary"
+        );
+
+        let (git_dir, work_tree) = checkout(
+            "padding-boundary",
+            &[(name, "first"), ("after.txt", "second")],
+        );
+
+        let status = working_tree(&git_dir, &work_tree).expect("the index should parse");
+
+        assert_eq!(
+            status.examined, 2,
+            "the entry after the boundary has to be found, not lost"
+        );
+        assert_eq!(status.changed, 0);
+    }
+
+    #[test]
+    fn a_real_checkout_index_is_readable() {
+        // No index this crate writes can prove the format was read right:
+        // the writer and the reader can be wrong together, and for #310
+        // they were, through nine passing tests. So this reads the index of
+        // whichever checkout the test is running in.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let git_dir = root.join(".git");
+        if !git_dir.join("index").is_file() {
+            eprintln!("no .git/index beside the source, so nothing to read; skipping");
+            return;
+        }
+
+        let status = working_tree(&git_dir, &root)
+            .expect("a checkout's own index should parse, not report not knowing");
+
+        assert!(
+            status.examined > 50,
+            "this repository tracks hundreds of files; {} suggests the walk stopped early",
+            status.examined
+        );
     }
 }
