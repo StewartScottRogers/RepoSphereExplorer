@@ -93,6 +93,7 @@ jobs:
           echo "path=${binary}" >> "${GITHUB_OUTPUT}"
 
       - uses: anthropics/claude-code-action@v1
+        id: reviewer
         with:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -136,3 +137,53 @@ jobs:
             would - do not build a scoring rubric. Never edit any file, never
             open a PR, never push a commit; you only have Bash(cargo *) and
             Bash(gh *) available, no Edit or Write tool and no git access.
+
+      # A green tick on this check used to mean one of two different things.
+      # The action declines to run when the pull request modifies the
+      # workflow that invokes it - a sound guard, since otherwise a branch
+      # could rewrite its own reviewer - and then reports success. Pull
+      # request #299 showed `review pass 30s` with nobody having reviewed
+      # it, indistinguishable at a glance from the eight-to-thirteen minute
+      # pass of a real review. This station is the repository's only
+      # reviewer and is informational rather than required, so that was a
+      # pull request merging unreviewed with nothing anywhere saying so.
+      #
+      # So: find out whether a review actually landed, and if it did not,
+      # say which case it was and go red. Red here blocks nothing - the
+      # required check is `fmt / clippy / test` - it only stops the tick
+      # from lying. Work order #300.
+      - name: Confirm a review actually landed
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AGENT_OUTCOME: ${{ steps.reviewer.outcome }}
+        run: |
+          set -euo pipefail
+
+          # Reviews on this exact head: an approval of an earlier push is
+          # not a review of what is being merged now.
+          # `gh api --jq` takes a filter, not jq's `--arg`, so the head goes
+          # into the filter itself.
+          filter="[.[] | select(.commit_id == \"${HEAD_SHA}\")] | length"
+          landed=$(gh api "repos/${REPO}/pulls/${PR}/reviews" --jq "${filter}")
+
+          if [ "${landed}" -gt 0 ]; then
+            echo "Reviewed: ${landed} review(s) on ${HEAD_SHA}."
+            exit 0
+          fi
+
+          # Nothing landed. Which of the two reasons was it?
+          if gh pr diff "${PR}" --repo "${REPO}" --name-only | grep -q '^\.github/workflows/'; then
+            echo "::error::Not reviewed. This pull request edits a workflow, so the"
+            echo "::error::reviewer declined to run - it refuses to review a branch that"
+            echo "::error::could rewrite its own reviewer. That guard is right; the green"
+            echo "::error::tick it used to leave was not. Read this one yourself."
+          else
+            echo "::error::Not reviewed. The agent step finished as '${AGENT_OUTCOME}' and"
+            echo "::error::left no review on ${HEAD_SHA}. Check the log above: a runtime"
+            echo "::error::that failed to install is work order #298's failure mode."
+          fi
+          exit 1
