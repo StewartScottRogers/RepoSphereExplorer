@@ -2694,6 +2694,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-csv",
  "plugin-dart",
+ "plugin-dhall",
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
@@ -5540,6 +5541,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-dhall"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-directory"
 version = "0.6.0"
 dependencies = [
@@ -7295,6 +7305,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-csv",
  "plugin-dart",
+ "plugin-dhall",
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
@@ -8387,6 +8398,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-csv",
  "plugin-dart",
+ "plugin-dhall",
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
