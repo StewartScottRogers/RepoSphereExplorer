@@ -2740,6 +2740,7 @@ dependencies = [
  "plugin-restructuredtext",
  "plugin-ruby",
  "plugin-rust",
+ "plugin-sass",
  "plugin-scala",
  "plugin-scheme",
  "plugin-shell",
@@ -5973,6 +5974,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-sass"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-scala"
 version = "0.6.0"
 dependencies = [
@@ -7341,6 +7351,7 @@ dependencies = [
  "plugin-restructuredtext",
  "plugin-ruby",
  "plugin-rust",
+ "plugin-sass",
  "plugin-scala",
  "plugin-scheme",
  "plugin-shell",
@@ -8433,6 +8444,7 @@ dependencies = [
  "plugin-restructuredtext",
  "plugin-ruby",
  "plugin-rust",
+ "plugin-sass",
  "plugin-scala",
  "plugin-scheme",
  "plugin-shell",

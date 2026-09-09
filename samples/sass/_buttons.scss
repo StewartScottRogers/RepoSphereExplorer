@@ -1,0 +1,42 @@
+// Button component: tokens, a helper function, a reset placeholder, and
+// the variant mixin every button uses.
+@use "sass:math";
+@use "tokens" as tokens;
+@forward "tokens";
+
+$button-padding: 12px;
+$button-radius: 4px;
+
+@function double($value) {
+  @return $value * 2;
+}
+
+%reset {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+@mixin button-variant($background, $foreground: white, $radius: $button-radius) {
+  background-color: $background;
+  color: $foreground;
+  border-radius: $radius;
+  padding: $button-padding;
+}
+
+.button {
+  @extend %reset;
+  @include button-variant($background: #3366ff);
+
+  &:hover {
+    .icon {
+      &.spin {
+        transform: rotate(math.div(360deg, 1));
+      }
+    }
+  }
+
+  &.button--large {
+    padding: double($button-padding);
+  }
+}
