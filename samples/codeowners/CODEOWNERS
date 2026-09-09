@@ -1,0 +1,23 @@
+# Ownership for this repository. The LAST matching rule wins, which is the
+# opposite of an ignore file and the thing people most often get wrong.
+
+# A catch-all, so nothing is unowned by accident.
+*                       @org/maintainers
+
+# The service and the plugins it links.
+/crates/service/        @org/platform @ada
+/crates/plugins/        @org/platform
+
+# The front ends, which need somebody who has actually looked at them.
+/crates/gui/            @grace
+/crates/tui/            @grace
+
+# Documentation, owned by an address rather than a handle.
+/GUIDANCE.md            docs@example.com
+/DECISIONS.md           docs@example.com
+/samples/               @org/quality docs@example.com
+
+# Vendored code nobody here wrote: named with no owner, which REMOVES the
+# catch-all above rather than adding to it.
+/vendor/
+/third_party/

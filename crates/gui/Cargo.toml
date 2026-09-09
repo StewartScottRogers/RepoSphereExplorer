@@ -22,8 +22,13 @@ plugin-asciidoc = { path = "../plugins/asciidoc" }
 plugin-audio = { path = "../plugins/audio" }
 plugin-avro = { path = "../plugins/avro" }
 plugin-assembly = { path = "../plugins/assembly" }
+plugin-bibtex = { path = "../plugins/bibtex" }
+plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
+plugin-dotenv = { path = "../plugins/dotenv" }
+plugin-editorconfig = { path = "../plugins/editorconfig" }
 plugin-ini = { path = "../plugins/ini" }
+plugin-latex = { path = "../plugins/latex" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-properties = { path = "../plugins/properties" }

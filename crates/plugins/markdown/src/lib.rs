@@ -318,6 +318,7 @@ fn looks_like_markdown(prefix: &[u8]) -> bool {
     };
     let lines: Vec<&str> = text.lines().collect();
     let mut headings = 0usize;
+    let mut nested = false;
 
     for (index, line) in lines.iter().enumerate() {
         if fence(line).is_some() || is_table_delimiter(line) || task_item(line).is_some() {
@@ -326,8 +327,9 @@ fn looks_like_markdown(prefix: &[u8]) -> bool {
         if !links_in(line).is_empty() {
             return true;
         }
-        if atx_heading(line).is_some() {
+        if let Some((level, _)) = atx_heading(line) {
             headings += 1;
+            nested |= level >= 2;
         }
         if setext_level(line).is_some()
             && index > 0
@@ -337,9 +339,11 @@ fn looks_like_markdown(prefix: &[u8]) -> bool {
             return true;
         }
     }
-    // Several headings and nothing that contradicts them is Markdown; one
-    // is a comment.
-    headings >= 2
+    // Several headings, and nesting among them. A file whose every `#`
+    // line is level one is a block of comments - a CODEOWNERS file, a
+    // shell script preamble - and a document that really is Markdown
+    // reaches `##` almost at once.
+    headings >= 2 && nested
 }
 
 /// The Markdown plugin's core half.
