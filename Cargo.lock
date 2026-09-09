@@ -2773,6 +2773,7 @@ dependencies = [
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
+ "plugin-thrift",
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
@@ -6295,6 +6296,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-thrift"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-toml"
 version = "0.6.0"
 dependencies = [
@@ -7594,6 +7604,7 @@ dependencies = [
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
+ "plugin-thrift",
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
@@ -8708,6 +8719,7 @@ dependencies = [
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
+ "plugin-thrift",
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",

@@ -119,6 +119,7 @@ it.
 | Git attributes | `crates/plugins/gitattributes` | #329 | Rules, binary markings, diff/merge drivers, filters, language overrides |
 | Helm chart metadata | `crates/plugins/helmchart` | #350 | Chart and application versions, type, dependencies with conditions, maintainers |
 | GitLab CI configuration | `crates/plugins/gitlabci` | #347 | Stages, jobs, templates, images, includes, and jobs whose stage never runs |
+| Apache Thrift IDL | `crates/plugins/thrift` | #354 | Namespaces, includes, typedefs, structs and exceptions with numbered fields, services |
 
 ## Folder plugins
 

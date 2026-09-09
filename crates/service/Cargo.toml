@@ -36,6 +36,7 @@ plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-properties = { path = "../plugins/properties" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
+plugin-thrift = { path = "../plugins/thrift" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }
 plugin-certificate = { path = "../plugins/certificate" }
