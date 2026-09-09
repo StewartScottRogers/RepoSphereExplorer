@@ -50,8 +50,13 @@ jobs:
         run: |
           last_conclusion=$(gh run list --repo "$REPO" --workflow factory-shift.yml --limit 1 --json conclusion --jq '.[0].conclusion // "none"')
           echo "Last Factory shift conclusion: $last_conclusion"
-          if [ "$last_conclusion" = "failure" ]; then
-            echo "Last run failed; halting the chain for a human to look at."
+          # Anything but a clean success is a reason to stop, not only a
+          # `failure`. A run that was cancelled was cancelled by somebody,
+          # and dispatching another ten minutes later undoes what they did.
+          # A run that produced nothing now fails (#420), so it lands here
+          # rather than reading as success and chaining forever.
+          if [ "$last_conclusion" != "success" ] && [ "$last_conclusion" != "none" ]; then
+            echo "Last run ended as '$last_conclusion'; halting the chain for a human to look at."
             exit 0
           fi
 

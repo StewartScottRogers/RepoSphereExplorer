@@ -48,6 +48,33 @@ a reviewer's taste — decide whether work landed. Anything the factory cannot
 verify automatically it must not build unattended. Any design that makes a unit
 of work large or unverifiable is the wrong design for this repository.
 
+### A station reports success only when it produced something
+
+Twice now a station on this floor has cost a day by reporting success while
+doing nothing.
+
+The review station skipped and reported success, so an unreviewed pull
+request looked reviewed (#300). The night shift spent seven minutes and
+over a dollar a run, took sixty turns, and left no branch, no pull request,
+no comment and no closed issue — and reported success, so the chain that
+keys on `failure` dispatched the next one, and the one after that (#420).
+
+So: **a station's success has to be visible in something a reader can point
+at.** A branch, a pull request, a comment, a closed issue, a written file.
+Not "the step exited zero". A step that exits zero having done nothing must
+fail, and must say what it looked for.
+
+Two corollaries, both learned the expensive way:
+
+- **A guard must not key on `failure` alone.** Cancelled, skipped and
+  produced-nothing are all reasons to stop. A chain that stops only on
+  `failure` runs forever on everything else.
+- **Keep the evidence.** A station that spends money leaves its transcript
+  as an artifact, whatever its outcome. #420 could not be diagnosed for a
+  day because the only surviving record was
+  `permission_denials_count: 6` — a number, with no way to learn what had
+  been denied.
+
 ## 2. Architecture — one brain, two faces
 
 A **fat service** process owns all logic: filesystem traversal, file parsing,
