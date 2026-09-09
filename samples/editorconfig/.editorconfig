@@ -1,0 +1,28 @@
+# The root of the tree: no file further up applies.
+root = true
+
+# Everything, unless a later section says otherwise.
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Rust, which rustfmt formats to the same width.
+[*.rs]
+max_line_length = 100
+
+# Data and configuration files, which convention indents by two.
+[*.{json,yml,yaml,toml}]
+indent_size = 2
+
+# Makefiles do not get a choice: a tab is part of the syntax.
+[Makefile]
+indent_style = tab
+
+# Patches are exact bytes, so nothing may be trimmed from them.
+[*.{diff,patch}]
+trim_trailing_whitespace = false
+insert_final_newline = false

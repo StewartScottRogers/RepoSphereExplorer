@@ -105,6 +105,11 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_diff::DiffPresentation,
     &plugin_asciidoc::AsciidocPresentation,
     &plugin_orgmode::OrgmodePresentation,
+    &plugin_latex::LatexPresentation,
+    &plugin_bibtex::BibtexPresentation,
+    &plugin_editorconfig::EditorconfigPresentation,
+    &plugin_dotenv::DotenvPresentation,
+    &plugin_codeowners::CodeownersPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

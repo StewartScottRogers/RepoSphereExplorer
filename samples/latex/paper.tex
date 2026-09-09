@@ -1,0 +1,89 @@
+% A paper that exercises every field the LaTeX plugin extracts: a class
+% with options, several packages, a sectioning outline, environments,
+% labels, references, citations and a bibliography.
+\documentclass[11pt,a4paper,twoside]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+
+\title{Reading a Working Copy Without Running a Command}
+\author{Example Engineering}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A checkout's index records enough to answer whether its tracked files have
+changed, without invoking the source control system at all.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+The question a reader has is whether there is uncommitted work. See
+Section~\ref{sec:method} for how we answer it, and \cite{torvalds2005} for
+the format itself.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{The index}
+\label{sec:index}
+
+Each entry records a size and a modification time, so the comparison is
+three-way:
+
+\begin{equation}
+\label{eq:compare}
+s(f) =
+\begin{cases}
+  \text{changed} & \text{if } \lvert f \rvert \neq \lvert f_{\text{index}} \rvert \\
+  \text{same}    & \text{if } t(f) = t_{\text{index}} \\
+  h(f) = h_{\text{index}} & \text{otherwise}
+\end{cases}
+\end{equation}
+
+\subsection{Padding}
+
+Equation~\ref{eq:compare} is only reachable if the entries are walked
+correctly, which needs the padding rule in Table~\ref{tab:padding}.
+
+\begin{table}
+\centering
+\begin{tabular}{ll}
+\toprule
+Field & Bytes \\
+\midrule
+Fixed header & 62 \\
+Path & variable \\
+Padding & 1 to 8 \\
+\bottomrule
+\end{tabular}
+\caption{An index entry.}
+\label{tab:padding}
+\end{table}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.6\textwidth]{padding}
+\caption{Where a rounded-up offset lands.}
+\label{fig:padding}
+\end{figure}
+
+\section{Results}
+\label{sec:results}
+
+Reading is enough. See Figure~\ref{fig:padding}.
+
+\section*{Acknowledgements}
+
+To whoever wrote the format down.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

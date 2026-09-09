@@ -2686,9 +2686,11 @@ dependencies = [
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
+ "plugin-bibtex",
  "plugin-c",
  "plugin-certificate",
  "plugin-clojure",
+ "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
  "plugin-crystal",
@@ -2699,6 +2701,8 @@ dependencies = [
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
+ "plugin-dotenv",
+ "plugin-editorconfig",
  "plugin-elixir",
  "plugin-elm",
  "plugin-epub",
@@ -2722,6 +2726,7 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-model3d",
@@ -5466,6 +5471,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-bibtex"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-c"
 version = "0.6.0"
 dependencies = [
@@ -5490,6 +5504,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-clojure"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-codeowners"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -5585,6 +5608,24 @@ dependencies = [
 
 [[package]]
 name = "plugin-dockerfile"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-dotenv"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-editorconfig"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -5798,6 +5839,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-kotlin"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-latex"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7357,9 +7407,11 @@ dependencies = [
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
+ "plugin-bibtex",
  "plugin-c",
  "plugin-certificate",
  "plugin-clojure",
+ "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
  "plugin-crystal",
@@ -7370,6 +7422,8 @@ dependencies = [
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
+ "plugin-dotenv",
+ "plugin-editorconfig",
  "plugin-elixir",
  "plugin-elm",
  "plugin-epub",
@@ -7393,6 +7447,7 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-model3d",
@@ -8456,9 +8511,11 @@ dependencies = [
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
+ "plugin-bibtex",
  "plugin-c",
  "plugin-certificate",
  "plugin-clojure",
+ "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
  "plugin-crystal",
@@ -8469,6 +8526,8 @@ dependencies = [
  "plugin-directory",
  "plugin-disk-image",
  "plugin-dockerfile",
+ "plugin-dotenv",
+ "plugin-editorconfig",
  "plugin-elixir",
  "plugin-elm",
  "plugin-epub",
@@ -8492,6 +8551,7 @@ dependencies = [
  "plugin-julia",
  "plugin-jupyter-notebook",
  "plugin-kotlin",
+ "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-model3d",

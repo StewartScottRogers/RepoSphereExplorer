@@ -1,0 +1,55 @@
+% A bibliography exercising every field the BibTeX plugin extracts:
+% several entry types, a @string definition, a cross-reference, an entry
+% with braced accents, and a deliberately repeated key.
+
+@string{acm = {Association for Computing Machinery}}
+@string{cacm = {Communications of the ACM}}
+
+@article{knuth1984,
+  author       = {Knuth, Donald E.},
+  title        = {Literate Programming},
+  journal      = {The Computer Journal},
+  volume       = {27},
+  number       = {2},
+  pages        = {97--111},
+  year         = {1984},
+  doi          = {10.1093/comjnl/27.2.97},
+}
+
+@book{lamport1986,
+  author       = {Lamport, Leslie},
+  title        = {LaTeX: A Document Preparation System},
+  publisher    = {Addison-Wesley},
+  year         = {1986},
+  isbn         = {0-201-15790-X},
+}
+
+@inproceedings{torvalds2005,
+  author       = {Torvalds, Linus},
+  title        = {The Design of a Distributed Content Tracker},
+  crossref     = {proc2005},
+  pages        = {1--12},
+  year         = {2005},
+}
+
+@proceedings{proc2005,
+  title        = {Proceedings of the Linux Kernel Summit},
+  publisher    = acm,
+  year         = {2005},
+}
+
+@misc{brandt2020,
+  author       = {Brandt, Bj{\o}rn and Bl{\"a}sing, Ren{\'e}},
+  title        = {Accents Belong in Braces, Not in Bytes},
+  howpublished = {Technical note},
+  year         = {2020},
+}
+
+% The same key twice, which most readers take last-wins and which is
+% almost always somebody's merge going wrong.
+@techreport{knuth1984,
+  author       = {Knuth, Donald E.},
+  title        = {Literate Programming, Reprinted},
+  institution  = {Stanford University},
+  year         = {1984},
+}

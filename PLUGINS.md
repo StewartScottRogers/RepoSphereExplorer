@@ -104,6 +104,11 @@ it.
 | Unified diff | `crates/plugins/diff` | #325 | Files touched, hunks, insertions, renames and binary files |
 | AsciiDoc | `crates/plugins/asciidoc` | #318 | Title, attributes, outline, includes, source blocks and admonitions |
 | Org-mode | `crates/plugins/orgmode` | #319 | Title, keywords, outline with states and tags, blocks, tables, drawers |
+| LaTeX | `crates/plugins/latex` | #320 | Class, packages, outline, environments, labels, references, bibliography |
+| BibTeX | `crates/plugins/bibtex` | #321 | Entries with type, key, title, author, year; strings, crossrefs, repeats |
+| EditorConfig | `crates/plugins/editorconfig` | #326 | Root declaration, glob rules and the properties each sets |
+| dotenv | `crates/plugins/dotenv` | #330 | Variable names only, never values; quoting, interpolation, secret-looking names |
+| CODEOWNERS | `crates/plugins/codeowners` | #331 | Rules, users, teams, e-mail owners and patterns owned by nobody |
 
 ## Folder plugins
 
