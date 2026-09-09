@@ -1,0 +1,11 @@
+# Build and check output.
+*.Rcheck/
+*.tar.gz
+/man/
+
+# Session state.
+.Rhistory
+.RData
+.Rproj.user/
+
+.DS_Store

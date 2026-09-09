@@ -1,0 +1,7 @@
+Makefile.PL
+MANIFEST
+README.md
+cpanfile
+lib/LogDigest.pm
+t/00-load.t
+t/parse.t

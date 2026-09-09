@@ -1,0 +1,9 @@
+# Build output.
+elm-stuff/
+/dist/
+index.html.gz
+
+# Tool state.
+.elm-tooling/
+
+.DS_Store

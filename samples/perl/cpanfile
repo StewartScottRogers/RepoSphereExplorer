@@ -1,0 +1,15 @@
+requires 'perl', '5.036';
+
+requires 'Carp';
+requires 'List::Util', '1.55';
+requires 'POSIX';
+
+on 'test' => sub {
+    requires 'Test2::V0', '0.000159';
+    requires 'Test::More', '1.302194';
+};
+
+on 'develop' => sub {
+    requires 'Perl::Critic', '1.152';
+    requires 'Perl::Tidy', '20240903';
+};

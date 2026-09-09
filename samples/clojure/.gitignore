@@ -1,0 +1,12 @@
+# Build output.
+/target/
+/classes/
+*.jar
+
+# Tool state.
+.cpcache/
+.lsp/
+.clj-kondo/.cache/
+.nrepl-port
+
+.DS_Store

@@ -1,0 +1,23 @@
+name: http_cache
+version: 0.6.0
+description: |
+  A bounded HTTP response cache with freshness, revalidation and a
+  capacity that is enforced rather than suggested.
+
+authors:
+  - Example <engineering@example.com>
+
+crystal: ">= 1.15.0"
+
+license: MIT
+
+repository: https://github.com/example/http_cache
+
+targets:
+  http_cache:
+    main: src/http_cache.cr
+
+development_dependencies:
+  ameba:
+    github: crystal-ameba/ameba
+    version: ~> 1.6.4

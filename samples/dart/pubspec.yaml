@@ -1,0 +1,15 @@
+name: weather
+description: A weather client with retries, a fake source, and readings that describe themselves.
+version: 1.5.0
+repository: https://github.com/example/weather
+issue_tracker: https://github.com/example/weather/issues
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  meta: ^1.16.0
+
+dev_dependencies:
+  lints: ^5.1.1
+  test: ^1.25.15

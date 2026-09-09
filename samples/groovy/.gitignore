@@ -1,0 +1,9 @@
+# Build output.
+build/
+.gradle/
+
+# Editor state.
+.idea/
+*.iml
+
+.DS_Store

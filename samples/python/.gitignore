@@ -1,0 +1,16 @@
+# Build and packaging output.
+/build/
+/dist/
+*.egg-info/
+
+# Caches.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments.
+.venv/
+
+.DS_Store

@@ -1,0 +1,11 @@
+# Build output.
+dist-newstyle/
+dist/
+.stack-work/
+
+# Tool state.
+*.hi
+*.o
+.ghc.environment.*
+
+.DS_Store

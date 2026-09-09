@@ -1,0 +1,10 @@
+failure-threshold: warning
+
+ignored:
+  # Pinning every apt package by version makes a base image update a
+  # multi-line diff; the base image itself is pinned by digest instead.
+  - DL3008
+
+trustedRegistries:
+  - docker.io
+  - ghcr.io

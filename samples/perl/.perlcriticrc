@@ -1,0 +1,11 @@
+severity = 3
+verbose = %f:%l:%c %m (%p)
+
+[-Documentation::RequirePodAtEnd]
+[-Subroutines::ProhibitSubroutinePrototypes]
+
+[TestingAndDebugging::RequireUseStrict]
+severity = 5
+
+[TestingAndDebugging::RequireUseWarnings]
+severity = 5

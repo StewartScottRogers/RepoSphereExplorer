@@ -1,0 +1,40 @@
+{
+  "name": "@example/scheduler",
+  "version": "2.4.1",
+  "description": "A dependency-ordered task scheduler with cancellation.",
+  "type": "module",
+  "license": "MIT",
+  "main": "dist/scheduler.js",
+  "types": "dist/scheduler.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/scheduler.d.ts",
+      "default": "./dist/scheduler.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "test": "tsc --noEmit && node --test --experimental-strip-types test/",
+    "clean": "tsc --build --clean"
+  },
+  "keywords": [
+    "scheduler",
+    "dependencies",
+    "topological",
+    "cancellation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/example/scheduler.git"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

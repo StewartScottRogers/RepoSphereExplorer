@@ -1,0 +1,9 @@
+# Build output.
+/build/
+worker
+
+# Test and coverage artefacts.
+*.out
+*.test
+
+.DS_Store

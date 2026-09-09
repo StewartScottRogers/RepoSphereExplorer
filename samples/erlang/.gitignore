@@ -1,0 +1,11 @@
+# Build output.
+_build/
+*.beam
+ebin/
+
+# Test and tool state.
+logs/
+.rebar3/
+rebar3.crashdump
+
+.DS_Store

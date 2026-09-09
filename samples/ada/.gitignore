@@ -1,0 +1,12 @@
+# Build output.
+/obj/
+/bin/
+/lib/
+*.ali
+*.o
+
+# Alire state.
+/alire/
+/config/*.ads
+
+.DS_Store

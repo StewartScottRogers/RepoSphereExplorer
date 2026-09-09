@@ -1,0 +1,10 @@
+# Build and coverage output.
+/docs/build/
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# Environment state a package should not pin for its users.
+/Manifest.toml.bak
+
+.DS_Store

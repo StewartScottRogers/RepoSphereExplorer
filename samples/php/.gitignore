@@ -1,0 +1,9 @@
+# Dependencies and build output.
+/vendor/
+composer.lock
+
+# Tool state.
+/.phpunit.cache/
+/.php-cs-fixer.cache
+
+.DS_Store

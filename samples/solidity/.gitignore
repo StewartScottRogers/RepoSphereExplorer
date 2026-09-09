@@ -1,0 +1,12 @@
+# Build output.
+/out/
+/cache/
+/broadcast/
+
+# Dependencies, vendored by forge.
+/lib/
+
+# Secrets. Never commit a key, even a test one.
+.env
+
+.DS_Store

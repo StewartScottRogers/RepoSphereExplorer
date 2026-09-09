@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Warehouse.Inventory</RootNamespace>
+    <AssemblyName>Warehouse.Inventory</AssemblyName>
+    <Description>Stock levels, reservations and reorder points.</Description>
+  </PropertyGroup>
+
+</Project>

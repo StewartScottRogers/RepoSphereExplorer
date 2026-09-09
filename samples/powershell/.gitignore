@@ -1,0 +1,9 @@
+# Archives this script produces.
+*.zip
+/backups/
+
+# Module and test output.
+/Output/
+testResults.xml
+
+.DS_Store

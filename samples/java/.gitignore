@@ -1,0 +1,11 @@
+# Build output.
+target/
+
+# Editor and tool state.
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+.DS_Store

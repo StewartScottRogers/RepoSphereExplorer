@@ -1,0 +1,11 @@
+# Build output.
+build/
+DerivedData/
+*.xcworkspace
+*.xcuserstate
+
+# Dependencies.
+Pods/
+Podfile.lock
+
+.DS_Store

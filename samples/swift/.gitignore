@@ -1,0 +1,10 @@
+# Build output.
+.build/
+*.xcodeproj
+DerivedData/
+
+# Package state.
+Package.resolved
+.swiftpm/
+
+.DS_Store

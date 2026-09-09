@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "taskqueue"
+version = "0.9.2"
+description = "An in-process task queue with retries, backoff and dead letters."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["queue", "tasks", "retry", "backoff", "asyncio"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.26", "ruff>=0.11", "mypy>=1.15"]
+
+[project.scripts]
+taskqueue = "taskqueue.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/example/taskqueue"
+Issues = "https://github.com/example/taskqueue/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/taskqueue"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]

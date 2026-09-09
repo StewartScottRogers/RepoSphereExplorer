@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars and edit. The real file is ignored, because a
+# workspace that commits its variables commits whatever somebody once put
+# in them.
+
+region             = "eu-west-2"
+environment        = "development"
+instance_type      = "t4g.small"
+desired_capacity   = 2
+availability_zones = ["eu-west-2a", "eu-west-2b"]

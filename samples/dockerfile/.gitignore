@@ -1,0 +1,5 @@
+# Local overrides, which are one developer's settings.
+compose.override.yaml
+.env
+
+.DS_Store

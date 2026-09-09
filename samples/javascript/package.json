@@ -1,0 +1,36 @@
+{
+  "name": "@example/store",
+  "version": "3.1.0",
+  "description": "A tiny predictable state container with selectors and persistence.",
+  "type": "module",
+  "license": "MIT",
+  "main": "src/store.js",
+  "exports": {
+    ".": "./src/store.js"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "lint": "eslint src test",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "state",
+    "store",
+    "reducer",
+    "selector"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/example/store.git"
+  },
+  "devDependencies": {
+    "eslint": "^9.27.0",
+    "prettier": "^3.5.3"
+  }
+}

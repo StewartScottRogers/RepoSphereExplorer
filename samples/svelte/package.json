@@ -1,0 +1,38 @@
+{
+  "name": "@example/data-table",
+  "version": "1.8.0",
+  "description": "A sortable, filterable data table.",
+  "type": "module",
+  "license": "MIT",
+  "svelte": "./src/lib/index.js",
+  "exports": {
+    ".": {
+      "svelte": "./src/lib/index.js"
+    }
+  },
+  "files": [
+    "src/lib"
+  ],
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "check": "svelte-check --tsconfig ./jsconfig.json"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@testing-library/svelte": "^5.2.7",
+    "jsdom": "^26.1.0",
+    "svelte": "^5.33.1",
+    "svelte-check": "^4.2.1",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

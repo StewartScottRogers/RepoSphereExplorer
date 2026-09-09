@@ -1,0 +1,13 @@
+# Build output.
+build/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.exe
+
+# Tool state.
+compile_commands.json
+.cache/
+
+.DS_Store

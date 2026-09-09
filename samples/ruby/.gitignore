@@ -1,0 +1,10 @@
+# Build output.
+/pkg/
+*.gem
+
+# Test and tool state.
+/coverage/
+/.rspec_status
+/.rubocop_cache/
+
+.DS_Store
