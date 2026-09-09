@@ -2735,6 +2735,7 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-model3d",
@@ -2785,6 +2786,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "serde_json",
@@ -5940,6 +5942,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-lex"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-makefile"
 version = "0.6.0"
 dependencies = [
@@ -6403,6 +6414,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-xml"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-yacc"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7576,6 +7596,7 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-model3d",
@@ -7626,6 +7647,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "serde",
@@ -8692,6 +8714,7 @@ dependencies = [
  "plugin-jupyter-notebook",
  "plugin-kotlin",
  "plugin-latex",
+ "plugin-lex",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-model3d",
@@ -8742,6 +8765,7 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-yacc",
  "plugin-yaml",
  "protocol",
  "ratatui",

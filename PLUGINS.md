@@ -121,6 +121,8 @@ it.
 | GitLab CI configuration | `crates/plugins/gitlabci` | #347 | Stages, jobs, templates, images, includes, and jobs whose stage never runs |
 | JSON Schema | `crates/plugins/jsonschema` | #356 | Draft, identity, properties with types and requiredness, definitions, references, composition |
 | ANTLR grammar | `crates/plugins/antlr` | #358 | Grammar kind, options, tokens, channels, parser and lexer rules, undefined references |
+| Yacc grammar | `crates/plugins/yacc` | #359 | Tokens, start symbol, precedence, union, rules with empty alternatives, error rule |
+| Lex scanner | `crates/plugins/lex` | #360 | Options, start conditions, definitions, pattern-action rules, catch-all |
 
 ## Folder plugins
 

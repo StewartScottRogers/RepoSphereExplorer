@@ -122,6 +122,8 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_gitlabci::GitlabciPresentation,
     &plugin_jsonschema::JsonschemaPresentation,
     &plugin_antlr::AntlrPresentation,
+    &plugin_yacc::YaccPresentation,
+    &plugin_lex::LexPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

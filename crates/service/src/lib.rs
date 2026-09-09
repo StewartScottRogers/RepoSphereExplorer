@@ -120,6 +120,8 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_gitattributes::GitattributesCore,
     &plugin_ignorefile::IgnorefileCore,
     &plugin_antlr::AntlrCore,
+    &plugin_yacc::YaccCore,
+    &plugin_lex::LexCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_psd::PsdCore,
