@@ -122,6 +122,8 @@ it.
 | JSON Schema | `crates/plugins/jsonschema` | #356 | Draft, identity, properties with types and requiredness, definitions, references, composition |
 | GitHub Actions workflow | `crates/plugins/githubactions` | #346 | Name, triggers, jobs, actions, unpinned references, permissions, secrets |
 | Kubernetes manifest | `crates/plugins/kubernetes` | #349 | Resources, kinds, namespaces, images, unpinned tags, resource limits |
+| Maven POM | `crates/plugins/maven` | #343 | Coordinates, parent, modules, dependencies with scopes, properties, plugins |
+| MSBuild project | `crates/plugins/msbuild` | #344 | Kit, target frameworks, output type, packages, project references, imports |
 
 ## Folder plugins
 

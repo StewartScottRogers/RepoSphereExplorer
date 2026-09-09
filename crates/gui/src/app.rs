@@ -123,6 +123,8 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_jsonschema::JsonschemaPresentation,
     &plugin_githubactions::GithubactionsPresentation,
     &plugin_kubernetes::KubernetesPresentation,
+    &plugin_maven::MavenPresentation,
+    &plugin_msbuild::MsbuildPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

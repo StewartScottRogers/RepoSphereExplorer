@@ -85,6 +85,8 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_svg::SvgCore,
     &plugin_vue::VueCore,
     &plugin_html::HtmlCore,
+    &plugin_maven::MavenCore,
+    &plugin_msbuild::MsbuildCore,
     &plugin_xml::XmlCore,
     &plugin_restructuredtext::RestructuredTextCore,
     &plugin_jupyter_notebook::NotebookCore,

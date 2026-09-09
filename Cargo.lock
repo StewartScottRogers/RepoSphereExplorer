@@ -2738,7 +2738,9 @@ dependencies = [
  "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-maven",
  "plugin-model3d",
+ "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-npmlock",
@@ -5968,7 +5970,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-maven"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-model3d"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-msbuild"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7589,7 +7609,9 @@ dependencies = [
  "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-maven",
  "plugin-model3d",
+ "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-npmlock",
@@ -8706,7 +8728,9 @@ dependencies = [
  "plugin-latex",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-maven",
  "plugin-model3d",
+ "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nim",
  "plugin-npmlock",

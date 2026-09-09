@@ -34,6 +34,8 @@ plugin-githubactions = { path = "../plugins/githubactions" }
 plugin-kubernetes = { path = "../plugins/kubernetes" }
 plugin-latex = { path = "../plugins/latex" }
 plugin-markdown = { path = "../plugins/markdown" }
+plugin-maven = { path = "../plugins/maven" }
+plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-properties = { path = "../plugins/properties" }
