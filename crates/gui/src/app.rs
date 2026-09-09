@@ -110,6 +110,8 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_editorconfig::EditorconfigPresentation,
     &plugin_dotenv::DotenvPresentation,
     &plugin_codeowners::CodeownersPresentation,
+    &plugin_cargolock::CargolockPresentation,
+    &plugin_npmlock::NpmlockPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

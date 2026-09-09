@@ -39,6 +39,23 @@ pub trait PluginCore: Send + Sync {
     fn extensions(&self) -> &'static [&'static str] {
         &[]
     }
+
+    /// The plugins this one refines, by name.
+    ///
+    /// A JSON Schema is JSON. An npm lock file is JSON. A Kubernetes
+    /// manifest is YAML. When the general plugin and the specialisation
+    /// both recognise a file, the specialisation is the better answer -
+    /// but the general plugin usually owns the extension, and
+    /// [`Self::extensions`] would hand the file to it on that basis alone.
+    ///
+    /// Saying so here settles it. The extension hint keeps the job it was
+    /// added for - choosing between siblings that have no magic bytes and
+    /// genuinely overlap, which is what a C file opening as Rust needed
+    /// (#272) - and stops overruling a plugin strictly more specific than
+    /// the one it beat.
+    fn specialises(&self) -> &'static [&'static str] {
+        &[]
+    }
 }
 
 /// The core half of a folder plugin: decides whether a folder is a

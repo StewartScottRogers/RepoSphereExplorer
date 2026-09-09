@@ -121,6 +121,8 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_editorconfig::EditorconfigPresentation,
     &plugin_dotenv::DotenvPresentation,
     &plugin_codeowners::CodeownersPresentation,
+    &plugin_cargolock::CargolockPresentation,
+    &plugin_npmlock::NpmlockPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

@@ -244,3 +244,34 @@ column. A `.git` check is one `metadata` call per row; a folder sniff is a
 full directory read per row. Today only the selected folder is sniffed. See
 GUIDANCE.md §3.4.
 
+## D13 — A specialisation beats the format it specialises
+
+**Settled 2026-09-09.**
+
+The extension hint was added because source languages have no magic bytes
+and genuinely overlap: `struct` belongs to C, C++, Rust, Swift and
+Solidity alike, and a C file was opening as Rust (#272). Among siblings
+like those, the extension is the only honest tiebreak there is.
+
+It does something else entirely when one plugin is a narrower reading of
+another. An npm lock file *is* JSON; `json` owns the extension; so `json`
+won, whatever the registration order said. About twenty of the hundred
+plugins filed as #316 to #415 are specialisations of a format already
+built — JSON, YAML, TOML, XML and zip each have several — and every one of
+them would have lost the same way.
+
+Teaching the general plugin about its specialisations was the alternative,
+and it puts npm's business in the JSON plugin and Kubernetes' in the YAML
+plugin. So the specialisation declares what it refines instead, and
+`service::most_specific` drops the refined plugin before the extension
+hint is applied.
+
+**What it would take to revisit.** One function,
+`service::most_specific`, and one trait method with a default,
+`PluginCore::specialises`. A test with three doubles — a general plugin
+owning the extension, a specialisation, and a sibling refining nothing —
+fails if the drop is removed, and was checked by removing it.
+
+**What is deliberately unchanged.** The hint itself. A plugin that
+specialises nothing behaves exactly as it did, which is what keeps the
+#272 resolution intact.
