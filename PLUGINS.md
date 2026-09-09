@@ -120,6 +120,7 @@ it.
 | Helm chart metadata | `crates/plugins/helmchart` | #350 | Chart and application versions, type, dependencies with conditions, maintainers |
 | GitLab CI configuration | `crates/plugins/gitlabci` | #347 | Stages, jobs, templates, images, includes, and jobs whose stage never runs |
 | JSON Schema | `crates/plugins/jsonschema` | #356 | Draft, identity, properties with types and requiredness, definitions, references, composition |
+| Apache Thrift IDL | `crates/plugins/thrift` | #354 | Namespaces, includes, typedefs, structs and exceptions with numbered fields, services |
 
 ## Folder plugins
 
