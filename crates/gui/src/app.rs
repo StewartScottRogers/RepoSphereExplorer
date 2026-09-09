@@ -127,6 +127,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_msbuild::MsbuildPresentation,
     &plugin_protobuf::ProtobufPresentation,
     &plugin_thrift::ThriftPresentation,
+    &plugin_flatbuffers::FlatbuffersPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

@@ -138,6 +138,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_msbuild::MsbuildPresentation,
     &plugin_protobuf::ProtobufPresentation,
     &plugin_thrift::ThriftPresentation,
+    &plugin_flatbuffers::FlatbuffersPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever
