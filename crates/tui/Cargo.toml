@@ -32,6 +32,7 @@ plugin-gitlabci = { path = "../plugins/gitlabci" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
+plugin-jsonschema = { path = "../plugins/jsonschema" }
 plugin-latex = { path = "../plugins/latex" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-npmlock = { path = "../plugins/npmlock" }

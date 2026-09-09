@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/order.schema.json",
+  "title": "Order",
+  "description": "One order, its lines, and how it is being paid for.",
+  "type": "object",
+  "required": ["id", "customerId", "lines"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "The order identifier, unique for all time.",
+      "pattern": "^ord_[0-9a-f]{16}$"
+    },
+    "customerId": {
+      "type": "string",
+      "description": "Who placed it."
+    },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "description": "What was ordered. An order with no lines is not an order.",
+      "items": { "$ref": "#/$defs/line" }
+    },
+    "note": {
+      "type": ["string", "null"],
+      "description": "Anything the customer asked for in words."
+    },
+    "state": {
+      "enum": ["draft", "placed", "shipped", "cancelled"],
+      "description": "Where the order has got to."
+    },
+    "payment": { "$ref": "#/$defs/payment" }
+  },
+  "$defs": {
+    "line": {
+      "type": "object",
+      "required": ["sku", "quantity"],
+      "additionalProperties": false,
+      "properties": {
+        "sku": { "type": "string" },
+        "quantity": { "type": "integer", "minimum": 1 },
+        "unitPricePennies": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "oneOf": [
+        { "required": ["cardLastFour"] },
+        { "required": ["accountId"] }
+      ],
+      "properties": {
+        "cardLastFour": { "type": "string", "pattern": "^[0-9]{4}$" },
+        "accountId": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "shipped" } } },
+      "then": { "required": ["payment"] }
+    }
+  ]
+}
