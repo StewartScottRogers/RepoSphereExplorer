@@ -2715,11 +2715,13 @@ dependencies = [
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
+ "plugin-gitlabci",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-haskell",
  "plugin-hdf5",
+ "plugin-helmchart",
  "plugin-html",
  "plugin-ignorefile",
  "plugin-image",
@@ -5754,6 +5756,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gitlabci"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-go"
 version = "0.6.0"
 dependencies = [
@@ -5794,6 +5805,15 @@ name = "plugin-hdf5"
 version = "0.6.0"
 dependencies = [
  "hdf5-metno",
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-helmchart"
+version = "0.6.0"
+dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
@@ -7516,11 +7536,13 @@ dependencies = [
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
+ "plugin-gitlabci",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-haskell",
  "plugin-hdf5",
+ "plugin-helmchart",
  "plugin-html",
  "plugin-ignorefile",
  "plugin-image",
@@ -8628,11 +8650,13 @@ dependencies = [
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
+ "plugin-gitlabci",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-haskell",
  "plugin-hdf5",
+ "plugin-helmchart",
  "plugin-html",
  "plugin-ignorefile",
  "plugin-image",

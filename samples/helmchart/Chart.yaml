@@ -1,0 +1,42 @@
+apiVersion: v2
+name: repo-sphere
+description: A front door to the working directories source control checks out
+type: application
+
+# The chart's own version and the version of the application it installs
+# move separately, and confusing them is how a release goes out twice.
+version: 1.4.2
+appVersion: "0.6.0"
+
+keywords:
+  - explorer
+  - repositories
+  - developer-tools
+
+home: https://github.com/example/repo-sphere
+sources:
+  - https://github.com/example/repo-sphere
+
+maintainers:
+  - name: Example Engineering
+    email: engineering@example.com
+    url: https://example.com/team
+  - name: Platform
+    email: platform@example.com
+
+dependencies:
+  - name: postgresql
+    version: "15.5.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: "19.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: common
+    version: "2.x"
+    repository: https://charts.bitnami.com/bitnami
+
+annotations:
+  category: Developer Tools
+  licenses: MIT
