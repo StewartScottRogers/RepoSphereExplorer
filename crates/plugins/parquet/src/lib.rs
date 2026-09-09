@@ -331,4 +331,57 @@ mod tests {
             "one list, or a listing marks a file with a type its viewer will not open"
         );
     }
+    /// The fixture in `samples/`, which is where a person checking the
+    /// application - and quality assurance after them - meets this plugin.
+    fn repository_fixture() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../samples/parquet/pipeline-runs.parquet")
+    }
+
+    #[test]
+    fn the_repository_fixture_fills_every_column_type_and_truncates() {
+        // The fixture this replaced held two string columns and two rows.
+        // Nothing in it could tell whether a number, a boolean, a
+        // timestamp or a missing value rendered at all, and nothing in it
+        // reached MAX_ROWS, so `truncated` was only ever exercised by a
+        // file written inside a test.
+        let data = ParquetCore.view(&repository_fixture()).unwrap();
+        let view: ParquetView = serde_json::from_value(data).unwrap();
+
+        assert_eq!(view.row_count, 264);
+        assert!(
+            view.truncated,
+            "the fixture has more rows than the view shows, which is the point of it"
+        );
+        assert_eq!(view.table.rows.len(), MAX_ROWS);
+        assert_eq!(
+            view.table.headers,
+            vec![
+                "run_id".to_owned(),
+                "commit".to_owned(),
+                "branch".to_owned(),
+                "stage".to_owned(),
+                "started_at".to_owned(),
+                "duration_seconds".to_owned(),
+                "exit_code".to_owned(),
+                "passed".to_owned(),
+                "runner".to_owned(),
+            ]
+        );
+
+        let first = view.table.rows.first().expect("the view holds rows");
+        assert_eq!(first.len(), view.table.headers.len());
+        assert!(
+            first[4].starts_with("2026-08-01"),
+            "a timestamp column should render as a date, not as a count of milliseconds: {}",
+            first[4]
+        );
+
+        // The runner column is empty for a run that never got a machine,
+        // so the fixture proves a missing value renders as something.
+        assert!(
+            view.table.rows.iter().any(|row| row[8] == "null"),
+            "no row has a missing runner, so nothing shows how a null cell reads"
+        );
+    }
 }
