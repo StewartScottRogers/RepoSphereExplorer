@@ -4,7 +4,7 @@
 //! presentation half, so the two are separate, not shared, despite the
 //! similar shape.
 
-use plugin_api::{Graphic, Icon, PluginPresentation, UNKNOWN_ICON};
+use plugin_api::{FolderPresentation, Graphic, Icon, PluginPresentation, UNKNOWN_ICON};
 use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
 use std::collections::HashMap;
 use std::io;
@@ -134,6 +134,27 @@ pub fn present_graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic
         .iter()
         .find(|candidate| candidate.name() == plugin)
         .and_then(|candidate| candidate.graphic(data))
+}
+
+/// Every folder presentation plugin linked into this front end.
+///
+/// Separate from [`PRESENTATION_PLUGINS`] because folder plugins answer a
+/// different question. A file has one type. A folder can be a source
+/// control working copy and a Cargo workspace at once, and each plugin
+/// that recognises it contributes its own lines.
+const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] =
+    &[&plugin_project_cargo::CargoProjectPresentation];
+
+/// Turns a folder plugin's view data into displayable lines.
+#[must_use]
+pub fn present_folder(plugin: &str, data: &serde_json::Value) -> Vec<String> {
+    match FOLDER_PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+    {
+        Some(candidate) => candidate.present(data),
+        None => vec![format!("no presentation for folder plugin `{plugin}`")],
+    }
 }
 
 /// Turns a plugin's view data into displayable lines, via whichever
@@ -1376,6 +1397,23 @@ impl App {
         self.show_file_view(Some(Response::FileView {
             plugin: plugin.to_owned(),
             data,
+            also: Vec::new(),
+        }));
+    }
+
+    /// Plants a folder view carrying further views, as a completed preview
+    /// of a folder several plugins recognise would. Test-only.
+    #[cfg(test)]
+    fn set_folder_view(
+        &mut self,
+        plugin: &str,
+        data: serde_json::Value,
+        also: Vec<protocol::PluginView>,
+    ) {
+        self.show_file_view(Some(Response::FileView {
+            plugin: plugin.to_owned(),
+            data,
+            also,
         }));
     }
 
@@ -1385,7 +1423,7 @@ impl App {
     #[must_use]
     pub fn editable_text(&self) -> Option<String> {
         match &self.file_view {
-            Some(Response::FileView { plugin, data }) => PRESENTATION_PLUGINS
+            Some(Response::FileView { plugin, data, .. }) => PRESENTATION_PLUGINS
                 .iter()
                 .find(|candidate| candidate.name() == plugin)
                 .and_then(|candidate| candidate.editable_text(data)),
@@ -1823,7 +1861,7 @@ impl App {
     #[must_use]
     pub fn file_graphic(&self) -> Option<Graphic> {
         match &self.file_view {
-            Some(Response::FileView { plugin, data }) => present_graphic(plugin, data),
+            Some(Response::FileView { plugin, data, .. }) => present_graphic(plugin, data),
             _ => None,
         }
     }
@@ -1834,7 +1872,7 @@ impl App {
     #[must_use]
     pub fn file_views(&self) -> Vec<&'static str> {
         match &self.file_view {
-            Some(Response::FileView { plugin, data }) => PRESENTATION_PLUGINS
+            Some(Response::FileView { plugin, data, .. }) => PRESENTATION_PLUGINS
                 .iter()
                 .find(|candidate| candidate.name() == plugin)
                 .map(|candidate| candidate.views(data))
@@ -1862,12 +1900,20 @@ impl App {
     #[must_use]
     pub fn file_text(&self) -> String {
         match &self.file_view {
-            Some(Response::FileView { plugin, data }) => {
+            Some(Response::FileView { plugin, data, also }) => {
                 let views = self.file_views();
-                let Some(view) = views.get(self.file_view_index) else {
-                    return present(plugin, data).join("\n");
+                let mut lines = match views.get(self.file_view_index) {
+                    Some(view) => present_view(plugin, view, data),
+                    None => present(plugin, data),
                 };
-                present_view(plugin, view, data).join("\n")
+                // A folder is several things at once, and each folder
+                // plugin that recognises it adds its lines below the
+                // folder's own rather than in place of them.
+                for extra in also {
+                    lines.push(String::new());
+                    lines.extend(present_folder(&extra.plugin, &extra.data));
+                }
+                lines.join("\n")
             }
             Some(Response::Error { message }) => message.clone(),
             Some(Response::Directory { .. } | Response::Done | Response::ReposRoots { .. })
@@ -3434,6 +3480,7 @@ third",
             Ok(Response::FileView {
                 plugin: "text".to_owned(),
                 data: serde_json::json!({}),
+                also: Vec::new(),
             }),
         );
 
@@ -3628,5 +3675,53 @@ third",
         app.cancel_pending();
 
         assert!(!app.choosing_repos_root());
+    }
+    #[test]
+    fn a_folder_shows_its_project_lines_below_its_own() {
+        // Settled with the requester: a project view adds to a folder's
+        // details, it does not replace them. A folder is still a folder.
+        let mut app = App::new(std::env::temp_dir());
+        let folder = serde_json::json!({ "entries": ["src"], "total": 1 });
+        let project = plugin_api::FolderCore::view(
+            &plugin_project_cargo::CargoProjectCore,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/project-cargo"),
+        )
+        .unwrap();
+
+        app.set_folder_view(
+            "directory",
+            folder.clone(),
+            vec![protocol::PluginView {
+                plugin: "project-cargo".to_owned(),
+                data: project,
+            }],
+        );
+
+        let text = app.file_text();
+
+        assert!(
+            text.starts_with(&super::present("directory", &folder).join("\n")),
+            "the folder keeps its own lines, and keeps them first: {text}"
+        );
+        assert!(
+            text.contains("Package: instrument-log 2.3.0"),
+            "and the project lines follow: {text}"
+        );
+        assert!(
+            text.contains("Edition: 2024"),
+            "with everything the plugin found: {text}"
+        );
+    }
+
+    #[test]
+    fn a_file_view_is_unchanged_by_the_folder_machinery() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+
+        assert_eq!(app.file_text(), "hello");
     }
 }

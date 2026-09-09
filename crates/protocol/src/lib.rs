@@ -147,6 +147,19 @@ pub struct RepositoryInfo {
     pub remote: Option<String>,
 }
 
+/// One view of a path, and the plugin that should present it.
+///
+/// Named separately from [`Response::FileView`]'s own fields because a
+/// path can carry several of these, and a list of pairs is clearer on the
+/// wire than parallel lists of names and values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginView {
+    /// Name of the plugin that produced `data`.
+    pub plugin: String,
+    /// The plugin's view data, ready for its presentation half.
+    pub data: serde_json::Value,
+}
+
 /// A response sent from the service back to a front end.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Response {
@@ -161,6 +174,17 @@ pub enum Response {
         plugin: String,
         /// The plugin's view data, ready for its presentation half.
         data: serde_json::Value,
+        /// Further views of the same path, each to be presented by the
+        /// plugin it names and appended below the first.
+        ///
+        /// Always empty for a file. A file has exactly one type - two
+        /// plugins claiming one file is a defect, which is why the
+        /// extension tiebreak exists. A folder is several things at once
+        /// and honestly so: a source control working copy that is also a
+        /// Cargo workspace has two true descriptions, and a reader wants
+        /// both.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        also: Vec<PluginView>,
     },
     /// The request could not be completed.
     Error {
@@ -291,6 +315,7 @@ mod tests {
         let response = Response::FileView {
             plugin: "text".to_owned(),
             data: serde_json::json!({ "content": "hello", "truncated": false }),
+            also: Vec::new(),
         };
 
         let mut buf = Vec::new();

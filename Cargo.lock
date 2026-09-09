@@ -2732,6 +2732,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-presentation",
+ "plugin-project-cargo",
  "plugin-prolog",
  "plugin-psd",
  "plugin-python",
@@ -5897,6 +5898,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-project-cargo"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "plugin-prolog"
 version = "0.6.0"
 dependencies = [
@@ -7322,6 +7333,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-presentation",
+ "plugin-project-cargo",
  "plugin-prolog",
  "plugin-psd",
  "plugin-python",
@@ -8413,6 +8425,7 @@ dependencies = [
  "plugin-php",
  "plugin-powershell",
  "plugin-presentation",
+ "plugin-project-cargo",
  "plugin-prolog",
  "plugin-psd",
  "plugin-python",

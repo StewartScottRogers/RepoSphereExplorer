@@ -39,7 +39,8 @@ A cargo workspace, per [GUIDANCE.md §5](GUIDANCE.md#5-proposed-workspace-layout
 - `crates/tui/`, `crates/gui/` — the Ratatui terminal and Slint graphical front
   ends.
 - `crates/plugins/*/` — one crate per file type, each with a core half and a
-  presentation half. See [PLUGINS.md](PLUGINS.md) for the built and rejected
+  presentation half, plus the folder plugins, which describe a folder rather
+  than a file. See [PLUGINS.md](PLUGINS.md) for the built and rejected
   registry.
 - `samples/` — one fixture directory per plugin. See
   [samples/README.md](samples/README.md).
@@ -80,23 +81,28 @@ and what it would take to revisit them.
    marker, the provider in the remote address, the branch. Clone, fetch, pull
    and commit are out of scope (D10). Never run a source control command on a
    user's working copy.
-9. **Track plugins in [PLUGINS.md](PLUGINS.md).** Before proposing or building
-   a file-type plugin, check its Built and Rejected sections, plus
-   `gh issue list --label work-order --state all`, for that format. When a
-   plugin's pull request merges, add it to Built. When a work order concludes a
-   format cannot reasonably become a plugin, add it to Rejected with a one-line
-   reason and close the issue without a pull request — do not retry a rejected
-   format unless explicitly asked to.
-10. **Label a work order's pull request `auto-merge`.** Once the acceptance
+9. **A folder is several things at once; a file is one.** A file plugin wins
+   or loses. Every folder plugin that recognises a folder contributes, and its
+   lines are added below what the folder already reports, never in place of
+   them (D12). Sniff a folder only when it is the selected one — a full
+   directory read per row would make a listing crawl (GUIDANCE.md §3.4).
+10. **Track plugins in [PLUGINS.md](PLUGINS.md).** Before proposing or building
+    a plugin, check its Built, Folder and Rejected sections, plus
+    `gh issue list --label work-order --state all`, for that format. When a
+    plugin's pull request merges, add it to the right section. When a work
+    order concludes a format cannot reasonably become a plugin, add it to
+    Rejected with a one-line reason and close the issue without a pull
+    request — do not retry a rejected format unless explicitly asked to.
+11. **Label a work order's pull request `auto-merge`.** Once the acceptance
     checks pass and the pull request is open, apply the `auto-merge` label so it
     lands itself under the same no-human-review policy that already governs
     `main` — do not wait for manual review, and do not merge it directly
     yourself.
-11. **Keep `samples/` current.** A plugin work order that adds a new plugin
+12. **Keep `samples/` current.** A plugin work order that adds a new plugin
     crate must also add its `samples/<name>/` entry with a real, valid example
     file, in the same pull request. Make the fixture exercise every field the
     plugin extracts: `sample_coverage.rs` fails when a fixture stops proving
     anything.
-12. **Spell out an acronym before using it.** First use gives the full term,
+13. **Spell out an acronym before using it.** First use gives the full term,
     with the acronym in parentheses after it. This applies to documentation,
     commit messages, work orders and user-facing strings.

@@ -158,8 +158,7 @@ reachable by keyboard.
 
 The anchor the whole application is arranged around.
 
-- **One configured root.** For example `Z:
-epos` on Windows. Every launch
+- **One configured root.** For example `Z:\repos` on Windows. Every launch
   opens there, whatever the user was looking at when the application last
   closed. There is deliberately no last-location session restore: a front door
   that opens somewhere different each morning is not a front door.
@@ -167,8 +166,7 @@ epos` on Windows. Every launch
   user's settings and can be changed from inside the application. Roots are
   stored as a list with exactly one marked active, so several roots can be
   supported later without changing the stored shape.
-- **Cross-platform default.** `Z:
-epos` on Windows, `~/repos` elsewhere. When
+- **Cross-platform default.** `Z:\repos` on Windows, `~/repos` elsewhere. When
   nothing is configured, the first run offers the default and takes what the
   user gives it.
 - **Repository awareness.** The immediate children of the root are treated as
@@ -223,6 +221,37 @@ rather than a lookup, and unused plugins can be feature-gated out of a build.
 - Thumbnails and parses are cancellable, and cached by (path, mtime, size).
 - Nothing blocks the user interface thread. Every long operation is
   cancellable from the user interface.
+
+### 3.4 Folder plugins
+
+A folder is a subject too, and it answers a different question from a file.
+
+A file has exactly one type. Two plugins claiming one file is a defect, which
+is why §3.3's extension hint exists to settle it — a C file opening as Rust
+was a real bug (#272), not a hypothetical one.
+
+Folder facts stack. This repository's own root is a source control working
+copy **and** a Cargo workspace, and neither description is the wrong one. So
+folder plugins have their own trait pair and their own registry, and dispatch
+collects **every** plugin that recognises a folder rather than picking a
+winner. Their lines are added below what the folder already reports; a folder
+that is a project is still a folder, and a reader still wants to see what is
+inside it.
+
+Sniffing a folder reads the names of the entries directly inside it, not a
+prefix of bytes. A folder has no bytes, and every project marker there is —
+`Cargo.toml`, `package.json`, `go.mod`, `pom.xml` — is a file name.
+
+**The selected folder only.** A `.git` check is one `metadata` call per row; a
+folder sniff is a full directory read per row, and a Repos Directory holding
+two hundred folders would pay it two hundred times before a single row drew.
+Whether a listing can afford a project column is a separate question that this
+does not answer, and the omission is deliberate rather than an oversight.
+
+Reading, never driving, exactly as D10 requires: a folder plugin reads the
+manifest the author wrote and never runs the build tool. Resolving a manifest
+into what would actually build needs the registry, the lock file and the
+network, which is a different job from describing a folder.
 
 ## 4. Distribution — GitHub is the whole supply chain
 

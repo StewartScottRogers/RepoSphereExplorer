@@ -211,3 +211,36 @@ starting all along, so expect runs that were previously silent.
 Remove the secret. The fallback in `auto-merge.yml` takes over, the factory
 keeps merging, and the sweep goes back to closing work orders in its own
 time. Nothing else has to change.
+
+## D12 — Folder facts stack; file facts do not
+
+**Settled 2026-09-09.**
+
+A file has exactly one type. The whole file plugin dispatch is built on that:
+one `sniff` wins, and the extension hint exists only to settle which of two
+overlapping claims is right. Two plugins claiming one file was a defect, and
+a real one — a C file with a top-level `struct` opened as Rust, and every Java
+file opened as Perl (#272).
+
+A folder is not like that. This repository's own root is a source control
+working copy and a Cargo workspace at the same time, and there is no honest
+way to pick one of those as the answer. A monorepo is worse and more ordinary:
+the checkout at the top, a Go module in one subfolder, a Node package in
+another, each of them also a plain folder full of files.
+
+So folder plugins get their own trait pair (`FolderCore`, `FolderPresentation`)
+and their own registry, and the dispatch **collects** rather than selects.
+Their lines are appended to what the folder already reports rather than
+replacing it — settled with the requester on 2026-09-09, and the reason is
+that a folder that is a project is still a folder.
+
+**What it would take to revisit.** The collecting is one function,
+`service::folder_plugins_among`, and the union is assembled in one place, the
+`is_dir` arm of `service::view_file`. A test with two matching test doubles
+fails if the `filter` there is ever replaced by a `find`.
+
+**What is deliberately not decided.** Whether a *listing* can show a project
+column. A `.git` check is one `metadata` call per row; a folder sniff is a
+full directory read per row. Today only the selected folder is sniffed. See
+GUIDANCE.md §3.4.
+

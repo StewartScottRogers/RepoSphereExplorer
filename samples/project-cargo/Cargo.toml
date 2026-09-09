@@ -1,0 +1,29 @@
+# A sample Cargo project, so the `project-cargo` folder plugin has a folder
+# to recognise. It is a real manifest: `cargo metadata` reads it, and it
+# declares both a workspace and a package, which is the case that proves
+# the plugin does not stop at the first section it understands.
+
+[workspace]
+resolver = "3"
+members = ["crates/reading", "crates/writing", "crates/plugins/*"]
+
+[package]
+name = "instrument-log"
+version = "2.3.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Reads and summarises instrument run logs."
+license = "MIT"
+repository = "https://github.com/example/instrument-log"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"
+insta = "1"
+
+[build-dependencies]
+cc = "1"

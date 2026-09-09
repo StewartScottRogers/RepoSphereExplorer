@@ -44,6 +44,7 @@ Every one of them needed a file with something in it.
 | `hdf5/instrument-run.h5` | Groups three levels deep, and datasets that are scalar, one-dimensional and two-dimensional, across five element types. The walk has to descend, and the type descriptor has to hold up. |
 | `certificate/chain.pem` | A leaf certificate, the root that signed it, and the leaf's key. The key protects nothing and is safe to publish. |
 | `directory/` | The `directory` plugin has no file to sniff: the folder itself is what it recognises, so this one holds ordinary files of assorted types. |
+| `project-cargo/` | Same again, for a folder plugin: a real crate, with a manifest that declares a workspace *and* a package, which is the case that proves the plugin does not stop at the first section it understands. Its files belong to the `toml` and `rust` plugins, so the per-file checks skip this directory and ask about the folder. |
 | `model3d/` | Two fixtures, because OBJ and glTF carry different halves of the view: geometry counts from one, scene and generator from the other. |
 | `image/`, `audio/`, `video/` | Generated, and genuinely playable and viewable. Open them. |
 
