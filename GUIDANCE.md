@@ -48,6 +48,16 @@ a reviewer's taste — decide whether work landed. Anything the factory cannot
 verify automatically it must not build unattended. Any design that makes a unit
 of work large or unverifiable is the wrong design for this repository.
 
+**A station reports success only when it produced something a reader can point
+at** — a branch, a pull request, a comment, or a closed issue. Every trigger in
+the table above chains on "not a failure", so a run that exits cleanly having
+opened, closed, or commented on nothing still waves the next one through: two
+Factory shift runs did exactly that on the same day, each costing real money
+and producing nothing at all (issue #420). "The commands inside it returned
+zero" and "the work landed" are different claims, and only the station itself
+can tell them apart — a station must check its own output before reporting
+success, not just its exit code.
+
 ## 2. Architecture — one brain, two faces
 
 A **fat service** process owns all logic: filesystem traversal, file parsing,
