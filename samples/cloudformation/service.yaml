@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: The Repos Explorer release service - storage, queue, function and alarm.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - staging
+      - production
+  BucketName:
+    Type: String
+    Description: Where release artifacts land.
+  RetentionDays:
+    Type: Number
+    Default: 30
+  AlarmEmail:
+    Type: String
+    Default: floor@example.com
+  LegacyToggle:
+    Type: String
+    Default: off
+    Description: Left over from the previous stack; nothing reads it.
+
+Conditions:
+  IsProduction: !Equals [!Ref EnvironmentName, production]
+  KeepArtifactsLonger: !Equals [!Ref RetentionDays, 90]
+
+Mappings:
+  RegionToImage:
+    eu-west-1:
+      Image: ami-0111111111111111a
+    us-east-1:
+      Image: ami-0222222222222222b
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+
+  ReleaseQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${EnvironmentName}-releases'
+      MessageRetentionPeriod: 1209600
+
+  PublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+  PublisherFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${EnvironmentName}-publisher'
+      Runtime: provided.al2
+      Handler: bootstrap
+      Role: !GetAtt PublisherRole.Arn
+
+  PublisherLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${EnvironmentName}-publisher'
+      RetentionInDays: !Ref RetentionDays
+
+  FailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProduction
+    Properties:
+      AlarmName: !Sub '${EnvironmentName}-publisher-failures'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+
+Outputs:
+  BucketArn:
+    Description: The artifact bucket.
+    Value: !GetAtt ArtifactBucket.Arn
+    Export:
+      Name: !Sub '${EnvironmentName}-artifact-bucket'
+  QueueUrl:
+    Description: Where release messages go.
+    Value: !Ref ReleaseQueue

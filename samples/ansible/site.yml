@@ -1,0 +1,72 @@
+---
+# Brings the Repos Explorer service up on a fresh pair of machines.
+
+- name: Configure web servers
+  hosts: webservers
+  become: true
+  vars:
+    http_port: 8080
+    worker_processes: 4
+    registry_token: "{{ vault_registry_token }}"
+  roles:
+    - common
+    - role: nginx
+      vars:
+        nginx_worker_connections: 1024
+  pre_tasks:
+    - name: Refresh the package index
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == 'Debian'
+  tasks:
+    - name: Install the packages the service needs
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - nginx
+        - curl
+        - ca-certificates
+      notify: restart nginx
+
+    - name: Write the service configuration
+      ansible.builtin.template:
+        src: templates/explorer.conf.j2
+        dest: /etc/nginx/conf.d/explorer.conf
+        mode: "0644"
+      when: http_port is defined
+      notify: restart nginx
+
+    - ansible.builtin.command: /usr/local/bin/explorer --version
+  post_tasks:
+    - name: Report what is running
+      ansible.builtin.debug:
+        msg: "Serving on port {{ http_port }}"
+  handlers:
+    - name: restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+
+    - name: reload firewall
+      ansible.builtin.service:
+        name: firewalld
+        state: reloaded
+
+- name: Configure database servers
+  hosts: dbservers
+  become: true
+  vars:
+    postgres_version: 16
+  tasks:
+    - name: Install PostgreSQL
+      ansible.builtin.package:
+        name: "postgresql-{{ postgres_version }}"
+        state: present
+
+    - name: Make sure it is running
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true

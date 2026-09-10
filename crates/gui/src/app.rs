@@ -135,6 +135,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_requirements::RequirementsPresentation,
     &plugin_yarnlock::YarnlockPresentation,
     &plugin_pnpmlock::PnpmlockPresentation,
+    &plugin_solution::SolutionPresentation,
+    &plugin_jenkinsfile::JenkinsfilePresentation,
+    &plugin_ansible::AnsiblePresentation,
+    &plugin_cloudformation::CloudformationPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

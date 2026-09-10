@@ -1,0 +1,95 @@
+// Builds, checks and publishes the Repos Explorer service.
+pipeline {
+    agent {
+        label 'linux && docker'
+    }
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    parameters {
+        string(name: 'BRANCH', defaultValue: 'main', description: 'What to build')
+        booleanParam(name: 'PUBLISH', defaultValue: false, description: 'Push the release')
+        choice(name: 'PROFILE', choices: ['debug', 'release'], description: 'Cargo profile')
+    }
+
+    environment {
+        CARGO_TERM_COLOR = 'always'
+        REGISTRY = 'registry.example.com'
+        REGISTRY_TOKEN = credentials('registry-publish-token')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'git rev-parse HEAD > .commit'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'cargo build --release --all-features'
+                archiveArtifacts artifacts: 'target/release/*', fingerprint: true
+            }
+        }
+
+        stage('Checks') {
+            parallel {
+                stage('Format and lint') {
+                    steps {
+                        sh 'cargo fmt --all --check'
+                        sh 'cargo clippy --all-targets --all-features -- -D warnings'
+                    }
+                }
+
+                stage('Test') {
+                    agent {
+                        docker { image 'rust:1.90' }
+                    }
+                    steps {
+                        sh 'cargo test --all-features'
+                        junit 'target/test-results/*.xml'
+                    }
+                }
+
+                stage('Audit') {
+                    steps {
+                        sh 'cargo audit'
+                    }
+                }
+            }
+        }
+
+        stage('Publish') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression { return params.PUBLISH }
+                }
+            }
+            agent any
+            steps {
+                sh 'cargo publish --dry-run'
+                sh 'docker push $REGISTRY/repos-explorer:latest'
+            }
+        }
+    }
+
+    post {
+        always {
+            junit allowEmptyResults: true, testResults: 'target/test-results/*.xml'
+        }
+        success {
+            echo 'Green.'
+        }
+        failure {
+            mail to: 'floor@example.com', subject: 'Pipeline failed'
+        }
+        cleanup {
+            cleanWs()
+        }
+    }
+}
