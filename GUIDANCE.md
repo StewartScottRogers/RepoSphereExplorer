@@ -64,7 +64,7 @@ at.** A branch, a pull request, a comment, a closed issue, a written file.
 Not "the step exited zero". A step that exits zero having done nothing must
 fail, and must say what it looked for.
 
-Two corollaries, both learned the expensive way:
+Three corollaries, each learned the expensive way:
 
 - **A guard must not key on `failure` alone.** Cancelled, skipped and
   produced-nothing are all reasons to stop. A chain that stops only on
@@ -74,6 +74,16 @@ Two corollaries, both learned the expensive way:
   day because the only surviving record was
   `permission_denials_count: 6` — a number, with no way to learn what had
   been denied.
+- **An honest red mark is worth nothing if the next station ignores
+  it.** The reviewer refuses to review a branch that edits
+  `.github/workflows/`, since a branch must not be able to rewrite its
+  own reviewer, and since #300 it goes red and says “read this one
+  yourself” rather than leaving a false green. The pull request merged
+  anyway: branch protection requires only `fmt / clippy / test`, so
+  #438 landed unreviewed thirteen minutes after the station said not
+  to. A station that cannot certify a change has to be able to *stop*
+  it — by turning auto-merge off and holding the pull request —
+  not merely to complain about it (#439).
 
 ### A cleanup station never discards work on a first sighting
 
