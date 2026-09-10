@@ -34,8 +34,63 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
+      # A pull request that edits a workflow cannot be reviewed here, and
+      # the station has said so honestly since #300. What it could not do
+      # was stop the pull request: branch protection requires only
+      # `fmt / clippy / test`, and GitHub's auto-merge lands the branch the
+      # moment that passes. #438 changed the health check and merged
+      # unreviewed thirteen minutes after this station went red.
+      #
+      # So find out first, before ten minutes of runner time go into a
+      # review that will decline, and hold the pull request while the
+      # required check is still running. Work order #439.
+      - name: Hold a pull request that edits the factory itself
+        id: hold
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if ! gh pr diff "$PR" --repo "$REPO" --name-only | grep -q '^\.github/workflows/'; then
+            echo "edits_workflows=false" >> "$GITHUB_OUTPUT"
+            echo "No workflow files touched; the reviewer can run."
+            exit 0
+          fi
+          echo "edits_workflows=true" >> "$GITHUB_OUTPUT"
+
+          gh label create needs-human-review --repo "$REPO" --color 5319e7 \
+            --description "Edits the factory itself; a person has to read it" \
+            >/dev/null 2>&1 || true
+
+          # Removing the label is not enough on its own: GitHub's auto-merge
+          # stays enabled once `auto-merge.yml` has set it, label or no
+          # label, so it has to be turned off explicitly.
+          gh pr merge --disable-auto "$PR" --repo "$REPO" || true
+          gh pr edit "$PR" --repo "$REPO" --remove-label auto-merge || true
+          gh pr edit "$PR" --repo "$REPO" --add-label needs-human-review || true
+          # A heredoc body would have to sit at column zero, which ends
+          # the YAML block scalar this script lives in. printf keeps every
+          # line indented inside it.
+          gh pr comment "$PR" --repo "$REPO" --body "$(printf '%s\n' \
+            'This pull request edits `.github/workflows/`, so the independent' \
+            'reviewer declines to run on it: a branch must not be able to' \
+            'rewrite its own reviewer.' \
+            '' \
+            'Auto-merge has been turned off and the `auto-merge` label removed,' \
+            'because otherwise this would land as soon as `fmt / clippy / test`' \
+            'went green, unreviewed. That is what happened to #438.' \
+            '' \
+            '**Read the diff, then merge it yourself** - or put the `auto-merge`' \
+            'label back, which re-enables auto-merge, if you are content without' \
+            'reading it.' \
+            '' \
+            'Work order #439.')"
+
       - uses: actions/checkout@v7
+        if: steps.hold.outputs.edits_workflows != 'true'
       - name: Install gui's native build dependencies (Slint)
+        if: steps.hold.outputs.edits_workflows != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -55,6 +110,7 @@ jobs:
       # says nothing and leaves a red mark for somebody to notice.
       - name: Install the agent runtime
         id: agent-runtime
+        if: steps.hold.outputs.edits_workflows != 'true'
         env:
           # Bump deliberately, together with the other workflows that pin it.
           CLAUDE_CODE_VERSION: "2.1.265"
@@ -94,6 +150,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         id: reviewer
+        if: steps.hold.outputs.edits_workflows != 'true'
         with:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -172,6 +229,18 @@ jobs:
 
           if [ "${landed}" -gt 0 ]; then
             echo "Reviewed: ${landed} review(s) on ${HEAD_SHA}."
+            # A hold put on by an earlier run of this station has served
+            # its purpose once a review lands - the runtime failing to
+            # install (#298) is transient, and the pull request should go
+            # back to merging itself. Re-adding the label is what does it:
+            # `auto-merge.yml` triggers on `labeled`.
+            held=$(gh pr view "${PR}" --repo "${REPO}" --json labels \
+              --jq '[.labels[].name] | index("needs-human-review") // empty')
+            if [ -n "${held}" ]; then
+              echo "Releasing the hold: a review landed on ${HEAD_SHA}."
+              gh pr edit "${PR}" --repo "${REPO}" --remove-label needs-human-review || true
+              gh pr edit "${PR}" --repo "${REPO}" --add-label auto-merge || true
+            fi
             exit 0
           fi
 
@@ -180,7 +249,9 @@ jobs:
             echo "::error::Not reviewed. This pull request edits a workflow, so the"
             echo "::error::reviewer declined to run - it refuses to review a branch that"
             echo "::error::could rewrite its own reviewer. That guard is right; the green"
-            echo "::error::tick it used to leave was not. Read this one yourself."
+            echo "::error::tick it used to leave was not. Auto-merge has been turned off"
+            echo "::error::and the pull request labelled needs-human-review, so it waits"
+            echo "::error::rather than landing unread as #438 did. Read this one yourself."
           else
             echo "::error::Not reviewed. The agent step finished as '${AGENT_OUTCOME}' and"
             echo "::error::left no review on ${HEAD_SHA}. Check the log above: a runtime"
