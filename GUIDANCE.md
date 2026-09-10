@@ -75,6 +75,41 @@ Two corollaries, both learned the expensive way:
   `permission_denials_count: 6` — a number, with no way to learn what had
   been denied.
 
+### A cleanup station never discards work on a first sighting
+
+The floor health check runs every half hour and does two irreversible
+things: it closes pull requests, and it closes work orders. Both have now
+been caught acting on an answer they had no right to trust.
+
+It closed six pull requests as "conflicting" on a `mergeable` field GitHub
+had not recomputed since the branches were force-pushed; the field still
+described the commits before the rebase (#435). And it shut four work
+orders that had been deliberately reopened, because GitHub keeps the
+`closedByPullRequestsReferences` link across a reopen - so the four
+formats those orders asked for silently left the backlog, and the pull
+request that "closed" them had built something else entirely.
+
+The shape of both faults is the same: an automated sweep read one answer
+from a system that computes it lazily, and destroyed something on the
+strength of it.
+
+So: **before a cleanup station destroys anything, it asks twice, and the
+two answers have to agree.** Twice means either literally again - a second
+read, with the subject proved not to have moved in between - or a sweep
+later, with the first sighting recorded where the next sweep can see it. A
+disagreement is resolved in favour of leaving things alone; a sweep that
+does nothing costs half an hour, and a sweep that is wrong costs a day.
+
+Two corollaries:
+
+- **Prefer marking to destroying.** A pull request that conflicts is
+  labelled and given a sweep to be rebased before it is closed, and the
+  comment says so. The branch stays on the remote regardless: closing a
+  pull request must never be the only copy of anything.
+- **A human's later answer outranks a stale link.** If somebody reopened a
+  work order after the pull request merged, they were saying the merge did
+  not finish the job. No sweep gets to overrule that from a cached field.
+
 ## 2. Architecture — one brain, two faces
 
 A **fat service** process owns all logic: filesystem traversal, file parsing,
