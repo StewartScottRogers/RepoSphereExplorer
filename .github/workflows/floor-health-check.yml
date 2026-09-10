@@ -9,10 +9,10 @@ name: Floor health check
 #    sometimes holds the run in `action_required` (needs approval) or,
 #    less commonly, never creates one at all - either way auto-merge waits
 #    forever on a check that's never coming. Running often means this
-#    usually catches it while the PR can still merge normally; a PR
-#    already stale/conflicting by the time this runs gets closed instead,
-#    so its issue rebuilds fresh (factory-shift already picks up any issue
-#    with no open PR).
+#    usually catches it while the PR can still merge normally; a PR that
+#    conflicts with main is marked, given a sweep to be rebased, and only
+#    then closed, so its issue rebuilds fresh (factory-shift already picks
+#    up any issue with no open PR).
 # 2. Close any open work-order issue whose linked PR already merged but
 #    left it open. Found by hand once already (7 issues had silently sat
 #    "open" despite being done, inflating the backlog count and risking a
@@ -21,6 +21,11 @@ name: Floor health check
 #
 # Both are deterministic, so this is plain gh/bash - no need for an LLM
 # agent to do lookup-and-branch work with clear conditions.
+#
+# Both sweeps have since been caught acting on an answer they had no right
+# to trust, and both now check twice before doing anything irreversible.
+# See GUIDANCE.md section 1, "A cleanup station never discards work on a
+# first sighting".
 
 on:
   schedule:
@@ -37,12 +42,17 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Unstick or close auto-merge PRs with no working CI check
+      - name: Unstick, mark or close auto-merge PRs with no working CI check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          MARK: stale-conflict
         run: |
           set -u
+          gh label create "$MARK" --repo "$REPO" --color d93f0b \
+            --description "Conflicts with main; closed next sweep if it still does" \
+            >/dev/null 2>&1 || true
+
           prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq '.[].number')
           if [ -z "$prs" ]; then
             echo "No open auto-merge PRs."
@@ -50,15 +60,40 @@ jobs:
           fi
 
           for pr in $prs; do
-            info=$(gh pr view "$pr" --repo "$REPO" --json headRefOid,headRefName,mergeable)
+            info=$(gh pr view "$pr" --repo "$REPO" --json headRefOid,headRefName,mergeable,labels)
             sha=$(echo "$info" | jq -r .headRefOid)
             branch=$(echo "$info" | jq -r .headRefName)
             mergeable=$(echo "$info" | jq -r .mergeable)
+            marked=$(echo "$info" | jq -r --arg mark "$MARK" '[.labels[].name] | index($mark) // empty')
 
             if [ "$mergeable" = "CONFLICTING" ]; then
-              echo "PR #$pr: stale/conflicting against main - closing, issue will rebuild fresh."
-              gh pr close "$pr" --repo "$REPO" --comment "Closing - stale/conflicting against current main. The underlying issue stays open and will be picked up fresh (automated PR health check)."
-              continue
+              # GitHub works `mergeable` out in the background, and for a
+              # while after a push it still answers for the commit before
+              # it. Six pull requests were closed on exactly that stale
+              # answer (#435). So ask again, and believe it only if the head
+              # has not moved and the answer has not changed.
+              sleep 30
+              second=$(gh pr view "$pr" --repo "$REPO" --json headRefOid,mergeable)
+              still=$(echo "$second" | jq -r .mergeable)
+              head_now=$(echo "$second" | jq -r .headRefOid)
+
+              if [ "$head_now" = "$sha" ] && [ "$still" = "CONFLICTING" ]; then
+                if [ -z "$marked" ]; then
+                  echo "PR #$pr: conflicts with main - marking it, looking again next sweep."
+                  gh pr edit "$pr" --repo "$REPO" --add-label "$MARK" || true
+                  gh pr comment "$pr" --repo "$REPO" --body "This branch conflicts with current \`main\`. Rebase it before the next sweep, in half an hour, or the floor health check will close this pull request and the work order will be picked up fresh. The branch itself stays on the remote either way, so no work is lost."
+                else
+                  echo "PR #$pr: still conflicting a sweep later - closing, issue rebuilds fresh."
+                  gh pr close "$pr" --repo "$REPO" --comment "Closing - still conflicting with current main a full sweep after being marked. The branch stays on the remote and the work order stays open, so nothing is lost (automated PR health check)."
+                fi
+                continue
+              fi
+              echo "PR #$pr: the conflict did not survive a second look, leaving it open."
+            fi
+
+            if [ "$mergeable" != "CONFLICTING" ] && [ -n "$marked" ]; then
+              echo "PR #$pr: no longer conflicting, clearing the mark."
+              gh pr edit "$pr" --repo "$REPO" --remove-label "$MARK" || true
             fi
 
             has_ci=$(gh api "repos/$REPO/commits/$sha/check-runs" --jq '[.check_runs[] | select(.name == "fmt / clippy / test")] | length')
@@ -96,6 +131,20 @@ jobs:
             merged=$(gh pr view "$pr" --repo "$REPO" --json mergedAt --jq '.mergedAt // empty')
             if [ -z "$merged" ]; then
               echo "Issue #$n: PR #$pr is linked but not merged, leaving it open."
+              continue
+            fi
+            # GitHub keeps the "closed by" link after an issue is reopened,
+            # so this step used to shut a reopened work order again within
+            # the half hour - four formats went missing from the backlog
+            # that way, because the pull request that "closed" them had
+            # built something else entirely. A reopen dated after the merge
+            # is somebody saying the merge did not finish the job, and that
+            # answer outranks the link.
+            reopened=$(gh api "repos/$REPO/issues/$n/timeline" --paginate \
+              --jq '.[] | select(.event == "reopened") | .created_at' | tail -1)
+            if [ -n "$reopened" ] \
+               && [ "$(date -u -d "$reopened" +%s)" -gt "$(date -u -d "$merged" +%s)" ]; then
+              echo "Issue #$n: reopened $reopened, after PR #$pr merged $merged - leaving it open."
               continue
             fi
             echo "Issue #$n: already resolved by merged PR #$pr, closing."
