@@ -134,6 +134,10 @@ it.
 | pip requirements file | `crates/plugins/requirements` | #342 | Names, specifiers, extras, markers, includes, constraints, index addresses, hash pins, unpinned lines |
 | Yarn lock file | `crates/plugins/yarnlock` | #336 | Generation, requested ranges against resolved versions, patched packages, entries with no checksum |
 | pnpm lock file | `crates/plugins/pnpmlock` | #337 | Format version, workspace projects, locked packages, development-only packages, peer resolutions, patches |
+| Visual Studio solution | `crates/plugins/solution` | #345 | Format version, projects with kinds and paths, solution folders, configurations, projects selected but not built |
+| Jenkinsfile | `crates/plugins/jenkinsfile` | #348 | Style, agent, stages with steps and parallel or conditional marks, parameters, environment names, post conditions |
+| Ansible playbook | `crates/plugins/ansible` | #351 | Plays with hosts, tasks and modules, roles, handlers, variable names, privilege escalation, unnamed tasks, handlers never notified |
+| CloudFormation template | `crates/plugins/cloudformation` | #352 | Description, parameters with types and defaults, resources with types, outputs, conditions, mappings, unused parameters |
 
 ## Folder plugins
 

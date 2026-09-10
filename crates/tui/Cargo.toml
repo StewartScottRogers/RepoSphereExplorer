@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 interprocess = "2.4"
+plugin-ansible = { path = "../plugins/ansible" }
 plugin-antlr = { path = "../plugins/antlr" }
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
@@ -23,6 +24,7 @@ plugin-avro = { path = "../plugins/avro" }
 plugin-assembly = { path = "../plugins/assembly" }
 plugin-bibtex = { path = "../plugins/bibtex" }
 plugin-cargolock = { path = "../plugins/cargolock" }
+plugin-cloudformation = { path = "../plugins/cloudformation" }
 plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dotenv = { path = "../plugins/dotenv" }
@@ -34,6 +36,7 @@ plugin-gitlabci = { path = "../plugins/gitlabci" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
+plugin-jenkinsfile = { path = "../plugins/jenkinsfile" }
 plugin-jsonschema = { path = "../plugins/jsonschema" }
 plugin-githubactions = { path = "../plugins/githubactions" }
 plugin-kubernetes = { path = "../plugins/kubernetes" }
@@ -50,6 +53,7 @@ plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
+plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-thrift = { path = "../plugins/thrift" }
 plugin-vimscript = { path = "../plugins/vimscript" }

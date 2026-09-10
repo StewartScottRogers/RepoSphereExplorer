@@ -1,0 +1,18 @@
+// A pipeline part-way through being written: the shape is there, the
+// release stage is not. Jenkins runs it green and publishes nothing.
+pipeline {
+    agent any
+
+    stages {
+        stage('Build') {
+            steps {
+                sh 'cargo build --release'
+            }
+        }
+
+        stage('Release') {
+            steps {
+            }
+        }
+    }
+}

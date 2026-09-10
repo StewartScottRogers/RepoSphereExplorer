@@ -2680,6 +2680,7 @@ dependencies = [
  "i-slint-backend-testing",
  "interprocess",
  "plugin-ada",
+ "plugin-ansible",
  "plugin-antlr",
  "plugin-api",
  "plugin-archive",
@@ -2692,6 +2693,7 @@ dependencies = [
  "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
+ "plugin-cloudformation",
  "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
@@ -2731,6 +2733,7 @@ dependencies = [
  "plugin-ini",
  "plugin-java",
  "plugin-javascript",
+ "plugin-jenkinsfile",
  "plugin-json",
  "plugin-jsonschema",
  "plugin-julia",
@@ -2775,6 +2778,7 @@ dependencies = [
  "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
+ "plugin-solution",
  "plugin-sourcemap",
  "plugin-spreadsheet",
  "plugin-sql",
@@ -5438,6 +5442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-ansible"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-antlr"
 version = "0.6.0"
 dependencies = [
@@ -5547,6 +5560,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-clojure"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-cloudformation"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -5909,6 +5931,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-javascript"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-jenkinsfile"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6317,6 +6348,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-solidity"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-solution"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7651,6 +7691,7 @@ dependencies = [
  "dirs",
  "interprocess",
  "plugin-ada",
+ "plugin-ansible",
  "plugin-antlr",
  "plugin-api",
  "plugin-archive",
@@ -7663,6 +7704,7 @@ dependencies = [
  "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
+ "plugin-cloudformation",
  "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
@@ -7702,6 +7744,7 @@ dependencies = [
  "plugin-ini",
  "plugin-java",
  "plugin-javascript",
+ "plugin-jenkinsfile",
  "plugin-json",
  "plugin-jsonschema",
  "plugin-julia",
@@ -7746,6 +7789,7 @@ dependencies = [
  "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
+ "plugin-solution",
  "plugin-sourcemap",
  "plugin-spreadsheet",
  "plugin-sql",
@@ -8780,6 +8824,7 @@ version = "0.6.0"
 dependencies = [
  "interprocess",
  "plugin-ada",
+ "plugin-ansible",
  "plugin-antlr",
  "plugin-api",
  "plugin-archive",
@@ -8792,6 +8837,7 @@ dependencies = [
  "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
+ "plugin-cloudformation",
  "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
@@ -8831,6 +8877,7 @@ dependencies = [
  "plugin-ini",
  "plugin-java",
  "plugin-javascript",
+ "plugin-jenkinsfile",
  "plugin-json",
  "plugin-jsonschema",
  "plugin-julia",
@@ -8875,6 +8922,7 @@ dependencies = [
  "plugin-scheme",
  "plugin-shell",
  "plugin-solidity",
+ "plugin-solution",
  "plugin-sourcemap",
  "plugin-spreadsheet",
  "plugin-sql",
