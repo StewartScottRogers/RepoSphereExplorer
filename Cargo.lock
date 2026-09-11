@@ -2682,6 +2682,7 @@ dependencies = [
  "plugin-ada",
  "plugin-ansible",
  "plugin-antlr",
+ "plugin-apacheconf",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -2690,6 +2691,7 @@ dependencies = [
  "plugin-avro",
  "plugin-bibtex",
  "plugin-c",
+ "plugin-caddyfile",
  "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
@@ -2748,6 +2750,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
+ "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
  "plugin-objective-c",
@@ -2786,6 +2789,7 @@ dependencies = [
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
+ "plugin-systemdunit",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
@@ -5460,6 +5464,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-apacheconf"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-api"
 version = "0.6.0"
 dependencies = [
@@ -5528,6 +5541,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-c"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-caddyfile"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6075,6 +6097,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-nginxconf"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-nim"
 version = "0.6.0"
 dependencies = [
@@ -6423,6 +6454,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-swift"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-systemdunit"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7693,6 +7733,7 @@ dependencies = [
  "plugin-ada",
  "plugin-ansible",
  "plugin-antlr",
+ "plugin-apacheconf",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -7701,6 +7742,7 @@ dependencies = [
  "plugin-avro",
  "plugin-bibtex",
  "plugin-c",
+ "plugin-caddyfile",
  "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
@@ -7759,6 +7801,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
+ "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
  "plugin-objective-c",
@@ -7797,6 +7840,7 @@ dependencies = [
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
+ "plugin-systemdunit",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
@@ -8826,6 +8870,7 @@ dependencies = [
  "plugin-ada",
  "plugin-ansible",
  "plugin-antlr",
+ "plugin-apacheconf",
  "plugin-api",
  "plugin-archive",
  "plugin-asciidoc",
@@ -8834,6 +8879,7 @@ dependencies = [
  "plugin-avro",
  "plugin-bibtex",
  "plugin-c",
+ "plugin-caddyfile",
  "plugin-cargolock",
  "plugin-certificate",
  "plugin-clojure",
@@ -8892,6 +8938,7 @@ dependencies = [
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
+ "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
  "plugin-objective-c",
@@ -8930,6 +8977,7 @@ dependencies = [
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
+ "plugin-systemdunit",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",

@@ -150,6 +150,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_jenkinsfile::JenkinsfilePresentation,
     &plugin_ansible::AnsiblePresentation,
     &plugin_cloudformation::CloudformationPresentation,
+    &plugin_systemdunit::SystemdunitPresentation,
+    &plugin_nginxconf::NginxconfPresentation,
+    &plugin_apacheconf::ApacheconfPresentation,
+    &plugin_caddyfile::CaddyfilePresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

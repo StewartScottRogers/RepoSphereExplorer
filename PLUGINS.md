@@ -138,6 +138,10 @@ it.
 | Jenkinsfile | `crates/plugins/jenkinsfile` | #348 | Style, agent, stages with steps and parallel or conditional marks, parameters, environment names, post conditions |
 | Ansible playbook | `crates/plugins/ansible` | #351 | Plays with hosts, tasks and modules, roles, handlers, variable names, privilege escalation, unnamed tasks, handlers never notified |
 | CloudFormation template | `crates/plugins/cloudformation` | #352 | Description, parameters with types and defaults, resources with types, outputs, conditions, mappings, unused parameters |
+| systemd unit | `crates/plugins/systemdunit` | #363 | Kind, description, relations, service type, commands, restart policy, hardening set and not set, install target |
+| nginx configuration | `crates/plugins/nginxconf` | #364 | Server blocks with names and ports, locations and what each does, upstreams, logs, certificates, plain HTTP servers |
+| Apache configuration | `crates/plugins/apacheconf` | #365 | Virtual hosts with names and roots, directory and location containers, modules, rewrite rules, certificates, directory listings |
+| Caddyfile | `crates/plugins/caddyfile` | #366 | Global options, sites with their directives, reverse proxy targets, matchers, snippets, sites served over plain HTTP |
 
 ## Folder plugins
 

@@ -14,7 +14,14 @@ use std::io;
 use std::path::Path;
 
 /// The lowercase extensions this type claims, without their dot.
-pub const EXTENSIONS: &[&str] = &["ini", "cfg", "conf", "inf"];
+///
+/// `conf` is deliberately not among them. An extension is a hint that
+/// chooses between plugins which all recognised the content
+/// (GUIDANCE.md section 3.3), and `.conf` is worn by nginx, Apache,
+/// systemd and a dozen others, so as a hint it points nowhere. A
+/// `.conf` file that really is in this dialect still lands here, by
+/// being sniffed rather than by being named.
+pub const EXTENSIONS: &[&str] = &["ini", "cfg", "inf"];
 
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;

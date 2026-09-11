@@ -139,6 +139,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_jenkinsfile::JenkinsfilePresentation,
     &plugin_ansible::AnsiblePresentation,
     &plugin_cloudformation::CloudformationPresentation,
+    &plugin_systemdunit::SystemdunitPresentation,
+    &plugin_nginxconf::NginxconfPresentation,
+    &plugin_apacheconf::ApacheconfPresentation,
+    &plugin_caddyfile::CaddyfilePresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

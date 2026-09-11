@@ -117,6 +117,14 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_ansible::AnsibleCore,
     &plugin_yaml::YamlCore,
     &plugin_gitconfig::GitconfigCore,
+    &plugin_systemdunit::SystemdunitCore,
+    // These three sit ahead of `ini`, which sniffs loosely enough to
+    // claim all of them: an nginx, Apache or Caddy configuration is not
+    // a narrower kind of INI file, so `specialises` would be a lie -
+    // this is what the order in this list is for.
+    &plugin_nginxconf::NginxconfCore,
+    &plugin_apacheconf::ApacheconfCore,
+    &plugin_caddyfile::CaddyfileCore,
     &plugin_ini::IniCore,
     &plugin_properties::PropertiesCore,
     &plugin_diff::DiffCore,

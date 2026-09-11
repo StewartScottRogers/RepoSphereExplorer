@@ -1,0 +1,57 @@
+{
+	email floor@example.com
+	admin off
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+(logging) {
+	log {
+		output file /var/log/caddy/access.log
+		format json
+	}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000;"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}
+
+explorer.example.com, www.explorer.example.com {
+	import logging
+	import security_headers
+
+	encode gzip zstd
+
+	@api path /api/*
+	@static path /static/*
+
+	handle @api {
+		reverse_proxy 127.0.0.1:8080 127.0.0.1:8081 {
+			lb_policy least_conn
+			health_uri /health
+		}
+	}
+
+	handle @static {
+		root * /srv/explorer
+		file_server browse
+	}
+
+	handle {
+		root * /srv/explorer/public
+		try_files {path} /index.html
+		file_server
+	}
+
+	handle_errors {
+		respond "Something went wrong" 500
+	}
+}
+
+http://metrics.internal:8080 {
+	import logging
+	reverse_proxy 127.0.0.1:9090
+}
