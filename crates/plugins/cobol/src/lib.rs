@@ -53,6 +53,10 @@ pub struct CobolView {
     pub truncated: bool,
 }
 
+/// Statements that are a single word, and so look on the page exactly
+/// like a paragraph name written on a line of its own.
+const ONE_WORD_STATEMENTS: &[&str] = &["EXIT", "CONTINUE", "GOBACK", "STOP"];
+
 /// The four divisions, in the order COBOL requires them.
 const DIVISIONS: &[&str] = &["IDENTIFICATION", "ENVIRONMENT", "DATA", "PROCEDURE"];
 
@@ -196,8 +200,17 @@ fn parse(text: &str) -> CobolView {
             continue;
         }
         if division == "PROCEDURE" && line.ends_with('.') && !line.contains(' ') && line.len() > 1 {
-            // A paragraph name is a word alone on a line, with a full stop.
-            view.paragraphs.push(line.trim_end_matches('.').to_owned());
+            // A paragraph name is a word alone on a line with a full stop -
+            // and so, written out, is every scope terminator and a handful
+            // of one-word statements. Reading those as paragraphs invented
+            // five of the nine this repository's own fixture appeared to
+            // have, and then reported two of them as unreachable. Found by
+            // running the application, not by a test.
+            let name = line.trim_end_matches('.');
+            let upper = name.to_ascii_uppercase();
+            if !upper.starts_with("END-") && !ONE_WORD_STATEMENTS.contains(&upper.as_str()) {
+                view.paragraphs.push(name.to_owned());
+            }
         }
     }
 
@@ -442,6 +455,34 @@ mod tests {
         let count = &view.working_storage[1];
         assert_eq!(count.picture.as_deref(), Some("9(4)"));
         assert_eq!(count.value.as_deref(), Some("ZERO"));
+    }
+
+    #[test]
+    fn a_scope_terminator_is_not_a_paragraph() {
+        let view = parse(concat!(
+            "       IDENTIFICATION DIVISION.\n",
+            "       PROGRAM-ID. T.\n",
+            "       PROCEDURE DIVISION.\n",
+            "       MAIN-PARAGRAPH.\n",
+            "           READ SAMPLE-FILE\n",
+            "               AT END\n",
+            "                   MOVE \"Y\" TO WS-EOF\n",
+            "           END-READ.\n",
+            "           IF WS-COUNT > ZERO\n",
+            "               DISPLAY WS-COUNT\n",
+            "           END-IF.\n",
+            "           EXIT.\n",
+        ));
+
+        assert_eq!(
+            view.paragraphs,
+            vec!["MAIN-PARAGRAPH".to_owned()],
+            "END-READ, END-IF and EXIT are statements on a line of their own"
+        );
+        assert!(
+            view.never_performed.is_empty(),
+            "and so none of them can be an unreachable paragraph either"
+        );
     }
 
     #[test]
