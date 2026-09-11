@@ -1,0 +1,23 @@
+local csvstats = require("csvstats")
+
+describe("Column", function()
+    it("has no mean when it is empty", function()
+        local column = csvstats.Column.new("empty")
+        assert.is_nil(column:mean())
+    end)
+
+    it("averages what it is given", function()
+        local column = csvstats.Column.new("n")
+        column:add(1)
+        column:add(2)
+        column:add(3)
+        assert.are.equal(2, column:mean())
+    end)
+
+    it("reports no deviation for one repeated value", function()
+        local column = csvstats.Column.new("flat")
+        column:add(7)
+        column:add(7)
+        assert.are.equal(0, column:deviation())
+    end)
+end)

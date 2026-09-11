@@ -143,6 +143,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_nginxconf::NginxconfPresentation,
     &plugin_apacheconf::ApacheconfPresentation,
     &plugin_caddyfile::CaddyfilePresentation,
+    &plugin_sshconfig::SshconfigPresentation,
+    &plugin_lua::LuaPresentation,
+    &plugin_zig::ZigPresentation,
+    &plugin_dlang::DlangPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

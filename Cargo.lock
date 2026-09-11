@@ -2706,6 +2706,7 @@ dependencies = [
  "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
+ "plugin-dlang",
  "plugin-dockerfile",
  "plugin-dotenv",
  "plugin-editorconfig",
@@ -2744,6 +2745,7 @@ dependencies = [
  "plugin-kubernetes",
  "plugin-latex",
  "plugin-lex",
+ "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-maven",
@@ -2786,6 +2788,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-sshconfig",
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
@@ -2807,6 +2810,7 @@ dependencies = [
  "plugin-yacc",
  "plugin-yaml",
  "plugin-yarnlock",
+ "plugin-zig",
  "protocol",
  "serde_json",
  "service",
@@ -5694,6 +5698,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-dlang"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-dockerfile"
 version = "0.6.0"
 dependencies = [
@@ -6034,6 +6047,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-lex"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-lua"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6435,6 +6457,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-sshconfig"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-svelte"
 version = "0.6.0"
 dependencies = [
@@ -6622,6 +6653,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-yarnlock"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-zig"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7757,6 +7797,7 @@ dependencies = [
  "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
+ "plugin-dlang",
  "plugin-dockerfile",
  "plugin-dotenv",
  "plugin-editorconfig",
@@ -7795,6 +7836,7 @@ dependencies = [
  "plugin-kubernetes",
  "plugin-latex",
  "plugin-lex",
+ "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-maven",
@@ -7837,6 +7879,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-sshconfig",
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
@@ -7858,6 +7901,7 @@ dependencies = [
  "plugin-yacc",
  "plugin-yaml",
  "plugin-yarnlock",
+ "plugin-zig",
  "protocol",
  "serde",
  "serde_json",
@@ -8894,6 +8938,7 @@ dependencies = [
  "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
+ "plugin-dlang",
  "plugin-dockerfile",
  "plugin-dotenv",
  "plugin-editorconfig",
@@ -8932,6 +8977,7 @@ dependencies = [
  "plugin-kubernetes",
  "plugin-latex",
  "plugin-lex",
+ "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
  "plugin-maven",
@@ -8974,6 +9020,7 @@ dependencies = [
  "plugin-spreadsheet",
  "plugin-sql",
  "plugin-sqlite",
+ "plugin-sshconfig",
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
@@ -8995,6 +9042,7 @@ dependencies = [
  "plugin-yacc",
  "plugin-yaml",
  "plugin-yarnlock",
+ "plugin-zig",
  "protocol",
  "ratatui",
  "serde_json",

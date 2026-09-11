@@ -142,6 +142,10 @@ it.
 | nginx configuration | `crates/plugins/nginxconf` | #364 | Server blocks with names and ports, locations and what each does, upstreams, logs, certificates, plain HTTP servers |
 | Apache configuration | `crates/plugins/apacheconf` | #365 | Virtual hosts with names and roots, directory and location containers, modules, rewrite rules, certificates, directory listings |
 | Caddyfile | `crates/plugins/caddyfile` | #366 | Global options, sites with their directives, reverse proxy targets, matchers, snippets, sites served over plain HTTP |
+| SSH client configuration | `crates/plugins/sshconfig` | #367 | Host blocks and what each sets, identity files, proxy jumps, port forwards, includes, checks turned off |
+| Lua | `crates/plugins/lua` | #376 | Functions with parameters and scope, locals, tables, requires, metatables, names assigned without local |
+| Zig | `crates/plugins/zig` | #377 | Imports, functions with signatures and visibility, structs, enumerations, error sets, tests, comptime blocks, unreleased allocations |
+| D | `crates/plugins/dlang` | #378 | Module, imports, functions with attributes and templates, structs, classes, templates, mixins, unittests, unchecked functions |
 
 ## Folder plugins
 
