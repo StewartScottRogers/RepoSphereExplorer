@@ -31,6 +31,7 @@ plugin-cargolock = { path = "../plugins/cargolock" }
 plugin-cloudformation = { path = "../plugins/cloudformation" }
 plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
+plugin-dlang = { path = "../plugins/dlang" }
 plugin-dotenv = { path = "../plugins/dotenv" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
 plugin-flatbuffers = { path = "../plugins/flatbuffers" }
@@ -46,6 +47,7 @@ plugin-githubactions = { path = "../plugins/githubactions" }
 plugin-kubernetes = { path = "../plugins/kubernetes" }
 plugin-latex = { path = "../plugins/latex" }
 plugin-lex = { path = "../plugins/lex" }
+plugin-lua = { path = "../plugins/lua" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-maven = { path = "../plugins/maven" }
 plugin-msbuild = { path = "../plugins/msbuild" }
@@ -60,6 +62,7 @@ plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
+plugin-sshconfig = { path = "../plugins/sshconfig" }
 plugin-systemdunit = { path = "../plugins/systemdunit" }
 plugin-thrift = { path = "../plugins/thrift" }
 plugin-vimscript = { path = "../plugins/vimscript" }
@@ -143,6 +146,7 @@ plugin-xml = { path = "../plugins/xml" }
 plugin-yacc = { path = "../plugins/yacc" }
 plugin-yaml = { path = "../plugins/yaml" }
 plugin-yarnlock = { path = "../plugins/yarnlock" }
+plugin-zig = { path = "../plugins/zig" }
 protocol = { path = "../protocol" }
 serde_json = "1"
 slint = "1.17"

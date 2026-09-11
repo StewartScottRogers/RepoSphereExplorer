@@ -1,0 +1,38 @@
+# The floor's own machines. Everything else is left to the defaults.
+
+Include ~/.ssh/config.d/*.conf
+
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    HashKnownHosts yes
+    AddKeysToAgent yes
+    IdentitiesOnly yes
+
+Host build
+    HostName build.example.com
+    User floor
+    Port 2222
+    IdentityFile ~/.ssh/id_ed25519_build
+    LocalForward 9090 127.0.0.1:9090
+
+Host db
+    HostName db.internal
+    User explorer
+    ProxyJump build
+    IdentityFile ~/.ssh/id_ed25519_build
+    LocalForward 5432 127.0.0.1:5432
+
+Host mirror
+    HostName mirror.example.net
+    User git
+    IdentityFile ~/.ssh/id_ed25519_mirror
+    DynamicForward 1080
+
+# A throwaway machine that is rebuilt every morning, so its key is
+# different every morning too.
+Host scratch
+    HostName 10.0.0.9
+    User root
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null

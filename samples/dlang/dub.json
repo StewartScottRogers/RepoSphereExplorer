@@ -1,0 +1,21 @@
+{
+    "name": "csvstats",
+    "description": "Summary statistics for comma-separated files.",
+    "authors": ["The floor"],
+    "license": "MIT",
+    "targetType": "executable",
+    "sourcePaths": ["source"],
+    "dependencies": {},
+    "configurations": [
+        {
+            "name": "application",
+            "targetType": "executable",
+            "mainSourceFile": "source/app.d"
+        },
+        {
+            "name": "library",
+            "targetType": "library",
+            "excludedSourceFiles": ["source/app.d"]
+        }
+    ]
+}
