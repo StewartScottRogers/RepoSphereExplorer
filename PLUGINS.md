@@ -146,6 +146,10 @@ it.
 | Lua | `crates/plugins/lua` | #376 | Functions with parameters and scope, locals, tables, requires, metatables, names assigned without local |
 | Zig | `crates/plugins/zig` | #377 | Imports, functions with signatures and visibility, structs, enumerations, error sets, tests, comptime blocks, unreleased allocations |
 | D | `crates/plugins/dlang` | #378 | Module, imports, functions with attributes and templates, structs, classes, templates, mixins, unittests, unchecked functions |
+| Pascal | `crates/plugins/pascal` | #379 | Header, units used per half, types, classes and properties, routines with parameters and return types, unwritten interface routines |
+| COBOL | `crates/plugins/cobol` | #380 | Program identifier, divisions and sections, file control entries, working storage with levels and pictures, paragraphs, unreachable paragraphs |
+| Verilog | `crates/plugins/verilog` | #381 | Modules with parameters and typed ports, procedural blocks and sensitivity, instances, interfaces, assertions, bare always blocks |
+| VHDL | `crates/plugins/vhdl` | #382 | Libraries and packages, entities with generics and ports, architectures, processes with sensitivity lists, signals, instances, processes that run once |
 
 ## Folder plugins
 
