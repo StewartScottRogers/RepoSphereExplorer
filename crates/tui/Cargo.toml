@@ -27,6 +27,7 @@ plugin-bibtex = { path = "../plugins/bibtex" }
 plugin-caddyfile = { path = "../plugins/caddyfile" }
 plugin-cargolock = { path = "../plugins/cargolock" }
 plugin-cloudformation = { path = "../plugins/cloudformation" }
+plugin-cobol = { path = "../plugins/cobol" }
 plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dlang = { path = "../plugins/dlang" }
@@ -53,6 +54,7 @@ plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-openapi = { path = "../plugins/openapi" }
 plugin-orgmode = { path = "../plugins/orgmode" }
+plugin-pascal = { path = "../plugins/pascal" }
 plugin-pnpmlock = { path = "../plugins/pnpmlock" }
 plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
@@ -63,6 +65,8 @@ plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-sshconfig = { path = "../plugins/sshconfig" }
 plugin-systemdunit = { path = "../plugins/systemdunit" }
 plugin-thrift = { path = "../plugins/thrift" }
+plugin-verilog = { path = "../plugins/verilog" }
+plugin-vhdl = { path = "../plugins/vhdl" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }
 plugin-certificate = { path = "../plugins/certificate" }

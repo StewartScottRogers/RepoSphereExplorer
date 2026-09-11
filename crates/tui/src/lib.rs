@@ -158,6 +158,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_lua::LuaPresentation,
     &plugin_zig::ZigPresentation,
     &plugin_dlang::DlangPresentation,
+    &plugin_pascal::PascalPresentation,
+    &plugin_cobol::CobolPresentation,
+    &plugin_verilog::VerilogPresentation,
+    &plugin_vhdl::VhdlPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

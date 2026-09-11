@@ -2696,6 +2696,7 @@ dependencies = [
  "plugin-certificate",
  "plugin-clojure",
  "plugin-cloudformation",
+ "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
@@ -2761,6 +2762,7 @@ dependencies = [
  "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
+ "plugin-pascal",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
@@ -2800,6 +2802,8 @@ dependencies = [
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
+ "plugin-verilog",
+ "plugin-vhdl",
  "plugin-video",
  "plugin-vimscript",
  "plugin-vue",
@@ -5603,6 +5607,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-cobol"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-codeowners"
 version = "0.6.0"
 dependencies = [
@@ -6206,6 +6219,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-pascal"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-pdf"
 version = "0.6.0"
 dependencies = [
@@ -6558,6 +6580,24 @@ dependencies = [
 
 [[package]]
 name = "plugin-vbnet"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-verilog"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-vhdl"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7787,6 +7827,7 @@ dependencies = [
  "plugin-certificate",
  "plugin-clojure",
  "plugin-cloudformation",
+ "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
@@ -7852,6 +7893,7 @@ dependencies = [
  "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
+ "plugin-pascal",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
@@ -7891,6 +7933,8 @@ dependencies = [
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
+ "plugin-verilog",
+ "plugin-vhdl",
  "plugin-video",
  "plugin-vimscript",
  "plugin-vue",
@@ -8928,6 +8972,7 @@ dependencies = [
  "plugin-certificate",
  "plugin-clojure",
  "plugin-cloudformation",
+ "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
  "plugin-cpp",
@@ -8993,6 +9038,7 @@ dependencies = [
  "plugin-orgmode",
  "plugin-package-archive",
  "plugin-parquet",
+ "plugin-pascal",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
@@ -9032,6 +9078,8 @@ dependencies = [
  "plugin-toml",
  "plugin-typescript",
  "plugin-vbnet",
+ "plugin-verilog",
+ "plugin-vhdl",
  "plugin-video",
  "plugin-vimscript",
  "plugin-vue",
