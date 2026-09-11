@@ -17,6 +17,7 @@ dirs = "6"
 interprocess = "2.4"
 plugin-ansible = { path = "../plugins/ansible" }
 plugin-antlr = { path = "../plugins/antlr" }
+plugin-apacheconf = { path = "../plugins/apacheconf" }
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
 plugin-archive = { path = "../plugins/archive" }
@@ -25,6 +26,7 @@ plugin-audio = { path = "../plugins/audio" }
 plugin-avro = { path = "../plugins/avro" }
 plugin-assembly = { path = "../plugins/assembly" }
 plugin-bibtex = { path = "../plugins/bibtex" }
+plugin-caddyfile = { path = "../plugins/caddyfile" }
 plugin-cargolock = { path = "../plugins/cargolock" }
 plugin-cloudformation = { path = "../plugins/cloudformation" }
 plugin-codeowners = { path = "../plugins/codeowners" }
@@ -47,6 +49,7 @@ plugin-lex = { path = "../plugins/lex" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-maven = { path = "../plugins/maven" }
 plugin-msbuild = { path = "../plugins/msbuild" }
+plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-openapi = { path = "../plugins/openapi" }
 plugin-orgmode = { path = "../plugins/orgmode" }
@@ -57,6 +60,7 @@ plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
+plugin-systemdunit = { path = "../plugins/systemdunit" }
 plugin-thrift = { path = "../plugins/thrift" }
 plugin-vimscript = { path = "../plugins/vimscript" }
 plugin-c = { path = "../plugins/c" }

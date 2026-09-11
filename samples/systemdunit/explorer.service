@@ -1,0 +1,33 @@
+[Unit]
+Description=Repos Explorer service
+Documentation=https://example.com/repos-explorer man:explorer(8)
+After=network-online.target explorer-db.service
+Wants=network-online.target
+Requires=explorer.socket
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=notify
+User=explorer
+Group=explorer
+WorkingDirectory=/var/lib/explorer
+Environment=RUST_LOG=info
+EnvironmentFile=-/etc/default/explorer
+ExecStartPre=/usr/bin/explorer check --config /etc/explorer/explorer.toml
+ExecStart=/usr/bin/explorer serve \
+    --config /etc/explorer/explorer.toml \
+    --listen-fd 3 \
+    --repos-directory /srv/repos
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStopPost=/usr/bin/explorer report-exit
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
