@@ -23,6 +23,8 @@ plugin-asciidoc = { path = "../plugins/asciidoc" }
 plugin-audio = { path = "../plugins/audio" }
 plugin-avro = { path = "../plugins/avro" }
 plugin-assembly = { path = "../plugins/assembly" }
+plugin-awk = { path = "../plugins/awk" }
+plugin-batchfile = { path = "../plugins/batchfile" }
 plugin-bibtex = { path = "../plugins/bibtex" }
 plugin-caddyfile = { path = "../plugins/caddyfile" }
 plugin-cargolock = { path = "../plugins/cargolock" }
@@ -33,6 +35,7 @@ plugin-diff = { path = "../plugins/diff" }
 plugin-dlang = { path = "../plugins/dlang" }
 plugin-dotenv = { path = "../plugins/dotenv" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
+plugin-elisp = { path = "../plugins/elisp" }
 plugin-flatbuffers = { path = "../plugins/flatbuffers" }
 plugin-gitattributes = { path = "../plugins/gitattributes" }
 plugin-gitconfig = { path = "../plugins/gitconfig" }
@@ -48,6 +51,7 @@ plugin-latex = { path = "../plugins/latex" }
 plugin-lex = { path = "../plugins/lex" }
 plugin-lua = { path = "../plugins/lua" }
 plugin-markdown = { path = "../plugins/markdown" }
+plugin-matlab = { path = "../plugins/matlab" }
 plugin-maven = { path = "../plugins/maven" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }

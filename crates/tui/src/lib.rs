@@ -162,6 +162,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_cobol::CobolPresentation,
     &plugin_verilog::VerilogPresentation,
     &plugin_vhdl::VhdlPresentation,
+    &plugin_matlab::MatlabPresentation,
+    &plugin_elisp::ElispPresentation,
+    &plugin_awk::AwkPresentation,
+    &plugin_batchfile::BatchfilePresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever
