@@ -1,6 +1,8 @@
 # Build output.
 /build/
-worker
+# Anchored: the built binary sits at the project root, and an
+# unanchored `worker` also matches the `cmd/worker/` directory.
+/worker
 
 # Test and coverage artefacts.
 *.out

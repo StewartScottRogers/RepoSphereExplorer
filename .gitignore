@@ -7,5 +7,8 @@
 Thumbs.db
 .DS_Store
 
-# Local MCP session state (cipher)
-data/
+# Local Model Context Protocol session state (cipher). Anchored to the
+# repository root: unanchored, `data/` matches a directory of that name at
+# any depth, and it silently swallowed `samples/purescript/src/Data/`,
+# whose fixtures were then never committed at all.
+/data/
