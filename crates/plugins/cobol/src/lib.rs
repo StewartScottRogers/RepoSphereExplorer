@@ -73,7 +73,12 @@ fn source_of(line: &str) -> Option<&str> {
     // A fixed-format line is at least seven columns of margin; if the
     // first six are digits or blank and the seventh is an indicator,
     // treat it as fixed.
-    if line.len() > 7 {
+    // `split_at` takes a byte index, and seven bytes into a line holding
+    // any character outside ASCII is not a character boundary - which
+    // panics. A margin is digits and blanks, so a line that is not ASCII
+    // there was never fixed-format anyway. Found by sniffing a comma
+    // separated fixture that happened to hold an 'ã'.
+    if line.len() > 7 && line.is_char_boundary(7) {
         let (area, rest) = line.split_at(7);
         let sequence = &area[..6];
         let indicator = area.as_bytes()[6];
@@ -385,6 +390,17 @@ mod tests {
     fn does_not_claim_prose_that_uses_the_word_division() {
         assert!(!CobolCore.sniff(b"The data division met on Tuesday.\n"));
         assert!(!CobolCore.sniff(b""));
+    }
+
+    #[test]
+    fn a_line_that_is_not_ascii_in_the_margin_does_not_panic() {
+        // `split_at(7)` takes a byte index; this line has a two-byte
+        // character straddling it.
+        let line = "v\u{e0}lor\u{e3},2,3";
+
+        assert!(super::source_of(line).is_some());
+        let not_ascii = "v\u{e0}lor\u{e3},2,3\nsecond,4,5\n";
+        assert!(!CobolCore.sniff(not_ascii.as_bytes()));
     }
 
     #[test]

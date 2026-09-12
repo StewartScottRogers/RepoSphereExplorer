@@ -150,6 +150,10 @@ it.
 | COBOL | `crates/plugins/cobol` | #380 | Program identifier, divisions and sections, file control entries, working storage with levels and pictures, paragraphs, unreachable paragraphs |
 | Verilog | `crates/plugins/verilog` | #381 | Modules with parameters and typed ports, procedural blocks and sensitivity, instances, interfaces, assertions, bare always blocks |
 | VHDL | `crates/plugins/vhdl` | #382 | Libraries and packages, entities with generics and ports, architectures, processes with sensitivity lists, signals, instances, processes that run once |
+| MATLAB | `crates/plugins/matlab` | #383 | Kind, class, functions with inputs and several outputs, nested functions, cell sections, toolbox calls, unchecked arguments |
+| Emacs Lisp | `crates/plugins/elisp` | #384 | Package header, lexical binding, definitions with commands and autoloads, requires and provides, key bindings, unreachable commands |
+| AWK | `crates/plugins/awk` | #385 | BEGIN and END blocks, pattern-action rules, functions, field separator, highest field, arrays, names global inside a function |
+| Batch file | `crates/plugins/batchfile` | #386 | Echo, setlocal, delayed expansion, labels, calls and jumps, variables, programs run, errorlevel checks, unreachable labels, missing labels |
 
 ## Folder plugins
 

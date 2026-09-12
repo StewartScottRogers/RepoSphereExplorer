@@ -2689,6 +2689,8 @@ dependencies = [
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
+ "plugin-awk",
+ "plugin-batchfile",
  "plugin-bibtex",
  "plugin-c",
  "plugin-caddyfile",
@@ -2711,6 +2713,7 @@ dependencies = [
  "plugin-dockerfile",
  "plugin-dotenv",
  "plugin-editorconfig",
+ "plugin-elisp",
  "plugin-elixir",
  "plugin-elm",
  "plugin-epub",
@@ -2749,6 +2752,7 @@ dependencies = [
  "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-matlab",
  "plugin-maven",
  "plugin-model3d",
  "plugin-msbuild",
@@ -5539,6 +5543,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-awk"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-batchfile"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-bibtex"
 version = "0.6.0"
 dependencies = [
@@ -5739,6 +5761,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-editorconfig"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-elisp"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6087,6 +6118,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-markdown"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-matlab"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7820,6 +7860,8 @@ dependencies = [
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
+ "plugin-awk",
+ "plugin-batchfile",
  "plugin-bibtex",
  "plugin-c",
  "plugin-caddyfile",
@@ -7842,6 +7884,7 @@ dependencies = [
  "plugin-dockerfile",
  "plugin-dotenv",
  "plugin-editorconfig",
+ "plugin-elisp",
  "plugin-elixir",
  "plugin-elm",
  "plugin-epub",
@@ -7880,6 +7923,7 @@ dependencies = [
  "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-matlab",
  "plugin-maven",
  "plugin-model3d",
  "plugin-msbuild",
@@ -8965,6 +9009,8 @@ dependencies = [
  "plugin-assembly",
  "plugin-audio",
  "plugin-avro",
+ "plugin-awk",
+ "plugin-batchfile",
  "plugin-bibtex",
  "plugin-c",
  "plugin-caddyfile",
@@ -8987,6 +9033,7 @@ dependencies = [
  "plugin-dockerfile",
  "plugin-dotenv",
  "plugin-editorconfig",
+ "plugin-elisp",
  "plugin-elixir",
  "plugin-elm",
  "plugin-epub",
@@ -9025,6 +9072,7 @@ dependencies = [
  "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
+ "plugin-matlab",
  "plugin-maven",
  "plugin-model3d",
  "plugin-msbuild",
