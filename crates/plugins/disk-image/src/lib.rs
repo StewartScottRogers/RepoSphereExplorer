@@ -21,7 +21,12 @@ use std::path::Path;
 /// Both halves report these: the presentation half so a listing can
 /// mark the file, the core half so `service` can tell this type from
 /// another whose content heuristic matches the same text.
-pub const EXTENSIONS: &[&str] = &["iso", "img", "vhd", "vmdk"];
+/// `vhd` is not among them. This plugin recognises ISO 9660 content
+/// and nothing else, so the hint could never settle a `.vhd` file on
+/// it anyway - an extension only chooses between plugins that have
+/// already recognised the bytes (GUIDANCE.md section 3.3). VHDL, which
+/// has no magic to sniff, needs it.
+pub const EXTENSIONS: &[&str] = &["iso", "img", "vmdk"];
 
 /// Sector size fixed by the ISO 9660 spec.
 const SECTOR_SIZE: u64 = 2048;
