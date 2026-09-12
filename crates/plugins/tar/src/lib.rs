@@ -577,6 +577,27 @@ mod tests {
     }
 
     #[test]
+    fn the_unsafe_fixture_proves_both_warnings() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../samples/tar/unsafe.tar");
+        let data = TarCore.view(&path).unwrap();
+        let view: TarView = serde_json::from_value(data).unwrap();
+
+        assert_eq!(view.escaping_paths.len(), 2, "one climbs, one is absolute");
+        assert_eq!(view.risky_modes.len(), 2, "one setuid, one world-writable");
+        assert!(
+            view.risky_modes
+                .iter()
+                .any(|said| said.contains("as its owner"))
+        );
+        assert!(
+            view.risky_modes
+                .iter()
+                .any(|said| said.contains("writable by anyone"))
+        );
+    }
+
+    #[test]
     fn a_file_that_is_not_tar_is_an_error_rather_than_a_panic() {
         let path = std::env::temp_dir().join("not-really.tar");
         std::fs::write(&path, b"nothing like an archive").unwrap();

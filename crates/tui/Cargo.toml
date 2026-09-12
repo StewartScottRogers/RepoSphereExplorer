@@ -28,6 +28,7 @@ plugin-awk = { path = "../plugins/awk" }
 plugin-batchfile = { path = "../plugins/batchfile" }
 plugin-bibtex = { path = "../plugins/bibtex" }
 plugin-bson = { path = "../plugins/bson" }
+plugin-bzip2 = { path = "../plugins/bzip2" }
 plugin-caddyfile = { path = "../plugins/caddyfile" }
 plugin-cargolock = { path = "../plugins/cargolock" }
 plugin-cbor = { path = "../plugins/cbor" }
@@ -75,6 +76,7 @@ plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-purescript = { path = "../plugins/purescript" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
+plugin-sevenzip = { path = "../plugins/sevenzip" }
 plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-sshconfig = { path = "../plugins/sshconfig" }
@@ -161,10 +163,12 @@ plugin-wasm = { path = "../plugins/wasm" }
 plugin-webmanifest = { path = "../plugins/webmanifest" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
+plugin-xz = { path = "../plugins/xz" }
 plugin-yacc = { path = "../plugins/yacc" }
 plugin-yaml = { path = "../plugins/yaml" }
 plugin-yarnlock = { path = "../plugins/yarnlock" }
 plugin-zig = { path = "../plugins/zig" }
+plugin-zstd = { path = "../plugins/zstd" }
 protocol = { path = "../protocol" }
 ratatui = "0.30"
 serde_json = "1"

@@ -166,6 +166,10 @@ it.
 | gzip | `crates/plugins/gzip` | #398 | Original name, modification time, compression level, operating system, comment, uncompressed size, ratio, checksum |
 | tar archive | `crates/plugins/tar` | #397 | Entries with paths, sizes, modes, owners and kinds, total size, format variant, extended headers, escaping paths, risky modes |
 | Python pickle | `crates/plugins/pickle` | #396 | Protocol, opcode count, what it builds, the imports it would make, the executing opcodes; read as opcodes, never executed |
+| bzip2 | `crates/plugins/bzip2` | #399 | Block size, block count, stream count, compressed size, and what the format records nowhere |
+| Zstandard | `crates/plugins/zstd` | #401 | Frames with window size, content size, dictionary identifier and checksum flag, ratio, frames needing a dictionary |
+| xz | `crates/plugins/xz` | #400 | Block count, integrity check, filter chain, dictionary size, uncompressed size from the index, ratio |
+| 7-Zip archive | `crates/plugins/sevenzip` | #402 | Format version, entries with sizes and times, total, ratio, methods, encrypted header, solid blocks |
 
 ## Folder plugins
 

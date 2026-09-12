@@ -178,6 +178,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_gzip::GzipPresentation,
     &plugin_tar::TarPresentation,
     &plugin_pickle::PicklePresentation,
+    &plugin_bzip2::Bzip2Presentation,
+    &plugin_zstd::ZstdPresentation,
+    &plugin_xz::XzPresentation,
+    &plugin_sevenzip::SevenzipPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

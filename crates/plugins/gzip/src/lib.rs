@@ -379,6 +379,15 @@ mod tests {
     }
 
     #[test]
+    fn the_bare_fixture_proves_what_a_header_can_leave_out() {
+        let view = view_of("bare.gz");
+
+        assert_eq!(view.not_stated.len(), 2);
+        assert!(view.original_name.is_none());
+        assert!(view.modified.is_none());
+    }
+
+    #[test]
     fn a_compressed_archive_is_still_read_as_gzip() {
         let view = view_of("readings.tar.gz");
 

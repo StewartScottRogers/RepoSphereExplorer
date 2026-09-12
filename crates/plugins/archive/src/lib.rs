@@ -9,7 +9,13 @@ use std::path::Path;
 /// Both halves report these: the presentation half so a listing can
 /// mark the file, the core half so `service` can tell this type from
 /// another whose content heuristic matches the same text.
-pub const EXTENSIONS: &[&str] = &["zip", "tar", "gz", "bz2", "xz", "7z", "rar"];
+/// Only `zip`. This plugin sniffs `PK` and reads a zip archive; it has
+/// never been able to read a tar, a gzip, a bzip2, an xz, a 7-Zip or a
+/// rar, and an extension it cannot honour is a hint that points
+/// nowhere - the hint chooses only between plugins that already
+/// recognised the bytes (GUIDANCE.md section 3.3). The five formats
+/// that now have plugins of their own take their extensions with them.
+pub const EXTENSIONS: &[&str] = &["zip"];
 
 /// Maximum number of entries listed in the view; archives with more are
 /// truncated, matching §2.1's parse limits.

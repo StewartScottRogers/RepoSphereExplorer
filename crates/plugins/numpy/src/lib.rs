@@ -376,6 +376,20 @@ mod tests {
     }
 
     #[test]
+    fn names_an_array_that_holds_python_objects() {
+        let view = view_of("objects.npy");
+
+        assert_eq!(
+            view.object_arrays.len(),
+            1,
+            "`|O` means the values are pickled, and loading one unpickles"
+        );
+        let data = NumpyCore.view(&sample("objects.npy")).unwrap();
+        let lines = NumpyPresentation.present(&data);
+        assert!(lines.iter().any(|line| line.contains("unpickling runs")));
+    }
+
+    #[test]
     fn presents_the_transposition_warning_with_its_reason() {
         let data = NumpyCore.view(&sample("column-major.npy")).unwrap();
 
