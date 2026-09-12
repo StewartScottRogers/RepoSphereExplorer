@@ -158,6 +158,10 @@ it.
 | JSON5 | `crates/plugins/json5` | #390 | Shape, top-level keys, comments, the JSON5 extensions used and what each costs a strict reader |
 | PureScript | `crates/plugins/purescript` | #387 | Module and export list, imports, signatures, types, classes, instances, foreign imports, names without signatures |
 | Gleam | `crates/plugins/gleam` | #388 | Imports, functions with signatures and visibility, custom types and constructors, aliases, constants, tests, external functions, missing return types |
+| CBOR | `crates/plugins/cbor` | #391 | Self-describing tag, top-level item, map keys, tags with meanings, shape, indefinite-length items, trailing bytes |
+| BSON | `crates/plugins/bson` | #392 | Document count, first document's fields and types, object identifiers, dates, binary subtypes, nesting depth, ragged fields |
+| Apache Arrow | `crates/plugins/arrow` | #394 | Schema with types and nullability, record batches, rows per batch, dictionary-encoded columns, custom metadata, first rows, nested columns |
+| Apache ORC | `crates/plugins/orc` | #393 | Rows, schema with types and nullability, stripes and their rows, compression, writer, metadata, first rows, nested columns |
 
 ## Folder plugins
 

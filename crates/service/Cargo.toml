@@ -16,6 +16,7 @@ plugin-apacheconf = { path = "../plugins/apacheconf" }
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
 plugin-archive = { path = "../plugins/archive" }
+plugin-arrow = { path = "../plugins/arrow" }
 plugin-asciidoc = { path = "../plugins/asciidoc" }
 plugin-audio = { path = "../plugins/audio" }
 plugin-avro = { path = "../plugins/avro" }
@@ -23,8 +24,10 @@ plugin-assembly = { path = "../plugins/assembly" }
 plugin-awk = { path = "../plugins/awk" }
 plugin-batchfile = { path = "../plugins/batchfile" }
 plugin-bibtex = { path = "../plugins/bibtex" }
+plugin-bson = { path = "../plugins/bson" }
 plugin-caddyfile = { path = "../plugins/caddyfile" }
 plugin-cargolock = { path = "../plugins/cargolock" }
+plugin-cbor = { path = "../plugins/cbor" }
 plugin-cloudformation = { path = "../plugins/cloudformation" }
 plugin-cobol = { path = "../plugins/cobol" }
 plugin-codeowners = { path = "../plugins/codeowners" }
@@ -57,6 +60,7 @@ plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-openapi = { path = "../plugins/openapi" }
+plugin-orc = { path = "../plugins/orc" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-pascal = { path = "../plugins/pascal" }
 plugin-pnpmlock = { path = "../plugins/pnpmlock" }
