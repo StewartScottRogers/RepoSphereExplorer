@@ -175,3 +175,48 @@ fn samples_has_one_subdirectory_per_plugin_crate() {
         "samples/ must have exactly one subdirectory per crates/plugins/* entry"
     );
 }
+
+/// Every fixture has to be in the repository, not merely on this machine.
+///
+/// A `.gitignore` rule matching a fixture is silent: the tests here walk
+/// the working tree, so they pass locally while the factory sees a
+/// directory that is short of files, or missing altogether. It happened
+/// twice at once - an unanchored `data/` at the root swallowed
+/// `samples/purescript/src/Data/`, and an unanchored `worker` inside
+/// `samples/go/.gitignore`, meant for the built binary, swallowed
+/// `samples/go/cmd/worker/`. Neither said anything.
+#[test]
+fn every_sample_file_is_in_the_repository() {
+    let output = std::process::Command::new("git")
+        .args([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "samples",
+        ])
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .output()
+        .expect("git is how the factory checks this repository out");
+    assert!(
+        output.status.success(),
+        "git ls-files failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let ignored: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    assert!(
+        ignored.is_empty(),
+        "{} fixture(s) under samples/ are ignored by git, so they exist here \
+         and nowhere else:\n{}\n\nAnchor the rule that matches them - a bare \
+         `name/` matches at every depth, `/name/` only at the root.",
+        ignored.len(),
+        ignored.join("\n")
+    );
+}

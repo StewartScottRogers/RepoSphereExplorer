@@ -155,6 +155,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_elisp::ElispPresentation,
     &plugin_awk::AwkPresentation,
     &plugin_batchfile::BatchfilePresentation,
+    &plugin_jsonlines::JsonlinesPresentation,
+    &plugin_json5::Json5Presentation,
+    &plugin_purescript::PurescriptPresentation,
+    &plugin_gleam::GleamPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

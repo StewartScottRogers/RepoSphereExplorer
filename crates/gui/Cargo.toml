@@ -42,10 +42,13 @@ plugin-flatbuffers = { path = "../plugins/flatbuffers" }
 plugin-gitattributes = { path = "../plugins/gitattributes" }
 plugin-gitconfig = { path = "../plugins/gitconfig" }
 plugin-gitlabci = { path = "../plugins/gitlabci" }
+plugin-gleam = { path = "../plugins/gleam" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
 plugin-jenkinsfile = { path = "../plugins/jenkinsfile" }
+plugin-json5 = { path = "../plugins/json5" }
+plugin-jsonlines = { path = "../plugins/jsonlines" }
 plugin-jsonschema = { path = "../plugins/jsonschema" }
 plugin-githubactions = { path = "../plugins/githubactions" }
 plugin-kubernetes = { path = "../plugins/kubernetes" }
@@ -64,6 +67,7 @@ plugin-pascal = { path = "../plugins/pascal" }
 plugin-pnpmlock = { path = "../plugins/pnpmlock" }
 plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
+plugin-purescript = { path = "../plugins/purescript" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-solution = { path = "../plugins/solution" }
