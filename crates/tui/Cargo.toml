@@ -44,6 +44,7 @@ plugin-gitattributes = { path = "../plugins/gitattributes" }
 plugin-gitconfig = { path = "../plugins/gitconfig" }
 plugin-gitlabci = { path = "../plugins/gitlabci" }
 plugin-gleam = { path = "../plugins/gleam" }
+plugin-gzip = { path = "../plugins/gzip" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
@@ -62,10 +63,12 @@ plugin-maven = { path = "../plugins/maven" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-npmlock = { path = "../plugins/npmlock" }
+plugin-numpy = { path = "../plugins/numpy" }
 plugin-openapi = { path = "../plugins/openapi" }
 plugin-orc = { path = "../plugins/orc" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-pascal = { path = "../plugins/pascal" }
+plugin-pickle = { path = "../plugins/pickle" }
 plugin-pnpmlock = { path = "../plugins/pnpmlock" }
 plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
@@ -76,6 +79,7 @@ plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-sshconfig = { path = "../plugins/sshconfig" }
 plugin-systemdunit = { path = "../plugins/systemdunit" }
+plugin-tar = { path = "../plugins/tar" }
 plugin-thrift = { path = "../plugins/thrift" }
 plugin-verilog = { path = "../plugins/verilog" }
 plugin-vhdl = { path = "../plugins/vhdl" }

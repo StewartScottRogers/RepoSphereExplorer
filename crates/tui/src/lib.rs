@@ -174,6 +174,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_bson::BsonPresentation,
     &plugin_arrow::ArrowPresentation,
     &plugin_orc::OrcPresentation,
+    &plugin_numpy::NumpyPresentation,
+    &plugin_gzip::GzipPresentation,
+    &plugin_tar::TarPresentation,
+    &plugin_pickle::PicklePresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

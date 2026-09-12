@@ -2994,6 +2994,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
+ "plugin-gzip",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-helmchart",
@@ -3025,6 +3026,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-openapi",
@@ -3036,6 +3038,7 @@ dependencies = [
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pickle",
  "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
@@ -3066,6 +3069,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-systemdunit",
+ "plugin-tar",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
@@ -6360,6 +6364,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gzip"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-haskell"
 version = "0.6.0"
 dependencies = [
@@ -6642,6 +6655,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-numpy"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-objective-c"
 version = "0.6.0"
 dependencies = [
@@ -6742,6 +6765,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-php"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-pickle"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7019,6 +7051,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-systemdunit"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-tar"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -8392,6 +8433,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
+ "plugin-gzip",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-helmchart",
@@ -8423,6 +8465,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-openapi",
@@ -8434,6 +8477,7 @@ dependencies = [
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pickle",
  "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
@@ -8464,6 +8508,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-systemdunit",
+ "plugin-tar",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
@@ -9571,6 +9616,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
+ "plugin-gzip",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-helmchart",
@@ -9602,6 +9648,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-openapi",
@@ -9613,6 +9660,7 @@ dependencies = [
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pickle",
  "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
@@ -9643,6 +9691,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-systemdunit",
+ "plugin-tar",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",

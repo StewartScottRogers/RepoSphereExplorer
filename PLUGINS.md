@@ -162,6 +162,10 @@ it.
 | BSON | `crates/plugins/bson` | #392 | Document count, first document's fields and types, object identifiers, dates, binary subtypes, nesting depth, ragged fields |
 | Apache Arrow | `crates/plugins/arrow` | #394 | Schema with types and nullability, record batches, rows per batch, dictionary-encoded columns, custom metadata, first rows, nested columns |
 | Apache ORC | `crates/plugins/orc` | #393 | Rows, schema with types and nullability, stripes and their rows, compression, writer, metadata, first rows, nested columns |
+| NumPy array | `crates/plugins/numpy` | #395 | Format version, shape, data type, element count, column-major layout, arrays inside an archive, object arrays |
+| gzip | `crates/plugins/gzip` | #398 | Original name, modification time, compression level, operating system, comment, uncompressed size, ratio, checksum |
+| tar archive | `crates/plugins/tar` | #397 | Entries with paths, sizes, modes, owners and kinds, total size, format variant, extended headers, escaping paths, risky modes |
+| Python pickle | `crates/plugins/pickle` | #396 | Protocol, opcode count, what it builds, the imports it would make, the executing opcodes; read as opcodes, never executed |
 
 ## Folder plugins
 
