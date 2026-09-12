@@ -159,6 +159,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_json5::Json5Presentation,
     &plugin_purescript::PurescriptPresentation,
     &plugin_gleam::GleamPresentation,
+    &plugin_cbor::CborPresentation,
+    &plugin_bson::BsonPresentation,
+    &plugin_arrow::ArrowPresentation,
+    &plugin_orc::OrcPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its
