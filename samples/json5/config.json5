@@ -1,0 +1,45 @@
+{
+  // The Repos Explorer service, configured the way a person writes it
+  // rather than the way a machine emits it. Every liberty this file
+  // takes is one a strict JSON reader would refuse.
+
+  name: 'repos-explorer',
+  version: '1.4.0',
+
+  server: {
+    host: 'localhost',
+    port: 8080,
+    // Bytes, written the way the manual writes it.
+    maxRequestSize: 0x100000,
+    keepAliveSeconds: 65,
+  },
+
+  /* The directories the service is allowed to open at.
+     A block comment, because this needed more than a line. */
+  reposDirectories: [
+    'Z:\\repos',
+    '/srv/repos',
+    '~/work',
+  ],
+
+  limits: {
+    sniffPrefixBytes: 0x8006,
+    viewBytes: 0x10000,
+    // A ratio, written without its leading zero.
+    warnAboveLoad: .85,
+  },
+
+  logging: {
+    level: 'info',
+    // A message written across several lines, which strict JSON has no \
+way to spell.
+    banner: 'Repos Explorer \
+starting up',
+  },
+
+  features: {
+    folderPlugins: true,
+    specialisation: true,
+    experimentalPreview: false,
+  },
+}

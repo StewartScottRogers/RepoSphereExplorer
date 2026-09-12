@@ -2728,6 +2728,7 @@ dependencies = [
  "plugin-gitconfig",
  "plugin-githubactions",
  "plugin-gitlabci",
+ "plugin-gleam",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -2742,6 +2743,8 @@ dependencies = [
  "plugin-javascript",
  "plugin-jenkinsfile",
  "plugin-json",
+ "plugin-json5",
+ "plugin-jsonlines",
  "plugin-jsonschema",
  "plugin-julia",
  "plugin-jupyter-notebook",
@@ -2778,6 +2781,7 @@ dependencies = [
  "plugin-properties",
  "plugin-protobuf",
  "plugin-psd",
+ "plugin-purescript",
  "plugin-python",
  "plugin-r",
  "plugin-requirements",
@@ -5908,6 +5912,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gleam"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-go"
 version = "0.6.0"
 dependencies = [
@@ -6028,6 +6041,24 @@ dependencies = [
 
 [[package]]
 name = "plugin-json"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-json5"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-jsonlines"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6367,6 +6398,15 @@ dependencies = [
  "image",
  "plugin-api",
  "psd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-purescript"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
  "serde",
  "serde_json",
 ]
@@ -7899,6 +7939,7 @@ dependencies = [
  "plugin-gitconfig",
  "plugin-githubactions",
  "plugin-gitlabci",
+ "plugin-gleam",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -7913,6 +7954,8 @@ dependencies = [
  "plugin-javascript",
  "plugin-jenkinsfile",
  "plugin-json",
+ "plugin-json5",
+ "plugin-jsonlines",
  "plugin-jsonschema",
  "plugin-julia",
  "plugin-jupyter-notebook",
@@ -7949,6 +7992,7 @@ dependencies = [
  "plugin-properties",
  "plugin-protobuf",
  "plugin-psd",
+ "plugin-purescript",
  "plugin-python",
  "plugin-r",
  "plugin-requirements",
@@ -9048,6 +9092,7 @@ dependencies = [
  "plugin-gitconfig",
  "plugin-githubactions",
  "plugin-gitlabci",
+ "plugin-gleam",
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
@@ -9062,6 +9107,8 @@ dependencies = [
  "plugin-javascript",
  "plugin-jenkinsfile",
  "plugin-json",
+ "plugin-json5",
+ "plugin-jsonlines",
  "plugin-jsonschema",
  "plugin-julia",
  "plugin-jupyter-notebook",
@@ -9098,6 +9145,7 @@ dependencies = [
  "plugin-properties",
  "plugin-protobuf",
  "plugin-psd",
+ "plugin-purescript",
  "plugin-python",
  "plugin-r",
  "plugin-requirements",

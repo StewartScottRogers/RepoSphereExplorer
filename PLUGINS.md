@@ -154,6 +154,10 @@ it.
 | Emacs Lisp | `crates/plugins/elisp` | #384 | Package header, lexical binding, definitions with commands and autoloads, requires and provides, key bindings, unreachable commands |
 | AWK | `crates/plugins/awk` | #385 | BEGIN and END blocks, pattern-action rules, functions, field separator, highest field, arrays, names global inside a function |
 | Batch file | `crates/plugins/batchfile` | #386 | Echo, setlocal, delayed expansion, labels, calls and jumps, variables, programs run, errorlevel checks, unreachable labels, missing labels |
+| JSON Lines | `crates/plugins/jsonlines` | #389 | Record count, keys with their frequencies, shared keys, ragged keys, first records, unreadable lines |
+| JSON5 | `crates/plugins/json5` | #390 | Shape, top-level keys, comments, the JSON5 extensions used and what each costs a strict reader |
+| PureScript | `crates/plugins/purescript` | #387 | Module and export list, imports, signatures, types, classes, instances, foreign imports, names without signatures |
+| Gleam | `crates/plugins/gleam` | #388 | Imports, functions with signatures and visibility, custom types and constructors, aliases, constants, tests, external functions, missing return types |
 
 ## Folder plugins
 

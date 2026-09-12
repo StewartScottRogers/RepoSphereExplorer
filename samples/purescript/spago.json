@@ -1,0 +1,13 @@
+{
+  "name": "csvstats",
+  "dependencies": [
+    "arrays",
+    "console",
+    "effect",
+    "foldable-traversable",
+    "integers",
+    "maybe",
+    "prelude"
+  ],
+  "packages_db_version": "psc-0.15.15-20260901"
+}
