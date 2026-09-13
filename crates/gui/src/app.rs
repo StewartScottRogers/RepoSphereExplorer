@@ -1113,6 +1113,8 @@ impl App {
     /// Confirms a pending rename/copy/extract input on Return; on macOS,
     /// also starts a rename in normal mode, per §2.3's platform table (a
     /// delete confirmation uses y/n instead, via [`Self::handle_key_text`]).
+    /// Off macOS, normal mode opens whatever is selected in the focused
+    /// pane, matching what double-clicking that row already does.
     pub fn handle_return(&mut self) {
         self.handle_return_for_os(std::env::consts::OS);
     }
@@ -1130,7 +1132,11 @@ impl App {
                 self.confirm_text_input();
             }
             Mode::Normal if os == "macos" => self.request_rename(),
-            Mode::Normal | Mode::ConfirmDelete { .. } => {}
+            Mode::Normal => match self.focus {
+                Pane::Folders => self.toggle_folder(self.folder_selected),
+                Pane::Contents | Pane::File => self.open_content(self.content_selected),
+            },
+            Mode::ConfirmDelete { .. } => {}
         }
     }
 
@@ -1402,7 +1408,7 @@ impl App {
         if let Some(row) = new_rows.iter().position(|(_, idx)| idx == &child_indices) {
             self.folder_selected = row;
         }
-        self.focus = Pane::Folders;
+        self.focus = Pane::Contents;
         self.load_contents_for_selected();
     }
 
@@ -3243,15 +3249,71 @@ third",
     }
 
     #[test]
-    fn non_macos_return_in_normal_mode_is_a_no_op() {
-        let mut app = app_with_one_content_entry();
-        let before = app.status_text();
-
-        app.handle_return_for_os("windows");
-        assert_eq!(app.status_text(), before);
+    fn return_with_folders_pane_focused_toggles_that_row() {
+        // App::new leaves focus on Folders, where Return has to reach
+        // toggle_folder rather than falling through to a no-op.
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        assert!(app.folder_labels()[0].contains('v')); // root starts expanded.
 
         app.handle_return_for_os("linux");
-        assert_eq!(app.status_text(), before);
+        assert!(app.folder_labels()[0].contains('>'));
+
+        app.handle_return_for_os("windows");
+        assert!(app.folder_labels()[0].contains('v'));
+    }
+
+    #[test]
+    fn return_on_a_selected_file_changes_nothing() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        let contents_before = app.content_labels();
+        let folder_before = app.folder_selected();
+
+        app.handle_return_for_os("linux");
+
+        assert_eq!(app.content_labels(), contents_before);
+        assert_eq!(app.folder_selected(), folder_before);
+        assert_eq!(app.focus_index(), 1, "focus stays on Contents");
+    }
+
+    #[test]
+    fn return_on_a_selected_folder_drills_in_and_a_second_return_goes_deeper() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        app.select_content(0);
+
+        app.handle_return_for_os("linux");
+        assert_eq!(app.folder_selected(), 1, "drilled into sub");
+        assert_eq!(
+            app.focus_index(),
+            1,
+            "open_content leaves focus on Contents"
+        );
+
+        app.apply_contents_result(
+            &[0],
+            Ok(Response::Directory {
+                entries: entries(&[("sub2", true)]),
+            }),
+        );
+
+        app.handle_return_for_os("linux");
+        assert_eq!(
+            app.folder_selected(),
+            2,
+            "a second Return goes one level deeper, not back up the tree"
+        );
     }
 
     #[test]
