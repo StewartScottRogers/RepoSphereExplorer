@@ -1363,6 +1363,15 @@ impl App {
         if let Some(node) = self.root.node_at_mut(&indices) {
             node.expanded = !node.expanded;
         }
+        // Collapsing a folder takes its descendants out of the listing,
+        // and the selection may have been one of them. Left pointing past
+        // the end it selects nothing, and every rule that reads it -
+        // which folder to list, which folder to drill into - quietly does
+        // nothing instead. The folder just collapsed is where a reader
+        // would expect to be, and is where Explorer leaves them.
+        if self.folder_selected >= self.root.flatten().len() {
+            self.folder_selected = index;
+        }
     }
 
     /// Selects contents row `index`, loading its preview if it is a file.
@@ -1511,8 +1520,20 @@ impl App {
 
         let mut child_indices = parent_indices;
         child_indices.push(child_index);
-        if let Some(node) = self.root.node_at_mut(&child_indices) {
-            node.expanded = true;
+        // Every folder on the way down, not only the one being opened.
+        // `flatten` lists the rows a collapsed tree *shows*, so with an
+        // ancestor closed the new row did not exist: the lookup below
+        // found nothing, the selection stayed where it was, and the
+        // listing reloaded the folder it was already showing. Return did
+        // nothing and said nothing.
+        //
+        // Expanding the whole path is also the right answer rather than
+        // merely a working one - it is what File Explorer does, and it
+        // keeps the tree showing where the reader actually is.
+        for depth in 0..=child_indices.len() {
+            if let Some(node) = self.root.node_at_mut(&child_indices[..depth]) {
+                node.expanded = true;
+            }
         }
 
         let new_rows = self.root.flatten();
@@ -3874,6 +3895,67 @@ third",
         app.request_delete();
         app.handle_key_text("q");
         assert_eq!(app.status_text(), "Delete doomed.txt? y/n");
+    }
+
+    #[test]
+    fn drilling_in_works_with_the_tree_above_it_collapsed() {
+        // The reader tidied the tree away, which is the obvious thing to
+        // do when the tree is not what they are working in. Return in the
+        // listing then did nothing at all, and said nothing about it.
+        let mut app = App::new(std::env::temp_dir().join("repos"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("src", true), ("notes.txt", false)]),
+            }),
+        );
+        app.toggle_folder(0);
+        assert!(!app.folder_rows()[0].expanded, "the tree is collapsed");
+
+        app.select_content(0);
+        app.open_content(0);
+
+        assert_eq!(
+            app.folder_rows().len(),
+            2,
+            "drilling in shows where the reader went: the tree follows              them rather than staying shut"
+        );
+        assert_eq!(app.folder_rows()[1].name, "src");
+        assert_eq!(
+            app.folder_selected(),
+            1,
+            "and the selected folder is the one just opened"
+        );
+    }
+
+    #[test]
+    fn collapsing_a_folder_does_not_leave_the_selection_past_the_end() {
+        // A selection pointing past the last row selects nothing, and
+        // every rule that reads it - which folder to list, which to drill
+        // into - then quietly does nothing.
+        let mut app = App::new(std::env::temp_dir().join("repos"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("src", true)]),
+            }),
+        );
+        app.select_folder(1);
+        assert_eq!(app.folder_selected(), 1, "the child is selected");
+
+        app.toggle_folder(0);
+
+        assert!(
+            app.folder_selected() < app.folder_rows().len(),
+            "the selection has to name a row that exists; it is {} of {}",
+            app.folder_selected(),
+            app.folder_rows().len()
+        );
+        assert_eq!(
+            app.folder_selected(),
+            0,
+            "and the folder just collapsed is where a reader expects to be"
+        );
     }
 
     #[test]
