@@ -43,12 +43,24 @@ global Theme {
     out property <brush> on-accent: Palette.accent-foreground;
 }
 
+/// One row of the navigation tree. Mirrors `app::FolderRow`.
+export struct FolderRow {
+    icon: image,
+    name: string,
+    depth: int,
+    expandable: bool,
+    expanded: bool,
+}
+
 component Pane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
-    in property <[string]> rows;
+    in property <[FolderRow]> rows;
     in property <int> selected;
-    callback row-clicked(int);
+    // The click carries where it landed, because the chevron and the name
+    // do different things and only Rust knows which is which - see
+    // `app::chevron_hit`.
+    callback row-clicked(int, length);
     callback row-double-clicked(int);
 
     // The scroll offset, and how much of the listing fits. Both surfaced so
@@ -59,13 +71,25 @@ component Pane inherits Rectangle {
     in-out property <length> scroll-y;
     out property <length> viewport-height: scroll.visible-height;
 
-    // A per-row `for`-loop generating `Rectangle`/`TouchArea` instances
-    // leaves every instance but the first permanently unresponsive to real
-    // mouse input under Slint 1.17.1 (matches upstream issue #6836).
-    // Worked around with a `for`-loop of plain `Text` rows (which does not
-    // trigger the bug), a single non-repeated highlight `Rectangle`, and one
-    // overlay `TouchArea` that derives the clicked row from `mouse-y`.
+    // A per-row `for`-loop generating `TouchArea` instances leaves every
+    // instance but the first permanently unresponsive to real mouse input
+    // under Slint 1.17.1 (matches upstream issue #6836). So there is one
+    // overlay `TouchArea` for the whole pane, and it derives the row from
+    // `mouse-y` and the chevron from `mouse-x`. Repeated `Rectangle`s are
+    // fine, and are what the contents pane already draws.
     property <length> row-height: 20px;
+
+    // File Explorer's navigation pane geometry. These have to agree with
+    // `app::FOLDER_PADDING`, `FOLDER_INDENT` and `FOLDER_CHEVRON`, which are
+    // what decide whether a click landed on a chevron.
+    property <length> pad: 4px;
+    property <length> indent: 16px;
+    property <length> chevron: 16px;
+
+    // The row under the pointer, or -1 when the pointer is elsewhere.
+    property <int> hovered: click-area.has-hover && rows.length > 0
+        ? clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1)
+        : -1;
 
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
@@ -88,19 +112,70 @@ component Pane inherits Rectangle {
                 Rectangle {
                     height: max(rows.length * row-height, 1px);
 
-                    Rectangle {
-                        y: selected >= 0 ? selected * row-height : 0px;
-                        height: selected >= 0 ? row-height : 0px;
-                        background: Theme.accent;
-                    }
-
-                    for row[i] in rows: Text {
-                        text: row;
-                        color: i == selected ? Theme.on-accent : Palette.foreground;
+                    for row[i] in rows: tree-row := Rectangle {
                         y: i * row-height;
                         height: row-height;
-                        vertical-alignment: center;
-                        x: 4px;
+                        width: 100%;
+                        // Selected wins over hovered, as it does in
+                        // Explorer: the pointer passing over the selection
+                        // must not make it look unselected.
+                        background: i == selected
+                            ? Theme.accent
+                            : (i == hovered ? Theme.hover : transparent);
+                        // Named and labelled so a test can ask which rows
+                        // the pane is showing, the same way the contents
+                        // pane's rows can be asked.
+                        accessible-role: text;
+                        accessible-label: row.name;
+
+                        HorizontalLayout {
+                            padding-left: pad + row.depth * indent;
+                            padding-right: 4px;
+
+                            // The chevron column is there whether or not the
+                            // row has a chevron, so every name at a given
+                            // depth starts at the same place.
+                            Rectangle {
+                                width: chevron;
+                                horizontal-stretch: 0;
+                                if row.expandable: Path {
+                                    width: 7px;
+                                    height: 9px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    viewbox-width: 7;
+                                    viewbox-height: 9;
+                                    stroke: i == selected ? Theme.on-accent : Theme.dim-text;
+                                    stroke-width: 1.4px;
+                                    commands: row.expanded
+                                        ? "M 0.5 2.5 L 3.5 6 L 6.5 2.5"
+                                        : "M 2 1 L 5.5 4.5 L 2 8";
+                                }
+                            }
+                            // Named so a test can measure where it lands:
+                            // the indent drawn here and `app::FOLDER_INDENT`,
+                            // which decides what a click hit, have to be the
+                            // same number.
+                            folder-icon := Image {
+                                source: row.icon;
+                                width: 16px;
+                                height: 16px;
+                                image-fit: contain;
+                                horizontal-stretch: 0;
+                            }
+                            Rectangle {
+                                width: 5px;
+                                horizontal-stretch: 0;
+                            }
+                            Text {
+                                text: row.name;
+                                color: i == selected ? Theme.on-accent : Palette.foreground;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                                min-width: 24px;
+                            }
+                        }
                     }
 
                     click-area := TouchArea {
@@ -108,7 +183,9 @@ component Pane inherits Rectangle {
                         height: 100%;
                         clicked => {
                             if (rows.length > 0) {
-                                row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                row-clicked(
+                                    clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1),
+                                    click-area.mouse-x);
                             }
                         }
                         double-clicked => {
@@ -805,7 +882,7 @@ export component MainWindow inherits Window {
     // it is not installed, so this costs nothing on other systems.
     default-font-family: "Segoe UI";
 
-    in property <[string]> folder-rows;
+    in property <[FolderRow]> folder-rows;
     in property <int> folder-selected;
     in property <[ContentRow]> content-rows;
     in property <int> content-selected;
@@ -825,7 +902,7 @@ export component MainWindow inherits Window {
     in property <string> status-text;
     in property <int> focus-pane;
 
-    callback folder-row-clicked(int);
+    callback folder-row-clicked(int, length);
     callback folder-row-double-clicked(int);
     callback content-row-clicked(int);
     callback content-row-ctrl-clicked(int);
@@ -1213,7 +1290,7 @@ export component MainWindow inherits Window {
                     scroll-y <=> folders-scroll-y;
                     width: folders-width;
                     horizontal-stretch: 0;
-                    row-clicked(i) => { folder-row-clicked(i); }
+                    row-clicked(i, x) => { folder-row-clicked(i, x); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
                 }
                 Splitter {

@@ -7,7 +7,7 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::{ContentRow, MainWindow};
+pub use generated::{ContentRow, FolderRow, MainWindow};
 
 pub mod app;
 pub mod settings;
@@ -156,7 +156,18 @@ pub fn scroll_offset_for(selected: usize, viewport_height: f32, current: f32) ->
 
 /// Copies `app`'s current state into `ui`'s bound properties.
 pub fn sync_ui(ui: &MainWindow, app: &App) {
-    ui.set_folder_rows(string_model(app.folder_labels()));
+    ui.set_folder_rows(ModelRc::new(VecModel::from(
+        app.folder_rows()
+            .into_iter()
+            .map(|row| FolderRow {
+                icon: icon_image(row.icon, true),
+                name: row.name.into(),
+                depth: row_index(row.depth),
+                expandable: row.expandable,
+                expanded: row.expanded,
+            })
+            .collect::<Vec<_>>(),
+    )));
     ui.set_folder_selected(row_index(app.folder_selected()));
     ui.set_content_rows(ModelRc::new(VecModel::from(
         app.content_rows()

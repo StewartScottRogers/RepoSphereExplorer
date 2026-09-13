@@ -656,6 +656,48 @@ impl SortKey {
     }
 }
 
+/// One folders-pane row, as the navigation tree renders it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRow {
+    /// The folder icon, the same one the listing beside it draws.
+    pub icon: Icon,
+    /// The folder's own name, with no path and no trailing separator.
+    pub name: String,
+    /// How deep in the tree the row sits. The pane indents by this.
+    pub depth: usize,
+    /// Whether the row has a chevron in front of it.
+    pub expandable: bool,
+    /// Whether that chevron points down.
+    pub expanded: bool,
+}
+
+/// How far one level of the tree indents, in pixels.
+pub const FOLDER_INDENT: f32 = 16.0;
+
+/// The width of the chevron column in front of a folder's icon.
+pub const FOLDER_CHEVRON: f32 = 16.0;
+
+/// The padding inside a pane's left edge, before the first row content.
+pub const FOLDER_PADDING: f32 = 4.0;
+
+/// Whether `x` pixels in from a folders-pane row's left edge falls on the
+/// chevron of a row at `depth`.
+///
+/// In Rust rather than in `app.slint` for the reason given on
+/// [`crate::scroll_offset_for`]: a rule written in that file cannot be
+/// exercised without an event loop, and every layout rule this project has
+/// got wrong was one that lived there.
+#[must_use]
+pub fn chevron_hit(x: f32, depth: usize) -> bool {
+    // `depth` is a tree level, and a tree deep enough to overflow this has
+    // long since run out of pane to indent into.
+    let Ok(level) = u16::try_from(depth) else {
+        return false;
+    };
+    let start = FOLDER_PADDING + f32::from(level) * FOLDER_INDENT;
+    x >= start && x < start + FOLDER_CHEVRON
+}
+
 /// One contents row, as the details view renders it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentRow {
@@ -1841,27 +1883,44 @@ impl App {
         self.browse(target);
     }
 
-    /// Display labels for the folders pane, one per visible tree row.
+    /// The folders pane's rows, one per visible tree row.
     #[must_use]
-    pub fn folder_labels(&self) -> Vec<String> {
+    pub fn folder_rows(&self) -> Vec<FolderRow> {
         self.root
             .flatten()
             .iter()
             .map(|(depth, indices)| {
                 let node = self.root.node_at(indices);
-                let name = node.map_or("?", |n| n.name.as_str());
-                let marker = node.map_or(' ', |n| {
-                    if n.children.is_none() {
-                        '.'
-                    } else if n.expanded {
-                        'v'
-                    } else {
-                        '>'
-                    }
-                });
-                format!("{}{marker} {name}/", "  ".repeat(*depth))
+                FolderRow {
+                    icon: icon_for(node.map_or("", |n| n.name.as_str()), true),
+                    name: node.map_or_else(|| "?".to_owned(), |n| n.name.clone()),
+                    depth: *depth,
+                    // A node whose children have never been fetched reads as
+                    // a leaf, which is what the pane has always shown: the
+                    // tree learns a folder has subfolders by being opened,
+                    // and guessing before then would put a chevron in front
+                    // of every empty folder in the listing.
+                    expandable: node.is_some_and(|n| n.children.is_some()),
+                    expanded: node.is_some_and(|n| n.expanded),
+                }
             })
             .collect()
+    }
+
+    /// Handles a click on folder row `index`, `x` pixels in from the left
+    /// edge of the pane.
+    ///
+    /// The chevron opens and closes the row without moving the selection,
+    /// and the rest of the row selects it - which is how File Explorer's
+    /// navigation pane behaves, and the reason the pointer position has to
+    /// come this far in rather than being resolved in `app.slint`.
+    pub fn click_folder(&mut self, index: usize, x: f32) {
+        let row = self.folder_rows().into_iter().nth(index);
+        if row.is_some_and(|row| row.expandable && chevron_hit(x, row.depth)) {
+            self.toggle_folder(index);
+        } else {
+            self.select_folder(index);
+        }
     }
 
     /// Index of the selected row in [`Self::folder_labels`].
@@ -2153,7 +2212,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, PathBuf, UNKNOWN_ICON, format_kind, format_timestamp, icon_for, strip_verbatim_prefix,
+        App, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp, icon_for,
+        strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, Response};
@@ -2990,7 +3050,7 @@ third",
         );
 
         assert_eq!(app.content_labels(), vec!["sub/", "note.txt"]);
-        assert_eq!(app.folder_labels().len(), 2); // root + "sub"
+        assert_eq!(app.folder_rows().len(), 2); // root + "sub"
     }
 
     #[test]
@@ -3149,15 +3209,12 @@ third",
             }),
         );
         app.select_folder(0);
-        assert!(
-            app.folder_labels()[0].contains('v'),
-            "the root starts expanded"
-        );
+        assert!(app.folder_rows()[0].expanded, "the root starts expanded");
 
         app.handle_return_for_os("windows");
 
         assert!(
-            app.folder_labels()[0].contains('>'),
+            !app.folder_rows()[0].expanded,
             "Return acts on whichever pane has focus, and in the tree that              is expanding or collapsing - the same as double-clicking it"
         );
     }
@@ -3616,13 +3673,13 @@ third",
                 entries: entries(&[("sub", true)]),
             }),
         );
-        assert!(app.folder_labels()[0].contains('v')); // root starts expanded.
+        assert!(app.folder_rows()[0].expanded); // root starts expanded.
 
         app.toggle_folder(0);
-        assert!(app.folder_labels()[0].contains('>'));
+        assert!(!app.folder_rows()[0].expanded);
 
         app.toggle_folder(0);
-        assert!(app.folder_labels()[0].contains('v'));
+        assert!(app.folder_rows()[0].expanded);
     }
 
     #[test]
@@ -3728,7 +3785,92 @@ third",
     }
 
     #[test]
-    fn folder_labels_mark_collapsed_and_leaf_rows_distinctly() {
+    fn folder_rows_carry_the_name_and_the_depth_the_pane_indents_by() {
+        let mut app = App::new(std::env::temp_dir().join("repos"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+
+        let rows = app.folder_rows();
+        assert_eq!(rows.len(), 2);
+        // The name alone: File Explorer's navigation pane draws a folder
+        // icon, not a trailing separator, and the depth is a number the
+        // pane indents by rather than spaces baked into the text.
+        assert_eq!(rows[0].name, "repos");
+        assert_eq!(rows[0].depth, 0);
+        assert_eq!(rows[1].name, "sub");
+        assert_eq!(rows[1].depth, 1);
+    }
+
+    #[test]
+    fn the_chevron_is_the_first_column_and_moves_right_with_the_depth() {
+        // Padding 4, chevron 16, indent 16. Depth 0 owns 4..20, depth 1
+        // owns 20..36 - the boundaries are what a misplaced click lands on.
+        assert!(
+            !chevron_hit(3.9, 0),
+            "left of the padding is not the chevron"
+        );
+        assert!(
+            chevron_hit(4.0, 0),
+            "the chevron starts where the padding ends"
+        );
+        assert!(chevron_hit(19.9, 0));
+        assert!(!chevron_hit(20.0, 0), "at 20 the icon has started");
+
+        assert!(!chevron_hit(19.9, 1), "a child's chevron is one indent in");
+        assert!(chevron_hit(20.0, 1));
+        assert!(chevron_hit(35.9, 1));
+        assert!(!chevron_hit(36.0, 1));
+    }
+
+    #[test]
+    fn clicking_the_chevron_opens_the_row_and_clicking_the_name_selects_it() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        assert!(app.folder_rows()[0].expanded, "the root starts expanded");
+
+        // On the chevron: closes it, and the selection does not move.
+        app.select_folder(1);
+        app.click_folder(0, 8.0);
+        assert!(!app.folder_rows()[0].expanded);
+
+        // On the name: selects the row and leaves it closed.
+        app.click_folder(0, 60.0);
+        assert!(!app.folder_rows()[0].expanded, "the name does not toggle");
+        assert_eq!(app.folder_selected(), 0);
+    }
+
+    #[test]
+    fn the_chevron_column_of_a_row_that_cannot_expand_just_selects_it() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        // "sub" has never been opened, so it has no chevron to click.
+        assert!(!app.folder_rows()[1].expandable);
+
+        app.click_folder(1, 24.0);
+
+        assert_eq!(app.folder_selected(), 1);
+        assert!(
+            !app.folder_rows()[1].expanded,
+            "an empty chevron column is part of the row, not a control"
+        );
+    }
+
+    #[test]
+    fn folder_rows_mark_collapsed_and_leaf_rows_distinctly() {
         let mut app = App::new(std::env::temp_dir());
         app.apply_contents_result(
             &[],
@@ -3737,13 +3879,14 @@ third",
             }),
         );
         // The root is expanded by default but "sub"'s own children have
-        // never been fetched, so it must render as a leaf ('.'), not a
-        // collapsed-but-known-nonempty folder ('>').
-        assert!(app.folder_labels()[1].contains('.'));
+        // never been fetched, so it gets no chevron: the tree learns a
+        // folder has subfolders by being opened.
+        assert!(!app.folder_rows()[1].expandable);
 
         app.toggle_folder(0);
-        assert_eq!(app.folder_labels().len(), 1);
-        assert!(app.folder_labels()[0].contains('>'));
+        assert_eq!(app.folder_rows().len(), 1);
+        let root = &app.folder_rows()[0];
+        assert!(root.expandable && !root.expanded);
     }
 
     #[test]
