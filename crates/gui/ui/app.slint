@@ -521,256 +521,273 @@ component ContentsPane inherits Rectangle {
         }
         scroll := ScrollView {
             viewport-y <=> root.scroll-y;
-            body := Rectangle {
-                width: 100%;
-                min-height: max(rows.length * row-height, root.height - 22px - header-height);
-
-                for row[i] in rows: Rectangle {
-                    y: i * row-height;
-                    height: row.selected ? row-height : 0px;
+            // The same top-aligned layout the folders pane has, and needed
+            // for the same reason: a `ScrollView` lays a bare child out at
+            // its own height rather than the child's, so the listing was
+            // 452px tall however many rows it held. There was nothing to
+            // scroll, and the offset Rust writes to bring the selected row
+            // into view was back to zero by the next frame.
+            //
+            // The rows are drawn at `i * row-height` whether or not the
+            // viewport is tall enough to hold them, so the pane looked
+            // right until the selection went past the fold - and then it
+            // stopped following, with no row highlighted anywhere.
+            VerticalLayout {
+                alignment: start;
+                body := Rectangle {
                     width: 100%;
-                    background: Theme.accent;
-                }
+                    // The second term keeps a short listing filling the pane,
+                    // so a click below the last row still lands on the pane
+                    // rather than falling through.
+                    min-height: max(rows.length * row-height, root.height - 22px - header-height);
 
-                for row[i] in rows: listing-row := Rectangle {
-                    y: i * row-height;
-                    height: row-height;
-                    width: 100%;
-                    // Named so a test can ask which rows are on screen: the
-                    // element search returns the visible ones, which is
-                    // exactly the question "did the pane scroll far enough,
-                    // and no further".
-                    accessible-role: text;
-                    accessible-label: row.name;
-                    HorizontalLayout {
-                        padding-left: 4px;
-                        padding-right: 4px;
+                    for row[i] in rows: Rectangle {
+                        y: i * row-height;
+                        height: row.selected ? row-height : 0px;
+                        width: 100%;
+                        background: Theme.accent;
+                    }
+
+                    for row[i] in rows: listing-row := Rectangle {
+                        y: i * row-height;
+                        height: row-height;
+                        width: 100%;
+                        // Named so a test can ask which rows are on screen: the
+                        // element search returns the visible ones, which is
+                        // exactly the question "did the pane scroll far enough,
+                        // and no further".
+                        accessible-role: text;
+                        accessible-label: row.name;
                         HorizontalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 5px;
-                            padding-top: 2px;
-                            padding-bottom: 2px;
-                            Image {
-                                source: row.icon;
-                                width: 16px;
-                                image-fit: contain;
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            HorizontalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 5px;
+                                padding-top: 2px;
+                                padding-bottom: 2px;
+                                Image {
+                                    source: row.icon;
+                                    width: 16px;
+                                    image-fit: contain;
+                                    horizontal-stretch: 0;
+                                }
+                                Text {
+                                    text: row.name;
+                                    // A working copy is named in the accent
+                                    // colour and in bold: distinguishable at a
+                                    // glance from an ordinary folder, which
+                                    // stays listed and stays plain.
+                                    color: row.selected
+                                        ? Theme.on-accent
+                                        : (row.is-repository ? Theme.accent : Palette.foreground);
+                                    font-weight: row.is-repository ? 700 : 400;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    min-width: 24px;
+                                }
+                            }
+                            Text {
+                                text: row.size;
+                                color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                width: size-column;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
                                 horizontal-stretch: 0;
                             }
                             Text {
-                                text: row.name;
-                                // A working copy is named in the accent
-                                // colour and in bold: distinguishable at a
-                                // glance from an ordinary folder, which
-                                // stays listed and stays plain.
-                                color: row.selected
-                                    ? Theme.on-accent
-                                    : (row.is-repository ? Theme.accent : Palette.foreground);
-                                font-weight: row.is-repository ? 700 : 400;
+                                text: row.kind;
+                                color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                width: kind-column;
                                 overflow: elide;
+                                horizontal-alignment: right;
                                 vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                min-width: 24px;
+                                horizontal-stretch: 0;
                             }
-                        }
-                        Text {
-                            text: row.size;
-                            color: row.selected ? Theme.on-accent : Theme.dim-text;
-                            width: size-column;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                            horizontal-stretch: 0;
-                        }
-                        Text {
-                            text: row.kind;
-                            color: row.selected ? Theme.on-accent : Theme.dim-text;
-                            width: kind-column;
-                            overflow: elide;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                            horizontal-stretch: 0;
-                        }
-                        Text {
-                            text: row.modified;
-                            color: row.selected ? Theme.on-accent : Theme.dim-text;
-                            width: modified-column;
-                            overflow: elide;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                            horizontal-stretch: 0;
-                        }
-                    }
-                }
-
-                if prompt-row >= 0: Rectangle {
-                    y: prompt-row * row-height;
-                    height: row-height;
-                    width: 100%;
-                    background: Theme.field;
-                    border-width: 1px;
-                    border-color: Theme.accent;
-                    HorizontalLayout {
-                        padding-left: 4px;
-                        spacing: 2px;
-                        alignment: start;
-                        Text {
-                            text: prompt-text;
-                            color: Theme.accent;
-                            vertical-alignment: center;
-                        }
-                        // A caret, so a text prompt reads as one waiting for
-                        // typing rather than as a label.
-                        Rectangle {
-                            width: prompt-editable ? 1px : 0px;
-                            background: Theme.accent;
-                            y: 3px;
-                            height: row-height - 6px;
-                        }
-                        Text {
-                            text: prompt-editable ? "  (Enter / Esc)" : "";
-                            color: Theme.dim-text;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-
-                if banding: Rectangle {
-                    y: min(band-from, band-to);
-                    height: abs(band-to - band-from);
-                    width: 100%;
-                    background: Theme.accent.transparentize(0.75);
-                    border-width: 1px;
-                    border-color: Theme.accent;
-                }
-
-                click-area := TouchArea {
-                    width: 100%;
-                    height: 100%;
-                    moved => {
-                        if (click-area.pressed) {
-                            band-to = click-area.mouse-y;
-                            // A press that has not travelled a row's height
-                            // is still a click; only past that is it a drag.
-                            if (abs(band-to - band-from) >= row-height) {
-                                banding = true;
+                            Text {
+                                text: row.modified;
+                                color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                width: modified-column;
+                                overflow: elide;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                horizontal-stretch: 0;
                             }
                         }
                     }
-                    double-clicked => {
-                        if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
-                            row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
-                        }
-                    }
-                    pointer-event(event) => {
-                        if (event.kind == PointerEventKind.down) {
-                            // Any press dismisses an open context menu; the
-                            // item's own handler runs first when the press
-                            // landed on one.
-                            open-context = -1;
-                            band-from = click-area.mouse-y;
-                            band-to = click-area.mouse-y;
-                        }
-                        if (event.kind == PointerEventKind.up && banding) {
-                            banding = false;
-                            if (rows.length > 0) {
-                                rows-marqueed(
-                                    clamp(floor(min(band-from, band-to) / row-height), 0, rows.length - 1),
-                                    clamp(floor(max(band-from, band-to) / row-height), 0, rows.length - 1));
+
+                    if prompt-row >= 0: Rectangle {
+                        y: prompt-row * row-height;
+                        height: row-height;
+                        width: 100%;
+                        background: Theme.field;
+                        border-width: 1px;
+                        border-color: Theme.accent;
+                        HorizontalLayout {
+                            padding-left: 4px;
+                            spacing: 2px;
+                            alignment: start;
+                            Text {
+                                text: prompt-text;
+                                color: Theme.accent;
+                                vertical-alignment: center;
+                            }
+                            // A caret, so a text prompt reads as one waiting for
+                            // typing rather than as a label.
+                            Rectangle {
+                                width: prompt-editable ? 1px : 0px;
+                                background: Theme.accent;
+                                y: 3px;
+                                height: row-height - 6px;
+                            }
+                            Text {
+                                text: prompt-editable ? "  (Enter / Esc)" : "";
+                                color: Theme.dim-text;
+                                vertical-alignment: center;
                             }
                         }
-                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left && !banding) {
-                            if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
-                                if (event.modifiers.control) {
-                                    row-ctrl-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
-                                } else if (event.modifiers.shift) {
-                                    row-shift-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
-                                } else {
-                                    row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                    }
+
+                    if banding: Rectangle {
+                        y: min(band-from, band-to);
+                        height: abs(band-to - band-from);
+                        width: 100%;
+                        background: Theme.accent.transparentize(0.75);
+                        border-width: 1px;
+                        border-color: Theme.accent;
+                    }
+
+                    click-area := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        moved => {
+                            if (click-area.pressed) {
+                                band-to = click-area.mouse-y;
+                                // A press that has not travelled a row's height
+                                // is still a click; only past that is it a drag.
+                                if (abs(band-to - band-from) >= row-height) {
+                                    banding = true;
                                 }
                             }
                         }
-                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                        double-clicked => {
                             if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
-                                row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
-                                // Open at the pointer: a `PopupWindow` with no
-                                // placement of its own lands at the pane's
-                                // top-left corner, half over the folders pane.
-                                menu-x = click-area.mouse-x;
-                                menu-y = click-area.mouse-y;
-                                open-context = 0;
-                            } else {
-                                menu-x = click-area.mouse-x;
-                                menu-y = click-area.mouse-y;
-                                open-context = 1;
+                                row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                            }
+                        }
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.down) {
+                                // Any press dismisses an open context menu; the
+                                // item's own handler runs first when the press
+                                // landed on one.
+                                open-context = -1;
+                                band-from = click-area.mouse-y;
+                                band-to = click-area.mouse-y;
+                            }
+                            if (event.kind == PointerEventKind.up && banding) {
+                                banding = false;
+                                if (rows.length > 0) {
+                                    rows-marqueed(
+                                        clamp(floor(min(band-from, band-to) / row-height), 0, rows.length - 1),
+                                        clamp(floor(max(band-from, band-to) / row-height), 0, rows.length - 1));
+                                }
+                            }
+                            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left && !banding) {
+                                if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                                    if (event.modifiers.control) {
+                                        row-ctrl-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                    } else if (event.modifiers.shift) {
+                                        row-shift-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                    } else {
+                                        row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                    }
+                                }
+                            }
+                            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                                if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                                    row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                    // Open at the pointer: a `PopupWindow` with no
+                                    // placement of its own lands at the pane's
+                                    // top-left corner, half over the folders pane.
+                                    menu-x = click-area.mouse-x;
+                                    menu-y = click-area.mouse-y;
+                                    open-context = 0;
+                                } else {
+                                    menu-x = click-area.mouse-x;
+                                    menu-y = click-area.mouse-y;
+                                    open-context = 1;
+                                }
                             }
                         }
                     }
-                }
 
-                // The context menus are ordinary elements rather than
-                // `PopupWindow`s: a popup cannot be positioned from its
-                // enclosing component, has to be sized by hand or it is laid
-                // out 0x0 with its contents unhittable, and its default close
-                // policy eats the click that chooses an item. An element in
-                // the pane has none of those problems.
-                if open-context == 1: Rectangle {
-                    x: menu-x;
-                    y: menu-y;
-                    width: menu-width;
-                    height: 2 * menu-item-height;
-                    background: Theme.panel;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    VerticalLayout {
-                        ContextMenuItem {
-                            label: "New Folder";
-                            item-height: menu-item-height;
-                            activated => { open-context = -1; new-folder-requested(); }
-                        }
-                        ContextMenuItem {
-                            label: "New File";
-                            item-height: menu-item-height;
-                            activated => { open-context = -1; new-file-requested(); }
+                    // The context menus are ordinary elements rather than
+                    // `PopupWindow`s: a popup cannot be positioned from its
+                    // enclosing component, has to be sized by hand or it is laid
+                    // out 0x0 with its contents unhittable, and its default close
+                    // policy eats the click that chooses an item. An element in
+                    // the pane has none of those problems.
+                    if open-context == 1: Rectangle {
+                        x: menu-x;
+                        y: menu-y;
+                        width: menu-width;
+                        height: 2 * menu-item-height;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            ContextMenuItem {
+                                label: "New Folder";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; new-folder-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "New File";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; new-file-requested(); }
+                            }
                         }
                     }
-                }
 
-                if open-context == 0: Rectangle {
-                    x: menu-x;
-                    y: menu-y;
-                    width: menu-width;
-                    height: 5 * menu-item-height;
-                    background: Theme.panel;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    VerticalLayout {
-                        ContextMenuItem {
-                            label: "Open";
-                            item-height: menu-item-height;
-                            activated => { open-context = -1; open-requested(); }
-                        }
-                        ContextMenuItem {
-                            label: "Rename";
-                            shortcut: "F2";
-                            item-height: menu-item-height;
-                            activated => { open-context = -1; rename-requested(); }
-                        }
-                        ContextMenuItem {
-                            label: "Copy";
-                            shortcut: "Ctrl+C";
-                            item-height: menu-item-height;
-                            activated => { open-context = -1; copy-requested(); }
-                        }
-                        ContextMenuItem {
-                            label: "Delete";
-                            shortcut: "Del";
-                            item-height: menu-item-height;
-                            activated => { open-context = -1; delete-requested(); }
-                        }
-                        ContextMenuItem {
-                            label: "Extract";
-                            item-height: menu-item-height;
-                            item-enabled: extract-enabled;
-                            activated => { open-context = -1; extract-requested(); }
+                    if open-context == 0: Rectangle {
+                        x: menu-x;
+                        y: menu-y;
+                        width: menu-width;
+                        height: 5 * menu-item-height;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            ContextMenuItem {
+                                label: "Open";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; open-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Rename";
+                                shortcut: "F2";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; rename-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Copy";
+                                shortcut: "Ctrl+C";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; copy-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Delete";
+                                shortcut: "Del";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; delete-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Extract";
+                                item-height: menu-item-height;
+                                item-enabled: extract-enabled;
+                                activated => { open-context = -1; extract-requested(); }
+                            }
                         }
                     }
                 }
