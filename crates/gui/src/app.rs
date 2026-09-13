@@ -171,6 +171,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_zstd::ZstdPresentation,
     &plugin_xz::XzPresentation,
     &plugin_sevenzip::SevenzipPresentation,
+    &plugin_jar::JarPresentation,
+    &plugin_apk::ApkPresentation,
+    &plugin_wheel::WheelPresentation,
+    &plugin_rubygem::RubygemPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its
