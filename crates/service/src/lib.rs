@@ -486,7 +486,7 @@ pub fn view_file(path: &Path) -> io::Result<Response> {
             match guarded(name, path, || plugin.view(path)) {
                 Ok(data) => Response::FileView {
                     plugin: name.to_owned(),
-                    data: data?,
+                    data: with_source_text(path, data?),
                     also: Vec::new(),
                 },
                 // A panicking plugin costs this file its preview and
@@ -500,6 +500,59 @@ pub fn view_file(path: &Path) -> io::Result<Response> {
             message: format!("no plugin recognises {}", path.display()),
         },
     })
+}
+
+/// Largest file whose text is carried in a view. The same ceiling the
+/// plugins that read text already use, so a file is treated the same way
+/// whichever of them opens it.
+const MAX_SOURCE_BYTES: u64 = 64 * 1024;
+
+/// Puts the file's own text into `data` when the plugin that read it did
+/// not.
+///
+/// A `content` string in a view is what makes the front end offer the raw
+/// Text tab and the editor. Until now that depended on whether a plugin's
+/// author had kept the source: fifty-two of them parse a text format
+/// thoroughly and throw the text away, so a `.css`, a `.zig` or a
+/// `CMakeLists.txt` could be read *about* but never read or edited. Being
+/// well supported was what made a file uneditable.
+///
+/// It belongs here rather than in each plugin. This process is the only
+/// one that touches the filesystem, it has already opened the file, and
+/// the guarantee wanted is about the file rather than about its format:
+/// **every view of a text file carries that file's text**.
+///
+/// A plugin that kept its own `content` keeps it, untouched. A file that
+/// is not valid text, or is past [`MAX_SOURCE_BYTES`], gets nothing - and
+/// a view with no text is what tells the front end not to offer an editor
+/// it could only save half a file from.
+fn with_source_text(path: &Path, mut data: serde_json::Value) -> serde_json::Value {
+    let Some(object) = data.as_object_mut() else {
+        return data;
+    };
+    if object.contains_key("content") {
+        return data;
+    }
+    let Ok(metadata) = fs::metadata(path) else {
+        return data;
+    };
+    if metadata.len() > MAX_SOURCE_BYTES {
+        return data;
+    }
+    let Ok(bytes) = fs::read(path) else {
+        return data;
+    };
+    let Ok(text) = String::from_utf8(bytes) else {
+        return data;
+    };
+    object.insert("content".to_owned(), serde_json::Value::String(text));
+    // Only when the plugin said nothing: a plugin that reports its own
+    // reading was cut short keeps saying so, and the front end goes on
+    // refusing to edit what it has only part of.
+    object
+        .entry("truncated")
+        .or_insert(serde_json::Value::Bool(false));
+    data
 }
 
 /// Lists `path` if it is a directory, otherwise views it through whichever

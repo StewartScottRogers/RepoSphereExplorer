@@ -47,7 +47,13 @@ pub struct Frame {
 pub struct ZstdView {
     /// `frames` for compressed content, `dictionary` for the dictionary
     /// such content is compressed against.
-    pub content: String,
+    ///
+    /// Not `content`, which it was called until it was noticed that a
+    /// `content` string in a view means one thing to the front end: the
+    /// file's own text, the thing the editor saves back. A `.zst` was
+    /// offering a Text tab reading `frames`, and saving would have
+    /// written that word over the compressed file.
+    pub kind: String,
     /// The identifier this file *provides*, when it is a dictionary - the
     /// number a frame names to say it needs this one.
     pub dictionary_provides: Option<u32>,
@@ -217,7 +223,7 @@ fn parse(bytes: &[u8]) -> Option<ZstdView> {
         && u32::from_le_bytes([head[0], head[1], head[2], head[3]]) == DICTIONARY_MAGIC
     {
         return Some(ZstdView {
-            content: "dictionary".to_owned(),
+            kind: "dictionary".to_owned(),
             dictionary_provides: Some(u32::from_le_bytes([head[4], head[5], head[6], head[7]])),
             frames: Vec::new(),
             compressed_size: bytes.len() as u64,
@@ -264,7 +270,7 @@ fn parse(bytes: &[u8]) -> Option<ZstdView> {
     });
 
     Some(ZstdView {
-        content: "frames".to_owned(),
+        kind: "frames".to_owned(),
         dictionary_provides: None,
         needs_a_dictionary: frames
             .iter()
@@ -466,7 +472,7 @@ mod tests {
     fn a_bare_dictionary_is_recognised_as_one() {
         let view = view_of("readings.dict");
 
-        assert_eq!(view.content, "dictionary");
+        assert_eq!(view.kind, "dictionary");
         assert!(view.dictionary_provides.is_some());
         assert!(view.frames.is_empty(), "a dictionary holds no frames");
     }
