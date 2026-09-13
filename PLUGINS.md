@@ -181,6 +181,7 @@ it.
 | Minidump | `crates/plugins/minidump` | #412 | Flags, time taken, process, threads, exception with its parameters, modules with versions, system |
 | Packet capture | `crates/plugins/pcap` | #413 | Classic and pcapng: format, version, byte order, link type, packets, bytes, time range, interfaces, comments |
 | Cascading Style Sheets | `crates/plugins/css` | #414 | Rules, selectors, at-rules with conditions, custom properties, fonts, imports, colours, nesting |
+| .NET assembly | `crates/plugins/dotnetassembly` | #411 | Metadata tables walked: name, version, culture, target framework, references, public types, entry point, strong name |
 
 ## Folder plugins
 

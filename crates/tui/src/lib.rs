@@ -193,6 +193,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_minidump::MinidumpPresentation,
     &plugin_pcap::PcapPresentation,
     &plugin_css::CssPresentation,
+    &plugin_dotnetassembly::DotnetassemblyPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

@@ -2978,6 +2978,7 @@ dependencies = [
  "plugin-dlang",
  "plugin-dockerfile",
  "plugin-dotenv",
+ "plugin-dotnetassembly",
  "plugin-editorconfig",
  "plugin-elisp",
  "plugin-elixir",
@@ -6239,6 +6240,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-dotnetassembly"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-editorconfig"
 version = "0.6.0"
 dependencies = [
@@ -8580,6 +8590,7 @@ dependencies = [
  "plugin-dlang",
  "plugin-dockerfile",
  "plugin-dotenv",
+ "plugin-dotnetassembly",
  "plugin-editorconfig",
  "plugin-elisp",
  "plugin-elixir",
@@ -9790,6 +9801,7 @@ dependencies = [
  "plugin-dlang",
  "plugin-dockerfile",
  "plugin-dotenv",
+ "plugin-dotnetassembly",
  "plugin-editorconfig",
  "plugin-elisp",
  "plugin-elixir",

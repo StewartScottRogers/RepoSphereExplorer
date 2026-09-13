@@ -182,6 +182,7 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_minidump::MinidumpPresentation,
     &plugin_pcap::PcapPresentation,
     &plugin_css::CssPresentation,
+    &plugin_dotnetassembly::DotnetassemblyPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

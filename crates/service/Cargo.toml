@@ -38,6 +38,7 @@ plugin-css = { path = "../plugins/css" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dlang = { path = "../plugins/dlang" }
 plugin-dotenv = { path = "../plugins/dotenv" }
+plugin-dotnetassembly = { path = "../plugins/dotnetassembly" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
 plugin-elisp = { path = "../plugins/elisp" }
 plugin-flatbuffers = { path = "../plugins/flatbuffers" }
