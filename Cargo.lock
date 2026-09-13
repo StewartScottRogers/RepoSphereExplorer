@@ -2943,6 +2943,7 @@ dependencies = [
  "plugin-antlr",
  "plugin-apacheconf",
  "plugin-api",
+ "plugin-apk",
  "plugin-archive",
  "plugin-arrow",
  "plugin-asciidoc",
@@ -3003,6 +3004,7 @@ dependencies = [
  "plugin-ignorefile",
  "plugin-image",
  "plugin-ini",
+ "plugin-jar",
  "plugin-java",
  "plugin-javascript",
  "plugin-jenkinsfile",
@@ -3055,6 +3057,7 @@ dependencies = [
  "plugin-restructuredtext",
  "plugin-roff",
  "plugin-ruby",
+ "plugin-rubygem",
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
@@ -3086,6 +3089,7 @@ dependencies = [
  "plugin-vue",
  "plugin-wasm",
  "plugin-webmanifest",
+ "plugin-wheel",
  "plugin-word-document",
  "plugin-xml",
  "plugin-xz",
@@ -5896,6 +5900,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-apk"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-archive"
 version = "0.6.0"
 dependencies = [
@@ -6457,6 +6471,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-jar"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-java"
 version = "0.6.0"
 dependencies = [
@@ -6940,6 +6964,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-rubygem"
+version = "0.6.0"
+dependencies = [
+ "flate2",
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-rust"
 version = "0.6.0"
 dependencies = [
@@ -7225,6 +7259,16 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "plugin-wheel"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
 ]
 
 [[package]]
@@ -8429,6 +8473,7 @@ dependencies = [
  "plugin-antlr",
  "plugin-apacheconf",
  "plugin-api",
+ "plugin-apk",
  "plugin-archive",
  "plugin-arrow",
  "plugin-asciidoc",
@@ -8489,6 +8534,7 @@ dependencies = [
  "plugin-ignorefile",
  "plugin-image",
  "plugin-ini",
+ "plugin-jar",
  "plugin-java",
  "plugin-javascript",
  "plugin-jenkinsfile",
@@ -8541,6 +8587,7 @@ dependencies = [
  "plugin-restructuredtext",
  "plugin-roff",
  "plugin-ruby",
+ "plugin-rubygem",
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
@@ -8572,6 +8619,7 @@ dependencies = [
  "plugin-vue",
  "plugin-wasm",
  "plugin-webmanifest",
+ "plugin-wheel",
  "plugin-word-document",
  "plugin-xml",
  "plugin-xz",
@@ -9628,6 +9676,7 @@ dependencies = [
  "plugin-antlr",
  "plugin-apacheconf",
  "plugin-api",
+ "plugin-apk",
  "plugin-archive",
  "plugin-arrow",
  "plugin-asciidoc",
@@ -9688,6 +9737,7 @@ dependencies = [
  "plugin-ignorefile",
  "plugin-image",
  "plugin-ini",
+ "plugin-jar",
  "plugin-java",
  "plugin-javascript",
  "plugin-jenkinsfile",
@@ -9740,6 +9790,7 @@ dependencies = [
  "plugin-restructuredtext",
  "plugin-roff",
  "plugin-ruby",
+ "plugin-rubygem",
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
@@ -9771,6 +9822,7 @@ dependencies = [
  "plugin-vue",
  "plugin-wasm",
  "plugin-webmanifest",
+ "plugin-wheel",
  "plugin-word-document",
  "plugin-xml",
  "plugin-xz",

@@ -170,6 +170,10 @@ it.
 | Zstandard | `crates/plugins/zstd` | #401 | Frames with window size, content size, dictionary identifier and checksum flag, ratio, frames needing a dictionary |
 | xz | `crates/plugins/xz` | #400 | Block count, integrity check, filter chain, dictionary size, uncompressed size from the index, ratio |
 | 7-Zip archive | `crates/plugins/sevenzip` | #402 | Format version, entries with sizes and times, total, ratio, methods, encrypted header, solid blocks |
+| Java archive | `crates/plugins/jar` | #403 | Manifest attributes, main class, class path, versions, entries, packages, signing, services |
+| Android package | `crates/plugins/apk` | #404 | Binary manifest decoded: package, versions, SDK range, permissions, components, native code, signing |
+| Python wheel | `crates/plugins/wheel` | #405 | Distribution, version, wheel format, generator, purity, compatibility tags, requirements, entry points |
+| Ruby gem | `crates/plugins/rubygem` | #406 | Name, version, summary, authors, licence, runtime and development dependencies, Ruby, executables, files |
 
 ## Folder plugins
 
