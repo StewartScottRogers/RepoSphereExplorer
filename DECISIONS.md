@@ -275,3 +275,54 @@ fails if the drop is removed, and was checked by removing it.
 **What is deliberately unchanged.** The hint itself. A plugin that
 specialises nothing behaves exactly as it did, which is what keeps the
 #272 resolution intact.
+
+## D14 — The File pane is an editor, within a written boundary
+
+**Settled 2026-09-13.**
+
+The pane could already edit a file: Edit, type, Save, written back
+through the service. That was a *fix a typo* affordance and it sat
+comfortably inside an application for reaching and understanding
+repositories (D7, D10).
+
+Syntax colouring does not sit inside it. Slint 1.17.1's text-entry
+widget has one `color` property and no per-range styling, and its
+`StyledText` element, which does colour spans, cannot be typed into. So
+colouring what somebody is editing means writing the editing surface by
+hand: caret, selection, undo, scrolling, virtualisation - and losing
+input method editor (IME) composition, screen-reader accessibility and
+right-to-left text until each is put back.
+
+That is a different product living inside this one, and left unstated
+it would keep asking for more: find and replace, bracket matching,
+folding, completion. So the boundary is written down instead, in
+GUIDANCE.md §3.6, and a proposal outside it has to argue against a line
+rather than against a mood.
+
+What made it worth doing anyway is that the expensive half is already
+built. A hundred and eighty plugins parse these formats today. The
+Roslyn C# compiler platform's lesson is that classification belongs to
+the front end that already parses - so the plugin returns spans and the
+pane paints them, which is what §3 has always said about icons and
+views. Nothing new is being invented; an existing idea is being applied
+once more.
+
+**What it would take to revisit.** The classification half stands on
+its own and would survive: `PluginPresentation::classify` defaults to
+no spans, so a pane that stopped painting them would simply read as it
+did before. The editing surface is the reversible part - the File pane
+chooses between the hand-written editor and Slint's `TextEdit` in one
+place, and going back means choosing the other and losing colour while
+typing.
+
+**What this supersedes.** GUIDANCE.md §7's D4 settled the editing scope
+for v1 as "view plus operations only", and D6 extended it to the
+operations Windows File Explorer has. Neither anticipated editing a
+file's text, which the pane nonetheless grew. This says what that is
+and where it stops; §3.6 is the boundary D4 and D6 never drew.
+
+**What is deliberately unchanged.** Where a save goes. The service is
+still the only process that touches the filesystem, `save_file_edit`
+still sends `Request::WriteFile`, and nothing about the editing surface
+alters D10: it reads and writes the file a reader chose, and runs
+nothing.
