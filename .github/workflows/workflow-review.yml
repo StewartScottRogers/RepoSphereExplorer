@@ -50,6 +50,10 @@ permissions: {}
 
 jobs:
   review:
+    # Named for the same reason its counterpart is: `independent
+    # review` is a required check, and two contexts of the same name
+    # cannot be told apart. Work order #460.
+    name: workflow review
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:

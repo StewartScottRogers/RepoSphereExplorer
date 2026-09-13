@@ -6,7 +6,8 @@ name: Independent review
 # pushes a commit - it only inspects the diff and leaves a
 # `gh pr review --approve` or `--request-changes`.
 #
-# This check is required on `main`, alongside `fmt / clippy / test`: a
+# This check - `independent review` - is required on `main`, alongside
+# `fmt / clippy / test`: a
 # pull request does not merge until this station has run and left a
 # review, or said out loud that it has nothing to say. Work order #460.
 #
@@ -42,6 +43,11 @@ permissions:
 
 jobs:
   review:
+    # Named, because the other reviewer's job has the same id and a
+    # check is addressed by name. Two contexts both called `review`
+    # cannot be told apart in branch protection, and this one is
+    # required. Work order #460.
+    name: independent review
     runs-on: ubuntu-latest
     steps:
       # There are two pull requests this station has nothing to say
