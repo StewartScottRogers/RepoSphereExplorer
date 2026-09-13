@@ -39,6 +39,7 @@ plugin-cbor = { path = "../plugins/cbor" }
 plugin-cloudformation = { path = "../plugins/cloudformation" }
 plugin-cobol = { path = "../plugins/cobol" }
 plugin-codeowners = { path = "../plugins/codeowners" }
+plugin-css = { path = "../plugins/css" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dlang = { path = "../plugins/dlang" }
 plugin-dotenv = { path = "../plugins/dotenv" }
@@ -67,6 +68,7 @@ plugin-lua = { path = "../plugins/lua" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-matlab = { path = "../plugins/matlab" }
 plugin-maven = { path = "../plugins/maven" }
+plugin-minidump = { path = "../plugins/minidump" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-npmlock = { path = "../plugins/npmlock" }
@@ -76,6 +78,7 @@ plugin-openapi = { path = "../plugins/openapi" }
 plugin-orc = { path = "../plugins/orc" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-pascal = { path = "../plugins/pascal" }
+plugin-pcap = { path = "../plugins/pcap" }
 plugin-pickle = { path = "../plugins/pickle" }
 plugin-pnpmlock = { path = "../plugins/pnpmlock" }
 plugin-properties = { path = "../plugins/properties" }

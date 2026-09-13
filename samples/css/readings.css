@@ -1,0 +1,130 @@
+@charset "utf-8";
+@import url("reset.css") layer(reset);
+@import "typography.css" screen;
+
+/* The readings table, and the panel it sits in. */
+
+:root {
+  --ink: #1f2933;
+  --paper: #fdfdfb;
+  --accent: rgb(11 94 215);
+  --warning: hsl(38 92% 44%);
+  --gutter: 1.25rem;
+  --measure: 68ch;
+  --panel-radius: 6px;
+}
+
+@font-face {
+  font-family: "Readings Mono";
+  src: url("readings-mono.woff2") format("woff2"),
+       url("readings-mono.woff") format("woff");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: var(--gutter);
+  max-width: var(--measure);
+  color: var(--ink);
+  background: var(--paper);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.panel {
+  border: 1px solid #d8dee4;
+  border-radius: var(--panel-radius);
+  padding: var(--gutter);
+
+  & > h2 {
+    margin-top: 0;
+    font-size: 1.125rem;
+  }
+
+  &:focus-within {
+    outline: 2px solid var(--accent);
+  }
+}
+
+table.readings {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: "Readings Mono", ui-monospace, monospace;
+}
+
+table.readings th,
+table.readings td {
+  border-bottom: 1px solid #e4e8ec;
+  padding: 0.35rem 0.6rem;
+  text-align: right;
+}
+
+table.readings tbody tr:nth-child(odd) {
+  background: #f6f8fa;
+}
+
+td.out-of-range {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+td.out-of-range::after {
+  content: " out of range";
+  font-size: 0.75em;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6edf3;
+    --paper: #0d1117;
+  }
+
+  table.readings tbody tr:nth-child(odd) {
+    background: #161b22;
+  }
+}
+
+@media print {
+  .panel {
+    border: none;
+  }
+}
+
+@container panel (min-width: 40rem) {
+  table.readings th {
+    position: sticky;
+    top: 0;
+  }
+}
+
+@supports (backdrop-filter: blur(4px)) {
+  .panel {
+    backdrop-filter: blur(4px);
+  }
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.panel[data-just-loaded] {
+  animation: settle 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel[data-just-loaded] {
+    animation: none;
+  }
+}

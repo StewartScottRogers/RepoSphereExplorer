@@ -1,0 +1,37 @@
+/* A theme overlay, loaded after readings.css.
+ *
+ * It reads the base sheet's custom properties and supplies none of its
+ * own except the ones it overrides, which is the whole point of an
+ * overlay: --gutter and --measure come from the sheet underneath. */
+
+@layer theme;
+
+@layer theme {
+  :root[data-contrast="high"] {
+    --ink: #000000;
+    --paper: #ffffff;
+    --accent: #0000cc;
+  }
+
+  :root[data-contrast="high"] body {
+    padding: var(--gutter);
+    max-width: var(--measure);
+    font-weight: 500;
+  }
+
+  :root[data-contrast="high"] .panel {
+    border: 2px solid var(--ink);
+    border-radius: var(--panel-radius);
+    box-shadow: none;
+  }
+
+  :root[data-contrast="high"] table.readings tbody tr:nth-child(odd) {
+    background: var(--paper);
+    outline: 1px solid var(--ink);
+  }
+
+  :root[data-contrast="high"] td.out-of-range {
+    color: var(--paper);
+    background: var(--danger);
+  }
+}

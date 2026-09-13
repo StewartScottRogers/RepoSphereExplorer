@@ -179,6 +179,9 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_apkpkg::ApkpkgPresentation,
     &plugin_javaclass::JavaclassPresentation,
     &plugin_pyc::PycPresentation,
+    &plugin_minidump::MinidumpPresentation,
+    &plugin_pcap::PcapPresentation,
+    &plugin_css::CssPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

@@ -2969,6 +2969,7 @@ dependencies = [
  "plugin-cpp",
  "plugin-crystal",
  "plugin-csharp",
+ "plugin-css",
  "plugin-csv",
  "plugin-dart",
  "plugin-diff",
@@ -3025,6 +3026,7 @@ dependencies = [
  "plugin-markdown",
  "plugin-matlab",
  "plugin-maven",
+ "plugin-minidump",
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
@@ -3041,6 +3043,7 @@ dependencies = [
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pascal",
+ "plugin-pcap",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
@@ -6153,6 +6156,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-css"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-csv"
 version = "0.6.0"
 dependencies = [
@@ -6666,6 +6678,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-minidump"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-model3d"
 version = "0.6.0"
 dependencies = [
@@ -6813,6 +6834,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-pascal"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-pcap"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -8541,6 +8571,7 @@ dependencies = [
  "plugin-cpp",
  "plugin-crystal",
  "plugin-csharp",
+ "plugin-css",
  "plugin-csv",
  "plugin-dart",
  "plugin-diff",
@@ -8597,6 +8628,7 @@ dependencies = [
  "plugin-markdown",
  "plugin-matlab",
  "plugin-maven",
+ "plugin-minidump",
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
@@ -8613,6 +8645,7 @@ dependencies = [
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pascal",
+ "plugin-pcap",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
@@ -9748,6 +9781,7 @@ dependencies = [
  "plugin-cpp",
  "plugin-crystal",
  "plugin-csharp",
+ "plugin-css",
  "plugin-csv",
  "plugin-dart",
  "plugin-diff",
@@ -9804,6 +9838,7 @@ dependencies = [
  "plugin-markdown",
  "plugin-matlab",
  "plugin-maven",
+ "plugin-minidump",
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
@@ -9820,6 +9855,7 @@ dependencies = [
  "plugin-package-archive",
  "plugin-parquet",
  "plugin-pascal",
+ "plugin-pcap",
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
