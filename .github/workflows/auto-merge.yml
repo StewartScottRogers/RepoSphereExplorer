@@ -7,9 +7,20 @@ name: Auto-merge
 # pull_request_target, not pull_request: workflows triggered by Dependabot's
 # pull_request event get a read-only token, which cannot enable auto-merge.
 # Nothing from the pull request branch is checked out or executed here.
+# `synchronize` is here because auto-merge can be turned *off* after it
+# was turned on: `workflow-review.yml` disables it on a pull request that
+# edits a workflow, until a review approves the head being merged. Without
+# re-enabling on a push, such a pull request finishes every check, gets
+# its approval, and then sits there - labelled, green, and doing nothing.
+# #461 did exactly that and needed merging by hand. Work order #462.
+#
+# Enabling is idempotent and GitHub still waits for the required checks,
+# so doing it again on every push costs nothing. It adds no exposure
+# either: this workflow checks out nothing and runs no code from the
+# branch, which is why `pull_request_target` is safe here at all.
 on:
   pull_request_target:
-    types: [opened, labeled, ready_for_review]
+    types: [opened, labeled, synchronize, ready_for_review]
 
 permissions:
   contents: write
