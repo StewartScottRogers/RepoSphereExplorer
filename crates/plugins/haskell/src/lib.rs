@@ -81,8 +81,9 @@ fn is_haskell_type_signature(line: &str) -> bool {
 }
 
 /// Whether `text` looks like Haskell source: markers not used by this
-/// project's other source-language plugins. A `{-# LANGUAGE` pragma opens a
-/// GHC language extension directive; `import qualified ` is Haskell's
+/// project's other source-language plugins. `{-#` opens a GHC pragma -
+/// `{-# LANGUAGE`, `{-# OPTIONS_GHC`, and the rest of GHC's pragma names -
+/// which nothing else writes; `import qualified ` is Haskell's
 /// qualified-import syntax, distinct from every sibling plugin's own
 /// `import`/`require` markers; a line matching [`is_haskell_type_signature`]
 /// is a top-level type signature, distinct from the Rust plugin's `std::`
@@ -95,7 +96,7 @@ fn is_haskell_type_signature(line: &str) -> bool {
 /// also uses `<-` for monadic bind in `do` notation (see the R plugin's own
 /// note on that overlap).
 fn has_haskell_syntax(text: &str) -> bool {
-    text.contains("{-# LANGUAGE")
+    text.contains("{-#")
         || text.contains("import qualified ")
         || text.lines().any(is_haskell_type_signature)
 }
@@ -199,6 +200,13 @@ mod tests {
         assert!(HaskellCore.sniff(b"{-# LANGUAGE OverloadedStrings #-}\nmain = pure ()\n"));
         assert!(HaskellCore.sniff(b"import qualified Data.Map as Map\n"));
         assert!(HaskellCore.sniff(b"greet :: String -> String\ngreet name = name\n"));
+    }
+
+    #[test]
+    fn sniffs_an_hspec_discover_options_pragma_as_haskell() {
+        // What `hspec-discover` generates for a project's `test/Spec.hs`:
+        // one line, no `LANGUAGE` pragma in sight.
+        assert!(HaskellCore.sniff(b"{-# OPTIONS_GHC -F -pgmF hspec-discover #-}\n"));
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::path::Path;
 /// Both halves report these: the presentation half so a listing can
 /// mark the file, the core half so `service` can tell this type from
 /// another whose content heuristic matches the same text.
-pub const EXTENSIONS: &[&str] = &["scala", "sc"];
+pub const EXTENSIONS: &[&str] = &["scala", "sc", "sbt"];
 
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
@@ -87,16 +87,19 @@ fn has_scala_shebang(text: &str) -> bool {
 /// plugin's `data class `; `extends App` is Scala's classic application
 /// entry point; `def main(args: Array[String]` is Scala's main-method
 /// signature, distinct from Kotlin's `fun main(` and Java's
-/// `public static void main(String`; and `sealed trait ` is checked as a
+/// `public static void main(String`; `sealed trait ` is checked as a
 /// compound marker (never a bare `trait ` line start) so it does not
 /// collide with the Rust plugin's own bare `trait `/`pub trait ` line-start
-/// check.
+/// check; and `addSbtPlugin(` is the call an sbt build's `project/*.sbt`
+/// files declare their own plugins with, which have neither an `import
+/// scala.` nor a class or object of their own.
 fn has_scala_syntax(text: &str) -> bool {
     text.contains("import scala.")
         || text.contains("case class ")
         || text.contains("extends App")
         || text.contains("def main(args: Array[String]")
         || text.contains("sealed trait ")
+        || text.contains("addSbtPlugin(")
 }
 
 /// The Scala plugin's core half.
@@ -205,6 +208,15 @@ mod tests {
             b"object Main {\n  def main(args: Array[String]): Unit = {\n    println(\"hi\")\n  }\n}\n"
         ));
         assert!(ScalaCore.sniff(b"sealed trait Shape\n"));
+    }
+
+    #[test]
+    fn sniffs_an_sbt_plugin_declaration_as_scala() {
+        // `project/plugins.sbt` has neither an `import scala.` nor a class
+        // or object - just plugin declarations.
+        assert!(
+            ScalaCore.sniff(b"addSbtPlugin(\"org.scalameta\" % \"sbt-scalafmt\" % \"2.5.4\")\n")
+        );
     }
 
     #[test]

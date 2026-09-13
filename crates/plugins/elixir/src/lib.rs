@@ -80,19 +80,22 @@ fn has_elixir_shebang(text: &str) -> bool {
 /// project's other source-language plugins. `defmodule ` is Elixir's module
 /// declaration; `IO.puts`/`IO.inspect` are Elixir's console functions,
 /// distinct from the Ruby plugin's bare `puts` check; `@moduledoc` is
-/// Elixir's module-documentation attribute; and `|>` is Elixir's pipe
-/// operator, distinct from the R plugin's `%>%` pipe. None of these appear
-/// in a bare `end`-closed block on their own, which is why this plugin does
-/// not rely on that marker (the Ruby plugin already claims bare `end`
-/// lines), and is instead placed ahead of `ruby` in `CORE_PLUGINS` so a
-/// genuine Elixir file's `end` lines are reached only after one of these
-/// stronger, Elixir-only markers has already matched.
+/// Elixir's module-documentation attribute; `|>` is Elixir's pipe operator,
+/// distinct from the R plugin's `%>%` pipe; and `ExUnit.` is Elixir's test
+/// framework namespace, the whole of what a generated `test_helper.exs`
+/// contains. None of these appear in a bare `end`-closed block on their
+/// own, which is why this plugin does not rely on that marker (the Ruby
+/// plugin already claims bare `end` lines), and is instead placed ahead of
+/// `ruby` in `CORE_PLUGINS` so a genuine Elixir file's `end` lines are
+/// reached only after one of these stronger, Elixir-only markers has
+/// already matched.
 fn has_elixir_syntax(text: &str) -> bool {
     text.contains("defmodule ")
         || text.contains("IO.puts")
         || text.contains("IO.inspect")
         || text.contains("@moduledoc")
         || text.contains("|>")
+        || text.contains("ExUnit.")
 }
 
 /// The Elixir plugin's core half.
@@ -199,6 +202,13 @@ mod tests {
         assert!(ElixirCore.sniff(b"IO.inspect(x)\n"));
         assert!(ElixirCore.sniff(b"@moduledoc \"\"\"\nA greeter.\n\"\"\"\n"));
         assert!(ElixirCore.sniff(b"[1, 2, 3] |> Enum.map(&(&1 * 2))\n"));
+    }
+
+    #[test]
+    fn sniffs_a_generated_test_helper_as_elixir() {
+        // What `mix new` generates for `test/test_helper.exs`: one call,
+        // no `defmodule` in sight.
+        assert!(ElixirCore.sniff(b"ExUnit.start(capture_log: true)\n"));
     }
 
     #[test]

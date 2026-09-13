@@ -1,9 +1,9 @@
 //! `MSBuild` project file type plugin: core and presentation halves.
 //!
-//! A specialisation of XML: a `<Project>` root with an `Sdk` attribute,
-//! or `<PropertyGroup>` and `<ItemGroup>` children, which nothing else
-//! writes. It claims the project extensions itself, so `xml` never sees
-//! them.
+//! A specialisation of XML: a `<Project>` root with an `Sdk` attribute, a
+//! `ToolsVersion` attribute, or a `<PropertyGroup>` or `<ItemGroup>` child,
+//! which nothing else writes. It claims the project extensions itself, so
+//! `xml` never sees them.
 
 use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
@@ -175,6 +175,12 @@ fn parse(text: &str) -> MsbuildView {
 }
 
 /// Whether `text` is an `MSBuild` project.
+///
+/// A `Directory.Build.props` is a bare `<Project>` with one
+/// `<PropertyGroup>` and nothing else - no `Sdk` attribute, no
+/// `ToolsVersion`, no `<ItemGroup>` - and it is the file that decides how
+/// every project beside it builds, so `<PropertyGroup>` or `<ItemGroup>`
+/// alone is enough rather than requiring both together.
 fn looks_like_it(text: &str) -> bool {
     if !text.contains("<Project") {
         return false;
@@ -183,7 +189,8 @@ fn looks_like_it(text: &str) -> bool {
         .first()
         .and_then(|at| attribute(text, *at, "Sdk"))
         .is_some()
-        || (text.contains("<PropertyGroup") && text.contains("<ItemGroup"))
+        || text.contains("<PropertyGroup")
+        || text.contains("<ItemGroup")
         || text.contains("ToolsVersion=")
 }
 
@@ -320,6 +327,15 @@ mod tests {
             MsbuildCore
                 .sniff(b"<Project ToolsVersion=\"4.0\"><PropertyGroup/><ItemGroup/></Project>")
         );
+    }
+
+    #[test]
+    fn sniffs_a_bare_directory_build_props_with_only_a_property_group() {
+        // No Sdk, no ToolsVersion, no ItemGroup - just the shape every
+        // Directory.Build.props actually has.
+        assert!(MsbuildCore.sniff(
+            b"<Project>\n  <PropertyGroup>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n"
+        ));
     }
 
     #[test]

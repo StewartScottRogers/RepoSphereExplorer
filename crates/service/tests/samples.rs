@@ -153,6 +153,181 @@ fn every_sample_directory_proves_its_own_plugin() {
     );
 }
 
+/// Files under `samples/` that the text plugin alone recognises, named with
+/// why each one genuinely is plain text rather than a fixture its own
+/// directory's plugin failed to read. Path relative to `samples/`, using `/`.
+const TEXT_ONLY_EXCEPTIONS: &[(&str, &str)] = &[
+    (
+        "apkpkg/README.md",
+        "prose with a single top-level heading; the markdown plugin \
+         deliberately declines a bare '# ' line since it reads as a comment \
+         in a dozen other formats (#272), and the body has no fenced code, \
+         link, list or table for it to catch instead",
+    ),
+    ("arrow/README.md", README_REASON),
+    ("awk/README.md", README_REASON),
+    ("bicep/README.md", README_REASON),
+    ("bson/README.md", README_REASON),
+    ("bzip2/README.md", README_REASON),
+    ("cbor/README.md", README_REASON),
+    ("cobol/README.md", README_REASON),
+    ("composerlock/README.md", README_REASON),
+    ("css/README.md", README_REASON),
+    ("directory/README.md", README_REASON),
+    (
+        "directory/notes.txt",
+        "an ordinary personal note, included beside the folder's recognised \
+         files to show a directory listing holds more than one kind of \
+         thing - it is nobody's format but plain text",
+    ),
+    (
+        "directory/shopping-list.txt",
+        "an ordinary personal list, included beside the folder's recognised \
+         files for the same reason as notes.txt in this directory",
+    ),
+    ("dlang/README.md", README_REASON),
+    (
+        "dockerfile/.gitignore",
+        "three plain filename patterns with no negation, directory slash or \
+         wildcard, so the ignorefile plugin's own sniff - which requires \
+         one of those to avoid claiming an arbitrary word list - declines \
+         it; a supporting file in the dockerfile project, not the \
+         ignorefile plugin's own fixture",
+    ),
+    ("gemfilelock/README.md", README_REASON),
+    ("gleam/README.md", README_REASON),
+    ("gzip/README.md", README_REASON),
+    ("json5/README.md", README_REASON),
+    ("jsonlines/README.md", README_REASON),
+    ("matlab/README.md", README_REASON),
+    ("minidump/README.md", README_REASON),
+    ("ninja/README.md", README_REASON),
+    ("nuget/README.md", README_REASON),
+    ("numpy/README.md", README_REASON),
+    (
+        "ocaml/bin/dune",
+        "a Dune build file; this project has no Dune plugin, so it can only \
+         ever open as plain text",
+    ),
+    ("orc/README.md", README_REASON),
+    ("pascal/README.md", README_REASON),
+    (
+        "perl/MANIFEST",
+        "a plain list of file paths, one per line; the MANIFEST format has \
+         no syntax of its own for a plugin to sniff",
+    ),
+    ("purescript/README.md", README_REASON),
+    (
+        "python/src/taskqueue/py.typed",
+        "a Python Enhancement Proposal (PEP) 561 marker file, which by \
+         convention is empty and so has no content any plugin could read",
+    ),
+    (
+        "r/NAMESPACE",
+        "a roxygen2-generated export()/importFrom() directive list - R \
+         package metadata, not the R source syntax the plugin's sniff \
+         looks for",
+    ),
+    ("rubygem/README.md", README_REASON),
+    ("sevenzip/README.md", README_REASON),
+    (
+        "solidity/remappings.txt",
+        "a Foundry import-remapping file: one `prefix=path` line per import \
+         alias, with no Solidity syntax of its own",
+    ),
+    ("tar/README.md", README_REASON),
+    (
+        "text/access.log",
+        "the text plugin's own fixture, proving rule 2 for samples/text/ - \
+         it is supposed to be recognised only as text",
+    ),
+    (
+        "text/release-notes.txt",
+        "the text plugin's own fixture, for the same reason as access.log \
+         in this directory",
+    ),
+    ("verilog/README.md", README_REASON),
+    ("zig/README.md", README_REASON),
+    ("zstd/README.md", README_REASON),
+];
+
+/// The reason shared by every bare-prose `README.md` in [`TEXT_ONLY_EXCEPTIONS`]:
+/// a single top-level heading and paragraphs of prose, with none of the
+/// fenced code, links, lists or tables the markdown plugin's sniff looks
+/// for, and the same reason a bare `# ` line is not enough on its own
+/// (#272) - a heading alone reads as a comment in a dozen other formats.
+const README_REASON: &str = "prose with a single top-level heading and no \
+    other markdown markers - the same shape as apkpkg/README.md above";
+
+#[test]
+fn nothing_recognised_only_by_text_is_missing_from_the_exceptions_list() {
+    // Rule 3. The text plugin recognises everything, so it is the plugin
+    // that never notices a sibling has stopped reading its own fixture.
+    // Every file it alone claims must be named here with a reason, or it
+    // is a hole the same shape as the one rule 1 already closes for a file
+    // nothing recognises at all.
+    let mut failures = Vec::new();
+
+    for plugin_dir in sorted_dir_entries(&samples_dir())
+        .into_iter()
+        .filter(|path| path.is_dir())
+    {
+        for file in files_under(&plugin_dir) {
+            if recognised_by(&file) != ["text".to_owned()] {
+                continue;
+            }
+            let relative = file
+                .strip_prefix(samples_dir())
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace('\\', "/");
+            if !TEXT_ONLY_EXCEPTIONS
+                .iter()
+                .any(|(path, _reason)| *path == relative)
+            {
+                failures.push(format!(
+                    "{} is recognised only by the text plugin, and is not in \
+                     TEXT_ONLY_EXCEPTIONS - either its own plugin should read \
+                     it, or it belongs in that list with a reason",
+                    file.display()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} sample file(s) open as plain text with no plugin of their own \
+         claiming them:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn every_text_only_exception_still_names_a_file_under_samples() {
+    // Rule 4. A rename or removal leaves a stale entry here, which is a
+    // silent excuse for whatever file used to be at that path - so it has
+    // to fail loudly instead.
+    let mut failures = Vec::new();
+
+    for (relative, _reason) in TEXT_ONLY_EXCEPTIONS {
+        if !samples_dir().join(relative).is_file() {
+            failures.push(format!(
+                "TEXT_ONLY_EXCEPTIONS names {relative}, which is not a file under samples/"
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} stale text-only exception(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn samples_has_one_subdirectory_per_plugin_crate() {
     let plugins_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins");

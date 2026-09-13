@@ -80,8 +80,10 @@ fn has_erlang_shebang(text: &str) -> bool {
 /// project's other source-language plugins. `-module(`/`-export(`/
 /// `-record(`/`-behaviour(`/`-behavior(` are Erlang's parenthesized,
 /// dash-prefixed module attributes; `-spec ` is its function type-signature
-/// attribute; and `io:format(` is Erlang's qualified console-output call,
-/// distinct from every sibling plugin's own console-output marker. None of
+/// attribute; `io:format(` is Erlang's qualified console-output call,
+/// distinct from every sibling plugin's own console-output marker; and
+/// `{application, ` opens the top-level tuple an `.app`/`.app.src` resource
+/// file is, in place of a `-module(` attribute it has no use for. None of
 /// these overlap another plugin's checks, so this plugin needs no ordering
 /// constraint against a specific sibling.
 fn has_erlang_syntax(text: &str) -> bool {
@@ -92,6 +94,7 @@ fn has_erlang_syntax(text: &str) -> bool {
         || text.contains("-behavior(")
         || text.contains("-spec ")
         || text.contains("io:format(")
+        || text.contains("{application, ")
 }
 
 /// The Erlang plugin's core half.
@@ -199,6 +202,14 @@ mod tests {
         assert!(ErlangCore.sniff(b"-behavior(gen_server).\n"));
         assert!(ErlangCore.sniff(b"-spec hi() -> ok.\n"));
         assert!(ErlangCore.sniff(b"greet() ->\n    io:format(\"hi~n\").\n"));
+    }
+
+    #[test]
+    fn sniffs_an_app_resource_file_as_erlang() {
+        // An `.app.src` is an Erlang term, not a module: no `-module(`.
+        assert!(ErlangCore.sniff(
+            b"{application, greeter, [\n    {vsn, \"1.0.0\"},\n    {registered, []}\n]}.\n"
+        ));
     }
 
     #[test]
