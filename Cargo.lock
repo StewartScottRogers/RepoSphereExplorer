@@ -2944,6 +2944,7 @@ dependencies = [
  "plugin-apacheconf",
  "plugin-api",
  "plugin-apk",
+ "plugin-apkpkg",
  "plugin-archive",
  "plugin-arrow",
  "plugin-asciidoc",
@@ -3006,6 +3007,7 @@ dependencies = [
  "plugin-ini",
  "plugin-jar",
  "plugin-java",
+ "plugin-javaclass",
  "plugin-javascript",
  "plugin-jenkinsfile",
  "plugin-json",
@@ -3029,6 +3031,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-nuget",
  "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
@@ -3051,6 +3054,7 @@ dependencies = [
  "plugin-protobuf",
  "plugin-psd",
  "plugin-purescript",
+ "plugin-pyc",
  "plugin-python",
  "plugin-r",
  "plugin-requirements",
@@ -5910,6 +5914,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-apkpkg"
+version = "0.6.0"
+dependencies = [
+ "flate2",
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-archive"
 version = "0.6.0"
 dependencies = [
@@ -6490,6 +6504,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-javaclass"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-javascript"
 version = "0.6.0"
 dependencies = [
@@ -6698,6 +6721,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-nuget"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-numpy"
 version = "0.6.0"
 dependencies = [
@@ -6902,6 +6935,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-purescript"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-pyc"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -8474,6 +8516,7 @@ dependencies = [
  "plugin-apacheconf",
  "plugin-api",
  "plugin-apk",
+ "plugin-apkpkg",
  "plugin-archive",
  "plugin-arrow",
  "plugin-asciidoc",
@@ -8536,6 +8579,7 @@ dependencies = [
  "plugin-ini",
  "plugin-jar",
  "plugin-java",
+ "plugin-javaclass",
  "plugin-javascript",
  "plugin-jenkinsfile",
  "plugin-json",
@@ -8559,6 +8603,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-nuget",
  "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
@@ -8581,6 +8626,7 @@ dependencies = [
  "plugin-protobuf",
  "plugin-psd",
  "plugin-purescript",
+ "plugin-pyc",
  "plugin-python",
  "plugin-r",
  "plugin-requirements",
@@ -9677,6 +9723,7 @@ dependencies = [
  "plugin-apacheconf",
  "plugin-api",
  "plugin-apk",
+ "plugin-apkpkg",
  "plugin-archive",
  "plugin-arrow",
  "plugin-asciidoc",
@@ -9739,6 +9786,7 @@ dependencies = [
  "plugin-ini",
  "plugin-jar",
  "plugin-java",
+ "plugin-javaclass",
  "plugin-javascript",
  "plugin-jenkinsfile",
  "plugin-json",
@@ -9762,6 +9810,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-nuget",
  "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
@@ -9784,6 +9833,7 @@ dependencies = [
  "plugin-protobuf",
  "plugin-psd",
  "plugin-purescript",
+ "plugin-pyc",
  "plugin-python",
  "plugin-r",
  "plugin-requirements",

@@ -21,6 +21,7 @@ plugin-apacheconf = { path = "../plugins/apacheconf" }
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
 plugin-apk = { path = "../plugins/apk" }
+plugin-apkpkg = { path = "../plugins/apkpkg" }
 plugin-archive = { path = "../plugins/archive" }
 plugin-arrow = { path = "../plugins/arrow" }
 plugin-asciidoc = { path = "../plugins/asciidoc" }
@@ -53,6 +54,7 @@ plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
 plugin-jar = { path = "../plugins/jar" }
+plugin-javaclass = { path = "../plugins/javaclass" }
 plugin-jenkinsfile = { path = "../plugins/jenkinsfile" }
 plugin-json5 = { path = "../plugins/json5" }
 plugin-jsonlines = { path = "../plugins/jsonlines" }
@@ -68,6 +70,7 @@ plugin-maven = { path = "../plugins/maven" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-npmlock = { path = "../plugins/npmlock" }
+plugin-nuget = { path = "../plugins/nuget" }
 plugin-numpy = { path = "../plugins/numpy" }
 plugin-openapi = { path = "../plugins/openapi" }
 plugin-orc = { path = "../plugins/orc" }
@@ -78,6 +81,7 @@ plugin-pnpmlock = { path = "../plugins/pnpmlock" }
 plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-purescript = { path = "../plugins/purescript" }
+plugin-pyc = { path = "../plugins/pyc" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-rubygem = { path = "../plugins/rubygem" }
