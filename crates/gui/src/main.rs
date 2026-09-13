@@ -119,7 +119,19 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         }};
     }
 
-    on_row_event!(on_folder_row_clicked, select_folder);
+    // Not `on_row_event!`: this one carries where in the row the click
+    // landed, because the chevron opens the folder and the name selects it.
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_folder_row_clicked(move |i, x| {
+            let mut app = app.borrow_mut();
+            app.click_folder(index(i), x);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
     on_row_event!(on_folder_row_double_clicked, toggle_folder);
     on_row_event!(on_content_row_clicked, select_content);
     on_row_event!(on_content_row_ctrl_clicked, toggle_content);
