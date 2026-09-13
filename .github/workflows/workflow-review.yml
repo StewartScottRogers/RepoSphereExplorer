@@ -286,6 +286,12 @@ jobs:
             # was already on. Turning auto-merge back on is the release.
             # Only for a pull request the floor was told it may land:
             # somebody else's workflow change is not ours to merge.
+            #
+            # This works only because the hold below no longer strips
+            # that label. It used to, and then this check asked for a
+            # signal the hold had just destroyed - so the one sequence
+            # #462 is about, held then pushed then approved, always took
+            # the "left for a person" branch and released nothing.
             wanted=$(gh pr view "${PR}" --repo "${REPO}" --json labels \
               --jq '[.labels[].name] | index("auto-merge") // empty')
             if [ -z "${wanted}" ]; then
@@ -324,7 +330,12 @@ jobs:
             echo '::error::disablePullRequestAutoMerge mutation needs.'
             exit 1
           fi
-          gh pr edit "${PR}" --repo "${REPO}" --remove-label auto-merge || true
+          # The `auto-merge` label is deliberately left alone. Taking
+          # it off stops nothing - the line above is what stops the
+          # merge, which is the whole lesson of #440 - and it destroys
+          # the one record of the floor having been told it may land
+          # this. The release above needs that record to survive being
+          # held, or it releases nothing. Work order #462.
           gh pr edit "${PR}" --repo "${REPO}" --add-label needs-human-review || true
 
           if [ "${state}" = "CHANGES_REQUESTED" ]; then
@@ -336,12 +347,13 @@ jobs:
             "Held: ${reason}." \
             '' \
             'This pull request edits the factory itself, so `workflow-review.yml`' \
-            'reviews it rather than the usual station. Auto-merge is off and the' \
-            '`auto-merge` label removed, because removing the label alone does not' \
-            'stop a merge that is already enabled - which is how #440 landed.' \
+            'reviews it rather than the usual station. Auto-merge has been turned' \
+            'off - that, and not the label, is what stops a merge already enabled,' \
+            'which is how #440 landed.' \
             '' \
-            'Push a fix and this runs again. If you are content without it, put' \
-            'the `auto-merge` label back.')"
+            'Push a fix and this runs again: if the reviewer is satisfied it will' \
+            'turn auto-merge back on by itself. To land this as it stands, merge' \
+            'it yourself.')"
 
           echo "::error::Held. ${reason}."
           exit 1

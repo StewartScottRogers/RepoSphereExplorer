@@ -20,6 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # First, and before anything slow: the workflows are the only code
+      # in this repository that nothing else tests, and twice now a pull
+      # request has merged that should not have because of a bug in one
+      # - #440 through a hold that failed silently, #463 through a
+      # release path that could never fire. It costs a second.
+      - name: Workflow logic
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check pyyaml
+          bash .github/tests/hold.sh
       - name: Install gui's native build dependencies (Slint)
         run: |
           sudo apt-get update
