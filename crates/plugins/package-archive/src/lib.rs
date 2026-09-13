@@ -25,7 +25,11 @@ use std::path::Path;
 /// Both halves report these: the presentation half so a listing can
 /// mark the file, the core half so `service` can tell this type from
 /// another whose content heuristic matches the same text.
-pub const EXTENSIONS: &[&str] = &["deb", "rpm", "apk", "nupkg"];
+/// `apk` and `nupkg` are not here: this plugin reads an `ar` archive
+/// and an RPM header, and an Alpine package (`apk`, a gzip stream)
+/// or a `NuGet` package (`nupkg`, a zip) is neither. An extension a
+/// plugin cannot honour is a hint that points nowhere.
+pub const EXTENSIONS: &[&str] = &["deb", "rpm"];
 
 /// Maximum number of file entries listed in the view; packages with more
 /// are truncated, matching the `archive` plugin's own `MAX_ENTRIES` limit.

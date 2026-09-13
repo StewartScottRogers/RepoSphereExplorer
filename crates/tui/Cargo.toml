@@ -18,6 +18,7 @@ plugin-antlr = { path = "../plugins/antlr" }
 plugin-apacheconf = { path = "../plugins/apacheconf" }
 plugin-api = { path = "../plugin-api" }
 plugin-ada = { path = "../plugins/ada" }
+plugin-apk = { path = "../plugins/apk" }
 plugin-archive = { path = "../plugins/archive" }
 plugin-arrow = { path = "../plugins/arrow" }
 plugin-asciidoc = { path = "../plugins/asciidoc" }
@@ -49,6 +50,7 @@ plugin-gzip = { path = "../plugins/gzip" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
+plugin-jar = { path = "../plugins/jar" }
 plugin-jenkinsfile = { path = "../plugins/jenkinsfile" }
 plugin-json5 = { path = "../plugins/json5" }
 plugin-jsonlines = { path = "../plugins/jsonlines" }
@@ -76,6 +78,7 @@ plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-purescript = { path = "../plugins/purescript" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
+plugin-rubygem = { path = "../plugins/rubygem" }
 plugin-sevenzip = { path = "../plugins/sevenzip" }
 plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
@@ -161,6 +164,7 @@ plugin-video = { path = "../plugins/video" }
 plugin-vue = { path = "../plugins/vue" }
 plugin-wasm = { path = "../plugins/wasm" }
 plugin-webmanifest = { path = "../plugins/webmanifest" }
+plugin-wheel = { path = "../plugins/wheel" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
 plugin-xz = { path = "../plugins/xz" }
