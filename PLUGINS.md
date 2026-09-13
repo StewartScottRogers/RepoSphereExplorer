@@ -182,6 +182,10 @@ it.
 | Packet capture | `crates/plugins/pcap` | #413 | Classic and pcapng: format, version, byte order, link type, packets, bytes, time range, interfaces, comments |
 | Cascading Style Sheets | `crates/plugins/css` | #414 | Rules, selectors, at-rules with conditions, custom properties, fonts, imports, colours, nesting |
 | .NET assembly | `crates/plugins/dotnetassembly` | #411 | Metadata tables walked: name, version, culture, target framework, references, public types, entry point, strong name |
+| Sass | `crates/plugins/sass` | #415 | Which syntax, partial, variables, mixins and functions with parameters, uses and forwards, placeholders, nesting depth |
+| Bicep | `crates/plugins/bicep` | #353 | Target scope, parameters with types, defaults, secure and allowed, variables, resources, modules, outputs |
+| Nix expression | `crates/plugins/nix` | #354 | Flake or not, description, pinned inputs with follows, outputs, arguments, derivation with its three kinds of input |
+| Starlark build file | `crates/plugins/starlark` | #355 | Build file or extension, loads, targets with dependencies and globs, visibility three ways, functions and rules |
 
 ## Folder plugins
 

@@ -1,0 +1,125 @@
+// The readings table, as a Sass partial. The leading underscore is what
+// makes it one: it is compiled only through whatever `@use`s it.
+
+@use "sass:math";
+@use "sass:color";
+@use "../theme/palette" as palette;
+@forward "mixins" show respond-to, visually-hidden;
+
+$gutter: 1.25rem;
+$measure: 68ch;
+$ink: #1f2933;
+$paper: #fdfdfb;
+$accent: rgb(11 94 215);
+$row-stripe: color.adjust($paper, $lightness: -3%);
+$breakpoints: (
+  "narrow": 30rem,
+  "wide": 60rem,
+);
+
+@function column-width($columns, $of: 12) {
+  @if $columns > $of {
+    @error "#{$columns} columns will not fit in #{$of}.";
+  }
+
+  @return math.percentage(math.div($columns, $of));
+}
+
+@function stripe($base, $depth: 3%) {
+  @return color.adjust($base, $lightness: -$depth);
+}
+
+@mixin respond-to($name, $edge: min) {
+  $width: map-get($breakpoints, $name);
+
+  @if $edge == min {
+    @media (min-width: $width) {
+      @content;
+    }
+  } @else {
+    @media (max-width: $width - 0.01px) {
+      @content;
+    }
+  }
+}
+
+@mixin numeric-column($align: right) {
+  font-variant-numeric: tabular-nums;
+  text-align: $align;
+}
+
+%panel-surface {
+  background: $paper;
+  border: 1px solid stripe($paper, 8%);
+  border-radius: 6px;
+}
+
+%screen-reader-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.panel {
+  @extend %panel-surface;
+
+  padding: $gutter;
+  max-width: $measure;
+  color: $ink;
+
+  > header {
+    display: flex;
+    justify-content: space-between;
+
+    h2 {
+      margin: 0;
+      font-size: 1.125rem;
+
+      .count {
+        color: $accent;
+
+        &::before {
+          content: "(";
+        }
+
+        &::after {
+          content: ")";
+        }
+      }
+    }
+  }
+
+  table.readings {
+    width: 100%;
+    border-collapse: collapse;
+
+    th,
+    td {
+      @include numeric-column;
+
+      padding: 0.35rem 0.6rem;
+      border-bottom: 1px solid stripe($paper, 6%);
+    }
+
+    th:first-child,
+    td:first-child {
+      @include numeric-column(left);
+
+      width: column-width(4);
+    }
+
+    tbody tr:nth-child(odd) {
+      background: $row-stripe;
+    }
+  }
+
+  .legend {
+    @extend %screen-reader-only;
+  }
+
+  @include respond-to("wide") {
+    padding: $gutter * 2;
+  }
+}

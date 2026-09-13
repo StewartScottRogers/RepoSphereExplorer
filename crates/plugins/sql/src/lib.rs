@@ -50,9 +50,19 @@ fn strip_ci_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     .then(|| &s[prefix.len()..])
 }
 
-/// Whether `line`, once trimmed, starts with `keyword` case-insensitively.
+/// Whether `line`, once trimmed, starts with `keyword`
+/// case-insensitively *as a whole word*.
+///
+/// The word boundary is the whole of work order #424. Without it a YAML
+/// line reading `selector:` starts with `SELECT`, and any YAML file
+/// whose extension `yaml` does not claim - an extensionless one, or a
+/// `.txt` - was claimed by this plugin on the strength of it.
 fn starts_with_ci(line: &str, keyword: &str) -> bool {
-    strip_ci_prefix(line.trim_start(), keyword).is_some()
+    strip_ci_prefix(line.trim_start(), keyword).is_some_and(|rest| {
+        rest.chars()
+            .next()
+            .is_none_or(|next| !next.is_alphanumeric() && next != '_')
+    })
 }
 
 /// Whether `text` looks like SQL source: a line starting with one of
