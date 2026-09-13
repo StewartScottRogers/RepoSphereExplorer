@@ -88,7 +88,12 @@ fn has_elixir_shebang(text: &str) -> bool {
 /// genuine Elixir file's `end` lines are reached only after one of these
 /// stronger, Elixir-only markers has already matched.
 fn has_elixir_syntax(text: &str) -> bool {
-    text.contains("defmodule ")
+    // `ExUnit.` and `defp` are Elixir's and nobody else's. A project's
+    // `test_helper.exs` is one `ExUnit.start(...)` call and had none of
+    // the markers below it.
+    text.contains("ExUnit.")
+        || text.contains("defp ")
+        || text.contains("defmodule ")
         || text.contains("IO.puts")
         || text.contains("IO.inspect")
         || text.contains("@moduledoc")

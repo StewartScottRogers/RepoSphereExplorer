@@ -9,7 +9,9 @@ use std::path::Path;
 /// Both halves report these: the presentation half so a listing can
 /// mark the file, the core half so `service` can tell this type from
 /// another whose content heuristic matches the same text.
-pub const EXTENSIONS: &[&str] = &["scala", "sc"];
+/// `sbt` is here because a build file is Scala: `build.sbt` and
+/// `project/plugins.sbt` are the language in sbt's own vocabulary.
+pub const EXTENSIONS: &[&str] = &["scala", "sc", "sbt"];
 
 /// Maximum number of bytes read from a file when viewing it.
 const MAX_VIEW_BYTES: usize = 64 * 1024;
@@ -92,7 +94,12 @@ fn has_scala_shebang(text: &str) -> bool {
 /// collide with the Rust plugin's own bare `trait `/`pub trait ` line-start
 /// check.
 fn has_scala_syntax(text: &str) -> bool {
-    text.contains("import scala.")
+    // An `.sbt` file is Scala, written in sbt's own vocabulary: no
+    // class, no object, no `import scala.`, just settings and plugins.
+    text.contains("addSbtPlugin(")
+        || text.contains("scalaVersion :=")
+        || text.contains("libraryDependencies +=")
+        || text.contains("import scala.")
         || text.contains("case class ")
         || text.contains("extends App")
         || text.contains("def main(args: Array[String]")

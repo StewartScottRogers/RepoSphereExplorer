@@ -179,12 +179,26 @@ fn looks_like_it(text: &str) -> bool {
     if !text.contains("<Project") {
         return false;
     }
+    // An SDK-style project says so on the root element and the older
+    // kind carries `ToolsVersion`. A `Directory.Build.props` says
+    // neither: it is a bare `<Project>` holding the settings every real
+    // project imports, and asking for both a `PropertyGroup` and an
+    // `ItemGroup` missed it. The elements MSBuild puts inside a project
+    // are what settle it, and no other XML has them under `<Project>`.
     tags(text, "Project")
         .first()
         .and_then(|at| attribute(text, *at, "Sdk"))
         .is_some()
-        || (text.contains("<PropertyGroup") && text.contains("<ItemGroup"))
         || text.contains("ToolsVersion=")
+        || [
+            "<PropertyGroup",
+            "<ItemGroup",
+            "<Target ",
+            "<Import ",
+            "<UsingTask",
+        ]
+        .iter()
+        .any(|element| text.contains(element))
 }
 
 /// The `MSBuild` project plugin's core half.
@@ -312,6 +326,24 @@ mod tests {
   <Import Project="../Directory.Build.props" />
 </Project>
 "#;
+
+    #[test]
+    fn sniffs_a_bare_project_holding_shared_settings() {
+        // `Directory.Build.props` carries no SDK and no `ToolsVersion`,
+        // and often only a `PropertyGroup`. It is still MSBuild, and it
+        // is the file that decides how every project beside it builds.
+        assert!(
+            MsbuildCore.sniff(
+                "<Project>\n  <PropertyGroup>\n    <LangVersion>13.0</LangVersion>\n  \
+             </PropertyGroup>\n</Project>\n"
+                    .as_bytes()
+            )
+        );
+        assert!(
+            !MsbuildCore.sniff(b"<Project><Something/></Project>"),
+            "a `<Project>` with nothing of MSBuild's in it is somebody else's XML"
+        );
+    }
 
     #[test]
     fn sniffs_an_sdk_project_or_property_and_item_groups() {

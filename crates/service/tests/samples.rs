@@ -220,3 +220,104 @@ fn every_sample_file_is_in_the_repository() {
         ignored.join("\n")
     );
 }
+
+/// Files that really are nothing but text, so falling through to the
+/// general reader is the right answer rather than a plugin missing its
+/// own format. One line each, with the reason.
+///
+/// The line between the two is whether the file is the *language* of
+/// the directory it sits in. A `Directory.Build.props` is `MSBuild` and a
+/// `plugins.sbt` is Scala, so their plugins were taught to see them. A
+/// `dune` file is a different language that merely lives beside OCaml,
+/// and claiming it would need a plugin of its own.
+const PLAINLY_TEXT: &[&str] = &[
+    // The folder plugin's fixture. Its subject is the directory, and
+    // these are the ordinary files a directory is expected to hold.
+    "directory/notes.txt",
+    "directory/shopping-list.txt",
+    // Two bytes. A marker whose presence is the whole message (PEP 561);
+    // there is nothing in it to read.
+    "python/src/taskqueue/py.typed",
+    // A bare list of file paths, with no Perl in it.
+    "perl/MANIFEST",
+    // A bare list of `prefix=path` remappings, with no Solidity in it.
+    "solidity/remappings.txt",
+    // A bare list of names, with no `!`, `/` or `*` in it. `ignorefile`
+    // asks for a glob-shaped pattern on purpose: without that it would
+    // claim `perl/MANIFEST` above, which is also a list of names and is
+    // not an ignore file.
+    "dockerfile/.gitignore",
+    // S-expressions, and a language of its own rather than OCaml. It
+    // would need its own plugin, not a looser OCaml sniff.
+    "ocaml/bin/dune",
+    // A package manifest in R's own small vocabulary - `export()`,
+    // `importFrom()` - and not R code. The R plugin reads R code
+    // structure, of which this has none, so claiming it would relabel
+    // the file without saying anything more about it.
+    "r/NAMESPACE",
+];
+
+/// Rule 3. A file in `samples/<plugin>/` that goes to the general text
+/// reader is one that plugin cannot read, and rule 2 cannot see it: one
+/// file per directory is enough to satisfy that, so the rest can rot.
+///
+/// It found five real ones the first time it ran - a `.hs` and an `.exs`
+/// whose plugins own those extensions and could not recognise a
+/// one-line instance of them, two `Directory.Build.props`, and a
+/// `plugins.sbt` - all the same shape: a sniff too strict for a small
+/// but entirely ordinary file of its own format.
+#[test]
+fn no_file_falls_through_to_the_general_text_reader() {
+    let mut failures = Vec::new();
+    for plugin_dir in sorted_dir_entries(&samples_dir())
+        .into_iter()
+        .filter(|path| path.is_dir())
+    {
+        let owner = plugin_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        if owner == "text" {
+            continue;
+        }
+        for file in files_under(&plugin_dir) {
+            let relative = file
+                .strip_prefix(samples_dir())
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative.ends_with("README.md") || PLAINLY_TEXT.contains(&relative.as_str()) {
+                continue;
+            }
+            if recognised_by(&file) == vec!["text".to_owned()] {
+                failures.push(relative);
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} file(s) fell through to the general text reader:\n{}\n\nEither teach \
+         the plugin that owns the directory to recognise its own format, or - if \
+         the file really is nothing but text - say so in PLAINLY_TEXT with the \
+         reason.",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn every_plainly_text_entry_names_a_file_that_exists() {
+    // An exception left behind after a fixture was renamed would quietly
+    // excuse a file that is no longer there, and go on excusing it.
+    let missing: Vec<&str> = PLAINLY_TEXT
+        .iter()
+        .copied()
+        .filter(|relative| !samples_dir().join(relative).exists())
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "PLAINLY_TEXT names files that are not in the set: {missing:?}"
+    );
+}
