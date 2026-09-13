@@ -1431,8 +1431,10 @@ impl App {
         self.selection.contains(&index)
     }
 
-    /// Drills into contents row `index` if it is a directory, expanding and
-    /// selecting it in the folders tree.
+    /// Drills into contents row `index` if it is a directory. Independent of
+    /// the folders tree's expansion state: it follows the reader there by
+    /// expanding whatever was collapsed on the way, rather than depending on
+    /// the tree already showing the row it needs.
     pub fn open_content(&mut self, index: usize) {
         let Some(entry) = self.contents.get(index).cloned() else {
             return;
@@ -1453,6 +1455,12 @@ impl App {
             return;
         };
 
+        // The browsed folder itself may be collapsed in the tree - it can be
+        // selected there without being expanded - which would otherwise hide
+        // the very row being drilled into from the next `flatten()` below.
+        if let Some(parent) = self.root.node_at_mut(&parent_indices) {
+            parent.expanded = true;
+        }
         let mut child_indices = parent_indices;
         child_indices.push(child_index);
         if let Some(node) = self.root.node_at_mut(&child_indices) {
@@ -3252,6 +3260,33 @@ third",
 
         assert_eq!(app.folder_selected(), 1);
         assert!(app.status_text().starts_with("loading"));
+    }
+
+    #[test]
+    fn opening_a_directory_works_even_when_its_parent_is_collapsed_in_the_tree() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        app.toggle_folder(0);
+        assert!(
+            !app.folder_rows()[0].expanded,
+            "the root is collapsed, as a reader tidying the tree away would leave it"
+        );
+
+        app.open_content(0);
+
+        let Some((indices, _)) = &app.pending_contents else {
+            panic!("drilling in should have asked for a listing");
+        };
+        assert_eq!(
+            indices,
+            &vec![0],
+            "the listing requested should be \"sub\"'s, not the collapsed root's again"
+        );
     }
 
     #[test]
