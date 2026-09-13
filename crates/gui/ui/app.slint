@@ -521,6 +521,12 @@ component ContentsPane inherits Rectangle {
         }
         scroll := ScrollView {
             viewport-y <=> root.scroll-y;
+            // `ScrollView` lays a bare child out at its own height rather
+            // than the child's (see `Pane`, above), so without this
+            // top-aligned wrapper the scrollable body never grew past the
+            // pane's own height, and there was nothing to scroll.
+            VerticalLayout {
+                alignment: start;
             body := Rectangle {
                 width: 100%;
                 min-height: max(rows.length * row-height, root.height - 22px - header-height);
@@ -774,6 +780,7 @@ component ContentsPane inherits Rectangle {
                         }
                     }
                 }
+            }
             }
         }
     }

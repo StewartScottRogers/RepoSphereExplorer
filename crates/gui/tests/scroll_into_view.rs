@@ -96,6 +96,30 @@ fn viewport_height(ui: &MainWindow) -> f32 {
     height
 }
 
+/// `ScrollView` lays a bare child out at its own height rather than the
+/// child's, so a plain `Rectangle` scrollable body never grew past the
+/// pane's own height: nothing was ever left to scroll, and `viewport-y`
+/// clamped back to zero on every frame. This measures the body itself,
+/// rather than the viewport, so the defect fails the test even though the
+/// rows are still drawn at the right `y` (which is what the other tests
+/// here check).
+#[test]
+fn the_scrollable_body_is_as_tall_as_its_rows() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = shown_window();
+
+    let body = ElementHandle::find_by_element_id(&ui, "ContentsPane::body")
+        .next()
+        .expect("the contents pane draws a scrollable body");
+    let expected = f32::from(ROW_COUNT) * ROW_HEIGHT;
+
+    assert!(
+        (body.size().height - expected).abs() < 0.5,
+        "200 rows at {ROW_HEIGHT}px should measure {expected}px, not the {}px of the view",
+        body.size().height
+    );
+}
+
 #[test]
 fn the_offset_moves_the_listing_by_exactly_that_much() {
     i_slint_backend_testing::init_no_event_loop();
