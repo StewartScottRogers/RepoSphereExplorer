@@ -41,6 +41,7 @@ plugin-cloudformation = { path = "../plugins/cloudformation" }
 plugin-cmake = { path = "../plugins/cmake" }
 plugin-cobol = { path = "../plugins/cobol" }
 plugin-codeowners = { path = "../plugins/codeowners" }
+plugin-composerlock = { path = "../plugins/composerlock" }
 plugin-css = { path = "../plugins/css" }
 plugin-cue = { path = "../plugins/cue" }
 plugin-diff = { path = "../plugins/diff" }
@@ -50,10 +51,12 @@ plugin-dotnetassembly = { path = "../plugins/dotnetassembly" }
 plugin-editorconfig = { path = "../plugins/editorconfig" }
 plugin-elisp = { path = "../plugins/elisp" }
 plugin-flatbuffers = { path = "../plugins/flatbuffers" }
+plugin-gemfilelock = { path = "../plugins/gemfilelock" }
 plugin-gitattributes = { path = "../plugins/gitattributes" }
 plugin-gitconfig = { path = "../plugins/gitconfig" }
 plugin-gitlabci = { path = "../plugins/gitlabci" }
 plugin-gleam = { path = "../plugins/gleam" }
+plugin-gosum = { path = "../plugins/gosum" }
 plugin-gzip = { path = "../plugins/gzip" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
@@ -92,6 +95,8 @@ plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-purescript = { path = "../plugins/purescript" }
 plugin-pyc = { path = "../plugins/pyc" }
+plugin-pythonlock = { path = "../plugins/pythonlock" }
+plugin-rego = { path = "../plugins/rego" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-rubygem = { path = "../plugins/rubygem" }
