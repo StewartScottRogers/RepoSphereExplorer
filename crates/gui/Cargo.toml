@@ -38,9 +38,11 @@ plugin-caddyfile = { path = "../plugins/caddyfile" }
 plugin-cargolock = { path = "../plugins/cargolock" }
 plugin-cbor = { path = "../plugins/cbor" }
 plugin-cloudformation = { path = "../plugins/cloudformation" }
+plugin-cmake = { path = "../plugins/cmake" }
 plugin-cobol = { path = "../plugins/cobol" }
 plugin-codeowners = { path = "../plugins/codeowners" }
 plugin-css = { path = "../plugins/css" }
+plugin-cue = { path = "../plugins/cue" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dlang = { path = "../plugins/dlang" }
 plugin-dotenv = { path = "../plugins/dotenv" }
@@ -70,9 +72,11 @@ plugin-lua = { path = "../plugins/lua" }
 plugin-markdown = { path = "../plugins/markdown" }
 plugin-matlab = { path = "../plugins/matlab" }
 plugin-maven = { path = "../plugins/maven" }
+plugin-meson = { path = "../plugins/meson" }
 plugin-minidump = { path = "../plugins/minidump" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }
+plugin-ninja = { path = "../plugins/ninja" }
 plugin-nix = { path = "../plugins/nix" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-nuget = { path = "../plugins/nuget" }
