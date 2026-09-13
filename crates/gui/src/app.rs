@@ -175,6 +175,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_apk::ApkPresentation,
     &plugin_wheel::WheelPresentation,
     &plugin_rubygem::RubygemPresentation,
+    &plugin_nuget::NugetPresentation,
+    &plugin_apkpkg::ApkpkgPresentation,
+    &plugin_javaclass::JavaclassPresentation,
+    &plugin_pyc::PycPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

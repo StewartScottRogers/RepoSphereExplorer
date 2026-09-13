@@ -174,6 +174,10 @@ it.
 | Android package | `crates/plugins/apk` | #404 | Binary manifest decoded: package, versions, SDK range, permissions, components, native code, signing |
 | Python wheel | `crates/plugins/wheel` | #405 | Distribution, version, wheel format, generator, purity, compatibility tags, requirements, entry points |
 | Ruby gem | `crates/plugins/rubygem` | #406 | Name, version, summary, authors, licence, runtime and development dependencies, Ruby, executables, files |
+| NuGet package | `crates/plugins/nuget` | #407 | Identifier, version, prose, licence, dependencies grouped by target framework, assemblies, build targets, tools |
+| Alpine package | `crates/plugins/apkpkg` | #408 | Control stream read: name, version, architecture, size, depends, provides, licence, maintainer, install scripts |
+| Java class file | `crates/plugins/javaclass` | #409 | Version and Java release, class, superclass, interfaces, flags, fields and methods with descriptors, constant pool |
+| Python bytecode | `crates/plugins/pyc` | #410 | Release from the magic, invalidation kind, source time and size or hash, code object name, arguments, constants, names |
 
 ## Folder plugins
 
