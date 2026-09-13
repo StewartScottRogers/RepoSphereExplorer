@@ -11,6 +11,13 @@ name: Independent review
 # review becomes a hard gate is a deliberate, separate follow-up once this
 # workflow is proven working on real PRs - flipping it on prematurely could
 # block the entire pipeline if this workflow has a bug.
+#
+# What that costs is not hypothetical. Pull request #451 merged with this
+# check red: the station said "not reviewed" and the merge went ahead,
+# because red here blocks nothing. Every run this station loses is a work
+# order that lands unreviewed, which is why the turn budget below is set
+# to fit the job rather than trimmed to the cheapest thing that usually
+# works. Work order #452.
 
 on:
   pull_request:
@@ -126,7 +133,7 @@ jobs:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
-            --max-turns 60
+            --max-turns 150
             --allowedTools "Bash(cargo *),Bash(gh *)"
           prompt: |
             You are an independent reviewer for pull request #${{ github.event.pull_request.number }}
@@ -139,14 +146,31 @@ jobs:
                Find the `Closes #N` reference in the body and read that issue
                (`gh issue view N`) to learn what was actually asked for and its
                stated acceptance checks.
-            2. Independently re-run, in this checked-out branch:
+            2. Independently run, in this checked-out branch, what is cheap
+               and specific to this diff:
+
                - `cargo fmt --all -- --check`
-               - `cargo clippy --all-targets --all-features -- -D warnings`
-               - `cargo test --all-features`
-               Do not trust the PR description's claim that these passed -
-               run them yourself and read the actual output. Also re-check any
-               acceptance checks from the issue that are checkable this way
-               (e.g. a named grep, a specific file existing).
+               - `cargo clippy -p <crate> --all-targets --all-features -- -D warnings`
+                 and `cargo test -p <crate>`, for each crate the diff
+                 touches. `gh pr diff ${{ github.event.pull_request.number }} --name-only`
+                 names them: a path under `crates/plugins/foo/` is
+                 `-p plugin-foo`, one under `crates/foo/` is `-p foo`.
+
+               Do **not** run the whole workspace. `cargo test
+               --all-features` across a hundred and fifty crates is
+               eighteen minutes and thousands of lines, and reading it
+               spends the budget you need for steps 3 and 4 - which are
+               the part only you do. It also duplicates the required
+               `fmt / clippy / test` check, which is running on this same
+               commit right now and which branch protection will not let
+               this pull request merge without. Your job is the diff, not
+               a second copy of that run.
+
+               Do not trust the PR description's claim that anything
+               passed - run the above yourself and read the actual output.
+               Also re-check any acceptance checks from the issue that are
+               checkable this way (e.g. a named grep, a specific file
+               existing).
             3. Check the diff against this repo's CLAUDE.md rules, in
                particular rule 4 (surgical: does every changed line trace to
                the issue?) and rule 5 (no speculative structure: no
