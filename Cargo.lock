@@ -2953,6 +2953,7 @@ dependencies = [
  "plugin-batchfile",
  "plugin-bibtex",
  "plugin-bson",
+ "plugin-bzip2",
  "plugin-c",
  "plugin-caddyfile",
  "plugin-cargolock",
@@ -2994,6 +2995,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
+ "plugin-gzip",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-helmchart",
@@ -3025,6 +3027,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-openapi",
@@ -3036,6 +3039,7 @@ dependencies = [
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pickle",
  "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
@@ -3054,6 +3058,7 @@ dependencies = [
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
+ "plugin-sevenzip",
  "plugin-shell",
  "plugin-solidity",
  "plugin-solution",
@@ -3066,6 +3071,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-systemdunit",
+ "plugin-tar",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
@@ -3082,10 +3088,12 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-xz",
  "plugin-yacc",
  "plugin-yaml",
  "plugin-yarnlock",
  "plugin-zig",
+ "plugin-zstd",
  "protocol",
  "serde_json",
  "service",
@@ -4499,6 +4507,12 @@ dependencies = [
  "byteorder",
  "crc",
 ]
+
+[[package]]
+name = "lzma-rust2"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e2a88783b84d2d67ef2791778a9e76bfb68b8017aaf6c9d7d5f2626a478b16c"
 
 [[package]]
 name = "lzokay-native"
@@ -5977,6 +5991,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-bzip2"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-c"
 version = "0.6.0"
 dependencies = [
@@ -6360,6 +6383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gzip"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-haskell"
 version = "0.6.0"
 dependencies = [
@@ -6642,6 +6674,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-numpy"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "plugin-objective-c"
 version = "0.6.0"
 dependencies = [
@@ -6742,6 +6784,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-php"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-pickle"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -6916,6 +6967,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-sevenzip"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "sevenz-rust2",
+]
+
+[[package]]
 name = "plugin-shell"
 version = "0.6.0"
 dependencies = [
@@ -7019,6 +7080,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-systemdunit"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-tar"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7177,6 +7247,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-xz"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-yacc"
 version = "0.6.0"
 dependencies = [
@@ -7205,6 +7284,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-zig"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-zstd"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -8351,6 +8439,7 @@ dependencies = [
  "plugin-batchfile",
  "plugin-bibtex",
  "plugin-bson",
+ "plugin-bzip2",
  "plugin-c",
  "plugin-caddyfile",
  "plugin-cargolock",
@@ -8392,6 +8481,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
+ "plugin-gzip",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-helmchart",
@@ -8423,6 +8513,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-openapi",
@@ -8434,6 +8525,7 @@ dependencies = [
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pickle",
  "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
@@ -8452,6 +8544,7 @@ dependencies = [
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
+ "plugin-sevenzip",
  "plugin-shell",
  "plugin-solidity",
  "plugin-solution",
@@ -8464,6 +8557,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-systemdunit",
+ "plugin-tar",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
@@ -8480,16 +8574,30 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-xz",
  "plugin-yacc",
  "plugin-yaml",
  "plugin-yarnlock",
  "plugin-zig",
+ "plugin-zstd",
  "protocol",
  "serde",
  "serde_json",
  "trash",
  "updater",
  "zip",
+]
+
+[[package]]
+name = "sevenz-rust2"
+version = "0.22.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb967eb8b29410e61e8c9005058fcfd5889d0b827856beb25529c73dfc86a98a"
+dependencies = [
+ "crc32fast",
+ "js-sys",
+ "lzma-rust2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -9530,6 +9638,7 @@ dependencies = [
  "plugin-batchfile",
  "plugin-bibtex",
  "plugin-bson",
+ "plugin-bzip2",
  "plugin-c",
  "plugin-caddyfile",
  "plugin-cargolock",
@@ -9571,6 +9680,7 @@ dependencies = [
  "plugin-go",
  "plugin-graphql",
  "plugin-groovy",
+ "plugin-gzip",
  "plugin-haskell",
  "plugin-hdf5",
  "plugin-helmchart",
@@ -9602,6 +9712,7 @@ dependencies = [
  "plugin-nginxconf",
  "plugin-nim",
  "plugin-npmlock",
+ "plugin-numpy",
  "plugin-objective-c",
  "plugin-ocaml",
  "plugin-openapi",
@@ -9613,6 +9724,7 @@ dependencies = [
  "plugin-pdf",
  "plugin-perl",
  "plugin-php",
+ "plugin-pickle",
  "plugin-pnpmlock",
  "plugin-powershell",
  "plugin-presentation",
@@ -9631,6 +9743,7 @@ dependencies = [
  "plugin-rust",
  "plugin-scala",
  "plugin-scheme",
+ "plugin-sevenzip",
  "plugin-shell",
  "plugin-solidity",
  "plugin-solution",
@@ -9643,6 +9756,7 @@ dependencies = [
  "plugin-svg",
  "plugin-swift",
  "plugin-systemdunit",
+ "plugin-tar",
  "plugin-tcl",
  "plugin-terraform",
  "plugin-text",
@@ -9659,10 +9773,12 @@ dependencies = [
  "plugin-webmanifest",
  "plugin-word-document",
  "plugin-xml",
+ "plugin-xz",
  "plugin-yacc",
  "plugin-yaml",
  "plugin-yarnlock",
  "plugin-zig",
+ "plugin-zstd",
  "protocol",
  "ratatui",
  "serde_json",

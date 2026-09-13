@@ -163,6 +163,14 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_bson::BsonPresentation,
     &plugin_arrow::ArrowPresentation,
     &plugin_orc::OrcPresentation,
+    &plugin_numpy::NumpyPresentation,
+    &plugin_gzip::GzipPresentation,
+    &plugin_tar::TarPresentation,
+    &plugin_pickle::PicklePresentation,
+    &plugin_bzip2::Bzip2Presentation,
+    &plugin_zstd::ZstdPresentation,
+    &plugin_xz::XzPresentation,
+    &plugin_sevenzip::SevenzipPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

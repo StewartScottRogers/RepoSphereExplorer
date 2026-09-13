@@ -30,6 +30,7 @@ plugin-awk = { path = "../plugins/awk" }
 plugin-batchfile = { path = "../plugins/batchfile" }
 plugin-bibtex = { path = "../plugins/bibtex" }
 plugin-bson = { path = "../plugins/bson" }
+plugin-bzip2 = { path = "../plugins/bzip2" }
 plugin-caddyfile = { path = "../plugins/caddyfile" }
 plugin-cargolock = { path = "../plugins/cargolock" }
 plugin-cbor = { path = "../plugins/cbor" }
@@ -46,6 +47,7 @@ plugin-gitattributes = { path = "../plugins/gitattributes" }
 plugin-gitconfig = { path = "../plugins/gitconfig" }
 plugin-gitlabci = { path = "../plugins/gitlabci" }
 plugin-gleam = { path = "../plugins/gleam" }
+plugin-gzip = { path = "../plugins/gzip" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }
 plugin-ini = { path = "../plugins/ini" }
@@ -64,20 +66,24 @@ plugin-maven = { path = "../plugins/maven" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-npmlock = { path = "../plugins/npmlock" }
+plugin-numpy = { path = "../plugins/numpy" }
 plugin-openapi = { path = "../plugins/openapi" }
 plugin-orc = { path = "../plugins/orc" }
 plugin-orgmode = { path = "../plugins/orgmode" }
 plugin-pascal = { path = "../plugins/pascal" }
+plugin-pickle = { path = "../plugins/pickle" }
 plugin-pnpmlock = { path = "../plugins/pnpmlock" }
 plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-purescript = { path = "../plugins/purescript" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
+plugin-sevenzip = { path = "../plugins/sevenzip" }
 plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-sshconfig = { path = "../plugins/sshconfig" }
 plugin-systemdunit = { path = "../plugins/systemdunit" }
+plugin-tar = { path = "../plugins/tar" }
 plugin-thrift = { path = "../plugins/thrift" }
 plugin-verilog = { path = "../plugins/verilog" }
 plugin-vhdl = { path = "../plugins/vhdl" }
@@ -159,10 +165,12 @@ plugin-wasm = { path = "../plugins/wasm" }
 plugin-webmanifest = { path = "../plugins/webmanifest" }
 plugin-word-document = { path = "../plugins/word-document" }
 plugin-xml = { path = "../plugins/xml" }
+plugin-xz = { path = "../plugins/xz" }
 plugin-yacc = { path = "../plugins/yacc" }
 plugin-yaml = { path = "../plugins/yaml" }
 plugin-yarnlock = { path = "../plugins/yarnlock" }
 plugin-zig = { path = "../plugins/zig" }
+plugin-zstd = { path = "../plugins/zstd" }
 protocol = { path = "../protocol" }
 serde_json = "1"
 slint = "1.17"
