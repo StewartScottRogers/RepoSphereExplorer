@@ -190,6 +190,9 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_apkpkg::ApkpkgPresentation,
     &plugin_javaclass::JavaclassPresentation,
     &plugin_pyc::PycPresentation,
+    &plugin_minidump::MinidumpPresentation,
+    &plugin_pcap::PcapPresentation,
+    &plugin_css::CssPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever

@@ -178,6 +178,9 @@ it.
 | Alpine package | `crates/plugins/apkpkg` | #408 | Control stream read: name, version, architecture, size, depends, provides, licence, maintainer, install scripts |
 | Java class file | `crates/plugins/javaclass` | #409 | Version and Java release, class, superclass, interfaces, flags, fields and methods with descriptors, constant pool |
 | Python bytecode | `crates/plugins/pyc` | #410 | Release from the magic, invalidation kind, source time and size or hash, code object name, arguments, constants, names |
+| Minidump | `crates/plugins/minidump` | #412 | Flags, time taken, process, threads, exception with its parameters, modules with versions, system |
+| Packet capture | `crates/plugins/pcap` | #413 | Classic and pcapng: format, version, byte order, link type, packets, bytes, time range, interfaces, comments |
+| Cascading Style Sheets | `crates/plugins/css` | #414 | Rules, selectors, at-rules with conditions, custom properties, fonts, imports, colours, nesting |
 
 ## Folder plugins
 
