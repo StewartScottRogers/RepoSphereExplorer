@@ -6,18 +6,23 @@ name: Independent review
 # pushes a commit - it only inspects the diff and leaves a
 # `gh pr review --approve` or `--request-changes`.
 #
-# This does not yet gate merging: branch protection still only requires
-# `fmt / clippy / test` (see ci.yml). Turning "require approvals" on so this
-# review becomes a hard gate is a deliberate, separate follow-up once this
-# workflow is proven working on real PRs - flipping it on prematurely could
-# block the entire pipeline if this workflow has a bug.
+# This check - `independent review` - is required on `main`, alongside
+# `fmt / clippy / test`. A pull request does not merge until this
+# station has run and either left a review or said out loud that it has
+# nothing to say. Work order #460.
 #
-# What that costs is not hypothetical. Pull request #451 merged with this
-# check red: the station said "not reviewed" and the merge went ahead,
-# because red here blocks nothing. Every run this station loses is a work
-# order that lands unreviewed, which is why the turn budget below is set
-# to fit the job rather than trimmed to the cheapest thing that usually
-# works. Work order #452.
+# It was informational for a long time, and what that cost is not
+# hypothetical: pull request #451 merged with this check red - the
+# station said "not reviewed" and the merge went ahead. That is why the
+# turn budget below is set to fit the job rather than trimmed to the
+# cheapest thing that usually works (#452), and why standing aside is
+# something this job says in a run that happened rather than by not
+# running at all (#460).
+#
+# A run this station loses now blocks the line. The known way for that
+# to happen is the agent runtime failing to install (#298), which is
+# guarded and loud; the remedy is re-running the job, not merging past
+# it.
 
 on:
   pull_request:
@@ -38,37 +43,56 @@ permissions:
 
 jobs:
   review:
-    if: github.actor != 'dependabot[bot]'
+    # Named, because the other reviewer's job has the same id and a
+    # check is addressed by name. Two contexts both called `review`
+    # cannot be told apart in branch protection, and this one is
+    # required. Work order #460.
+    name: independent review
     runs-on: ubuntu-latest
     steps:
-      # A pull request that edits a workflow is not reviewed here: this
-      # workflow is triggered by `pull_request`, so GitHub runs the
-      # branch's own copy of it, and a branch must not be able to rewrite
-      # its own reviewer. `workflow-review.yml` reviews those instead,
-      # from the base branch, and holds them when they do not pass.
+      # There are two pull requests this station has nothing to say
+      # about, and it decides both here rather than by not running.
       #
-      # Finding out first also saves ten minutes of runner time on a
-      # review that would only decline. Work order #439.
-      - name: Say whether this one belongs to the other reviewer
+      # One edits a workflow. This workflow is triggered by
+      # `pull_request`, so GitHub runs the *branch's* copy of it, and a
+      # branch must not be able to rewrite its own reviewer;
+      # `workflow-review.yml` reviews those from the base branch instead,
+      # and holds them when they do not pass. Work order #439.
+      #
+      # The other is a dependency bump, which nobody wrote and which the
+      # dependency audit already covers.
+      #
+      # This used to be `if: github.actor != 'dependabot[bot]'` on the
+      # job. A job that does not run reports the check as *skipped*, and
+      # a required check is not satisfied by a skip - so the moment this
+      # became required, every dependency bump would have waited forever.
+      # Standing aside is something this station has to say out loud, in
+      # a run that happened. Work order #460.
+      - name: Say whether this one is ours
         id: hold
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
-          if gh pr diff "$PR" --repo "$REPO" --name-only | grep -q '^[.]github/workflows/'; then
-            echo "edits_workflows=true" >> "$GITHUB_OUTPUT"
+          if [ "${ACTOR}" = "dependabot[bot]" ]; then
+            echo "stand_aside=dependabot" >> "$GITHUB_OUTPUT"
+            echo "Opened by dependabot: nobody wrote this, and the dependency"
+            echo "audit already covers it. Nothing for this station to say."
+          elif gh pr diff "$PR" --repo "$REPO" --name-only | grep -q '^[.]github/workflows/'; then
+            echo "stand_aside=workflow" >> "$GITHUB_OUTPUT"
             echo "Edits .github/workflows/: workflow-review.yml reviews this one."
           else
-            echo "edits_workflows=false" >> "$GITHUB_OUTPUT"
-            echo "No workflow files touched; the reviewer can run."
+            echo "stand_aside=" >> "$GITHUB_OUTPUT"
+            echo "Ours; the reviewer can run."
           fi
 
       - uses: actions/checkout@v7
-        if: steps.hold.outputs.edits_workflows != 'true'
+        if: steps.hold.outputs.stand_aside == ''
       - name: Install gui's native build dependencies (Slint)
-        if: steps.hold.outputs.edits_workflows != 'true'
+        if: steps.hold.outputs.stand_aside == ''
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -88,7 +112,7 @@ jobs:
       # says nothing and leaves a red mark for somebody to notice.
       - name: Install the agent runtime
         id: agent-runtime
-        if: steps.hold.outputs.edits_workflows != 'true'
+        if: steps.hold.outputs.stand_aside == ''
         env:
           # Bump deliberately, together with the other workflows that pin it.
           CLAUDE_CODE_VERSION: "2.1.265"
@@ -128,7 +152,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         id: reviewer
-        if: steps.hold.outputs.edits_workflows != 'true'
+        if: steps.hold.outputs.stand_aside == ''
         with:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -201,9 +225,7 @@ jobs:
       # pull request merging unreviewed with nothing anywhere saying so.
       #
       # So: find out whether a review actually landed, and if it did not,
-      # say which case it was and go red. Red here blocks nothing - the
-      # required check is `fmt / clippy / test` - it only stops the tick
-      # from lying. Work order #300.
+      # say which case it was and go red. Work order #300.
       - name: Confirm a review actually landed
         if: always()
         env:
@@ -212,8 +234,25 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           AGENT_OUTCOME: ${{ steps.reviewer.outcome }}
+          STAND_ASIDE: ${{ steps.hold.outputs.stand_aside }}
         run: |
           set -euo pipefail
+
+          # Standing aside is a real answer, and it is the one the first
+          # step already worked out. Reaching it again here would ask
+          # the same question twice and could answer it differently.
+          case "${STAND_ASIDE}" in
+            dependabot)
+              echo "Stood aside: opened by dependabot."
+              exit 0
+              ;;
+            workflow)
+              echo "Stood aside: this pull request edits a workflow, so"
+              echo "workflow-review.yml reviews it from the base branch and holds"
+              echo "it if it does not pass."
+              exit 0
+              ;;
+          esac
 
           # Reviews on this exact head: an approval of an earlier push is
           # not a review of what is being merged now.
@@ -227,15 +266,7 @@ jobs:
             exit 0
           fi
 
-          # Nothing landed. Which of the two reasons was it?
-          if gh pr diff "${PR}" --repo "${REPO}" --name-only | grep -q '^\.github/workflows/'; then
-            echo "Not reviewed here: this pull request edits a workflow, so"
-            echo "workflow-review.yml reviews it from the base branch and holds it"
-            echo "if it does not pass. Nothing for this station to say."
-            exit 0
-          else
-            echo "::error::Not reviewed. The agent step finished as '${AGENT_OUTCOME}' and"
-            echo "::error::left no review on ${HEAD_SHA}. Check the log above: a runtime"
-            echo "::error::that failed to install is work order #298's failure mode."
-          fi
+          echo "::error::Not reviewed. The agent step finished as '${AGENT_OUTCOME}' and"
+          echo "::error::left no review on ${HEAD_SHA}. Check the log above: a runtime"
+          echo "::error::that failed to install is work order #298's failure mode."
           exit 1
