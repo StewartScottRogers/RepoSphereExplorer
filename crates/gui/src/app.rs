@@ -183,6 +183,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_pcap::PcapPresentation,
     &plugin_css::CssPresentation,
     &plugin_dotnetassembly::DotnetassemblyPresentation,
+    &plugin_sass::SassPresentation,
+    &plugin_bicep::BicepPresentation,
+    &plugin_nix::NixPresentation,
+    &plugin_starlark::StarlarkPresentation,
 ];
 
 /// The icon for an entry, from whichever presentation plugin claims its

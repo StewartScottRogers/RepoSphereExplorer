@@ -31,6 +31,7 @@ plugin-assembly = { path = "../plugins/assembly" }
 plugin-awk = { path = "../plugins/awk" }
 plugin-batchfile = { path = "../plugins/batchfile" }
 plugin-bibtex = { path = "../plugins/bibtex" }
+plugin-bicep = { path = "../plugins/bicep" }
 plugin-bson = { path = "../plugins/bson" }
 plugin-bzip2 = { path = "../plugins/bzip2" }
 plugin-caddyfile = { path = "../plugins/caddyfile" }
@@ -72,6 +73,7 @@ plugin-maven = { path = "../plugins/maven" }
 plugin-minidump = { path = "../plugins/minidump" }
 plugin-msbuild = { path = "../plugins/msbuild" }
 plugin-nginxconf = { path = "../plugins/nginxconf" }
+plugin-nix = { path = "../plugins/nix" }
 plugin-npmlock = { path = "../plugins/npmlock" }
 plugin-nuget = { path = "../plugins/nuget" }
 plugin-numpy = { path = "../plugins/numpy" }
@@ -89,10 +91,12 @@ plugin-pyc = { path = "../plugins/pyc" }
 plugin-requirements = { path = "../plugins/requirements" }
 plugin-roff = { path = "../plugins/roff" }
 plugin-rubygem = { path = "../plugins/rubygem" }
+plugin-sass = { path = "../plugins/sass" }
 plugin-sevenzip = { path = "../plugins/sevenzip" }
 plugin-solution = { path = "../plugins/solution" }
 plugin-sourcemap = { path = "../plugins/sourcemap" }
 plugin-sshconfig = { path = "../plugins/sshconfig" }
+plugin-starlark = { path = "../plugins/starlark" }
 plugin-systemdunit = { path = "../plugins/systemdunit" }
 plugin-tar = { path = "../plugins/tar" }
 plugin-thrift = { path = "../plugins/thrift" }

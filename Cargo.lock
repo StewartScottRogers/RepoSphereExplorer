@@ -2954,6 +2954,7 @@ dependencies = [
  "plugin-awk",
  "plugin-batchfile",
  "plugin-bibtex",
+ "plugin-bicep",
  "plugin-bson",
  "plugin-bzip2",
  "plugin-c",
@@ -3033,6 +3034,7 @@ dependencies = [
  "plugin-msgpack",
  "plugin-nginxconf",
  "plugin-nim",
+ "plugin-nix",
  "plugin-npmlock",
  "plugin-nuget",
  "plugin-numpy",
@@ -3067,6 +3069,7 @@ dependencies = [
  "plugin-ruby",
  "plugin-rubygem",
  "plugin-rust",
+ "plugin-sass",
  "plugin-scala",
  "plugin-scheme",
  "plugin-sevenzip",
@@ -3078,6 +3081,7 @@ dependencies = [
  "plugin-sql",
  "plugin-sqlite",
  "plugin-sshconfig",
+ "plugin-starlark",
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
@@ -6014,6 +6018,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-bicep"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-bson"
 version = "0.6.0"
 dependencies = [
@@ -6743,6 +6756,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-nix"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-npmlock"
 version = "0.6.0"
 dependencies = [
@@ -7065,6 +7087,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-sass"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-scala"
 version = "0.6.0"
 dependencies = [
@@ -7160,6 +7191,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-sshconfig"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-starlark"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -8566,6 +8606,7 @@ dependencies = [
  "plugin-awk",
  "plugin-batchfile",
  "plugin-bibtex",
+ "plugin-bicep",
  "plugin-bson",
  "plugin-bzip2",
  "plugin-c",
@@ -8645,6 +8686,7 @@ dependencies = [
  "plugin-msgpack",
  "plugin-nginxconf",
  "plugin-nim",
+ "plugin-nix",
  "plugin-npmlock",
  "plugin-nuget",
  "plugin-numpy",
@@ -8679,6 +8721,7 @@ dependencies = [
  "plugin-ruby",
  "plugin-rubygem",
  "plugin-rust",
+ "plugin-sass",
  "plugin-scala",
  "plugin-scheme",
  "plugin-sevenzip",
@@ -8690,6 +8733,7 @@ dependencies = [
  "plugin-sql",
  "plugin-sqlite",
  "plugin-sshconfig",
+ "plugin-starlark",
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",
@@ -9777,6 +9821,7 @@ dependencies = [
  "plugin-awk",
  "plugin-batchfile",
  "plugin-bibtex",
+ "plugin-bicep",
  "plugin-bson",
  "plugin-bzip2",
  "plugin-c",
@@ -9856,6 +9901,7 @@ dependencies = [
  "plugin-msgpack",
  "plugin-nginxconf",
  "plugin-nim",
+ "plugin-nix",
  "plugin-npmlock",
  "plugin-nuget",
  "plugin-numpy",
@@ -9890,6 +9936,7 @@ dependencies = [
  "plugin-ruby",
  "plugin-rubygem",
  "plugin-rust",
+ "plugin-sass",
  "plugin-scala",
  "plugin-scheme",
  "plugin-sevenzip",
@@ -9901,6 +9948,7 @@ dependencies = [
  "plugin-sql",
  "plugin-sqlite",
  "plugin-sshconfig",
+ "plugin-starlark",
  "plugin-svelte",
  "plugin-svg",
  "plugin-swift",

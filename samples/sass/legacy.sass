@@ -1,0 +1,44 @@
+// The original Sass syntax: indentation instead of braces, newlines
+// instead of semicolons. Still supported, still compiled by the same
+// tool, and read here so the pane can say which of the two a file is.
+
+@use "readings" as readings
+
+$legacy-ink: #2b2b2b
+$legacy-paper: #f4f1ea
+$legacy-rule: 1px solid #d8d2c4
+
+=bordered($colour: $legacy-rule)
+  border: $colour
+  border-radius: 3px
+
+=stacked
+  display: flex
+  flex-direction: column
+  gap: 0.5rem
+
+@function halve($value)
+  @return $value / 2
+
+%boxed
+  +bordered
+  padding: 0.75rem
+
+.legacy-panel
+  @extend %boxed
+  +stacked
+  color: $legacy-ink
+  background: $legacy-paper
+
+  h2
+    margin: 0
+    font-size: 1rem
+
+    small
+      color: rgba($legacy-ink, 0.6)
+
+  .readings
+    width: 100%
+
+    td
+      padding: halve(0.7rem)
