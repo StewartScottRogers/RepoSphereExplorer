@@ -7,9 +7,9 @@ name: Independent review
 # `gh pr review --approve` or `--request-changes`.
 #
 # This check - `independent review` - is required on `main`, alongside
-# `fmt / clippy / test`: a
-# pull request does not merge until this station has run and left a
-# review, or said out loud that it has nothing to say. Work order #460.
+# `fmt / clippy / test`. A pull request does not merge until this
+# station has run and either left a review or said out loud that it has
+# nothing to say. Work order #460.
 #
 # It was informational for a long time, and what that cost is not
 # hypothetical: pull request #451 merged with this check red - the
