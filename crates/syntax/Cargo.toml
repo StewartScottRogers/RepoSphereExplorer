@@ -1,0 +1,14 @@
+[package]
+name = "syntax"
+description = "One error-tolerant tokeniser, driven by a small description of a language."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+plugin-api = { path = "../plugin-api" }
+
+[lints]
+workspace = true

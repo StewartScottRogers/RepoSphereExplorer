@@ -158,6 +158,62 @@ pub const PREVIEW_VIEW: &str = "Preview";
 /// that text, as the file holds it.
 pub const TEXT_VIEW: &str = "Text";
 
+/// What a run of a file's text is, for colouring it.
+///
+/// A closed set, and deliberately a small one. This is the lexical layer
+/// of the Roslyn C# compiler platform's classification - what a token
+/// looks like, decided without knowing what it means - trimmed to the
+/// distinctions a reader can tell apart at a glance in a pane a few
+/// inches wide. `Type` and `Function` are as far as it reaches; anything
+/// finer needs to know what a name refers to, which is a later job
+/// (GUIDANCE.md §3.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Class {
+    /// Anything the classifier had nothing to say about, including
+    /// whitespace. The gaps between the other classes are these, so that
+    /// a run of spans covers its text with no holes in it.
+    Plain,
+    /// A word the language reserves: `if`, `fn`, `SELECT`.
+    Keyword,
+    /// A word naming a type: `String`, `int`, `List`.
+    Type,
+    /// A name being called.
+    Function,
+    /// A quoted run, including its quotes and anything escaped inside.
+    Text,
+    /// A numeric literal, including a radix prefix and a suffix.
+    Number,
+    /// A comment, including the marker that opened it.
+    Comment,
+    /// Brackets, operators and separators.
+    Punctuation,
+}
+
+/// One run of a file's text, and what it is.
+///
+/// `start` and `len` are byte offsets into the text that was classified,
+/// and always fall on character boundaries. A classifier returns spans in
+/// order, covering the whole text exactly once: no gap, no overlap. That
+/// is what lets a front end draw the text by walking the spans and
+/// nothing else, and it is checked as a property rather than trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    /// Byte offset of the run's first character.
+    pub start: usize,
+    /// The run's length in bytes.
+    pub len: usize,
+    /// What the run is.
+    pub class: Class,
+}
+
+impl Span {
+    /// A span of `class` covering `start..start + len`.
+    #[must_use]
+    pub const fn new(start: usize, len: usize, class: Class) -> Self {
+        Self { start, len, class }
+    }
+}
+
 /// The presentation half of a file-type plugin: turns the core half's view
 /// data into lines of text a front end can render, without ever touching
 /// raw file bytes.
@@ -233,6 +289,23 @@ pub trait PluginPresentation: Send + Sync {
             return text.lines().map(str::to_owned).collect();
         }
         self.present(data)
+    }
+
+    /// What each run of `text` is, for a front end that colours it.
+    ///
+    /// Empty by default, which reads exactly as it always did: a plugin
+    /// that says nothing about its syntax is not a plugin that renders
+    /// wrongly. A plugin opts in by describing its language once and
+    /// handing the description to the shared tokeniser, so that the
+    /// hundred and eighty plugins share one implementation rather than
+    /// each growing their own.
+    ///
+    /// The contract on the returned spans is [`Span`]'s: in order,
+    /// covering `text` exactly once. A front end may draw them without
+    /// checking, so a classifier that breaks it corrupts the display.
+    fn classify(&self, text: &str) -> Vec<Span> {
+        let _ = text;
+        Vec::new()
     }
 
     /// The file's text, when this type can be edited as text. `None` for a

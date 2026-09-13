@@ -3124,6 +3124,7 @@ dependencies = [
  "service",
  "slint",
  "slint-build",
+ "syntax",
  "updater",
 ]
 
@@ -6060,6 +6061,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -6176,6 +6178,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -6194,6 +6197,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -6470,6 +6474,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -6590,6 +6595,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -6608,6 +6614,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -6626,6 +6633,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -7092,6 +7100,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -7174,6 +7183,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -7220,6 +7230,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -7395,6 +7406,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -7527,6 +7539,7 @@ dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
+ "syntax",
 ]
 
 [[package]]
@@ -9434,6 +9447,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "syntax"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
 ]
 
 [[package]]

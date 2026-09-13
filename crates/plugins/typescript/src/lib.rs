@@ -1,9 +1,10 @@
 //! TypeScript file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -128,6 +129,86 @@ fn has_typescript_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct TypeScriptCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const TYPESCRIPT: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[
+        Quote::simple('"'),
+        Quote::simple('\''),
+        Quote {
+            open: '`',
+            close: '`',
+            escape: Some('\\'),
+            multiline: true,
+        },
+    ],
+    keywords: &[
+        "abstract",
+        "as",
+        "async",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "declare",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "from",
+        "function",
+        "if",
+        "implements",
+        "import",
+        "in",
+        "instanceof",
+        "interface",
+        "keyof",
+        "let",
+        "new",
+        "null",
+        "of",
+        "private",
+        "protected",
+        "public",
+        "readonly",
+        "return",
+        "satisfies",
+        "static",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "type",
+        "typeof",
+        "undefined",
+        "var",
+        "void",
+        "while",
+        "yield",
+    ],
+    types: &[
+        "Array", "Date", "Map", "Promise", "Record", "Set", "any", "bigint", "boolean", "never",
+        "number", "object", "string", "symbol", "unknown",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for TypeScriptCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -166,6 +247,10 @@ impl PluginCore for TypeScriptCore {
 pub struct TypeScriptPresentation;
 
 impl PluginPresentation for TypeScriptPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &TYPESCRIPT)
+    }
+
     fn name(&self) -> &'static str {
         "typescript"
     }

@@ -19,6 +19,7 @@ plugin-ansible = { path = "../plugins/ansible" }
 plugin-antlr = { path = "../plugins/antlr" }
 plugin-apacheconf = { path = "../plugins/apacheconf" }
 plugin-api = { path = "../plugin-api" }
+syntax = { path = "../syntax" }
 plugin-ada = { path = "../plugins/ada" }
 plugin-apk = { path = "../plugins/apk" }
 plugin-apkpkg = { path = "../plugins/apkpkg" }

@@ -1,9 +1,10 @@
 //! Rust file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -86,6 +87,27 @@ fn has_rust_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct RustCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const RUST: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+        "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move",
+        "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true",
+        "type", "unsafe", "use", "where", "while",
+    ],
+    types: &[
+        "Box", "Option", "Result", "Self", "String", "Vec", "bool", "char", "f32", "f64", "i128",
+        "i16", "i32", "i64", "i8", "isize", "str", "u128", "u16", "u32", "u64", "u8", "usize",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for RustCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -124,6 +146,10 @@ impl PluginCore for RustCore {
 pub struct RustPresentation;
 
 impl PluginPresentation for RustPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &RUST)
+    }
+
     fn name(&self) -> &'static str {
         "rust"
     }
