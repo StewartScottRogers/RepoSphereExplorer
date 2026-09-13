@@ -2968,6 +2968,7 @@ dependencies = [
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
+ "plugin-composerlock",
  "plugin-cpp",
  "plugin-crystal",
  "plugin-csharp",
@@ -2993,6 +2994,7 @@ dependencies = [
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
+ "plugin-gemfilelock",
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
@@ -3000,6 +3002,7 @@ dependencies = [
  "plugin-gitlabci",
  "plugin-gleam",
  "plugin-go",
+ "plugin-gosum",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-gzip",
@@ -3066,7 +3069,9 @@ dependencies = [
  "plugin-purescript",
  "plugin-pyc",
  "plugin-python",
+ "plugin-pythonlock",
  "plugin-r",
+ "plugin-rego",
  "plugin-requirements",
  "plugin-restructuredtext",
  "plugin-roff",
@@ -6156,6 +6161,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-composerlock"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-cpp"
 version = "0.6.0"
 dependencies = [
@@ -6387,6 +6401,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gemfilelock"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-geojson"
 version = "0.6.0"
 dependencies = [
@@ -6442,6 +6465,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-go"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-gosum"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -7063,7 +7095,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-pythonlock"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-r"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-rego"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -8660,6 +8710,7 @@ dependencies = [
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
+ "plugin-composerlock",
  "plugin-cpp",
  "plugin-crystal",
  "plugin-csharp",
@@ -8685,6 +8736,7 @@ dependencies = [
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
+ "plugin-gemfilelock",
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
@@ -8692,6 +8744,7 @@ dependencies = [
  "plugin-gitlabci",
  "plugin-gleam",
  "plugin-go",
+ "plugin-gosum",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-gzip",
@@ -8758,7 +8811,9 @@ dependencies = [
  "plugin-purescript",
  "plugin-pyc",
  "plugin-python",
+ "plugin-pythonlock",
  "plugin-r",
+ "plugin-rego",
  "plugin-requirements",
  "plugin-restructuredtext",
  "plugin-roff",
@@ -9879,6 +9934,7 @@ dependencies = [
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
+ "plugin-composerlock",
  "plugin-cpp",
  "plugin-crystal",
  "plugin-csharp",
@@ -9904,6 +9960,7 @@ dependencies = [
  "plugin-font",
  "plugin-fortran",
  "plugin-fsharp",
+ "plugin-gemfilelock",
  "plugin-geojson",
  "plugin-gitattributes",
  "plugin-gitconfig",
@@ -9911,6 +9968,7 @@ dependencies = [
  "plugin-gitlabci",
  "plugin-gleam",
  "plugin-go",
+ "plugin-gosum",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-gzip",
@@ -9977,7 +10035,9 @@ dependencies = [
  "plugin-purescript",
  "plugin-pyc",
  "plugin-python",
+ "plugin-pythonlock",
  "plugin-r",
+ "plugin-rego",
  "plugin-requirements",
  "plugin-restructuredtext",
  "plugin-roff",

@@ -190,6 +190,11 @@ it.
 | Meson build definition | `crates/plugins/meson` | #357 | Project, version, licence, languages, targets, dependencies with what gates them, options read, subdirectories, tests |
 | Ninja build file | `crates/plugins/ninja` | #358 | Rules with commands, build statements with the three kinds of input, variables, phony targets, defaults, includes |
 | CUE | `crates/plugins/cue` | #361 | Package, imports, definitions with fields, constraints as written, optional fields, defaults, concrete instances |
+| Rego policy | `crates/plugins/rego` | #362 | Package, imports, rules with their bodies, partial against complete, defaults, functions |
+| Bundler lock file | `crates/plugins/gemfilelock` | #338 | Sources kept apart, every gem once, direct against transitive, platforms, Ruby, Bundler |
+| Composer lock file | `crates/plugins/composerlock` | #339 | Content hash, packages with source and kind, development apart, platform requirements, stability |
+| Python lock file | `crates/plugins/pythonlock` | #340 | Which tool wrote it, lock format, Python, resolution markers, packages with sources, wheels, markers, hash |
+| Go checksum database | `crates/plugins/gosum` | #341 | Modules and versions, the two lines folded into one entry, several versions, go.mod only, pseudo-versions |
 
 ## Folder plugins
 

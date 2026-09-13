@@ -1,0 +1,108 @@
+{
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
+        "This file is @generated automatically"
+    ],
+    "content-hash": "9c1f4b2a7d6e5038c1b2a3d4e5f60718",
+    "packages": [
+        {
+            "name": "monolog/monolog",
+            "version": "3.7.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/Seldaek/monolog.git",
+                "reference": "8b8a4a9e7a6c5d4e3f2b1a0c9d8e7f6a5b4c3d2e"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/Seldaek/monolog/zipball/8b8a4a9e",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=8.1",
+                "psr/log": "^2.0 || ^3.0"
+            },
+            "type": "library",
+            "license": ["MIT"],
+            "description": "Sends your logs to files, sockets, inboxes, databases and various web services",
+            "time": "2024-06-28T09:40:51+00:00"
+        },
+        {
+            "name": "psr/log",
+            "version": "3.0.2",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/php-fig/log.git",
+                "reference": "f16e1d5863e37f8d8c2a01719f5b34baa2b714d3"
+            },
+            "type": "library",
+            "license": ["MIT"],
+            "description": "Common interface for logging libraries",
+            "time": "2024-09-11T13:17:53+00:00"
+        },
+        {
+            "name": "league/csv",
+            "version": "9.16.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/thephpleague/csv.git",
+                "reference": "3f9c5a6b7d8e9f0a1b2c3d4e5f60718293a4b5c6"
+            },
+            "require": {
+                "php": "^8.1.2",
+                "ext-json": "*"
+            },
+            "type": "library",
+            "license": ["MIT"],
+            "description": "CSV data manipulation made easy in PHP",
+            "time": "2024-05-24T11:04:54+00:00"
+        }
+    ],
+    "packages-dev": [
+        {
+            "name": "phpunit/phpunit",
+            "version": "11.3.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/sebastianbergmann/phpunit.git",
+                "reference": "1a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3d4"
+            },
+            "require": {
+                "php": ">=8.2",
+                "ext-dom": "*"
+            },
+            "type": "library",
+            "license": ["BSD-3-Clause"],
+            "description": "The PHP Unit Testing framework",
+            "time": "2024-08-13T06:15:36+00:00"
+        },
+        {
+            "name": "friendsofphp/php-cs-fixer",
+            "version": "3.62.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/PHP-CS-Fixer/PHP-CS-Fixer.git",
+                "reference": "b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e"
+            },
+            "type": "application",
+            "license": ["MIT"],
+            "description": "A tool to automatically fix PHP code style",
+            "time": "2024-08-07T17:03:09+00:00"
+        }
+    ],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": {},
+    "prefer-stable": true,
+    "prefer-lowest": false,
+    "platform": {
+        "php": ">=8.1",
+        "ext-json": "*",
+        "ext-mbstring": "*"
+    },
+    "platform-dev": {
+        "ext-xdebug": "*"
+    },
+    "plugin-api-version": "2.6.0"
+}

@@ -202,6 +202,11 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_meson::MesonPresentation,
     &plugin_ninja::NinjaPresentation,
     &plugin_cue::CuePresentation,
+    &plugin_rego::RegoPresentation,
+    &plugin_gemfilelock::GemfilelockPresentation,
+    &plugin_composerlock::ComposerlockPresentation,
+    &plugin_pythonlock::PythonlockPresentation,
+    &plugin_gosum::GosumPresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever
