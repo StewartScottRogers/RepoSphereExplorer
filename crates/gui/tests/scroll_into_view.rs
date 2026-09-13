@@ -174,3 +174,35 @@ fn a_row_already_on_screen_leaves_the_listing_where_it_was() {
         "a selection already in view must not move the listing under the reader"
     );
 }
+
+/// The pane has to be *able* to scroll, which the tests above assume and
+/// none of them checks.
+///
+/// A `ScrollView` takes its viewport height from its child's height, and a
+/// child stating only a `min-height` is laid out at the height of the view
+/// itself. The offset then has nowhere to go: Rust wrote it, the property
+/// took it, and the next frame put it back to zero. Nothing above catches
+/// that, because the rows are drawn at `i * row-height` whether or not the
+/// viewport is tall enough to hold them, so they were all still findable
+/// and the offsets all still measured right - while the running
+/// application never moved the listing at all. Arrowing down a directory
+/// of 181 entries left the pane showing the first 23 with nothing
+/// highlighted.
+#[test]
+fn the_listing_is_as_tall_as_the_rows_it_holds() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = shown_window();
+    let wanted = f32::from(ROW_COUNT) * ROW_HEIGHT;
+
+    let body = ElementHandle::find_by_element_id(&ui, "ContentsPane::body")
+        .next()
+        .expect("the contents pane's scrollable body should be in the tree");
+
+    assert!(
+        (body.size().height - wanted).abs() < 0.5,
+        "the scrollable body should be {wanted}px for {ROW_COUNT} rows, and is \
+         {}px. A body no taller than the view cannot scroll, whatever offset \
+         it is given.",
+        body.size().height
+    );
+}
