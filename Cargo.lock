@@ -2964,6 +2964,7 @@ dependencies = [
  "plugin-certificate",
  "plugin-clojure",
  "plugin-cloudformation",
+ "plugin-cmake",
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
@@ -2972,6 +2973,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-css",
  "plugin-csv",
+ "plugin-cue",
  "plugin-dart",
  "plugin-diff",
  "plugin-directory",
@@ -3028,12 +3030,14 @@ dependencies = [
  "plugin-markdown",
  "plugin-matlab",
  "plugin-maven",
+ "plugin-meson",
  "plugin-minidump",
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nginxconf",
  "plugin-nim",
+ "plugin-ninja",
  "plugin-nix",
  "plugin-npmlock",
  "plugin-nuget",
@@ -6113,6 +6117,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-cmake"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-cobol"
 version = "0.6.0"
 dependencies = [
@@ -6183,6 +6196,15 @@ name = "plugin-csv"
 version = "0.6.0"
 dependencies = [
  "csv",
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-cue"
+version = "0.6.0"
+dependencies = [
  "plugin-api",
  "serde",
  "serde_json",
@@ -6701,6 +6723,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-meson"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-minidump"
 version = "0.6.0"
 dependencies = [
@@ -6748,6 +6779,15 @@ dependencies = [
 
 [[package]]
 name = "plugin-nim"
+version = "0.6.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-ninja"
 version = "0.6.0"
 dependencies = [
  "plugin-api",
@@ -8616,6 +8656,7 @@ dependencies = [
  "plugin-certificate",
  "plugin-clojure",
  "plugin-cloudformation",
+ "plugin-cmake",
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
@@ -8624,6 +8665,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-css",
  "plugin-csv",
+ "plugin-cue",
  "plugin-dart",
  "plugin-diff",
  "plugin-directory",
@@ -8680,12 +8722,14 @@ dependencies = [
  "plugin-markdown",
  "plugin-matlab",
  "plugin-maven",
+ "plugin-meson",
  "plugin-minidump",
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nginxconf",
  "plugin-nim",
+ "plugin-ninja",
  "plugin-nix",
  "plugin-npmlock",
  "plugin-nuget",
@@ -9831,6 +9875,7 @@ dependencies = [
  "plugin-certificate",
  "plugin-clojure",
  "plugin-cloudformation",
+ "plugin-cmake",
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
@@ -9839,6 +9884,7 @@ dependencies = [
  "plugin-csharp",
  "plugin-css",
  "plugin-csv",
+ "plugin-cue",
  "plugin-dart",
  "plugin-diff",
  "plugin-directory",
@@ -9895,12 +9941,14 @@ dependencies = [
  "plugin-markdown",
  "plugin-matlab",
  "plugin-maven",
+ "plugin-meson",
  "plugin-minidump",
  "plugin-model3d",
  "plugin-msbuild",
  "plugin-msgpack",
  "plugin-nginxconf",
  "plugin-nim",
+ "plugin-ninja",
  "plugin-nix",
  "plugin-npmlock",
  "plugin-nuget",

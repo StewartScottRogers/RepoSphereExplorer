@@ -186,6 +186,10 @@ it.
 | Bicep | `crates/plugins/bicep` | #353 | Target scope, parameters with types, defaults, secure and allowed, variables, resources, modules, outputs |
 | Nix expression | `crates/plugins/nix` | #354 | Flake or not, description, pinned inputs with follows, outputs, arguments, derivation with its three kinds of input |
 | Starlark build file | `crates/plugins/starlark` | #355 | Build file or extension, loads, targets with dependencies and globs, visibility three ways, functions and rules |
+| CMake script | `crates/plugins/cmake` | #356 | Minimum version, project, version, languages, targets with kinds, packages, options with defaults, subdirectories, tests |
+| Meson build definition | `crates/plugins/meson` | #357 | Project, version, licence, languages, targets, dependencies with what gates them, options read, subdirectories, tests |
+| Ninja build file | `crates/plugins/ninja` | #358 | Rules with commands, build statements with the three kinds of input, variables, phony targets, defaults, includes |
+| CUE | `crates/plugins/cue` | #361 | Package, imports, definitions with fields, constraints as written, optional fields, defaults, concrete instances |
 
 ## Folder plugins
 

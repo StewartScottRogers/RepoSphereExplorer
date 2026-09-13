@@ -198,6 +198,10 @@ const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_bicep::BicepPresentation,
     &plugin_nix::NixPresentation,
     &plugin_starlark::StarlarkPresentation,
+    &plugin_cmake::CmakePresentation,
+    &plugin_meson::MesonPresentation,
+    &plugin_ninja::NinjaPresentation,
+    &plugin_cue::CuePresentation,
 ];
 
 /// Turns a plugin's view data into displayable lines, via whichever
