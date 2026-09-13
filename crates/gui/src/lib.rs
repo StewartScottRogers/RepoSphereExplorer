@@ -7,13 +7,15 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::{ContentRow, FolderRow, MainWindow};
+pub use generated::{ColouredRun, ContentRow, FolderRow, MainWindow, Theme};
 
 pub mod app;
 pub mod settings;
 
+pub use app::PRESENTATION_PLUGINS;
+
 use app::App;
-use plugin_api::{Graphic, Icon};
+use plugin_api::{Class, Graphic, Icon};
 use slint::{Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -154,6 +156,25 @@ pub fn scroll_offset_for(selected: usize, viewport_height: f32, current: f32) ->
     }
 }
 
+/// A [`Class`] as the number `Theme.syntax-colour` maps to a brush.
+///
+/// A number rather than a colour because the palette lives in
+/// `app.slint`: the front end knows what a keyword should look like in
+/// each scheme, and Rust knows which runs are keywords. Neither has to
+/// learn the other's half.
+const fn class_number(class: Class) -> i32 {
+    match class {
+        Class::Plain => 0,
+        Class::Keyword => 1,
+        Class::Type => 2,
+        Class::Function => 3,
+        Class::Text => 4,
+        Class::Number => 5,
+        Class::Comment => 6,
+        Class::Punctuation => 7,
+    }
+}
+
 /// Copies `app`'s current state into `ui`'s bound properties.
 pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_rows(ModelRc::new(VecModel::from(
@@ -205,6 +226,21 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
         app.file_views().into_iter().map(str::to_owned).collect(),
     ));
     ui.set_file_view_index(row_index(app.file_view_index()));
+    ui.set_file_lines(ModelRc::new(VecModel::from(
+        app.file_lines()
+            .into_iter()
+            .map(|line| {
+                ModelRc::new(VecModel::from(
+                    line.into_iter()
+                        .map(|run| ColouredRun {
+                            text: run.text.into(),
+                            class: class_number(run.class),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+            })
+            .collect::<Vec<_>>(),
+    )));
     ui.set_file_text(app.file_text().into());
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());

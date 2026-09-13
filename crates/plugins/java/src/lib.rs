@@ -1,9 +1,10 @@
 //! Java file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -103,6 +104,64 @@ fn has_java_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct JavaCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const JAVA: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "assert",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "continue",
+        "default",
+        "do",
+        "else",
+        "enum",
+        "extends",
+        "false",
+        "final",
+        "finally",
+        "for",
+        "if",
+        "implements",
+        "import",
+        "instanceof",
+        "interface",
+        "native",
+        "new",
+        "null",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "static",
+        "super",
+        "switch",
+        "synchronized",
+        "this",
+        "throw",
+        "throws",
+        "transient",
+        "true",
+        "try",
+        "volatile",
+        "while",
+    ],
+    types: &[
+        "Integer", "List", "Map", "Object", "String", "boolean", "byte", "char", "double", "float",
+        "int", "long", "short", "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for JavaCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -140,6 +199,10 @@ impl PluginCore for JavaCore {
 pub struct JavaPresentation;
 
 impl PluginPresentation for JavaPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &JAVA)
+    }
+
     fn name(&self) -> &'static str {
         "java"
     }

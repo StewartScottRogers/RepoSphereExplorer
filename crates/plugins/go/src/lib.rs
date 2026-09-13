@@ -1,9 +1,10 @@
 //! Go file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -114,6 +115,77 @@ fn has_go_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GoCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GO: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[
+        Quote::simple('"'),
+        Quote {
+            open: '`',
+            close: '`',
+            escape: None,
+            multiline: true,
+        },
+    ],
+    keywords: &[
+        "break",
+        "case",
+        "chan",
+        "const",
+        "continue",
+        "default",
+        "defer",
+        "else",
+        "fallthrough",
+        "false",
+        "for",
+        "func",
+        "go",
+        "goto",
+        "if",
+        "import",
+        "interface",
+        "map",
+        "nil",
+        "package",
+        "range",
+        "return",
+        "select",
+        "struct",
+        "switch",
+        "true",
+        "type",
+        "var",
+    ],
+    types: &[
+        "bool",
+        "byte",
+        "complex128",
+        "complex64",
+        "error",
+        "float32",
+        "float64",
+        "int",
+        "int16",
+        "int32",
+        "int64",
+        "int8",
+        "rune",
+        "string",
+        "uint",
+        "uint16",
+        "uint32",
+        "uint64",
+        "uint8",
+        "uintptr",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for GoCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -152,6 +224,10 @@ impl PluginCore for GoCore {
 pub struct GoPresentation;
 
 impl PluginPresentation for GoPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GO)
+    }
+
     fn name(&self) -> &'static str {
         "go"
     }

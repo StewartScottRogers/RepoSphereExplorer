@@ -1,9 +1,10 @@
 //! C++ file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -121,6 +122,71 @@ fn has_cpp_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CppCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CPP: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "auto",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "constexpr",
+        "continue",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "explicit",
+        "export",
+        "extern",
+        "false",
+        "for",
+        "friend",
+        "goto",
+        "if",
+        "inline",
+        "namespace",
+        "new",
+        "noexcept",
+        "nullptr",
+        "operator",
+        "override",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "sizeof",
+        "static",
+        "struct",
+        "switch",
+        "template",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typedef",
+        "typename",
+        "union",
+        "using",
+        "virtual",
+        "volatile",
+        "while",
+    ],
+    types: &[
+        "bool", "char", "double", "float", "int", "long", "short", "signed", "size_t", "string",
+        "unsigned", "vector", "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for CppCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -158,6 +224,10 @@ impl PluginCore for CppCore {
 pub struct CppPresentation;
 
 impl PluginPresentation for CppPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CPP)
+    }
+
     fn name(&self) -> &'static str {
         "cpp"
     }

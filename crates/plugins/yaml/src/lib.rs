@@ -6,11 +6,12 @@
 //! full parse would refuse the file outright on a syntax error, which is
 //! exactly when somebody most wants to look at it.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["yaml", "yml"];
@@ -213,6 +214,19 @@ fn looks_like_yaml(prefix: &[u8]) -> bool {
 #[derive(Debug, Default)]
 pub struct YamlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const YAML: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["false", "no", "null", "off", "on", "true", "yes"],
+    types: &[],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for YamlCore {
     fn name(&self) -> &'static str {
         "yaml"
@@ -243,6 +257,10 @@ impl PluginCore for YamlCore {
 pub struct YamlPresentation;
 
 impl PluginPresentation for YamlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &YAML)
+    }
+
     fn name(&self) -> &'static str {
         "yaml"
     }

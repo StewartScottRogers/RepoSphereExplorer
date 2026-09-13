@@ -1,9 +1,10 @@
 //! JavaScript file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -167,6 +168,73 @@ fn looks_like_vue_sfc(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct JavaScriptCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const JAVASCRIPT: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[
+        Quote::simple('"'),
+        Quote::simple('\''),
+        Quote {
+            open: '`',
+            close: '`',
+            escape: Some('\\'),
+            multiline: true,
+        },
+    ],
+    keywords: &[
+        "async",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "let",
+        "new",
+        "null",
+        "of",
+        "return",
+        "static",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "undefined",
+        "var",
+        "void",
+        "while",
+        "yield",
+    ],
+    types: &[
+        "Array", "Boolean", "Date", "Error", "JSON", "Map", "Math", "Number", "Object", "Promise",
+        "RegExp", "Set", "String", "Symbol",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for JavaScriptCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -204,6 +272,10 @@ impl PluginCore for JavaScriptCore {
 pub struct JavaScriptPresentation;
 
 impl PluginPresentation for JavaScriptPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &JAVASCRIPT)
+    }
+
     fn name(&self) -> &'static str {
         "javascript"
     }

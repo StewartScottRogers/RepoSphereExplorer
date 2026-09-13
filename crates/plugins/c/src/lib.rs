@@ -1,9 +1,10 @@
 //! C file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -136,6 +137,26 @@ fn has_c_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const C: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "auto", "break", "case", "const", "continue", "default", "do", "else", "enum", "extern",
+        "for", "goto", "if", "inline", "register", "restrict", "return", "sizeof", "static",
+        "struct", "switch", "typedef", "union", "volatile", "while",
+    ],
+    types: &[
+        "bool", "char", "double", "float", "int", "long", "short", "signed", "size_t", "unsigned",
+        "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for CCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -173,6 +194,10 @@ impl PluginCore for CCore {
 pub struct CPresentation;
 
 impl PluginPresentation for CPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &C)
+    }
+
     fn name(&self) -> &'static str {
         "c"
     }

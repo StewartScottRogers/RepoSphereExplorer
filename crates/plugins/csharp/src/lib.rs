@@ -1,9 +1,10 @@
 //! C# file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -173,6 +174,91 @@ fn has_csharp_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CSharpCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CSHARP: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "as",
+        "async",
+        "await",
+        "base",
+        "break",
+        "case",
+        "catch",
+        "checked",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "delegate",
+        "do",
+        "else",
+        "enum",
+        "event",
+        "explicit",
+        "extern",
+        "false",
+        "finally",
+        "fixed",
+        "for",
+        "foreach",
+        "get",
+        "goto",
+        "if",
+        "implicit",
+        "in",
+        "interface",
+        "internal",
+        "is",
+        "lock",
+        "namespace",
+        "new",
+        "null",
+        "operator",
+        "out",
+        "override",
+        "params",
+        "private",
+        "protected",
+        "public",
+        "readonly",
+        "record",
+        "ref",
+        "return",
+        "sealed",
+        "set",
+        "sizeof",
+        "stackalloc",
+        "static",
+        "struct",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "unchecked",
+        "unsafe",
+        "using",
+        "var",
+        "virtual",
+        "volatile",
+        "while",
+        "yield",
+    ],
+    types: &[
+        "List", "Task", "bool", "byte", "char", "decimal", "double", "float", "int", "long",
+        "object", "sbyte", "short", "string", "uint", "ulong", "ushort", "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for CSharpCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -210,6 +296,10 @@ impl PluginCore for CSharpCore {
 pub struct CSharpPresentation;
 
 impl PluginPresentation for CSharpPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CSHARP)
+    }
+
     fn name(&self) -> &'static str {
         "csharp"
     }

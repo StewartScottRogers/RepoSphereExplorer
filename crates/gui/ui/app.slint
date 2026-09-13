@@ -6,7 +6,7 @@ import { ScrollView, Palette, TextEdit } from "std-widgets.slint";
 // using; the derived shades below are the handful of tones the panes need
 // on top of it, expressed as offsets from the system's own so they stay
 // right in both schemes.
-global Theme {
+export global Theme {
     out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
     // Panels sitting on the window background: toolbar, column header, menus.
     out property <brush> panel: dark
@@ -41,6 +41,43 @@ global Theme {
         : Palette.background.darker(0.20);
     out property <brush> accent: Palette.accent-background;
     out property <brush> on-accent: Palette.accent-foreground;
+
+    // Syntax colours, one pair per class, chosen for the two schemes
+    // rather than derived from the palette: a hue that reads as "string"
+    // has to stay that hue, and shifting it with the accent colour would
+    // make the same file look like a different language on two machines.
+    //
+    // class | light      | dark       | why
+    // ------|------------|------------|---------------------------------
+    //     1 | #0000c0    | #569cd6    | keyword: the blue every editor uses
+    //     2 | #267f99    | #4ec9b0    | type: teal, near the keyword but not it
+    //     3 | #795e26    | #dcdcaa    | function: warm, so a call stands out
+    //     4 | #a31515    | #ce9178    | string: red-brown, the oldest convention
+    //     5 | #098658    | #b5cea8    | number: green, quiet
+    //     6 | #008000    | #6a9955    | comment: green, and the one to look past
+    //     7 | dimmed     | dimmed     | punctuation: present, not competing
+    //
+    // The light column is Visual Studio's default, the dark column is
+    // Visual Studio Code's dark+. Both are what a reader has already
+    // spent years looking at, which is the whole argument for them.
+    public pure function syntax-colour(class: int) -> brush {
+        if (class == 1) { return dark ? #569cd6 : #0000c0; }
+        if (class == 2) { return dark ? #4ec9b0 : #267f99; }
+        if (class == 3) { return dark ? #dcdcaa : #795e26; }
+        if (class == 4) { return dark ? #ce9178 : #a31515; }
+        if (class == 5) { return dark ? #b5cea8 : #098658; }
+        if (class == 6) { return dark ? #6a9955 : #008000; }
+        if (class == 7) { return dim-text; }
+        return Palette.foreground;
+    }
+}
+
+/// One coloured run of a line in the Text view. `class` is
+/// `plugin_api::Class` as a number, mapped to a colour by
+/// `Theme.syntax-colour`.
+export struct ColouredRun {
+    text: string,
+    class: int,
 }
 
 /// One row of the navigation tree. Mirrors `app::FolderRow`.
@@ -951,6 +988,11 @@ export component MainWindow inherits Window {
     in property <image> location-icon;
     // The file pane as an editor, for the types whose plugin can edit them.
     in property <bool> editing-file;
+    // The Text view's lines, each split into coloured runs. Empty when
+    // there is nothing to colour - the Preview is showing, the plugin
+    // describes no language, or the file carries no text - and the plain
+    // `Text` below is drawn instead.
+    in property <[[ColouredRun]]> file-lines;
     in property <bool> can-edit;
     in-out property <string> edit-text;
     callback edit-requested();
@@ -1403,7 +1445,34 @@ export component MainWindow inherits Window {
                                 height: 212px;
                             }
                         }
-                        if !editing-file: view := ScrollView {
+                        // Coloured: fixed-width, and no wrapping, because a
+                        // wrapped line of code puts the second half under a
+                        // column it has nothing to do with. Scrolls sideways
+                        // instead, which is what an editor does.
+                        if !editing-file && file-lines.length > 0: coloured := ScrollView {
+                            VerticalLayout {
+                                alignment: start;
+                                padding: 4px;
+                                for line[row] in file-lines: HorizontalLayout {
+                                    alignment: start;
+                                    height: 16px;
+                                    // Named so a test can ask what the pane
+                                    // drew: runs computed correctly and
+                                    // painted as one string would pass every
+                                    // other test in the sequence.
+                                    for run in line: syntax-run := Text {
+                                        text: run.text;
+                                        accessible-role: text;
+                                        accessible-label: run.text;
+                                        color: Theme.syntax-colour(run.class);
+                                        font-family: "Consolas, Menlo, monospace";
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                        if !editing-file && file-lines.length == 0: view := ScrollView {
                             Text {
                                 text: file-text;
                                 color: Palette.foreground;

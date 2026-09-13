@@ -4,7 +4,9 @@
 //! presentation half, so the two are separate, not shared, despite the
 //! similar shape.
 
-use plugin_api::{FolderPresentation, Graphic, Icon, PluginPresentation, UNKNOWN_ICON};
+use plugin_api::{
+    Class, FolderPresentation, Graphic, Icon, PluginPresentation, Span, TEXT_VIEW, UNKNOWN_ICON,
+};
 use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
 use std::collections::HashMap;
 use std::io;
@@ -16,7 +18,13 @@ use std::sync::mpsc::{self, Receiver};
 /// Hand-registered: a registration macro would be structure with no second
 /// caller to justify it while seven entries can still be read at a glance
 /// (see `plugin-api`'s crate docs).
-const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
+/// Every presentation half, in registration order.
+///
+/// Public so a test can walk the whole catalogue and hold each plugin to
+/// the contract on [`plugin_api::Span`]: a classifier whose spans do not
+/// cover their text would slice a string at a byte that is not a
+/// character boundary the first time somebody opened that format.
+pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_text::TextPresentation,
     &plugin_python::PythonPresentation,
     &plugin_elixir::ElixirPresentation,
@@ -696,6 +704,54 @@ pub fn chevron_hit(x: f32, depth: usize) -> bool {
     };
     let start = FOLDER_PADDING + f32::from(level) * FOLDER_INDENT;
     x >= start && x < start + FOLDER_CHEVRON
+}
+
+/// One coloured run of a line in the Text view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColouredRun {
+    /// The run's text, with no newline in it.
+    pub text: String,
+    /// What the run is, which is what decides its colour.
+    pub class: Class,
+}
+
+/// Splits `text` into lines, each a list of runs, using `spans`.
+///
+/// A span may cross a newline - a block comment usually does - so the
+/// break is made here rather than asked of the classifier, which would
+/// have to know how the pane lays text out to answer.
+///
+/// The trailing newline ends the last line rather than starting an empty
+/// one, so a file ending in a newline does not draw a blank row that is
+/// not in it.
+fn colour_lines(text: &str, spans: &[Span]) -> Vec<Vec<ColouredRun>> {
+    let mut lines: Vec<Vec<ColouredRun>> = Vec::new();
+    let mut line: Vec<ColouredRun> = Vec::new();
+    for span in spans {
+        let Some(part) = text.get(span.start..span.start + span.len) else {
+            continue;
+        };
+        let mut pieces = part.split('\n');
+        if let Some(first) = pieces.next().filter(|first| !first.is_empty()) {
+            line.push(ColouredRun {
+                text: first.to_owned(),
+                class: span.class,
+            });
+        }
+        for piece in pieces {
+            lines.push(std::mem::take(&mut line));
+            if !piece.is_empty() {
+                line.push(ColouredRun {
+                    text: piece.to_owned(),
+                    class: span.class,
+                });
+            }
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 /// One contents row, as the details view renders it.
@@ -2060,6 +2116,42 @@ impl App {
                 .unwrap_or_default(),
             _ => Vec::new(),
         }
+    }
+
+    /// The Text view's lines, each split into coloured runs, or empty when
+    /// there is nothing to colour.
+    ///
+    /// Empty covers three cases and the pane treats them alike, falling
+    /// back to the plain text it always drew: the pane is showing the
+    /// plugin's Preview rather than the file, the plugin describes no
+    /// language, or the file carries no text. None of them is a failure,
+    /// and a reader should not be able to tell them apart.
+    ///
+    /// Lines rather than one list of runs because a line is what gets
+    /// laid out: runs sit side by side across a line and lines stack, and
+    /// flattening that would leave the pane unable to place either.
+    #[must_use]
+    pub fn file_lines(&self) -> Vec<Vec<ColouredRun>> {
+        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
+            return Vec::new();
+        };
+        if self.file_views().get(self.file_view_index) != Some(&TEXT_VIEW) {
+            return Vec::new();
+        }
+        let Some(text) = data.get("content").and_then(serde_json::Value::as_str) else {
+            return Vec::new();
+        };
+        let Some(presentation) = PRESENTATION_PLUGINS
+            .iter()
+            .find(|candidate| candidate.name() == plugin)
+        else {
+            return Vec::new();
+        };
+        let spans = presentation.classify(text);
+        if spans.is_empty() {
+            return Vec::new();
+        }
+        colour_lines(text, &spans)
     }
 
     /// Which view the pane is showing, as an index into [`Self::file_views`].

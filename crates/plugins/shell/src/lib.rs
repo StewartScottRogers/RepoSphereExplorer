@@ -1,9 +1,10 @@
 //! Shell script file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -97,6 +98,31 @@ fn parse_definitions(content: &str) -> Vec<String> {
 #[derive(Debug, Default)]
 pub struct ShellCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SHELL: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[
+        Quote::simple('"'),
+        Quote {
+            open: '\'',
+            close: '\'',
+            escape: None,
+            multiline: false,
+        },
+    ],
+    keywords: &[
+        "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function", "if",
+        "in", "local", "readonly", "return", "select", "shift", "source", "then", "trap", "unset",
+        "until", "while",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for ShellCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -133,6 +159,10 @@ impl PluginCore for ShellCore {
 pub struct ShellPresentation;
 
 impl PluginPresentation for ShellPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SHELL)
+    }
+
     fn name(&self) -> &'static str {
         "shell"
     }
