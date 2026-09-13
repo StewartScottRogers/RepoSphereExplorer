@@ -85,7 +85,10 @@ fn has_erlang_shebang(text: &str) -> bool {
 /// these overlap another plugin's checks, so this plugin needs no ordering
 /// constraint against a specific sibling.
 fn has_erlang_syntax(text: &str) -> bool {
-    text.contains("-module(")
+    // An `.app.src` is not a module: it is a single Erlang term that
+    // `file:consult/1` reads, and it opens with `{application,`.
+    text.contains("{application,")
+        || text.contains("-module(")
         || text.contains("-export(")
         || text.contains("-record(")
         || text.contains("-behaviour(")
