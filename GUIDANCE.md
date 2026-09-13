@@ -341,6 +341,60 @@ manifest the author wrote and never runs the build tool. Resolving a manifest
 into what would actually build needs the registry, the lock file and the
 network, which is a different job from describing a folder.
 
+### 3.6 The File pane is an editor
+
+A plugin says what a file *is*. It also says what its parts *are*: which
+run of bytes is a keyword, which a string, which a comment. The pane
+paints what it is told and knows nothing about any language, exactly as
+§3 already has it for the icon and the view.
+
+That makes the File pane an editor rather than only a reader, and the
+step is deliberate (D14). It is the smaller half of a lesson worth
+taking from the Roslyn C# compiler platform: classification belongs to
+the thing that already parses the format, it is layered, and the fast
+lexical answer is never held up by a slower one.
+
+**Included.** Syntax colouring; a caret; selection; undo and redo;
+saving through the service, which stays the only process that touches
+the filesystem.
+
+**Excluded, and written down so a later work order has something to
+argue against.** Find and replace. Bracket matching. Automatic
+indentation beyond keeping the current line's. Code folding.
+Completion. Anything that has to understand a *project* rather than a
+file — resolving an import, following a reference across files, or
+knowing a type declared elsewhere. That last one is a compiler, and
+this is a Repos Explorer.
+
+**Monospace, not a preference.** Slint offers no way to ask where
+character *n* of a string sits, so a caret can only be placed where
+character position and pixel position are related by arithmetic. A
+proportional font would mean measuring a hidden `Text`'s
+`preferred-width` once per prefix, per keystroke. The editing surface
+is therefore fixed-width, and the arithmetic is one number shared
+between what is drawn and what a click means — the same trap, and the
+same remedy, as the folders pane's indent.
+
+**Knowingly given up until put back.** Writing the editing surface by
+hand loses three things Slint's own `TextEdit` does for free, and each
+is named here so that losing it stays a decision rather than an
+accident:
+
+- **Input method editor (IME) composition.** `TextInput` exposes
+  `preedit-text` and the platform's composition window. Without them
+  nobody typing Chinese, Japanese or Korean, and nobody using a dead
+  key for an accent, can type at all. Putting it back means handling
+  the composition events and drawing the pre-edit run.
+- **Accessibility.** `TextInput` sets the accessible role and value a
+  screen reader reads. Putting it back means setting them on the
+  surface, and keeping the value current as the document changes.
+- **Right-to-left text.** The arithmetic above assumes left to right.
+  Putting it back means laying a line out by direction runs, which is
+  most of a text shaper.
+
+None may be quietly dropped: the work order that replaces the plain
+editor either covers each or records it here as still outstanding.
+
 ## 4. Distribution — GitHub is the whole supply chain
 
 ### 4.1 The web page
@@ -422,6 +476,11 @@ Stated so the factory does not drift into them.
   working copies on this machine, not the repositories on a host.
 - **No third-party binary plugins, no mobile front end, no in-app package
   management** beyond the updater, and **no telemetry of any kind.**
+- **Not an integrated development environment.** The File pane edits a
+  file's text and colours it (§3.6, D14). It does not find and replace,
+  match brackets, indent for you, fold code, complete a name, or resolve
+  anything across files. §3.6 holds the full list; a feature that is on
+  it needs that line changed first.
 
 ## 7. Decisions
 
