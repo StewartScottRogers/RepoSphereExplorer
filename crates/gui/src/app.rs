@@ -1129,8 +1129,27 @@ impl App {
             | Mode::ReposRootInput { .. } => {
                 self.confirm_text_input();
             }
+            // Return renames on macOS, which is that platform's
+            // convention and the reason this is parameterised at all.
             Mode::Normal if os == "macos" => self.request_rename(),
-            Mode::Normal | Mode::ConfirmDelete { .. } => {}
+            Mode::Normal => self.activate_selection(),
+            Mode::ConfirmDelete { .. } => {}
+        }
+    }
+
+    /// Opens whatever is selected in the pane that has focus: a folder
+    /// in the contents pane is drilled into, and a row in the folders
+    /// tree is expanded or collapsed. Both are what double-clicking
+    /// that row already does; this is the keyboard's way to the same
+    /// place, and every file manager has it.
+    ///
+    /// A file is left alone. This application reads files rather than
+    /// launching them (D10 in spirit: it looks, it does not drive), and
+    /// selecting one has already shown it in the File pane.
+    pub fn activate_selection(&mut self) {
+        match self.focus {
+            Pane::Folders => self.toggle_folder(self.folder_selected),
+            Pane::Contents | Pane::File => self.open_content(self.content_selected),
         }
     }
 
@@ -1402,7 +1421,12 @@ impl App {
         if let Some(row) = new_rows.iter().position(|(_, idx)| idx == &child_indices) {
             self.folder_selected = row;
         }
-        self.focus = Pane::Folders;
+        // Focus stays on the contents, which is what the reader is now
+        // looking at. It used to move to the tree, and then the arrow
+        // keys moved the tree instead of the listing, and a second
+        // Return collapsed the folder just opened rather than going
+        // one deeper.
+        self.focus = Pane::Contents;
         self.load_contents_for_selected();
     }
 
@@ -3054,6 +3078,107 @@ third",
 
         assert!(app.pending_contents.is_none());
         assert_eq!(app.content_labels(), vec!["only.txt"]);
+    }
+
+    #[test]
+    fn return_drills_into_the_selected_folder() {
+        // The keyboard way to do what double-clicking does. Before this
+        // Return did nothing at all off macOS, so a folder in the
+        // contents pane could only be opened with the mouse.
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        app.select_content(0);
+
+        app.handle_return_for_os("windows");
+
+        assert_eq!(app.folder_selected(), 1, "it drilled in");
+        assert!(app.status_text().starts_with("loading"));
+    }
+
+    #[test]
+    fn return_on_a_file_does_nothing() {
+        // This application reads files; it does not launch them, and
+        // selecting one has already shown it in the File pane.
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("readings.csv", false)]),
+            }),
+        );
+        app.select_content(0);
+        let before = app.folder_selected();
+
+        app.handle_return_for_os("windows");
+
+        assert_eq!(app.folder_selected(), before);
+    }
+
+    #[test]
+    fn return_still_renames_on_macos() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        app.select_content(0);
+
+        app.handle_return_for_os("macos");
+
+        assert_eq!(
+            app.folder_selected(),
+            0,
+            "Return is rename on macOS, and drilling in is the mouse's job there"
+        );
+    }
+
+    #[test]
+    fn return_in_the_folders_pane_collapses_that_row() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        app.select_folder(0);
+        assert!(
+            app.folder_labels()[0].contains('v'),
+            "the root starts expanded"
+        );
+
+        app.handle_return_for_os("windows");
+
+        assert!(
+            app.folder_labels()[0].contains('>'),
+            "Return acts on whichever pane has focus, and in the tree that              is expanding or collapsing - the same as double-clicking it"
+        );
+    }
+
+    #[test]
+    fn drilling_in_leaves_the_keyboard_in_the_contents_pane() {
+        // It used to move focus to the tree, so the arrow keys then
+        // moved the tree rather than the listing being looked at, and a
+        // second Return collapsed the folder just opened.
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("sub", true)]),
+            }),
+        );
+        app.select_content(0);
+
+        app.open_content(0);
+
+        assert_eq!(app.focus_index(), 1, "the contents pane");
     }
 
     #[test]
