@@ -292,7 +292,7 @@ pub fn wire_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         let mut clipboard = clipboard();
         ui.on_edit_key(move |text, shift, control| {
             let Some(ui) = ui_weak.upgrade() else {
-                return;
+                return false;
             };
             // A page is what the pane is showing, not a number chosen
             // here: at least one row, so a pane too short to show any
@@ -301,8 +301,11 @@ pub fn wire_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
                 .unwrap_or(20)
                 .max(1);
             let mut app = app.borrow_mut();
-            app.edit_key(&mut clipboard, &text, shift, control, rows);
+            // The answer is what the markup uses to decide whether the
+            // key stops here or carries on to the window behind.
+            let used = app.edit_key(&mut clipboard, &text, shift, control, rows);
             sync_ui(&ui, &app);
+            used
         });
     }
     macro_rules! on_edit_command {
@@ -356,6 +359,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             })
             .collect::<Vec<_>>(),
     )));
+    let folder_moved = ui.get_folder_selected() != row_index(app.folder_selected());
     ui.set_folder_selected(row_index(app.folder_selected()));
     ui.set_content_rows(ModelRc::new(VecModel::from(
         app.content_rows()
@@ -372,20 +376,32 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             })
             .collect::<Vec<_>>(),
     )));
-    ui.set_content_selected(row_index(app.content_selected()));
     // Whatever moved the selection - a click, type-ahead, an arrow key,
     // Home or End, or the reselect after an operation - it lands here, so
     // one adjustment per render covers every one of them.
-    ui.set_content_scroll_y(scroll_offset_for(
-        app.content_selected(),
-        ui.get_content_viewport_height(),
-        ui.get_content_scroll_y(),
-    ));
-    ui.set_folders_scroll_y(scroll_offset_for(
-        app.folder_selected(),
-        ui.get_folders_viewport_height(),
-        ui.get_folders_scroll_y(),
-    ));
+    //
+    // Only when it actually moved, though. This runs on a timer whether
+    // anything happened or not, and an unconditional write meant a reader
+    // who wheeled the listing past the selected row had it yanked back
+    // within a tenth of a second: the pane could not be scrolled at all.
+    // What the window is already showing is the record of what was last
+    // drawn, so comparing against it needs no state of its own.
+    let content_moved = ui.get_content_selected() != row_index(app.content_selected());
+    ui.set_content_selected(row_index(app.content_selected()));
+    if content_moved {
+        ui.set_content_scroll_y(scroll_offset_for(
+            app.content_selected(),
+            ui.get_content_viewport_height(),
+            ui.get_content_scroll_y(),
+        ));
+    }
+    if folder_moved {
+        ui.set_folders_scroll_y(scroll_offset_for(
+            app.folder_selected(),
+            ui.get_folders_viewport_height(),
+            ui.get_folders_scroll_y(),
+        ));
+    }
     let graphic = app.file_graphic().as_ref().and_then(graphic_image);
     ui.set_file_has_graphic(graphic.is_some());
     ui.set_file_graphic(graphic.unwrap_or_default());

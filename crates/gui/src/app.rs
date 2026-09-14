@@ -2435,14 +2435,44 @@ impl App {
             self.sort_key = key;
             self.sort_ascending = true;
         }
+        // A selection is a set of files, not a set of row numbers. The
+        // lead row followed its file across the reorder from the start;
+        // the set behind it did not, so the highlight, and every
+        // operation that reads it, kept pointing at whatever landed on
+        // the old numbers. Delete after a sort named a file the reader
+        // had never picked.
         let selected = self
             .contents
             .get(self.content_selected)
             .map(|entry| entry.name.clone());
+        let anchored = self
+            .contents
+            .get(self.anchor)
+            .map(|entry| entry.name.clone());
+        let held: Vec<String> = self
+            .selection
+            .iter()
+            .filter_map(|index| self.contents.get(*index))
+            .map(|entry| entry.name.clone())
+            .collect();
+
         self.sort_contents();
+
+        let row_of = |name: &str, contents: &[DirectoryEntry]| {
+            contents.iter().position(|entry| entry.name == name)
+        };
         self.content_selected = selected
-            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .as_deref()
+            .and_then(|name| row_of(name, &self.contents))
             .unwrap_or(0);
+        self.anchor = anchored
+            .as_deref()
+            .and_then(|name| row_of(name, &self.contents))
+            .unwrap_or(self.content_selected);
+        self.selection = held
+            .iter()
+            .filter_map(|name| row_of(name, &self.contents))
+            .collect();
     }
 
     /// The column currently sorted on, as a UI column index.
