@@ -1,9 +1,10 @@
 //! Fortran file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -93,6 +94,62 @@ fn has_fortran_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct FortranCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const FORTRAN: Language = Language {
+    line_comment: &["!"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "allocate",
+        "call",
+        "case",
+        "contains",
+        "continue",
+        "cycle",
+        "deallocate",
+        "do",
+        "else",
+        "elseif",
+        "end",
+        "enddo",
+        "endif",
+        "function",
+        "if",
+        "implicit",
+        "integer",
+        "interface",
+        "module",
+        "none",
+        "only",
+        "parameter",
+        "print",
+        "program",
+        "read",
+        "result",
+        "return",
+        "select",
+        "stop",
+        "subroutine",
+        "then",
+        "type",
+        "use",
+        "while",
+        "write",
+    ],
+    types: &[
+        "character",
+        "complex",
+        "double",
+        "integer",
+        "logical",
+        "real",
+    ],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for FortranCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -130,6 +187,10 @@ impl PluginCore for FortranCore {
 pub struct FortranPresentation;
 
 impl PluginPresentation for FortranPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &FORTRAN)
+    }
+
     fn name(&self) -> &'static str {
         "fortran"
     }

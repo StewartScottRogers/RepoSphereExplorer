@@ -1,10 +1,11 @@
 //! Jupyter Notebook file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -174,6 +175,22 @@ fn present_cells(cells: &[NotebookCell]) -> Vec<String> {
 #[derive(Debug, Default)]
 pub struct NotebookCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const JUPYTER_NOTEBOOK: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "cells", "code", "false", "markdown", "metadata", "nbformat", "null", "outputs", "source",
+        "true",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for NotebookCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -207,6 +224,10 @@ impl PluginCore for NotebookCore {
 pub struct NotebookPresentation;
 
 impl PluginPresentation for NotebookPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &JUPYTER_NOTEBOOK)
+    }
+
     fn name(&self) -> &'static str {
         "jupyter-notebook"
     }

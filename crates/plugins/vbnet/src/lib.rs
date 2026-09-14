@@ -1,9 +1,10 @@
 //! VB.NET file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -97,6 +98,113 @@ fn has_vbnet_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct VbNetCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const VBNET: Language = Language {
+    line_comment: &["'"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "AddHandler",
+        "As",
+        "ByRef",
+        "ByVal",
+        "Case",
+        "Catch",
+        "Class",
+        "Const",
+        "Dim",
+        "Do",
+        "Each",
+        "Else",
+        "ElseIf",
+        "End",
+        "EndIf",
+        "Enum",
+        "Error",
+        "Event",
+        "Exit",
+        "False",
+        "Finally",
+        "For",
+        "Friend",
+        "Function",
+        "Get",
+        "Global",
+        "GoTo",
+        "If",
+        "Implements",
+        "Imports",
+        "In",
+        "Inherits",
+        "Interface",
+        "Is",
+        "Let",
+        "Lib",
+        "Loop",
+        "Me",
+        "Module",
+        "MustOverride",
+        "MyBase",
+        "Namespace",
+        "New",
+        "Next",
+        "Not",
+        "NotInheritable",
+        "Nothing",
+        "Of",
+        "On",
+        "Operator",
+        "Option",
+        "Optional",
+        "Or",
+        "Overloads",
+        "Overridable",
+        "Overrides",
+        "ParamArray",
+        "Partial",
+        "Private",
+        "Property",
+        "Protected",
+        "Public",
+        "RaiseEvent",
+        "ReDim",
+        "ReadOnly",
+        "RemoveHandler",
+        "Resume",
+        "Return",
+        "Select",
+        "Set",
+        "Shadows",
+        "Shared",
+        "Static",
+        "Step",
+        "Stop",
+        "Structure",
+        "Sub",
+        "Then",
+        "Throw",
+        "To",
+        "True",
+        "Try",
+        "TypeOf",
+        "Until",
+        "Using",
+        "When",
+        "While",
+        "With",
+        "WithEvents",
+        "WriteOnly",
+    ],
+    types: &[
+        "Boolean", "Byte", "Char", "Date", "Decimal", "Double", "Integer", "Long", "Object",
+        "Short", "Single", "String",
+    ],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for VbNetCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -133,6 +241,10 @@ impl PluginCore for VbNetCore {
 pub struct VbNetPresentation;
 
 impl PluginPresentation for VbNetPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &VBNET)
+    }
+
     fn name(&self) -> &'static str {
         "vbnet"
     }

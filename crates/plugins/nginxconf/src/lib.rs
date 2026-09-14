@@ -6,11 +6,12 @@
 //! each has, the log and certificate paths, and which servers answer
 //! over plain HTTP rather than redirecting to the encrypted site.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 ///
@@ -295,6 +296,35 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct NginxconfCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const NGINXCONF: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "access_log",
+        "error_log",
+        "events",
+        "http",
+        "include",
+        "index",
+        "listen",
+        "location",
+        "proxy_pass",
+        "root",
+        "server",
+        "server_name",
+        "ssl_certificate",
+        "upstream",
+        "worker_processes",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for NginxconfCore {
     fn name(&self) -> &'static str {
         "nginxconf"
@@ -325,6 +355,10 @@ impl PluginCore for NginxconfCore {
 pub struct NginxconfPresentation;
 
 impl PluginPresentation for NginxconfPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &NGINXCONF)
+    }
+
     fn name(&self) -> &'static str {
         "nginxconf"
     }

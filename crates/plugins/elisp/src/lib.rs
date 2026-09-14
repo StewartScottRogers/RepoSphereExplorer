@@ -7,11 +7,12 @@
 //! bindings - and the commands nobody can reach until something else has
 //! loaded the file.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["el"];
@@ -216,6 +217,37 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ElispCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ELISP: Language = Language {
+    line_comment: &[";"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "cond",
+        "defcustom",
+        "defmacro",
+        "defun",
+        "defvar",
+        "if",
+        "interactive",
+        "lambda",
+        "let",
+        "let*",
+        "progn",
+        "provide",
+        "require",
+        "setq",
+        "unless",
+        "when",
+        "while",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ElispCore {
     fn name(&self) -> &'static str {
         "elisp"
@@ -246,6 +278,10 @@ impl PluginCore for ElispCore {
 pub struct ElispPresentation;
 
 impl PluginPresentation for ElispPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ELISP)
+    }
+
     fn name(&self) -> &'static str {
         "elisp"
     }

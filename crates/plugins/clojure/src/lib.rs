@@ -1,9 +1,10 @@
 //! Clojure file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -102,6 +103,46 @@ fn has_clojure_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ClojureCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CLOJURE: Language = Language {
+    line_comment: &[";"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "case",
+        "catch",
+        "cond",
+        "def",
+        "defmacro",
+        "defn",
+        "defprotocol",
+        "defrecord",
+        "deftype",
+        "do",
+        "finally",
+        "fn",
+        "if",
+        "let",
+        "letfn",
+        "loop",
+        "ns",
+        "quote",
+        "recur",
+        "require",
+        "throw",
+        "try",
+        "use",
+        "var",
+        "when",
+        "when-not",
+    ],
+    types: &["boolean", "char", "double", "float", "int", "long", "short"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ClojureCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -139,6 +180,10 @@ impl PluginCore for ClojureCore {
 pub struct ClojurePresentation;
 
 impl PluginPresentation for ClojurePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CLOJURE)
+    }
+
     fn name(&self) -> &'static str {
         "clojure"
     }

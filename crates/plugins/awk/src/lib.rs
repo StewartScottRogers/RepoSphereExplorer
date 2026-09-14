@@ -6,11 +6,12 @@
 //! arrays - and the names used inside a function that are not among its
 //! parameters, which in awk means they are global.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["awk"];
@@ -307,6 +308,24 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct AwkCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const AWK: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "BEGIN", "END", "break", "continue", "delete", "do", "else", "exit", "for", "function",
+        "getline", "if", "in", "next", "nextfile", "print", "printf", "return", "while",
+    ],
+    types: &[
+        "gsub", "index", "length", "split", "sprintf", "sub", "substr",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for AwkCore {
     fn name(&self) -> &'static str {
         "awk"
@@ -337,6 +356,10 @@ impl PluginCore for AwkCore {
 pub struct AwkPresentation;
 
 impl PluginPresentation for AwkPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &AWK)
+    }
+
     fn name(&self) -> &'static str {
         "awk"
     }

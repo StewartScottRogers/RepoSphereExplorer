@@ -7,11 +7,12 @@
 //! foreign imports whose JavaScript the compiler never sees, and the
 //! names defined with no signature above them.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["purs"];
@@ -266,6 +267,25 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct PurescriptCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PURESCRIPT: Language = Language {
+    line_comment: &["--"],
+    block_comment: &[("{-", "-}")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "ado", "as", "case", "class", "data", "derive", "do", "else", "forall", "foreign",
+        "hiding", "if", "import", "in", "infix", "infixl", "infixr", "instance", "let", "module",
+        "newtype", "of", "then", "type", "where",
+    ],
+    types: &[
+        "Array", "Boolean", "Char", "Effect", "Int", "Maybe", "Number", "String", "Unit",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for PurescriptCore {
     fn name(&self) -> &'static str {
         "purescript"
@@ -296,6 +316,10 @@ impl PluginCore for PurescriptCore {
 pub struct PurescriptPresentation;
 
 impl PluginPresentation for PurescriptPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PURESCRIPT)
+    }
+
     fn name(&self) -> &'static str {
         "purescript"
     }

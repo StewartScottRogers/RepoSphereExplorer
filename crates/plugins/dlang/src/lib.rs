@@ -7,11 +7,12 @@
 //! the unittest blocks - and the functions carrying no safety attribute,
 //! which are `@system` by default.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["d", "di"];
@@ -308,6 +309,98 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct DlangCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const DLANG: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "alias",
+        "align",
+        "asm",
+        "assert",
+        "auto",
+        "body",
+        "break",
+        "case",
+        "cast",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debug",
+        "default",
+        "delegate",
+        "delete",
+        "deprecated",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extern",
+        "false",
+        "final",
+        "finally",
+        "for",
+        "foreach",
+        "function",
+        "goto",
+        "if",
+        "immutable",
+        "import",
+        "in",
+        "inout",
+        "interface",
+        "invariant",
+        "is",
+        "lazy",
+        "mixin",
+        "module",
+        "new",
+        "nothrow",
+        "null",
+        "out",
+        "override",
+        "package",
+        "pragma",
+        "private",
+        "protected",
+        "public",
+        "pure",
+        "ref",
+        "return",
+        "scope",
+        "shared",
+        "static",
+        "struct",
+        "super",
+        "switch",
+        "synchronized",
+        "template",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeid",
+        "typeof",
+        "union",
+        "unittest",
+        "version",
+        "void",
+        "while",
+        "with",
+    ],
+    types: &[
+        "bool", "byte", "cdouble", "cent", "char", "creal", "dchar", "double", "float", "idouble",
+        "ifloat", "int", "ireal", "long", "real", "short", "size_t", "string", "ubyte", "ucent",
+        "uint", "ulong", "ushort", "wchar",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for DlangCore {
     fn name(&self) -> &'static str {
         "dlang"
@@ -338,6 +431,10 @@ impl PluginCore for DlangCore {
 pub struct DlangPresentation;
 
 impl PluginPresentation for DlangPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &DLANG)
+    }
+
     fn name(&self) -> &'static str {
         "dlang"
     }

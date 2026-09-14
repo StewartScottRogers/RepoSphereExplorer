@@ -12,11 +12,12 @@
 //! needed to run it, and the distinction is the reason a Nix closure is
 //! smaller than a container image.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -403,6 +404,22 @@ fn read(path: &Path) -> io::Result<NixView> {
 #[derive(Debug, Default)]
 pub struct NixCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const NIX: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "assert", "builtins", "else", "false", "if", "import", "in", "inherit", "let", "null",
+        "or", "rec", "then", "true", "with",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for NixCore {
     fn name(&self) -> &'static str {
         "nix"
@@ -427,6 +444,10 @@ impl PluginCore for NixCore {
 pub struct NixPresentation;
 
 impl PluginPresentation for NixPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &NIX)
+    }
+
     fn name(&self) -> &'static str {
         "nix"
     }

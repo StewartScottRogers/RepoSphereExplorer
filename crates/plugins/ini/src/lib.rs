@@ -7,11 +7,12 @@
 //! duplicate keys - that no parser agrees on and every application has its
 //! own version of.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 ///
@@ -168,6 +169,19 @@ fn looks_like_ini(prefix: &[u8]) -> bool {
 #[derive(Debug, Default)]
 pub struct IniCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const INI: Language = Language {
+    line_comment: &["#", ";"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["false", "no", "off", "on", "true", "yes"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for IniCore {
     fn name(&self) -> &'static str {
         "ini"
@@ -198,6 +212,10 @@ impl PluginCore for IniCore {
 pub struct IniPresentation;
 
 impl PluginPresentation for IniPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &INI)
+    }
+
     fn name(&self) -> &'static str {
         "ini"
     }

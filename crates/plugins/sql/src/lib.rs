@@ -1,9 +1,10 @@
 //! SQL file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -103,6 +104,108 @@ fn parse_tables(content: &str) -> Vec<String> {
 #[derive(Debug, Default)]
 pub struct SqlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SQL: Language = Language {
+    line_comment: &["--"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "add",
+        "all",
+        "alter",
+        "and",
+        "as",
+        "asc",
+        "begin",
+        "between",
+        "by",
+        "case",
+        "cast",
+        "column",
+        "commit",
+        "constraint",
+        "create",
+        "cross",
+        "default",
+        "delete",
+        "desc",
+        "distinct",
+        "drop",
+        "else",
+        "end",
+        "exists",
+        "foreign",
+        "from",
+        "full",
+        "group",
+        "having",
+        "if",
+        "in",
+        "index",
+        "inner",
+        "insert",
+        "intersect",
+        "into",
+        "is",
+        "join",
+        "key",
+        "left",
+        "like",
+        "limit",
+        "not",
+        "null",
+        "offset",
+        "on",
+        "or",
+        "order",
+        "outer",
+        "primary",
+        "references",
+        "right",
+        "rollback",
+        "select",
+        "set",
+        "table",
+        "then",
+        "union",
+        "unique",
+        "update",
+        "values",
+        "view",
+        "when",
+        "where",
+        "with",
+    ],
+    types: &[
+        "bigint",
+        "bit",
+        "blob",
+        "boolean",
+        "char",
+        "date",
+        "datetime",
+        "decimal",
+        "double",
+        "float",
+        "int",
+        "integer",
+        "json",
+        "numeric",
+        "real",
+        "serial",
+        "smallint",
+        "text",
+        "time",
+        "timestamp",
+        "uuid",
+        "varchar",
+    ],
+    calls: true,
+    ignore_case: true,
+};
+
 impl PluginCore for SqlCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -139,6 +242,10 @@ impl PluginCore for SqlCore {
 pub struct SqlPresentation;
 
 impl PluginPresentation for SqlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SQL)
+    }
+
     fn name(&self) -> &'static str {
         "sql"
     }

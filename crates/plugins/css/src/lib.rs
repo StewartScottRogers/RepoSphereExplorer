@@ -9,11 +9,12 @@
 //! `rgb()`, `hsl()`, and the named colours - because a reader asking what
 //! colours a sheet uses is asking about all of them at once.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -381,6 +382,32 @@ fn read(path: &Path) -> io::Result<CssView> {
 #[derive(Debug, Default)]
 pub struct CssCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CSS: Language = Language {
+    line_comment: &[],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "and",
+        "charset",
+        "font-face",
+        "from",
+        "import",
+        "important",
+        "keyframes",
+        "media",
+        "not",
+        "only",
+        "supports",
+        "to",
+    ],
+    types: &["auto", "inherit", "initial", "none", "unset"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for CssCore {
     fn name(&self) -> &'static str {
         "css"
@@ -405,6 +432,10 @@ impl PluginCore for CssCore {
 pub struct CssPresentation;
 
 impl PluginPresentation for CssPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CSS)
+    }
+
     fn name(&self) -> &'static str {
         "css"
     }

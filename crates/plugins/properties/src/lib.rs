@@ -5,11 +5,12 @@
 //! anything outside Latin-1. Registered after `ini`, which claims the
 //! dialect with `[section]` headers; a properties file has none.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["properties"];
@@ -207,6 +208,19 @@ fn looks_like_properties(prefix: &[u8]) -> bool {
 #[derive(Debug, Default)]
 pub struct PropertiesCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PROPERTIES: Language = Language {
+    line_comment: &["#", "!"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["false", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for PropertiesCore {
     fn name(&self) -> &'static str {
         "properties"
@@ -237,6 +251,10 @@ impl PluginCore for PropertiesCore {
 pub struct PropertiesPresentation;
 
 impl PluginPresentation for PropertiesPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PROPERTIES)
+    }
+
     fn name(&self) -> &'static str {
         "properties"
     }

@@ -6,11 +6,12 @@
 //! resources with their types, the outputs, the conditions and the
 //! mappings, and names the parameters nothing refers to.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -273,6 +274,32 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CloudformationCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CLOUDFORMATION: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "AWSTemplateFormatVersion",
+        "Conditions",
+        "Description",
+        "Mappings",
+        "Metadata",
+        "Outputs",
+        "Parameters",
+        "Properties",
+        "Ref",
+        "Resources",
+        "Transform",
+        "Type",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for CloudformationCore {
     fn name(&self) -> &'static str {
         "cloudformation"
@@ -309,6 +336,10 @@ impl PluginCore for CloudformationCore {
 pub struct CloudformationPresentation;
 
 impl PluginPresentation for CloudformationPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CLOUDFORMATION)
+    }
+
     fn name(&self) -> &'static str {
         "cloudformation"
     }

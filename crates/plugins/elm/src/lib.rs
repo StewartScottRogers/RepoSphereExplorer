@@ -1,9 +1,10 @@
 //! Elm file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -72,6 +73,24 @@ fn has_elm_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ElmCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ELM: Language = Language {
+    line_comment: &["--"],
+    block_comment: &[("{-", "-}")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "alias", "as", "case", "else", "exposing", "if", "import", "in", "let", "module", "of",
+        "port", "then", "type", "where",
+    ],
+    types: &[
+        "Bool", "Char", "Float", "Int", "List", "Maybe", "Result", "String",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ElmCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -108,6 +127,10 @@ impl PluginCore for ElmCore {
 pub struct ElmPresentation;
 
 impl PluginPresentation for ElmPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ELM)
+    }
+
     fn name(&self) -> &'static str {
         "elm"
     }

@@ -9,10 +9,11 @@
 //! model onto all three, the same choice `word-document` made for its own
 //! unrelated container formats.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -42,6 +43,22 @@ enum Container {
     /// glTF in its plain-text (JSON) variant.
     Gltf,
 }
+
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const MODEL3D: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "endfacet", "endsolid", "f", "facet", "g", "mtllib", "o", "s", "solid", "usemtl", "v",
+        "vertex", "vn", "vt",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
 
 impl Container {
     /// Detects the container format from a file's bytes (a bounded prefix
@@ -288,6 +305,10 @@ impl PluginCore for Model3dCore {
 pub struct Model3dPresentation;
 
 impl PluginPresentation for Model3dPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &MODEL3D)
+    }
+
     fn name(&self) -> &'static str {
         "model3d"
     }

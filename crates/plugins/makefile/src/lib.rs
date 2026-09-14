@@ -1,9 +1,10 @@
 //! Makefile file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -147,6 +148,22 @@ fn has_makefile_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct MakefileCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const MAKEFILE: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "define", "else", "endef", "endif", "export", "ifdef", "ifeq", "ifndef", "ifneq",
+        "include", "override", "unexport", "vpath",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for MakefileCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -184,6 +201,10 @@ impl PluginCore for MakefileCore {
 pub struct MakefilePresentation;
 
 impl PluginPresentation for MakefilePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &MAKEFILE)
+    }
+
     fn name(&self) -> &'static str {
         "makefile"
     }

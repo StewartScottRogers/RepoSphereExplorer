@@ -5,11 +5,12 @@
 //! resolved to, which packages are served through a local patch, and
 //! which entries carry no integrity hash.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -191,6 +192,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct YarnlockCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const YARNLOCK: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["false", "null", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for YarnlockCore {
     fn name(&self) -> &'static str {
         "yarnlock"
@@ -227,6 +241,10 @@ impl PluginCore for YarnlockCore {
 pub struct YarnlockPresentation;
 
 impl PluginPresentation for YarnlockPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &YARNLOCK)
+    }
+
     fn name(&self) -> &'static str {
         "yarnlock"
     }

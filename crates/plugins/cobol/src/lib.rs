@@ -6,11 +6,12 @@
 //! the paragraphs of the procedure division - and the paragraphs nothing
 //! performs, which run only if the one above them falls through.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["cbl", "cob", "cpy", "cobol"];
@@ -243,6 +244,61 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CobolCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const COBOL: Language = Language {
+    line_comment: &["*>"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "ACCEPT",
+        "ADD",
+        "CALL",
+        "CLOSE",
+        "COMPUTE",
+        "CONFIGURATION",
+        "DATA",
+        "DISPLAY",
+        "DIVIDE",
+        "DIVISION",
+        "ELSE",
+        "END",
+        "END-IF",
+        "ENVIRONMENT",
+        "EVALUATE",
+        "EXIT",
+        "FILE",
+        "GO",
+        "IDENTIFICATION",
+        "IF",
+        "INPUT-OUTPUT",
+        "LINKAGE",
+        "MOVE",
+        "MULTIPLY",
+        "OPEN",
+        "PERFORM",
+        "PIC",
+        "PICTURE",
+        "PROCEDURE",
+        "PROGRAM-ID",
+        "READ",
+        "SECTION",
+        "SELECT",
+        "SET",
+        "STOP",
+        "SUBTRACT",
+        "UNTIL",
+        "VALUE",
+        "WHEN",
+        "WORKING-STORAGE",
+        "WRITE",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for CobolCore {
     fn name(&self) -> &'static str {
         "cobol"
@@ -273,6 +329,10 @@ impl PluginCore for CobolCore {
 pub struct CobolPresentation;
 
 impl PluginPresentation for CobolPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &COBOL)
+    }
+
     fn name(&self) -> &'static str {
         "cobol"
     }

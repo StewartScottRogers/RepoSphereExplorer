@@ -1,9 +1,10 @@
 //! HTML file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -90,6 +91,22 @@ fn has_html_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct HtmlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const HTML: Language = Language {
+    line_comment: &[],
+    block_comment: &[("<!--", "-->")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "a", "body", "button", "div", "form", "head", "html", "input", "li", "link", "meta", "p",
+        "script", "span", "style", "table", "td", "title", "tr", "ul",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for HtmlCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -128,6 +145,10 @@ impl PluginCore for HtmlCore {
 pub struct HtmlPresentation;
 
 impl PluginPresentation for HtmlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &HTML)
+    }
+
     fn name(&self) -> &'static str {
         "html"
     }

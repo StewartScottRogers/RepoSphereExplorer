@@ -1,9 +1,10 @@
 //! Svelte component file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -79,6 +80,22 @@ fn has_svelte_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct SvelteCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SVELTE: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "as", "await", "const", "each", "else", "export", "function", "if", "import", "let",
+        "return", "then",
+    ],
+    types: &["boolean", "number", "string"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for SvelteCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -115,6 +132,10 @@ impl PluginCore for SvelteCore {
 pub struct SveltePresentation;
 
 impl PluginPresentation for SveltePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SVELTE)
+    }
+
     fn name(&self) -> &'static str {
         "svelte"
     }

@@ -4,11 +4,12 @@
 //! with `%token` or `%%` declarations above the first - a shape nothing
 //! else has.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["y", "yy", "ypp"];
@@ -247,6 +248,28 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct YaccCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const YACC: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "left",
+        "nonassoc",
+        "precedence",
+        "right",
+        "start",
+        "token",
+        "type",
+        "union",
+    ],
+    types: &["char", "int", "void"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for YaccCore {
     fn name(&self) -> &'static str {
         "yacc"
@@ -277,6 +300,10 @@ impl PluginCore for YaccCore {
 pub struct YaccPresentation;
 
 impl PluginPresentation for YaccPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &YACC)
+    }
+
     fn name(&self) -> &'static str {
         "yacc"
     }

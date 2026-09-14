@@ -1,9 +1,10 @@
 //! Dart file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -104,6 +105,84 @@ fn has_dart_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct DartCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const DART: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "as",
+        "assert",
+        "async",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "covariant",
+        "default",
+        "deferred",
+        "do",
+        "dynamic",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "extension",
+        "external",
+        "factory",
+        "false",
+        "final",
+        "finally",
+        "for",
+        "get",
+        "if",
+        "implements",
+        "import",
+        "in",
+        "interface",
+        "is",
+        "late",
+        "library",
+        "mixin",
+        "new",
+        "null",
+        "on",
+        "operator",
+        "part",
+        "required",
+        "rethrow",
+        "return",
+        "set",
+        "show",
+        "static",
+        "super",
+        "switch",
+        "sync",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typedef",
+        "var",
+        "void",
+        "while",
+        "with",
+        "yield",
+    ],
+    types: &[
+        "Future", "List", "Map", "Object", "Set", "Stream", "String", "bool", "double", "int",
+        "num",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for DartCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -141,6 +220,10 @@ impl PluginCore for DartCore {
 pub struct DartPresentation;
 
 impl PluginPresentation for DartPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &DART)
+    }
+
     fn name(&self) -> &'static str {
         "dart"
     }

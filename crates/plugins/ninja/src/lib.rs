@@ -8,11 +8,12 @@
 //! from which inputs, with which command. Everything else in the file
 //! is in service of that.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -306,6 +307,19 @@ fn read(path: &Path) -> io::Result<NinjaView> {
 #[derive(Debug, Default)]
 pub struct NinjaCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const NINJA: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["build", "default", "include", "pool", "rule", "subninja"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for NinjaCore {
     fn name(&self) -> &'static str {
         "ninja"
@@ -330,6 +344,10 @@ impl PluginCore for NinjaCore {
 pub struct NinjaPresentation;
 
 impl PluginPresentation for NinjaPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &NINJA)
+    }
+
     fn name(&self) -> &'static str {
         "ninja"
     }

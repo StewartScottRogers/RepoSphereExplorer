@@ -1,9 +1,10 @@
 //! Ada file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -83,6 +84,102 @@ fn has_ada_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct AdaCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ADA: Language = Language {
+    line_comment: &["--"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abort",
+        "abs",
+        "abstract",
+        "accept",
+        "access",
+        "aliased",
+        "all",
+        "and",
+        "array",
+        "at",
+        "begin",
+        "body",
+        "case",
+        "constant",
+        "declare",
+        "delay",
+        "delta",
+        "digits",
+        "do",
+        "else",
+        "elsif",
+        "end",
+        "entry",
+        "exception",
+        "exit",
+        "for",
+        "function",
+        "generic",
+        "goto",
+        "if",
+        "in",
+        "interface",
+        "is",
+        "limited",
+        "loop",
+        "mod",
+        "new",
+        "not",
+        "null",
+        "of",
+        "or",
+        "others",
+        "out",
+        "overriding",
+        "package",
+        "pragma",
+        "private",
+        "procedure",
+        "protected",
+        "raise",
+        "range",
+        "record",
+        "rem",
+        "renames",
+        "requeue",
+        "return",
+        "reverse",
+        "select",
+        "separate",
+        "some",
+        "subtype",
+        "synchronized",
+        "tagged",
+        "task",
+        "terminate",
+        "then",
+        "type",
+        "until",
+        "use",
+        "when",
+        "while",
+        "with",
+        "xor",
+    ],
+    types: &[
+        "Boolean",
+        "Character",
+        "Duration",
+        "Float",
+        "Integer",
+        "Natural",
+        "Positive",
+        "String",
+    ],
+    calls: true,
+    ignore_case: true,
+};
+
 impl PluginCore for AdaCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -119,6 +216,10 @@ impl PluginCore for AdaCore {
 pub struct AdaPresentation;
 
 impl PluginPresentation for AdaPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ADA)
+    }
+
     fn name(&self) -> &'static str {
         "ada"
     }

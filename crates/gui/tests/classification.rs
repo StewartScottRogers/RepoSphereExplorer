@@ -169,3 +169,123 @@ fn a_plugin_with_no_description_says_nothing_rather_than_something_wrong() {
         "a plugin that describes no language returns no spans"
     );
 }
+
+/// Formats whose plugin describes no language, with the reason.
+///
+/// The line is whether the file has syntax at all. A `.csv` is values
+/// with commas between them; a comma is a separator, not punctuation a
+/// reader needs picked out. Prose is prose. Describing one of these
+/// would not colour it - it would put a colour on a comma and call that
+/// a language.
+const NO_SYNTAX: &[(&str, &str)] = &[
+    (
+        "text",
+        "the general reader: a plain text file has no syntax, which is what makes it plain",
+    ),
+    (
+        "csv",
+        "values with separators between them; the separator is not syntax",
+    ),
+    (
+        "markdown",
+        "prose. Its emphasis markers are the same characters as an apostrophe and a multiplication sign, and a tokeniser reading them as delimiters would colour the rest of every contraction",
+    ),
+    (
+        "diff",
+        "the plugin draws its own added and removed lines, which is the only colouring a diff wants",
+    ),
+    (
+        "tar",
+        "an archive. The view lists what is inside it, and that listing is the plugin's own words rather than the file's",
+    ),
+];
+
+/// Every plugin that opens a text file either describes its language or
+/// is in [`NO_SYNTAX`] with the reason it does not.
+///
+/// Without this, the hundred and eighteen descriptions are a batch of
+/// work that happened once. A plugin added next month would colour
+/// nothing, and the only way to notice would be to open one of its files
+/// and look.
+#[test]
+fn every_text_format_either_describes_its_language_or_says_why_not() {
+    let mut silent = Vec::new();
+    let mut directories: Vec<std::path::PathBuf> = std::fs::read_dir(samples_dir())
+        .expect("samples/ is there")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    directories.sort();
+
+    for directory in directories {
+        let name = directory.file_name().unwrap().to_string_lossy().to_string();
+        if NO_SYNTAX.iter().any(|(listed, _)| *listed == name) {
+            continue;
+        }
+        // Its own files, opened by it, that carry text. A plugin whose
+        // subject is not text has nothing to describe.
+        let mut describes = false;
+        let mut has_text = false;
+        for file in files_under(&directory) {
+            let Some((plugin, text)) = opened(&file) else {
+                continue;
+            };
+            if plugin.name() != name {
+                continue;
+            }
+            has_text = true;
+            if plugin
+                .classify(&text)
+                .iter()
+                .any(|span| span.class != Class::Plain)
+            {
+                describes = true;
+                break;
+            }
+        }
+        if has_text && !describes {
+            silent.push(name);
+        }
+    }
+
+    assert!(
+        silent.is_empty(),
+        "{} plugin(s) open a text file and colour nothing in it:\n{}\n\nGive \
+         the format a `Language` description, or - if it has no syntax to \
+         colour - add it to NO_SYNTAX with the reason.",
+        silent.len(),
+        silent.join("\n")
+    );
+}
+
+/// An entry left behind after a plugin was renamed would quietly excuse
+/// a format that is no longer there, and go on excusing it.
+#[test]
+fn every_no_syntax_entry_names_a_plugin_that_exists() {
+    let missing: Vec<&str> = NO_SYNTAX
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !samples_dir().join(name).is_dir())
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "NO_SYNTAX names formats that are not in the set: {missing:?}"
+    );
+}
+
+/// And each has to say why, because the list is the argument.
+#[test]
+fn every_no_syntax_entry_gives_a_reason() {
+    let mute: Vec<&str> = NO_SYNTAX
+        .iter()
+        .filter(|(_, reason)| reason.len() < 20)
+        .map(|(name, _)| *name)
+        .collect();
+
+    assert!(
+        mute.is_empty(),
+        "an exception without a reason is just a plugin nobody got to: {mute:?}"
+    );
+}

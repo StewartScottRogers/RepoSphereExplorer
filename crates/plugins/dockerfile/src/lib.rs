@@ -1,9 +1,10 @@
 //! Dockerfile file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -108,6 +109,39 @@ fn has_dockerfile_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct DockerfileCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const DOCKERFILE: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "ADD",
+        "ARG",
+        "AS",
+        "CMD",
+        "COPY",
+        "ENTRYPOINT",
+        "ENV",
+        "EXPOSE",
+        "FROM",
+        "HEALTHCHECK",
+        "LABEL",
+        "MAINTAINER",
+        "ONBUILD",
+        "RUN",
+        "SHELL",
+        "STOPSIGNAL",
+        "USER",
+        "VOLUME",
+        "WORKDIR",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for DockerfileCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -145,6 +179,10 @@ impl PluginCore for DockerfileCore {
 pub struct DockerfilePresentation;
 
 impl PluginPresentation for DockerfilePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &DOCKERFILE)
+    }
+
     fn name(&self) -> &'static str {
         "dockerfile"
     }

@@ -1,9 +1,10 @@
 //! Crystal file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -104,6 +105,75 @@ fn has_crystal_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CrystalCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CRYSTAL: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "alias",
+        "as",
+        "begin",
+        "break",
+        "case",
+        "class",
+        "def",
+        "do",
+        "else",
+        "elsif",
+        "end",
+        "ensure",
+        "enum",
+        "extend",
+        "false",
+        "for",
+        "fun",
+        "if",
+        "in",
+        "include",
+        "instance_sizeof",
+        "is_a?",
+        "lib",
+        "macro",
+        "module",
+        "next",
+        "nil",
+        "of",
+        "out",
+        "pointerof",
+        "private",
+        "protected",
+        "require",
+        "rescue",
+        "return",
+        "select",
+        "self",
+        "sizeof",
+        "struct",
+        "super",
+        "then",
+        "true",
+        "type",
+        "typeof",
+        "union",
+        "unless",
+        "until",
+        "when",
+        "while",
+        "with",
+        "yield",
+    ],
+    types: &[
+        "Array", "Bool", "Char", "Float32", "Float64", "Hash", "Int16", "Int32", "Int64", "Int8",
+        "Nil", "String", "Symbol", "UInt32", "UInt8",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for CrystalCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -141,6 +211,10 @@ impl PluginCore for CrystalCore {
 pub struct CrystalPresentation;
 
 impl PluginPresentation for CrystalPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CRYSTAL)
+    }
+
     fn name(&self) -> &'static str {
         "crystal"
     }

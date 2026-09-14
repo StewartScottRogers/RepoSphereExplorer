@@ -4,11 +4,12 @@
 //! keys, never the values: a `.env` is where secrets live, so what it
 //! reports is which keys look like credentials, not what they hold.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["env"];
@@ -164,6 +165,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct DotenvCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const DOTENV: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["export", "false", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for DotenvCore {
     fn name(&self) -> &'static str {
         "dotenv"
@@ -196,6 +210,10 @@ impl PluginCore for DotenvCore {
 pub struct DotenvPresentation;
 
 impl PluginPresentation for DotenvPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &DOTENV)
+    }
+
     fn name(&self) -> &'static str {
         "dotenv"
     }

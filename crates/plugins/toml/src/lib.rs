@@ -1,10 +1,11 @@
 //! TOML file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -174,6 +175,19 @@ fn push_tree_lines(value: &Value, depth: usize, label: &Label<'_>, lines: &mut V
 #[derive(Debug, Default)]
 pub struct TomlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const TOML: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["false", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for TomlCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -210,6 +224,10 @@ impl PluginCore for TomlCore {
 pub struct TomlPresentation;
 
 impl PluginPresentation for TomlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &TOML)
+    }
+
     fn name(&self) -> &'static str {
         "toml"
     }

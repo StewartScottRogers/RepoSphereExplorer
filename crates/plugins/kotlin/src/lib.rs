@@ -1,9 +1,10 @@
 //! Kotlin file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -100,6 +101,92 @@ fn has_kotlin_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct KotlinCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const KOTLIN: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "actual",
+        "annotation",
+        "as",
+        "break",
+        "by",
+        "catch",
+        "class",
+        "companion",
+        "const",
+        "constructor",
+        "continue",
+        "crossinline",
+        "data",
+        "delegate",
+        "do",
+        "dynamic",
+        "else",
+        "enum",
+        "expect",
+        "external",
+        "false",
+        "field",
+        "file",
+        "final",
+        "finally",
+        "for",
+        "fun",
+        "get",
+        "if",
+        "import",
+        "in",
+        "infix",
+        "init",
+        "inline",
+        "inner",
+        "interface",
+        "internal",
+        "is",
+        "lateinit",
+        "noinline",
+        "null",
+        "object",
+        "open",
+        "operator",
+        "out",
+        "override",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "reified",
+        "return",
+        "sealed",
+        "set",
+        "super",
+        "suspend",
+        "tailrec",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typealias",
+        "val",
+        "var",
+        "vararg",
+        "when",
+        "where",
+        "while",
+    ],
+    types: &[
+        "Any", "Array", "Boolean", "Byte", "Char", "Double", "Float", "Int", "List", "Long", "Map",
+        "Nothing", "Number", "Set", "Short", "String", "Unit",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for KotlinCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -137,6 +224,10 @@ impl PluginCore for KotlinCore {
 pub struct KotlinPresentation;
 
 impl PluginPresentation for KotlinPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &KOTLIN)
+    }
+
     fn name(&self) -> &'static str {
         "kotlin"
     }

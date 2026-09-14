@@ -4,11 +4,12 @@
 //! generic `json` plugin's indented tree view despite being JSON under the
 //! hood.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -299,6 +300,32 @@ fn render_map(points: &[(f64, f64)], bounding_box: (f64, f64, f64, f64)) -> Vec<
 #[derive(Debug, Default)]
 pub struct GeoJsonCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GEOJSON: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "Feature",
+        "FeatureCollection",
+        "GeometryCollection",
+        "LineString",
+        "MultiLineString",
+        "MultiPoint",
+        "MultiPolygon",
+        "Point",
+        "Polygon",
+        "false",
+        "null",
+        "true",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for GeoJsonCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -334,6 +361,10 @@ impl PluginCore for GeoJsonCore {
 pub struct GeoJsonPresentation;
 
 impl PluginPresentation for GeoJsonPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GEOJSON)
+    }
+
     fn name(&self) -> &'static str {
         "geojson"
     }

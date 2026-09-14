@@ -3,11 +3,12 @@
 //! An `@type{key,` entry header is a marker no sibling claims, so the
 //! sniff is a single unambiguous one.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["bib", "bibtex"];
@@ -233,6 +234,33 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct BibtexCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const BIBTEX: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "article",
+        "author",
+        "booktitle",
+        "editor",
+        "inproceedings",
+        "journal",
+        "misc",
+        "pages",
+        "publisher",
+        "techreport",
+        "title",
+        "volume",
+        "year",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for BibtexCore {
     fn name(&self) -> &'static str {
         "bibtex"
@@ -263,6 +291,10 @@ impl PluginCore for BibtexCore {
 pub struct BibtexPresentation;
 
 impl PluginPresentation for BibtexPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &BIBTEX)
+    }
+
     fn name(&self) -> &'static str {
         "bibtex"
     }

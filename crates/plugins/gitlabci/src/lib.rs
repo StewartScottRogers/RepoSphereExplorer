@@ -4,11 +4,12 @@
 //! `script:` key, is a pipeline. GitHub's workflows use `jobs:` and `on:`
 //! and are claimed by their own plugin first.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -269,6 +270,44 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GitlabciCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GITLABCI: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "after_script",
+        "allow_failure",
+        "artifacts",
+        "before_script",
+        "cache",
+        "dependencies",
+        "environment",
+        "extends",
+        "image",
+        "include",
+        "needs",
+        "only",
+        "parallel",
+        "retry",
+        "rules",
+        "script",
+        "services",
+        "stage",
+        "stages",
+        "tags",
+        "timeout",
+        "variables",
+        "when",
+        "workflow",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for GitlabciCore {
     fn name(&self) -> &'static str {
         "gitlabci"
@@ -304,6 +343,10 @@ impl PluginCore for GitlabciCore {
 pub struct GitlabciPresentation;
 
 impl PluginPresentation for GitlabciPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GITLABCI)
+    }
+
     fn name(&self) -> &'static str {
         "gitlabci"
     }

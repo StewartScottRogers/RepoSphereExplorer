@@ -3,11 +3,12 @@
 //! A specialisation of YAML: `apiVersion` and `kind` together at the top
 //! level, with a `metadata:` mapping, is a manifest and nothing else.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -198,6 +199,34 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct KubernetesCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const KUBERNETES: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "apiVersion",
+        "containers",
+        "image",
+        "kind",
+        "metadata",
+        "name",
+        "namespace",
+        "ports",
+        "replicas",
+        "selector",
+        "spec",
+        "status",
+        "template",
+        "volumes",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for KubernetesCore {
     fn name(&self) -> &'static str {
         "kubernetes"
@@ -233,6 +262,10 @@ impl PluginCore for KubernetesCore {
 pub struct KubernetesPresentation;
 
 impl PluginPresentation for KubernetesPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &KUBERNETES)
+    }
+
     fn name(&self) -> &'static str {
         "kubernetes"
     }

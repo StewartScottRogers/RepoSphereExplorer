@@ -4,11 +4,12 @@
 //! `root = true` declaration or the `indent_style`/`indent_size` keys are
 //! markers no general INI file carries.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["editorconfig"];
@@ -126,6 +127,31 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct EditorconfigCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const EDITORCONFIG: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "charset",
+        "end_of_line",
+        "false",
+        "indent_size",
+        "indent_style",
+        "insert_final_newline",
+        "max_line_length",
+        "root",
+        "tab_width",
+        "trim_trailing_whitespace",
+        "true",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for EditorconfigCore {
     fn name(&self) -> &'static str {
         "editorconfig"
@@ -156,6 +182,10 @@ impl PluginCore for EditorconfigCore {
 pub struct EditorconfigPresentation;
 
 impl PluginPresentation for EditorconfigPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &EDITORCONFIG)
+    }
+
     fn name(&self) -> &'static str {
         "editorconfig"
     }

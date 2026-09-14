@@ -7,11 +7,12 @@
 //! clocked blocks written as a bare `always`, which leaves the tools to
 //! infer what was meant.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["v", "sv", "svh", "vh"];
@@ -375,6 +376,56 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct VerilogCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const VERILOG: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "always",
+        "assign",
+        "begin",
+        "case",
+        "casex",
+        "casez",
+        "default",
+        "defparam",
+        "disable",
+        "else",
+        "end",
+        "endcase",
+        "endfunction",
+        "endgenerate",
+        "endmodule",
+        "endtask",
+        "for",
+        "fork",
+        "function",
+        "generate",
+        "if",
+        "initial",
+        "inout",
+        "input",
+        "join",
+        "localparam",
+        "module",
+        "negedge",
+        "output",
+        "parameter",
+        "posedge",
+        "repeat",
+        "task",
+        "while",
+    ],
+    types: &[
+        "bit", "byte", "int", "integer", "logic", "real", "reg", "time", "wire",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for VerilogCore {
     fn name(&self) -> &'static str {
         "verilog"
@@ -405,6 +456,10 @@ impl PluginCore for VerilogCore {
 pub struct VerilogPresentation;
 
 impl PluginPresentation for VerilogPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &VERILOG)
+    }
+
     fn name(&self) -> &'static str {
         "verilog"
     }

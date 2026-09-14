@@ -1,9 +1,10 @@
 //! Ruby file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -122,6 +123,63 @@ fn has_ruby_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct RubyCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const RUBY: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "BEGIN",
+        "END",
+        "alias",
+        "and",
+        "attr_accessor",
+        "attr_reader",
+        "attr_writer",
+        "begin",
+        "break",
+        "case",
+        "class",
+        "def",
+        "defined?",
+        "do",
+        "else",
+        "elsif",
+        "end",
+        "ensure",
+        "false",
+        "for",
+        "if",
+        "in",
+        "module",
+        "next",
+        "nil",
+        "not",
+        "or",
+        "redo",
+        "require",
+        "require_relative",
+        "rescue",
+        "retry",
+        "return",
+        "self",
+        "super",
+        "then",
+        "true",
+        "undef",
+        "unless",
+        "until",
+        "when",
+        "while",
+        "yield",
+    ],
+    types: &["Array", "Float", "Hash", "Integer", "String", "Symbol"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for RubyCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -159,6 +217,10 @@ impl PluginCore for RubyCore {
 pub struct RubyPresentation;
 
 impl PluginPresentation for RubyPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &RUBY)
+    }
+
     fn name(&self) -> &'static str {
         "ruby"
     }

@@ -6,11 +6,12 @@
 //! port forwards, the included files - and the places where a check has
 //! been turned off, with what each one stops catching.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -205,6 +206,29 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct SshconfigCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SSHCONFIG: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "ForwardAgent",
+        "Host",
+        "HostName",
+        "IdentityFile",
+        "Match",
+        "Port",
+        "ProxyJump",
+        "StrictHostKeyChecking",
+        "User",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for SshconfigCore {
     fn name(&self) -> &'static str {
         "sshconfig"
@@ -235,6 +259,10 @@ impl PluginCore for SshconfigCore {
 pub struct SshconfigPresentation;
 
 impl PluginPresentation for SshconfigPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SSHCONFIG)
+    }
+
     fn name(&self) -> &'static str {
         "sshconfig"
     }

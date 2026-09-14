@@ -7,11 +7,12 @@
 //! sensitivity lists, the signals, the component instances - and the
 //! processes that run once and then never again.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["vhd", "vhdl"];
@@ -311,6 +312,76 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct VhdlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const VHDL: Language = Language {
+    line_comment: &["--"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "architecture",
+        "array",
+        "begin",
+        "case",
+        "component",
+        "configuration",
+        "constant",
+        "downto",
+        "else",
+        "elsif",
+        "end",
+        "entity",
+        "exit",
+        "for",
+        "function",
+        "generate",
+        "generic",
+        "if",
+        "in",
+        "inout",
+        "is",
+        "loop",
+        "map",
+        "not",
+        "of",
+        "others",
+        "out",
+        "package",
+        "port",
+        "process",
+        "return",
+        "signal",
+        "then",
+        "to",
+        "type",
+        "use",
+        "variable",
+        "wait",
+        "when",
+        "while",
+        "with",
+    ],
+    types: &[
+        "bit",
+        "bit_vector",
+        "boolean",
+        "character",
+        "integer",
+        "natural",
+        "positive",
+        "real",
+        "signed",
+        "std_logic",
+        "std_logic_vector",
+        "string",
+        "time",
+        "unsigned",
+    ],
+    calls: true,
+    ignore_case: true,
+};
+
 impl PluginCore for VhdlCore {
     fn name(&self) -> &'static str {
         "vhdl"
@@ -341,6 +412,10 @@ impl PluginCore for VhdlCore {
 pub struct VhdlPresentation;
 
 impl PluginPresentation for VhdlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &VHDL)
+    }
+
     fn name(&self) -> &'static str {
         "vhdl"
     }

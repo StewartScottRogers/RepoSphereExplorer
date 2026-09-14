@@ -4,11 +4,12 @@
 //! `:PROPERTIES:` drawers are markers no sibling claims; a bare `* ` line
 //! is not enough on its own.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::Language;
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["org"];
@@ -178,6 +179,28 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct OrgmodeCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ORGMODE: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[],
+    quotes: &[],
+    keywords: &[
+        "AUTHOR",
+        "BEGIN_SRC",
+        "DATE",
+        "DONE",
+        "END_SRC",
+        "OPTIONS",
+        "TITLE",
+        "TODO",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for OrgmodeCore {
     fn name(&self) -> &'static str {
         "orgmode"
@@ -208,6 +231,10 @@ impl PluginCore for OrgmodeCore {
 pub struct OrgmodePresentation;
 
 impl PluginPresentation for OrgmodePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ORGMODE)
+    }
+
     fn name(&self) -> &'static str {
         "orgmode"
     }

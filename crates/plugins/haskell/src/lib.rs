@@ -1,9 +1,10 @@
 //! Haskell file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -107,6 +108,26 @@ fn has_haskell_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct HaskellCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const HASKELL: Language = Language {
+    line_comment: &["--"],
+    block_comment: &[("{-", "-}")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "case", "class", "data", "deriving", "do", "else", "forall", "foreign", "hiding", "if",
+        "import", "in", "infix", "infixl", "infixr", "instance", "let", "mdo", "module", "newtype",
+        "of", "proc", "rec", "then", "type", "where",
+    ],
+    types: &[
+        "Bool", "Char", "Double", "Either", "Float", "IO", "Int", "Integer", "Maybe", "String",
+        "Word",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for HaskellCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -143,6 +164,10 @@ impl PluginCore for HaskellCore {
 pub struct HaskellPresentation;
 
 impl PluginPresentation for HaskellPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &HASKELL)
+    }
+
     fn name(&self) -> &'static str {
         "haskell"
     }

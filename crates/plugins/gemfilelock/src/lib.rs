@@ -10,11 +10,12 @@
 //! in it arrived transitively, and saying which is which is most of
 //! what makes a lock file readable.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 ///
@@ -225,6 +226,26 @@ fn read(path: &Path) -> io::Result<GemfilelockView> {
 #[derive(Debug, Default)]
 pub struct GemfilelockCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GEMFILELOCK: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "BUNDLED",
+        "DEPENDENCIES",
+        "GEM",
+        "PLATFORMS",
+        "remote",
+        "specs",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for GemfilelockCore {
     fn name(&self) -> &'static str {
         "gemfilelock"
@@ -255,6 +276,10 @@ impl PluginCore for GemfilelockCore {
 pub struct GemfilelockPresentation;
 
 impl PluginPresentation for GemfilelockPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GEMFILELOCK)
+    }
+
     fn name(&self) -> &'static str {
         "gemfilelock"
     }

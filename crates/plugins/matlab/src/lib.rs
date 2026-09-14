@@ -7,11 +7,12 @@
 //! class, the calls that need a toolbox installed, and the functions
 //! that take inputs and check none of them.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -287,6 +288,42 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct MatlabCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const MATLAB: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[("%{", "%}")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "break",
+        "case",
+        "catch",
+        "classdef",
+        "continue",
+        "else",
+        "elseif",
+        "end",
+        "for",
+        "function",
+        "global",
+        "if",
+        "otherwise",
+        "parfor",
+        "persistent",
+        "return",
+        "switch",
+        "try",
+        "while",
+    ],
+    types: &[
+        "cell", "char", "double", "int16", "int32", "int64", "int8", "logical", "single", "struct",
+        "uint16", "uint32", "uint64", "uint8",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for MatlabCore {
     fn name(&self) -> &'static str {
         "matlab"
@@ -317,6 +354,10 @@ impl PluginCore for MatlabCore {
 pub struct MatlabPresentation;
 
 impl PluginPresentation for MatlabPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &MATLAB)
+    }
+
     fn name(&self) -> &'static str {
         "matlab"
     }

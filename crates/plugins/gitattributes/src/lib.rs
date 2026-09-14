@@ -4,11 +4,12 @@
 //! `binary`, `eol`, `diff`, `merge`, `filter`, `linguist-*`. Those names
 //! are the marker; the shape alone would read as an ignore file.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["gitattributes"];
@@ -170,6 +171,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GitattributesCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GITATTRIBUTES: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["binary", "diff", "eol", "filter", "lfs", "merge", "text"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for GitattributesCore {
     fn name(&self) -> &'static str {
         "gitattributes"
@@ -200,6 +214,10 @@ impl PluginCore for GitattributesCore {
 pub struct GitattributesPresentation;
 
 impl PluginPresentation for GitattributesPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GITATTRIBUTES)
+    }
+
     fn name(&self) -> &'static str {
         "gitattributes"
     }

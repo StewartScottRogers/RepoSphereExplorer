@@ -4,11 +4,12 @@
 //! shape: comments, negations, directory-only entries and anchored paths,
 //! and nothing that looks like an assignment or a command.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[
@@ -137,6 +138,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct IgnorefileCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const IGNOREFILE: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for IgnorefileCore {
     fn name(&self) -> &'static str {
         "ignorefile"
@@ -167,6 +181,10 @@ impl PluginCore for IgnorefileCore {
 pub struct IgnorefilePresentation;
 
 impl PluginPresentation for IgnorefilePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &IGNOREFILE)
+    }
+
     fn name(&self) -> &'static str {
         "ignorefile"
     }

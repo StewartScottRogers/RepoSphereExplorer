@@ -1,9 +1,10 @@
 //! Solidity file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -79,6 +80,81 @@ fn has_solidity_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct SolidityCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SOLIDITY: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "anonymous",
+        "as",
+        "assembly",
+        "break",
+        "calldata",
+        "catch",
+        "constant",
+        "constructor",
+        "continue",
+        "contract",
+        "delete",
+        "do",
+        "else",
+        "emit",
+        "enum",
+        "error",
+        "event",
+        "external",
+        "fallback",
+        "false",
+        "for",
+        "function",
+        "if",
+        "immutable",
+        "import",
+        "indexed",
+        "interface",
+        "internal",
+        "is",
+        "library",
+        "mapping",
+        "memory",
+        "modifier",
+        "new",
+        "override",
+        "payable",
+        "pragma",
+        "private",
+        "public",
+        "pure",
+        "receive",
+        "return",
+        "returns",
+        "revert",
+        "storage",
+        "struct",
+        "then",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "type",
+        "unchecked",
+        "using",
+        "view",
+        "virtual",
+        "while",
+    ],
+    types: &[
+        "address", "bool", "bytes", "bytes32", "int", "int256", "string", "uint", "uint256",
+        "uint8",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for SolidityCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -115,6 +191,10 @@ impl PluginCore for SolidityCore {
 pub struct SolidityPresentation;
 
 impl PluginPresentation for SolidityPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SOLIDITY)
+    }
+
     fn name(&self) -> &'static str {
         "solidity"
     }
