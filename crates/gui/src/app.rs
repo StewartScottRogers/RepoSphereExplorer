@@ -7,7 +7,8 @@
 use crate::document::Document;
 use crate::editor;
 use plugin_api::{
-    Class, FolderPresentation, Graphic, Icon, PluginPresentation, Span, TEXT_VIEW, UNKNOWN_ICON,
+    Class, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span, TEXT_VIEW,
+    UNKNOWN_ICON,
 };
 use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
 use std::collections::HashMap;
@@ -767,6 +768,27 @@ fn colour_lines(text: &str, spans: &[Span]) -> Vec<Vec<ColouredRun>> {
         lines.push(line);
     }
     lines
+}
+
+/// Where the file's own text begins inside a Preview, if it does.
+///
+/// A Preview is a plugin's summary followed by its file's text: `present`
+/// returns the summary then the content, and `present_view(TEXT_VIEW)`
+/// returns the content alone (see `PluginPresentation::views`). So the file
+/// inside a Preview is found, not assumed, by asking where `preview` ends
+/// exactly on `text` - a byte-exact suffix, not merely the first place `text`
+/// occurs, since a summary line is free to repeat a line of the file.
+///
+/// `None` covers a Preview that is not built this way: no file text at all
+/// (`text` empty), or a Preview whose summary is everything there is
+/// (`msbuild`, `solution`) - such a plugin is left exactly as it draws
+/// today, with no colouring.
+fn preview_text_offset(preview: &str, text: &str) -> Option<usize> {
+    if text.is_empty() {
+        return None;
+    }
+    let offset = preview.strip_suffix(text)?.len();
+    (offset == 0 || preview.as_bytes()[offset - 1] == b'\n').then_some(offset)
 }
 
 /// One contents row, as the details view renders it.
@@ -2273,14 +2295,15 @@ impl App {
         }
     }
 
-    /// The Text view's lines, each split into coloured runs, or empty when
-    /// there is nothing to colour.
+    /// The selected view's lines, each split into coloured runs, or empty
+    /// when there is nothing to colour.
     ///
-    /// Empty covers three cases and the pane treats them alike, falling
-    /// back to the plain text it always drew: the pane is showing the
-    /// plugin's Preview rather than the file, the plugin describes no
-    /// language, or the file carries no text. None of them is a failure,
-    /// and a reader should not be able to tell them apart.
+    /// Empty covers several cases and the pane treats them alike, falling
+    /// back to the plain text it always drew: the plugin describes no
+    /// language, the file carries no text, or - for the Preview - the
+    /// plugin's summary is everything there is, with no file text inside it
+    /// to find. None of them is a failure, and a reader should not be able
+    /// to tell them apart.
     ///
     /// Lines rather than one list of runs because a line is what gets
     /// laid out: runs sit side by side across a line and lines stack, and
@@ -2290,23 +2313,46 @@ impl App {
         let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
             return Vec::new();
         };
-        if self.file_views().get(self.file_view_index) != Some(&TEXT_VIEW) {
-            return Vec::new();
-        }
-        let Some(text) = data.get("content").and_then(serde_json::Value::as_str) else {
-            return Vec::new();
-        };
         let Some(presentation) = PRESENTATION_PLUGINS
             .iter()
             .find(|candidate| candidate.name() == plugin)
         else {
             return Vec::new();
         };
-        let spans = presentation.classify(text);
-        if spans.is_empty() {
-            return Vec::new();
+        let views = self.file_views();
+        let selected = views.get(self.file_view_index).copied();
+        if selected == Some(TEXT_VIEW) {
+            let Some(text) = data.get("content").and_then(serde_json::Value::as_str) else {
+                return Vec::new();
+            };
+            let spans = presentation.classify(text);
+            if spans.is_empty() {
+                return Vec::new();
+            }
+            return colour_lines(text, &spans);
         }
-        colour_lines(text, &spans)
+        if selected == Some(PREVIEW_VIEW) && views.contains(&TEXT_VIEW) {
+            let preview = present(plugin, data).join("\n");
+            let text = present_view(plugin, TEXT_VIEW, data).join("\n");
+            let Some(offset) = preview_text_offset(&preview, &text) else {
+                return Vec::new();
+            };
+            let spans = presentation.classify(&text);
+            if spans.is_empty() {
+                return Vec::new();
+            }
+            let mut shifted = Vec::with_capacity(spans.len() + 1);
+            if offset > 0 {
+                shifted.push(Span::new(0, offset, Class::Plain));
+            }
+            shifted.extend(
+                spans
+                    .into_iter()
+                    .map(|span| Span::new(span.start + offset, span.len, span.class)),
+            );
+            return colour_lines(&preview, &shifted);
+        }
+        Vec::new()
     }
 
     /// Which view the pane is showing, as an index into [`Self::file_views`].
@@ -2461,10 +2507,10 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        App, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp, icon_for,
-        strip_verbatim_prefix,
+        App, ColouredRun, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp,
+        icon_for, preview_text_offset, strip_verbatim_prefix,
     };
-    use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
+    use plugin_api::{Class, PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
@@ -2813,6 +2859,197 @@ second", "truncated": false }),
         app.set_file_view("image", serde_json::json!({ "width": 4, "height": 4 }));
 
         assert_eq!(app.file_views(), vec![PREVIEW_VIEW]);
+    }
+
+    #[test]
+    fn a_previews_file_tail_is_coloured_like_the_text_tab() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "rust",
+            serde_json::json!({
+                "content": "fn main() {}",
+                "truncated": false,
+                "functions": ["main"],
+                "structs": [],
+                "traits": [],
+            }),
+        );
+
+        let preview_lines = app.file_lines();
+        assert_eq!(
+            preview_lines.first(),
+            Some(&vec![ColouredRun {
+                text: "functions: main".to_owned(),
+                class: Class::Plain,
+            }]),
+            "the summary above the file reads as plain text: {preview_lines:?}"
+        );
+
+        app.select_file_view(1);
+        let text_lines = app.file_lines();
+        assert_eq!(
+            &preview_lines[1..],
+            text_lines.as_slice(),
+            "the file inside the Preview is coloured exactly as the Text tab colours it"
+        );
+    }
+
+    #[test]
+    fn a_previews_file_tail_matches_the_text_tab_across_languages() {
+        let cases: &[(&str, serde_json::Value)] = &[
+            (
+                "rust",
+                serde_json::json!({
+                    "content": "fn main() {}",
+                    "truncated": false,
+                    "functions": ["main"],
+                    "structs": [],
+                    "traits": [],
+                }),
+            ),
+            (
+                "python",
+                serde_json::json!({
+                    "content": "def main():\n    pass",
+                    "truncated": false,
+                    "functions": ["main"],
+                    "classes": [],
+                }),
+            ),
+            (
+                "javascript",
+                serde_json::json!({
+                    "content": "function main() {}",
+                    "truncated": false,
+                    "functions": ["main"],
+                    "classes": [],
+                }),
+            ),
+        ];
+
+        for (plugin, data) in cases {
+            let mut app = app_with_one_content_entry();
+            app.select_content(0);
+            app.set_file_view(plugin, data.clone());
+
+            let preview_lines = app.file_lines();
+            assert!(
+                !preview_lines.is_empty(),
+                "{plugin}'s Preview should colour its file tail"
+            );
+
+            app.select_file_view(1);
+            let text_lines = app.file_lines();
+            let tail_start = preview_lines.len() - text_lines.len();
+            assert_eq!(
+                preview_lines[tail_start..],
+                text_lines[..],
+                "{plugin}'s file tail should be coloured exactly as the Text tab colours it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_preview_that_is_all_summary_is_left_uncoloured() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "msbuild",
+            serde_json::json!({
+                "sdk": "Microsoft.NET.Sdk",
+                "target_frameworks": ["net8.0"],
+                "output_type": "Exe",
+                "properties": [],
+                "packages": [],
+                "project_references": [],
+                "imports": [],
+                "unversioned": [],
+                "content": "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+                "truncated": false,
+            }),
+        );
+        assert!(
+            app.file_lines().is_empty(),
+            "msbuild's Preview never contains its own text, so there is no tail to find"
+        );
+
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "solution",
+            serde_json::json!({
+                "format_version": "12.00",
+                "visual_studio_version": serde_json::Value::Null,
+                "projects": [],
+                "folders": [],
+                "configurations": [],
+                "selected_but_not_built": [],
+                "truncated": false,
+            }),
+        );
+        assert!(
+            app.file_lines().is_empty(),
+            "solution offers no Text view at all, so its Preview stays as it is today"
+        );
+    }
+
+    #[test]
+    fn a_preview_with_no_described_language_colours_nothing() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "first\nsecond", "truncated": false }),
+        );
+
+        assert!(
+            app.file_lines().is_empty(),
+            "a plugin with no language description colours nothing, as ever"
+        );
+    }
+
+    #[test]
+    fn preview_text_offset_finds_the_file_after_an_all_summary_preface() {
+        let preview = "functions: main\nfn main() {}";
+        assert_eq!(
+            preview_text_offset(preview, "fn main() {}"),
+            Some("functions: main\n".len())
+        );
+    }
+
+    #[test]
+    fn preview_text_offset_of_an_all_file_preview_is_the_start() {
+        let preview = "fn main() {}";
+        assert_eq!(preview_text_offset(preview, "fn main() {}"), Some(0));
+    }
+
+    #[test]
+    fn preview_text_offset_is_not_fooled_by_a_summary_line_repeating_a_file_line() {
+        // The summary happens to say `fn main() {}` too, so the first place
+        // the file's text occurs is not where the file itself begins - only
+        // the exact tail is.
+        let preview = "fn main() {}\nfn main() {}\nfn helper() {}";
+        let text = "fn main() {}\nfn helper() {}";
+        assert_eq!(
+            preview_text_offset(preview, text),
+            Some("fn main() {}\n".len())
+        );
+    }
+
+    #[test]
+    fn preview_text_offset_of_a_summary_only_preview_is_none() {
+        let preview = "Software development kit: Microsoft.NET.Sdk\nProduces: Exe";
+        assert_eq!(preview_text_offset(preview, ""), None);
+    }
+
+    #[test]
+    fn preview_text_offset_rejects_a_match_that_is_not_line_aligned() {
+        // The suffix "content1\ncontent2" occurs, but only inside the word
+        // "abcontent1" - not as a line of its own, so it is not the file.
+        let preview = "abcontent1\ncontent2";
+        let text = "content1\ncontent2";
+        assert_eq!(preview_text_offset(preview, text), None);
     }
 
     #[test]
