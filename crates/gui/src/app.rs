@@ -451,9 +451,23 @@ fn dedup_name(existing: &[DirectoryEntry], base: &str) -> String {
     if !existing.iter().any(|entry| entry.name == base) {
         return base.to_owned();
     }
+    // Insert before the extension so the copy keeps the type it had -
+    // `notes.txt` becomes `notes (2).txt`, not `notes.txt (2)`, which no
+    // plugin would recognise. A dotfile like `.gitignore` and a name with
+    // no extension have nowhere to insert in front of, so they keep the
+    // suffix-at-the-end behaviour.
+    let path = std::path::Path::new(base);
+    let extension = path.extension().and_then(std::ffi::OsStr::to_str);
+    let stem = path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or(base);
     let mut n = 2;
     loop {
-        let candidate = format!("{base} ({n})");
+        let candidate = match extension {
+            Some(ext) => format!("{stem} ({n}).{ext}"),
+            None => format!("{stem} ({n})"),
+        };
         if !existing.iter().any(|entry| entry.name == candidate) {
             return candidate;
         }
@@ -4178,7 +4192,47 @@ third",
     fn requesting_a_copy_prefills_a_name_that_does_not_collide() {
         let mut app = app_with_one_content_entry();
         app.request_copy();
-        assert_eq!(app.status_text(), "Copy to: doomed.txt (2)_  (Enter/Esc)");
+        assert_eq!(app.status_text(), "Copy to: doomed (2).txt_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn a_copy_of_an_extensionless_name_is_unchanged_in_behavior() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("README", false)]),
+            }),
+        );
+        app.request_copy();
+        assert_eq!(app.status_text(), "Copy to: README (2)_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn a_copy_of_a_dotfile_keeps_the_suffix_at_the_end() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[(".gitignore", false)]),
+            }),
+        );
+        app.request_copy();
+        assert_eq!(app.status_text(), "Copy to: .gitignore (2)_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn a_pasted_copy_is_recognised_by_the_same_plugin_as_the_original() {
+        let mut app = app_with_one_content_entry();
+        app.request_copy();
+        let status = app.status_text();
+        let prefix = "Copy to: ";
+        let suffix = "_  (Enter/Esc)";
+        let copy_name = &status[prefix.len()..status.len() - suffix.len()];
+
+        assert_eq!(copy_name, "doomed (2).txt");
+        assert_eq!(icon_for("doomed.txt", false), icon_for(copy_name, false));
+        assert_ne!(icon_for(copy_name, false), UNKNOWN_ICON);
     }
 
     #[test]
