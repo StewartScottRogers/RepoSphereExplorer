@@ -650,14 +650,6 @@ fn cut_and_paste_moves_a_file_and_spends_the_clipboard() {
     );
 }
 
-// Ignored, not deleted: the defect is real and this test is the proof of
-// it, but the fix is not a front-end change. `Request::Copy` moves one
-// file, so a paste of several is several requests, and the service keeps
-// one undo step (D6) - three requests would leave Ctrl+Z putting back one
-// file of three and reporting success, which is a worse lie than the one
-// being fixed. #504 settles whether D6 counts operations or requests, and
-// removes this attribute.
-#[ignore = "see #504: needs a multi-step undo before a multi-file paste is honest"]
 #[test]
 fn copying_a_multiple_selection_takes_every_file_it_says_it_took() {
     let _serial = serially();
@@ -816,4 +808,82 @@ fn undo_with_nothing_to_undo_says_so_rather_than_nothing() {
          said {:?}",
         ui.get_status_text()
     );
+}
+
+/// One Ctrl+Z puts back a whole multi-file paste.
+///
+/// This is the half of #504 that could not be done in the front end. A
+/// paste of three files is three filesystem moves, and the service used
+/// to remember one step - so undoing would have restored one file of
+/// three and reported success, which is a worse lie than the dropped
+/// files it was fixing. D6 settles "batch operations" and "undo of the
+/// immediately preceding operation" in the same breath: a batch is one
+/// operation, so it is one undo.
+///
+/// Pasted back into the folder it came from, which also proves each name
+/// is de-duplicated against the ones this same paste has already claimed.
+/// Checking only the folder's existing names would have had all three
+/// copies ask for the same free name.
+#[test]
+fn one_undo_puts_back_a_whole_multi_file_paste() {
+    let directory = scratch("paste-many");
+    for name in ["one.txt", "three.txt", "two.txt"] {
+        std::fs::write(directory.join(name), name).expect("the fixture is written");
+    }
+
+    let (ui, app) = window_at(&directory);
+
+    // All three, the way a reader takes them: click the first,
+    // shift-click the last.
+    ui.invoke_content_row_clicked(0);
+    ui.invoke_content_row_shift_clicked(2);
+    assert_eq!(app.borrow().selected_count(), 3, "all three are selected");
+
+    ui.invoke_clipboard_copy_requested();
+    assert!(
+        app.borrow().status_text().contains("3 items"),
+        "the status bar should say how many were taken rather than name \
+         one of them; it said {:?}",
+        app.borrow().status_text()
+    );
+
+    ui.invoke_clipboard_paste_requested();
+    pump(&ui, &app);
+
+    // `dedup_name` appends after the whole filename rather than before
+    // the extension, so the copies are "one.txt (2)" and not "one (2).txt".
+    // That is this codebase's existing convention, enshrined by a unit
+    // test; #509 questions it. What matters here is that all three got
+    // distinct names, which is what a per-file de-duplication buys.
+    let copies = ["one.txt (2)", "three.txt (2)", "two.txt (2)"];
+    for name in copies {
+        assert!(
+            directory.join(name).exists(),
+            "{name} should have been pasted; the folder holds {:?}",
+            std::fs::read_dir(&directory)
+                .map(|entries| entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name())
+                    .collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+    }
+
+    // One Ctrl+Z, and all three go.
+    ui.invoke_undo_requested();
+    pump(&ui, &app);
+
+    for name in copies {
+        assert!(
+            !directory.join(name).exists(),
+            "{name} should have been removed by the same single undo; a \
+             batch is one operation, so it is one undo"
+        );
+    }
+    for name in ["one.txt", "two.txt", "three.txt"] {
+        assert!(
+            directory.join(name).exists(),
+            "{name} is the original, and a copy's undo must not touch it"
+        );
+    }
 }

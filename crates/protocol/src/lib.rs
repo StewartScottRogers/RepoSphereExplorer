@@ -8,7 +8,7 @@ use std::io::{self, Read, Write};
 
 /// The protocol version this build speaks. Bump whenever [`Request`] or
 /// [`Response`] changes shape in a way that is not backward compatible.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// The name other processes use to find the service's local socket.
 pub const SOCKET_NAME: &str = "reposphereexplorer.sock";
@@ -39,19 +39,21 @@ pub enum Request {
         /// Path to open, as given by the caller.
         path: String,
     },
-    /// Renames (or moves) `from` to `to`. Journaled.
+    /// Renames (or moves) every pair in `items`, each an existing path and
+    /// the path it should have afterwards. Journaled, and undone as one
+    /// operation: D6 settles batch operations and one-step undo together,
+    /// so a move of several files is one thing a reader did and one thing
+    /// Ctrl+Z puts back.
     Rename {
-        /// The existing path.
-        from: String,
-        /// The path it should have afterwards.
-        to: String,
+        /// The pairs to move, source first.
+        items: Vec<(String, String)>,
     },
-    /// Copies the file at `from` to `to`. Journaled.
+    /// Copies every pair in `items`, each a source file and its
+    /// destination. Journaled and undone as one operation, as [`Self::Rename`]
+    /// is.
     Copy {
-        /// The source file.
-        from: String,
-        /// The destination path.
-        to: String,
+        /// The pairs to copy, source first.
+        items: Vec<(String, String)>,
     },
     /// Deletes every path in `paths`: the exact, confirmed target set (per
     /// GUIDANCE.md §2.1.5, not a pattern the service resolves itself).
