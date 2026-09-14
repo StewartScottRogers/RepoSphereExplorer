@@ -178,6 +178,49 @@ const fn class_number(class: Class) -> i32 {
     }
 }
 
+/// The editor's half of [`sync_ui`], which is most of what it does while
+/// a file is open and none of what it does otherwise.
+fn sync_editor(ui: &MainWindow, app: &App) {
+    ui.set_editing_in_colour(app.editing_in_colour());
+    if !app.editing_file() {
+        return;
+    }
+    // Only while the editor is open: writing this back every sync would
+    // fight the cursor as the user types.
+    let text = app.edit_text();
+    if ui.get_edit_text() != text.as_str() {
+        ui.set_edit_text(text.into());
+    }
+    ui.set_edit_lines(ModelRc::new(VecModel::from(
+        app.edit_lines()
+            .into_iter()
+            .map(|line| {
+                ModelRc::new(VecModel::from(
+                    line.into_iter()
+                        .map(|run| ColouredRun {
+                            text: run.text.into(),
+                            class: class_number(run.class),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+            })
+            .collect::<Vec<_>>(),
+    )));
+    let (line, column) = app.edit_caret();
+    ui.set_edit_caret_line(row_index(line));
+    ui.set_edit_caret_column(row_index(column));
+    ui.set_edit_longest_line(row_index(app.edit_longest_line()));
+    match app.edit_selection() {
+        Some(((start_line, start_column), (end_line, end_column))) => {
+            ui.set_edit_selection_start_line(row_index(start_line));
+            ui.set_edit_selection_start_column(row_index(start_column));
+            ui.set_edit_selection_end_line(row_index(end_line));
+            ui.set_edit_selection_end_column(row_index(end_column));
+        }
+        None => ui.set_edit_selection_start_line(-1),
+    }
+}
+
 /// Copies `app`'s current state into `ui`'s bound properties.
 pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_rows(ModelRc::new(VecModel::from(
@@ -262,14 +305,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_editing_path(app.editing_path());
     ui.set_editing_file(app.editing_file());
     ui.set_can_edit(app.can_edit());
-    if app.editing_file() {
-        // Only while the editor is open: writing this back every sync would
-        // fight the cursor as the user types.
-        let text = app.edit_text();
-        if ui.get_edit_text() != text.as_str() {
-            ui.set_edit_text(text.into());
-        }
-    }
+    sync_editor(ui, app);
     ui.set_location_icon(icon_image(app::icon_for("", true), true));
 }
 

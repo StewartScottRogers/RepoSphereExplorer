@@ -4,6 +4,8 @@
 //! presentation half, so the two are separate, not shared, despite the
 //! similar shape.
 
+use crate::document::Document;
+use crate::editor;
 use plugin_api::{
     Class, FolderPresentation, Graphic, Icon, PluginPresentation, Span, TEXT_VIEW, UNKNOWN_ICON,
 };
@@ -706,6 +708,19 @@ pub fn chevron_hit(x: f32, depth: usize) -> bool {
     x >= start && x < start + FOLDER_CHEVRON
 }
 
+/// A file open in the editor.
+struct Edit {
+    /// Where a save goes.
+    path: PathBuf,
+    /// The text and the caret.
+    document: Document,
+    /// Whether the hand-written surface is drawing it, or Slint's plain
+    /// box. See [`editor::code_editor_suits`]: a file the surface cannot
+    /// place a caret in, or cannot receive typing for, opens in the
+    /// plain one instead, and the status bar says why.
+    coloured: bool,
+}
+
 /// One coloured run of a line in the Text view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColouredRun {
@@ -788,7 +803,7 @@ pub struct App {
     file_view_index: usize,
     /// The text being edited in the file pane, and the file it belongs to.
     /// `None` when the pane is showing a preview rather than an editor.
-    editing_file: Option<(PathBuf, String)>,
+    editing_file: Option<Edit>,
     /// The entry name to reselect after the next listing arrives, set
     /// by whichever operation is about to change the folder in place.
     reselect: Option<String>,
@@ -1689,7 +1704,104 @@ impl App {
     pub fn edit_text(&self) -> String {
         self.editing_file
             .as_ref()
-            .map_or_else(String::new, |(_, text)| text.clone())
+            .map_or_else(String::new, |edit| edit.document.text().to_owned())
+    }
+
+    /// Whether the hand-written surface is drawing the file, rather than
+    /// Slint's plain box.
+    #[must_use]
+    pub fn editing_in_colour(&self) -> bool {
+        self.editing_file.as_ref().is_some_and(|edit| edit.coloured)
+    }
+
+    /// The editor's lines, coloured, for the surface to draw.
+    #[must_use]
+    pub fn edit_lines(&self) -> Vec<Vec<ColouredRun>> {
+        let Some(edit) = self.editing_file.as_ref() else {
+            return Vec::new();
+        };
+        if !edit.coloured {
+            return Vec::new();
+        }
+        let text = edit.document.text();
+        let spans = self
+            .file_view_plugin()
+            .map(|plugin| plugin.classify(text))
+            .filter(|spans| !spans.is_empty())
+            .unwrap_or_else(|| vec![Span::new(0, text.len(), Class::Plain)]);
+        colour_lines(text, &spans)
+    }
+
+    /// Which presentation half opened the file being viewed.
+    fn file_view_plugin(&self) -> Option<&'static dyn PluginPresentation> {
+        let Some(Response::FileView { plugin, .. }) = &self.file_view else {
+            return None;
+        };
+        PRESENTATION_PLUGINS
+            .iter()
+            .copied()
+            .find(|candidate| candidate.name() == plugin)
+    }
+
+    /// Where the caret is, as a line and a column.
+    #[must_use]
+    pub fn edit_caret(&self) -> (usize, usize) {
+        self.editing_file.as_ref().map_or((0, 0), |edit| {
+            let caret = edit.document.caret();
+            (edit.document.line_of(caret), edit.document.column_of(caret))
+        })
+    }
+
+    /// The selection, as a start and an end in lines and columns.
+    #[must_use]
+    pub fn edit_selection(&self) -> Option<((usize, usize), (usize, usize))> {
+        let edit = self.editing_file.as_ref()?;
+        let range = edit.document.selection()?;
+        Some((
+            (
+                edit.document.line_of(range.start),
+                edit.document.column_of(range.start),
+            ),
+            (
+                edit.document.line_of(range.end),
+                edit.document.column_of(range.end),
+            ),
+        ))
+    }
+
+    /// The widest line, in columns, which is how far the surface scrolls.
+    #[must_use]
+    pub fn edit_longest_line(&self) -> usize {
+        self.editing_file.as_ref().map_or(0, |edit| {
+            edit.document
+                .text()
+                .lines()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+    }
+
+    /// A keystroke, for the editor to make sense of.
+    pub fn edit_key(
+        &mut self,
+        clipboard: &mut dyn editor::Clipboard,
+        text: &str,
+        shift: bool,
+        control: bool,
+        rows: usize,
+    ) -> bool {
+        let Some(edit) = self.editing_file.as_mut() else {
+            return false;
+        };
+        editor::handle_key(&mut edit.document, clipboard, text, shift, control, rows)
+    }
+
+    /// A click in the editor.
+    pub fn edit_click(&mut self, line: usize, column: usize, extend: bool) {
+        if let Some(edit) = self.editing_file.as_mut() {
+            editor::handle_click(&mut edit.document, line, column, extend);
+        }
     }
 
     /// Opens the selected file in the editor, if its plugin can edit it.
@@ -1703,23 +1815,45 @@ impl App {
         let Some((path, _)) = self.selected_entry_path() else {
             return;
         };
-        self.editing_file = Some((path, text));
+        let coloured = editor::code_editor_suits(&text);
+        if !coloured {
+            // Said rather than silently downgraded: a reader who has
+            // just lost syntax colouring should be told why, not left to
+            // wonder whether it is broken.
+            self.status = Some(
+                "editing as plain text: this file is in a script the coloured \
+                 editor cannot place a caret in"
+                    .to_owned(),
+            );
+        }
+        self.editing_file = Some(Edit {
+            path,
+            document: Document::new(text),
+            coloured,
+        });
         self.focus = Pane::File;
     }
 
     /// Takes the editor's text as the user has changed it.
     pub fn set_edit_text(&mut self, text: &str) {
-        if let Some((_, current)) = self.editing_file.as_mut() {
-            text.clone_into(current);
+        // Only the plain box needs this: it owns its own text while the
+        // reader types, and hands it back on save. The coloured surface
+        // reports every keystroke as it happens, so its document is
+        // already current and overwriting it here would undo the caret.
+        if let Some(edit) = self.editing_file.as_mut()
+            && !edit.coloured
+        {
+            edit.document = Document::new(text);
         }
     }
 
     /// Ctrl+S: writes the editor's text back through the service, which is
     /// the only process that touches the filesystem.
     pub fn save_file_edit(&mut self) {
-        let Some((path, text)) = self.editing_file.clone() else {
+        let Some(edit) = self.editing_file.as_ref() else {
             return;
         };
+        let (path, text) = (edit.path.clone(), edit.document.text().to_owned());
         self.editing_file = None;
         self.pending_operation = Some(spawn_request(Request::WriteFile {
             path: path.to_string_lossy().into_owned(),
@@ -2324,6 +2458,8 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{
         App, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp, icon_for,
         strip_verbatim_prefix,
@@ -4263,5 +4399,158 @@ third",
         );
 
         assert_eq!(app.file_text(), "hello");
+    }
+    #[test]
+    fn a_file_the_surface_cannot_serve_opens_in_the_plain_editor_and_says_so() {
+        // Acceptance checks 2 and 4 of #480: neither input method
+        // composition nor right-to-left text is handled, so rather than
+        // letting either fail quietly the file goes to Slint's own box.
+        let name_text = "let name = \"\u{5f20}\u{4e09}\";";
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("names.txt", false)]),
+            }),
+        );
+        app.select_content(0);
+        app.set_file_view("text", serde_json::json!({ "content": name_text }));
+        app.begin_file_edit();
+
+        assert!(app.editing_file(), "it still opens for editing");
+        assert!(
+            !app.editing_in_colour(),
+            "but not in the surface that cannot place a caret in it"
+        );
+        assert!(
+            app.status_text().contains("plain text"),
+            "and the reader is told why rather than left wondering: {:?}",
+            app.status_text()
+        );
+        assert!(
+            app.edit_lines().is_empty(),
+            "so the coloured surface is handed nothing to draw"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_file_opens_in_the_coloured_surface() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("notes.txt", false)]),
+            }),
+        );
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "one\ntwo\nthree\n" }),
+        );
+        app.begin_file_edit();
+
+        assert!(app.editing_in_colour());
+        assert_eq!(app.edit_lines().len(), 3, "a line per line");
+        assert_eq!(app.edit_caret(), (0, 0));
+        assert_eq!(app.edit_longest_line(), 5, "the width of \"three\"");
+    }
+    /// A clipboard holding nothing. These tests press no clipboard key,
+    /// and reaching for the machine's would make them fight whatever
+    /// else on it is using it.
+    struct NoClipboard;
+
+    impl crate::editor::Clipboard for NoClipboard {
+        fn read(&mut self) -> Option<String> {
+            None
+        }
+        fn write(&mut self, _text: &str) {}
+    }
+
+    /// A directory of this test's own, so two runs cannot tread on each
+    /// other and neither treads on a fixture.
+    fn scratch(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!("repos-explorer-round-trip-{name}"));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        directory
+    }
+
+    /// An app looking at `directory`, with its one file open in the
+    /// editor - through `service`, so the view is the real one.
+    fn editing(directory: &Path, name: &str) -> App {
+        let mut app = App::new(directory.to_path_buf());
+        let entries = service::list_directory(directory).expect("the scratch directory lists");
+        app.apply_contents_result(&[], Ok(Response::Directory { entries }));
+        app.select_content(0);
+        let view = service::view_file(&directory.join(name)).expect("the file opens");
+        app.show_file_view(Some(view));
+        app.begin_file_edit();
+        app
+    }
+
+    /// A real file, opened through the service, typed into, and asked
+    /// for its text back.
+    ///
+    /// The save itself crosses a process boundary on purpose - the
+    /// service is the only thing that touches the filesystem - so this
+    /// stops at the text the save would carry. What that text does when
+    /// it gets there is `service`'s own
+    /// `writing_a_file_puts_the_bytes_on_disk`.
+    #[test]
+    fn typing_into_a_real_file_gives_the_text_a_save_would_carry() {
+        let directory = scratch("save");
+        let path = directory.join("demo.rs");
+        std::fs::write(&path, "fn main() {}\n").expect("the fixture is written");
+
+        let mut app = editing(&directory, "demo.rs");
+        assert!(
+            app.editing_in_colour(),
+            "an ASCII file gets the coloured surface"
+        );
+
+        let mut clipboard = NoClipboard;
+        for letter in ["/", "/", " ", "h", "i"] {
+            app.edit_key(&mut clipboard, letter, false, false, 20);
+        }
+
+        assert_eq!(
+            app.edit_text(),
+            "// hifn main() {}\n",
+            "what was typed is there, where the caret was - which starts \
+             at the beginning of the file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("the file is still there"),
+            "fn main() {}\n",
+            "and nothing has reached the file yet, because nothing has \
+             been saved"
+        );
+    }
+
+    #[test]
+    fn discarding_an_edit_leaves_the_file_exactly_as_it_was() {
+        let directory = scratch("discard");
+        let path = directory.join("demo.rs");
+        let original = "fn main() {}\n";
+        std::fs::write(&path, original).expect("the fixture is written");
+
+        let mut app = editing(&directory, "demo.rs");
+        let mut clipboard = NoClipboard;
+        app.edit_key(&mut clipboard, "x", false, false, 20);
+        assert!(app.edit_text().starts_with('x'), "it was typed into");
+
+        app.cancel_file_edit();
+
+        assert!(!app.editing_file(), "the editor closes");
+        assert_eq!(
+            app.status_text(),
+            "edit discarded",
+            "and says so, because this is the one place the text is lost"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("the file is still there"),
+            original,
+            "and the file is untouched"
+        );
     }
 }

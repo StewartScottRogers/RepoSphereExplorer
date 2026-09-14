@@ -24,6 +24,10 @@ syntax = { path = "../syntax" }
 # caret moves by grapheme cluster rather than by byte, which is what a
 # reader sees.
 unicode-segmentation = "1"
+# The clipboard. Slint keeps its own on the `Platform` trait, where an
+# application cannot reach it; this is the crate Slint's own windowing
+# backend already uses, so it is in the tree either way.
+copypasta = "0.10"
 plugin-ada = { path = "../plugins/ada" }
 plugin-apk = { path = "../plugins/apk" }
 plugin-apkpkg = { path = "../plugins/apkpkg" }
