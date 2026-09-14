@@ -12,7 +12,7 @@
 //! naming: a defect in `main`'s own wiring cannot be seen from here.
 
 use gui::app::App;
-use gui::{ContentRow, MainWindow, sync_ui, wire_editor};
+use gui::{ContentRow, MainWindow, sync_ui};
 use i_slint_backend_testing::ElementHandle;
 use slint::platform::{PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model as _};
@@ -31,123 +31,9 @@ fn scratch(name: &str) -> PathBuf {
     directory
 }
 
-/// The wiring `main` does for everything the Contents pane reports.
-/// Copied from `main.rs` because those functions are private.
-///
-/// Long because it is a list of callbacks rather than a computation:
-/// splitting it would put half the list behind a name that means
-/// nothing, and the point of the copy is that it reads beside `main`'s.
-#[allow(clippy::too_many_lines)]
-fn wire(ui: &MainWindow, app: &Rc<RefCell<App>>) {
-    let index = |i: i32| usize::try_from(i).unwrap_or(usize::MAX);
-
-    macro_rules! on_row_event {
-        ($setter:ident, $method:ident) => {{
-            let app = Rc::clone(app);
-            let ui_weak = ui.as_weak();
-            ui.$setter(move |i| {
-                let mut app = app.borrow_mut();
-                app.$method(index(i));
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-    on_row_event!(on_content_row_clicked, select_content);
-    on_row_event!(on_content_row_ctrl_clicked, toggle_content);
-    on_row_event!(on_content_row_shift_clicked, extend_selection_to);
-    on_row_event!(on_content_row_double_clicked, open_content);
-
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_content_rows_marqueed(move |from, to| {
-            let mut app = app.borrow_mut();
-            app.select_range(index(from), index(to));
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-
-    macro_rules! on_delta_event {
-        ($setter:ident, $method:ident) => {{
-            let app = Rc::clone(app);
-            let ui_weak = ui.as_weak();
-            ui.$setter(move |delta| {
-                let mut app = app.borrow_mut();
-                app.$method(delta);
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-    on_delta_event!(on_selection_moved, move_selection);
-    on_delta_event!(on_pane_cycled, cycle_focus);
-    on_delta_event!(on_content_sort_requested, sort_by_column);
-
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_edge_requested(move |last| {
-            let mut app = app.borrow_mut();
-            app.select_edge(last != 0);
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_key_text(move |text| {
-            let mut app = app.borrow_mut();
-            app.handle_key_text(&text);
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_cancel_requested(move || {
-            let mut app = app.borrow_mut();
-            app.cancel_pending();
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_edit_requested(move || {
-            let mut app = app.borrow_mut();
-            app.begin_file_edit();
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    // The editor's own callbacks, through the application's wiring
-    // rather than a copy of it - a copy is a second thing to keep right,
-    // and a test of a copy proves nothing about what a reader gets.
-    wire_editor(ui, app);
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_save_requested(move || {
-            let mut app = app.borrow_mut();
-            app.save_file_edit();
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-}
+// The window's callbacks come from the crate's own wiring, which is what
+// `main` calls. A copy here would be a second thing to keep right, and a
+// test of a copy proves nothing about what a reader gets.
 
 /// A shown window, wired to an application listing `directory`.
 fn window_on(directory: &Path) -> (MainWindow, Rc<RefCell<App>>) {
@@ -158,7 +44,7 @@ fn window_on(directory: &Path) -> (MainWindow, Rc<RefCell<App>>) {
         app.apply_contents_result_for_test(&[], protocol::Response::Directory { entries });
     }
     let ui = MainWindow::new().expect("the window should build");
-    wire(&ui, &app);
+    gui::wire_callbacks(&ui, &app);
     sync_ui(&ui, &app.borrow());
     ui.show().expect("the window should show");
     ui.window()
