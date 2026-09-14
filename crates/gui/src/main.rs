@@ -46,6 +46,26 @@ fn wire_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             sync_ui(&ui, &app);
         });
     }
+    macro_rules! on_edit_command {
+        ($setter:ident, $command:ident) => {{
+            let app = Rc::clone(app);
+            let ui_weak = ui.as_weak();
+            let mut clipboard = SystemClipboard::default();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.edit_command(gui::app::EditCommand::$command, &mut clipboard);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+    on_edit_command!(on_edit_undo_requested, Undo);
+    on_edit_command!(on_edit_redo_requested, Redo);
+    on_edit_command!(on_edit_cut_requested, Cut);
+    on_edit_command!(on_edit_copy_requested, Copy);
+    on_edit_command!(on_edit_paste_requested, Paste);
+
     {
         let app = Rc::clone(app);
         let ui_weak = ui.as_weak();

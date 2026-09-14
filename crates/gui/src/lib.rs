@@ -182,6 +182,13 @@ const fn class_number(class: Class) -> i32 {
 /// a file is open and none of what it does otherwise.
 fn sync_editor(ui: &MainWindow, app: &App) {
     ui.set_editing_in_colour(app.editing_in_colour());
+    ui.set_edit_modified(app.edit_modified());
+    ui.set_edit_can_undo(app.edit_can_undo());
+    ui.set_edit_can_redo(app.edit_can_redo());
+    ui.set_edit_has_selection(app.edit_has_selection());
+    let (line, column) = app.edit_position();
+    ui.set_edit_line(row_index(line));
+    ui.set_edit_column(row_index(column));
     if !app.editing_file() {
         return;
     }

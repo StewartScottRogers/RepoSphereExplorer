@@ -16,8 +16,10 @@ use slint::{ComponentHandle, LogicalPosition, ModelRc, SharedString, VecModel};
 use std::cell::Cell;
 use std::rc::Rc;
 
-/// Tab metrics in `app.slint`, which the click mapping is derived from.
-const TAB_WIDTH: f32 = 80.0;
+/// The strip's height in `app.slint`. Its width is not a constant -
+/// the tabs share whatever the File pane is - so it is measured rather
+/// than assumed. Assuming it is how a third tab came to be drawn off the
+/// right-hand edge of a default-width pane while every test passed.
 const TAB_HEIGHT: f32 = 24.0;
 
 /// A shown window whose File pane offers `views` as its tabs.
@@ -40,12 +42,14 @@ fn switcher(ui: &MainWindow) -> Option<ElementHandle> {
 }
 
 /// Clicks the middle of tab `index`, as it is drawn.
-fn click_tab(ui: &MainWindow, index: usize) {
+fn click_tab(ui: &MainWindow, index: usize, tabs: usize) {
     let strip = switcher(ui).expect("a switcher should be drawn");
     let origin = strip.absolute_position();
+    #[allow(clippy::cast_precision_loss)]
+    let width = strip.size().width / tabs as f32;
     let index = u16::try_from(index).expect("the test uses a handful of tabs");
     let position = LogicalPosition::new(
-        origin.x + f32::from(index).mul_add(TAB_WIDTH, TAB_WIDTH / 2.0),
+        origin.x + f32::from(index).mul_add(width, width / 2.0),
         origin.y + TAB_HEIGHT / 2.0,
     );
     let window = ui.window();
@@ -61,13 +65,13 @@ fn click_tab(ui: &MainWindow, index: usize) {
 }
 
 /// The view index the window last asked for, after clicking tab `index`.
-fn asked_for(ui: &MainWindow, index: usize) -> i32 {
+fn asked_for(ui: &MainWindow, index: usize, tabs: usize) -> i32 {
     let chosen = Rc::new(Cell::new(-1));
     ui.on_file_tab_selected({
         let chosen = Rc::clone(&chosen);
         move |view| chosen.set(view)
     });
-    click_tab(ui, index);
+    click_tab(ui, index, tabs);
     chosen.get()
 }
 
@@ -78,8 +82,11 @@ fn a_type_offering_two_views_gets_a_switcher_wide_enough_to_hit() {
 
     let strip = switcher(&ui).expect("two views should draw a switcher");
 
+    // Wide enough that each of the two tabs is worth aiming at, and
+    // tall enough to hit. A number rather than a multiple of a constant,
+    // because the tabs now share whatever width the pane has.
     assert!(
-        strip.size().width >= 2.0 * TAB_WIDTH && strip.size().height > 0.0,
+        strip.size().width >= 80.0 && strip.size().height > 0.0,
         "a strip laid out at {:?} could not be clicked",
         strip.size()
     );
@@ -103,7 +110,7 @@ fn clicking_a_tab_asks_for_the_view_it_landed_on() {
     for index in 0..3 {
         let ui = window_with_views(&["Preview", "Text", "Outline"]);
         assert_eq!(
-            asked_for(&ui, index),
+            asked_for(&ui, index, 3),
             i32::try_from(index).expect("a handful of tabs"),
             "clicking tab {index} should ask for view {index}"
         );
@@ -139,7 +146,7 @@ fn clicking_the_edit_tab_asks_for_the_edit_tab() {
     let ui = window_with_views(&["Preview", "Text", "Edit"]);
 
     assert_eq!(
-        asked_for(&ui, 2),
+        asked_for(&ui, 2, 3),
         2,
         "the last tab is the way into the editor, so a click on it has to \
          arrive as the last index rather than as a view"
