@@ -440,6 +440,8 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_breadcrumbs(string_model(app.breadcrumbs()));
     ui.set_can_go_back(app.can_go_back());
     ui.set_can_go_forward(app.can_go_forward());
+    ui.set_can_go_up(app.can_go_up());
+    ui.set_address_path(app.address_path().into());
     ui.set_path_input(app.path_input().into());
     ui.set_editing_path(app.editing_path());
     ui.set_editing_file(app.editing_file());

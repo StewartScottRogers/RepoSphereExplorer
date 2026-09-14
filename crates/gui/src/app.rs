@@ -1742,6 +1742,9 @@ impl App {
         let Some(parent) = self.selected_dir_path().parent().map(PathBuf::from) else {
             return;
         };
+        if !self.may_navigate() {
+            return;
+        }
         self.remember_current();
         self.push_history(parent.clone());
         let rows = self.root.flatten();
@@ -2263,6 +2266,48 @@ impl App {
         self.history_index > 0
     }
 
+    /// The browsed folder as one string, for the markup to notice that it
+    /// changed. What the address bar draws comes from `breadcrumbs`; this
+    /// is only the thing a `changed` handler can watch, because the
+    /// breadcrumb model is rebuilt on every timer tick whether the folder
+    /// moved or not.
+    #[must_use]
+    pub fn address_path(&self) -> String {
+        self.selected_dir_path().to_string_lossy().into_owned()
+    }
+
+    /// Whether Up has anywhere to go, so the button can be drawn refused
+    /// at the top of a tree the way Back and Forward already are.
+    #[must_use]
+    pub fn can_go_up(&self) -> bool {
+        self.selected_dir_path().parent().is_some()
+    }
+
+    /// Whether Back, Forward and Up may run, and clears the address bar's
+    /// own prompt when they do.
+    ///
+    /// These three are the address bar's, and the only prompt that competes
+    /// with them is the address bar's own: a reader who presses Ctrl+L and
+    /// then clicks one of the arrows has changed their mind about typing a
+    /// path, so the field goes and the click is honoured. They used to run
+    /// straight through it, leaving the bar showing a stale path in an open
+    /// field - and Enter there navigated back to that stale text, silently
+    /// undoing the click.
+    ///
+    /// A prompt over a row is different. Renaming or deleting a file is not
+    /// finished, and navigating away from it without a word would discard
+    /// it, so these refuse instead.
+    fn may_navigate(&mut self) -> bool {
+        match self.mode {
+            Mode::Normal => true,
+            Mode::PathInput { .. } => {
+                self.mode = Mode::Normal;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Whether Forward has a folder to return to.
     #[must_use]
     pub fn can_go_forward(&self) -> bool {
@@ -2271,7 +2316,7 @@ impl App {
 
     /// Goes back one folder in history.
     pub fn go_back(&mut self) {
-        if !self.can_go_back() {
+        if !self.can_go_back() || !self.may_navigate() {
             return;
         }
         self.remember_current();
@@ -2283,7 +2328,7 @@ impl App {
 
     /// Goes forward one folder in history.
     pub fn go_forward(&mut self) {
-        if !self.can_go_forward() {
+        if !self.can_go_forward() || !self.may_navigate() {
             return;
         }
         self.history_index += 1;

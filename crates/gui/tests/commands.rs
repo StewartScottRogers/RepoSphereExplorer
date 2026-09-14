@@ -41,6 +41,10 @@ fn ready_window() -> MainWindow {
     ui.set_content_is_archive(true);
     ui.set_can_go_back(true);
     ui.set_can_go_forward(true);
+    // Up is refused at the top of a tree, the way its two neighbours are
+    // refused with no history. This window has no application behind it,
+    // so it says so itself.
+    ui.set_can_go_up(true);
     ui.show().expect("the window should show");
     ui
 }
