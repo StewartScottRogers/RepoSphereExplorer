@@ -358,6 +358,7 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     }
 
     on_delta_event!(on_selection_moved, move_selection);
+    on_delta_event!(on_selection_extended, extend_selection_by);
     on_delta_event!(on_pane_cycled, cycle_focus);
     on_delta_event!(on_content_sort_requested, sort_by_column);
     on_delta_event!(on_breadcrumb_requested, navigate_to_breadcrumb);
@@ -369,6 +370,17 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         ui.on_edge_requested(move |last| {
             let mut app = app.borrow_mut();
             app.select_edge(last != 0);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_edge_extended(move |last| {
+            let mut app = app.borrow_mut();
+            app.extend_selection_to_edge(last != 0);
             if let Some(ui) = ui_weak.upgrade() {
                 sync_ui(&ui, &app);
             }

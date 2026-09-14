@@ -14,7 +14,7 @@
 use gui::app::App;
 use gui::{ContentRow, MainWindow, sync_ui};
 use i_slint_backend_testing::ElementHandle;
-use slint::platform::{PointerEventButton, WindowEvent};
+use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model as _};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -158,6 +158,33 @@ fn press(ui: &MainWindow, text: &str) {
         .dispatch_event(WindowEvent::KeyPressed { text: text.into() });
     ui.window()
         .dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+}
+
+/// A key with Shift held, pressed and released around it the way a
+/// keyboard sends one. Slint takes its modifier state from these events,
+/// so a Shift shortcut cannot be dispatched any other way.
+fn press_shift(ui: &MainWindow, key: Key) {
+    let shift = slint::SharedString::from(char::from(Key::Shift).to_string());
+    let text = slint::SharedString::from(char::from(key).to_string());
+    let window = ui.window();
+    window.dispatch_event(WindowEvent::KeyPressed {
+        text: shift.clone(),
+    });
+    window.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    window.dispatch_event(WindowEvent::KeyReleased { text });
+    window.dispatch_event(WindowEvent::KeyReleased { text: shift });
+}
+
+/// Four files, listed, with the first row clicked so the listing has the
+/// keyboard and an anchor to extend from.
+fn four_rows(name: &str) -> (MainWindow, Rc<RefCell<App>>) {
+    let directory = scratch(name);
+    for file in ["alpha.txt", "bravo.txt", "charlie.txt", "delta.txt"] {
+        std::fs::write(directory.join(file), "x").expect("the fixture is written");
+    }
+    let (ui, app) = window_on(&directory);
+    ui.invoke_content_row_clicked(0);
+    (ui, app)
 }
 
 /// The listing shows the files it was given, and a click selects one.
@@ -840,5 +867,138 @@ fn control_s_saves_and_closes_the_editor() {
         !app.borrow().editing_file(),
         "Ctrl+S should have saved and closed the editor; if neither this \
          nor Escape works the keyboard cannot leave the editor at all"
+    );
+}
+
+/// Shift+Down grows the selection instead of moving it.
+///
+/// There was no keyboard way to select a range at all: the window's key
+/// scope sent every arrow to `selection-moved`, which replaces the
+/// selection, so a reader had to use the mouse or Ctrl+A for everything.
+/// D6 settles multi-select, and #504 made it matter - Copy and Cut now
+/// honour the whole selection, so building one is worth doing.
+#[test]
+fn shift_down_extends_the_selection_rather_than_moving_it() {
+    i_slint_backend_testing::init_no_event_loop();
+    let (ui, app) = four_rows("shift-down");
+    assert_eq!(highlighted(&ui), vec!["alpha.txt".to_owned()]);
+
+    press_shift(&ui, Key::DownArrow);
+    assert_eq!(
+        highlighted(&ui),
+        vec!["alpha.txt".to_owned(), "bravo.txt".to_owned()],
+        "one Shift+Down should have selected two rows, not moved to the second"
+    );
+
+    press_shift(&ui, Key::DownArrow);
+    assert_eq!(
+        highlighted(&ui),
+        vec![
+            "alpha.txt".to_owned(),
+            "bravo.txt".to_owned(),
+            "charlie.txt".to_owned()
+        ],
+        "and again should make three"
+    );
+    assert_eq!(
+        selected_name(&app),
+        "charlie.txt",
+        "the lead row is the far end, so a further Shift+Down keeps growing"
+    );
+}
+
+/// A plain arrow still replaces the selection. This is the behaviour that
+/// has to survive the change, not the one being added.
+#[test]
+fn a_plain_arrow_still_collapses_the_selection_to_one_row() {
+    i_slint_backend_testing::init_no_event_loop();
+    let (ui, _app) = four_rows("plain-arrow");
+
+    press_shift(&ui, Key::DownArrow);
+    press_shift(&ui, Key::DownArrow);
+    assert_eq!(highlighted(&ui).len(), 3, "three are selected");
+
+    press(&ui, &char::from(Key::DownArrow).to_string());
+
+    assert_eq!(
+        highlighted(&ui),
+        vec!["delta.txt".to_owned()],
+        "a plain arrow moves, and moving replaces the selection"
+    );
+}
+
+/// Shift+Up back over the anchor flips the range rather than growing it
+/// the other way - the anchor is where the range is measured from, and it
+/// does not follow the lead row.
+#[test]
+fn shift_up_back_over_the_anchor_flips_the_range() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = scratch("shift-flip");
+    for file in ["alpha.txt", "bravo.txt", "charlie.txt", "delta.txt"] {
+        std::fs::write(directory.join(file), "x").expect("the fixture is written");
+    }
+    let (ui, _app) = window_on(&directory);
+    // Anchor on the third row, so there is somewhere to go in both
+    // directions.
+    ui.invoke_content_row_clicked(2);
+
+    press_shift(&ui, Key::DownArrow);
+    assert_eq!(
+        highlighted(&ui),
+        vec!["charlie.txt".to_owned(), "delta.txt".to_owned()]
+    );
+
+    press_shift(&ui, Key::UpArrow);
+    assert_eq!(
+        highlighted(&ui),
+        vec!["charlie.txt".to_owned()],
+        "back onto the anchor leaves the anchor alone"
+    );
+
+    press_shift(&ui, Key::UpArrow);
+    assert_eq!(
+        highlighted(&ui),
+        vec!["bravo.txt".to_owned(), "charlie.txt".to_owned()],
+        "and past it the range runs the other way from the same anchor"
+    );
+}
+
+/// Shift+End and Shift+Home take the range to the ends.
+#[test]
+fn shift_end_and_shift_home_extend_to_the_ends() {
+    i_slint_backend_testing::init_no_event_loop();
+    let (ui, _app) = four_rows("shift-ends");
+
+    press_shift(&ui, Key::End);
+    assert_eq!(
+        highlighted(&ui).len(),
+        4,
+        "Shift+End selects to the last row"
+    );
+
+    ui.invoke_content_row_clicked(3);
+    press_shift(&ui, Key::Home);
+    assert_eq!(
+        highlighted(&ui).len(),
+        4,
+        "and Shift+Home from the last row selects back to the first"
+    );
+}
+
+/// The whole point of #511: a range built from the keyboard is the range
+/// Copy takes.
+#[test]
+fn a_range_built_with_shift_is_what_copy_takes() {
+    i_slint_backend_testing::init_no_event_loop();
+    let (ui, app) = four_rows("shift-then-copy");
+
+    press_shift(&ui, Key::DownArrow);
+    press_shift(&ui, Key::DownArrow);
+    ui.invoke_clipboard_copy_requested();
+
+    assert!(
+        app.borrow().status_text().contains("3 items"),
+        "the status bar should report the three rows Shift built; it said {:?}",
+        app.borrow().status_text()
     );
 }

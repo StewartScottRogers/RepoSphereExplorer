@@ -1620,6 +1620,51 @@ impl App {
         self.load_file_view();
     }
 
+    /// Shift+arrow: grows or shrinks the selected range to the row the
+    /// arrow would have landed on, the way Shift+click extends to the row
+    /// clicked. The anchor stays put, so a Shift+Up back over it flips the
+    /// range rather than growing it the other way.
+    ///
+    /// Only the Contents pane has a range to extend; the tree selects one
+    /// folder at a time, so a held Shift there means what no Shift means.
+    pub fn extend_selection_by(&mut self, delta: i32) {
+        if !matches!(self.mode, Mode::Normal) || !matches!(self.focus, Pane::Contents | Pane::File)
+        {
+            self.move_selection(delta);
+            return;
+        }
+        if let Some(next) = self.row_offset_from(self.content_selected, delta) {
+            self.extend_selection_to(next);
+        }
+    }
+
+    /// Shift+Home and Shift+End: extends the range to the first or last
+    /// row rather than moving to it.
+    pub fn extend_selection_to_edge(&mut self, last: bool) {
+        if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
+            return;
+        }
+        if !matches!(self.focus, Pane::Contents | Pane::File) {
+            self.select_edge(last);
+            return;
+        }
+        let index = if last { self.contents.len() - 1 } else { 0 };
+        self.extend_selection_to(index);
+    }
+
+    /// The contents row `delta` away from `current`, clamped to the
+    /// listing. `None` when there are no rows to land on.
+    fn row_offset_from(&self, current: usize, delta: i32) -> Option<usize> {
+        let last = self.contents.len().checked_sub(1)?;
+        Some(if delta < 0 {
+            current.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            current
+                .saturating_add(delta.unsigned_abs() as usize)
+                .min(last)
+        })
+    }
+
     /// A rubber-band drag: selects every row the band covered, inclusive.
     /// The lead row is the far end, where the pointer was released, so a
     /// following Shift+click extends from there.
