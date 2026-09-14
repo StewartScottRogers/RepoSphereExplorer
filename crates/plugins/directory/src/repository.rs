@@ -50,7 +50,7 @@ pub struct Repository {
 #[must_use]
 pub fn describe(path: &Path) -> Option<Repository> {
     let git_dir = git_dir_of(path)?;
-    let remote = remote_url(&git_dir);
+    let remote = remote_url(&common_dir_of(&git_dir));
     Some(Repository {
         provider: remote.as_deref().and_then(provider_of),
         branch: branch_at(&git_dir),
@@ -86,6 +86,42 @@ fn git_dir_of(path: &Path) -> Option<PathBuf> {
         worktree_git_dir(&marker)
     } else {
         None
+    }
+}
+
+/// The directory holding what every checkout of a clone shares - the
+/// `config`, and so the remote.
+///
+/// An ordinary clone's git directory is its own common directory. A linked
+/// worktree's is not: `git worktree add` gives it `HEAD`, `index`, `logs`
+/// and `refs` of its own and **no `config`**, leaving a `commondir` file
+/// pointing at the clone's git directory beside it. Reading `config` from
+/// the worktree's own directory therefore found nothing, so a worktree of a
+/// GitHub clone reported "Remote: none configured" and lost its provider,
+/// while the clone beside it named both.
+///
+/// A submodule is not the same case and must not be folded into it: its git
+/// directory under `<outer>/.git/modules/<name>` carries a real `config` of
+/// its own, which is already the right one to read.
+fn common_dir_of(git_dir: &Path) -> PathBuf {
+    let Ok(text) = std::fs::read_to_string(git_dir.join("commondir")) else {
+        return git_dir.to_path_buf();
+    };
+    let target = PathBuf::from(text.trim());
+    if target.as_os_str().is_empty() {
+        return git_dir.to_path_buf();
+    }
+    // The path is relative to the git directory that named it, and git
+    // writes it that way (`../..`) for a worktree inside its own clone.
+    let resolved = if target.is_absolute() {
+        target
+    } else {
+        git_dir.join(target)
+    };
+    if resolved.is_dir() {
+        resolved
+    } else {
+        git_dir.to_path_buf()
     }
 }
 
@@ -318,6 +354,12 @@ mod tests {
     }
 
     #[test]
+    ///
+    /// The git directory here is given a `config`, which a real linked
+    /// worktree's never has - this test is about the marker being
+    /// followed, and nothing else. What git actually writes is covered by
+    /// `a_worktrees_remote_comes_from_the_clone_it_shares`, and the
+    /// difference is why a broken worktree remote survived this test.
     fn a_worktree_marker_file_is_followed_to_the_real_git_directory() {
         let dir = temp_dir("worktree-parent");
         let real = dir.join("real");
@@ -341,6 +383,102 @@ mod tests {
 
         assert_eq!(found.branch.as_deref(), Some("feature"));
         assert_eq!(found.provider.as_deref(), Some("github.com"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What `git worktree add` actually writes: the worktree's own git
+    /// directory holds `HEAD`, `index`, `logs` and `refs` and **no
+    /// `config`**, with a `commondir` file pointing at the clone's git
+    /// directory beside it. The remote is shared, so it has to be read
+    /// from there.
+    ///
+    /// Reading `config` from the worktree's own directory found nothing,
+    /// so a worktree of a GitHub clone reported "Remote: none configured"
+    /// and lost its provider while the clone beside it named both.
+    #[test]
+    fn a_worktrees_remote_comes_from_the_clone_it_shares() {
+        let dir = temp_dir("worktree-commondir");
+
+        // The clone's git directory, with the config every checkout shares.
+        let clone_git = dir.join("clone").join(".git");
+        std::fs::create_dir_all(&clone_git).unwrap();
+        std::fs::write(clone_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(
+            clone_git.join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/owner/name.git\n",
+        )
+        .unwrap();
+
+        // The worktree's own git directory: no config, and a commondir
+        // written relative to itself, the way git writes it.
+        let worktree_git = clone_git.join("worktrees").join("side");
+        std::fs::create_dir_all(&worktree_git).unwrap();
+        std::fs::write(worktree_git.join("HEAD"), "ref: refs/heads/side\n").unwrap();
+        std::fs::write(worktree_git.join("commondir"), "../..\n").unwrap();
+        assert!(
+            !worktree_git.join("config").exists(),
+            "the fixture is only honest if it has no config of its own"
+        );
+
+        let checkout = dir.join("side");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", worktree_git.display()),
+        )
+        .unwrap();
+
+        let found = describe(&checkout).expect("a worktree is a working copy");
+
+        assert_eq!(
+            found.branch.as_deref(),
+            Some("side"),
+            "the branch is the worktree's own, and always was"
+        );
+        assert_eq!(
+            found.remote.as_deref(),
+            Some("https://github.com/owner/name.git"),
+            "the remote is the clone's, shared by every checkout of it"
+        );
+        assert_eq!(found.provider.as_deref(), Some("github.com"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A submodule is not the same case and must not be folded into it.
+    /// Its git directory under `<outer>/.git/modules/<name>` carries a real
+    /// `config` of its own, which is already the right one to read - so a
+    /// fix for worktrees must leave it alone.
+    #[test]
+    fn a_submodule_still_reads_the_config_in_its_own_git_directory() {
+        let dir = temp_dir("submodule-config");
+
+        let module_git = dir.join("outer").join(".git").join("modules").join("inner");
+        std::fs::create_dir_all(&module_git).unwrap();
+        std::fs::write(module_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(
+            module_git.join("config"),
+            "[remote \"origin\"]\n\turl = git@gitlab.com:group/inner.git\n",
+        )
+        .unwrap();
+
+        let checkout = dir.join("outer").join("inner");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", module_git.display()),
+        )
+        .unwrap();
+
+        let found = describe(&checkout).expect("a submodule is a working copy");
+
+        assert_eq!(
+            found.remote.as_deref(),
+            Some("git@gitlab.com:group/inner.git"),
+            "a submodule's own config is the one that names its remote"
+        );
+        assert_eq!(found.provider.as_deref(), Some("gitlab.com"));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
