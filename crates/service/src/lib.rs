@@ -662,28 +662,33 @@ enum Undoable {
 }
 
 thread_local! {
-    /// The single step [`Request::Undo`] would take. GUIDANCE.md §2 keeps
+    /// The steps [`Request::Undo`] would take. GUIDANCE.md §2 keeps
     /// business rules out of the front ends, so the service remembers what
     /// the last operation was and how to reverse it; a front end only asks.
     ///
-    /// One step deep, per D6's "undo of the immediately preceding
-    /// operation". Thread-local because the service answers every request on
-    /// one thread ([`run`] loops over [`serve_one`]), which also keeps the
-    /// tests from treading on each other's step.
-    static UNDO: std::cell::RefCell<Option<Undoable>> = const { std::cell::RefCell::new(None) };
+    /// One *operation* deep, per D6, which settles "undo of the immediately
+    /// preceding operation" and "batch operations" in the same breath: a
+    /// paste of three files is one thing the reader did, so it is one thing
+    /// Ctrl+Z puts back. Several steps, reversed in reverse order, rather
+    /// than several undos.
+    ///
+    /// Thread-local because the service answers every request on one thread
+    /// ([`run`] loops over [`serve_one`]), which also keeps the tests from
+    /// treading on each other's steps.
+    static UNDO: std::cell::RefCell<Vec<Undoable>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Records `step` as what would undo the operation just performed, or
-/// clears the record when the operation cannot be undone.
-fn remember_undo(step: Option<Undoable>) {
-    UNDO.with_borrow_mut(|slot| *slot = step);
+/// Records `steps` as what would undo the operation just performed. An
+/// empty list clears the record, for an operation that cannot be undone.
+fn remember_undo(steps: Vec<Undoable>) {
+    UNDO.with_borrow_mut(|slot| *slot = steps);
 }
 
 /// Records an undo step only if `result` succeeded; a failed operation
 /// changed nothing and leaves the previous step alone.
 fn remember_if_done(result: &io::Result<()>, step: Undoable) {
     if result.is_ok() {
-        remember_undo(Some(step));
+        remember_undo(vec![step]);
     }
 }
 
@@ -692,13 +697,24 @@ fn remember_if_done(result: &io::Result<()>, step: Undoable) {
 /// # Errors
 /// Returns an error if there is nothing to undo, or if reversing it fails.
 pub fn undo() -> io::Result<()> {
-    let step = UNDO.with_borrow_mut(Option::take);
-    let Some(step) = step else {
+    let steps = UNDO.with_borrow_mut(std::mem::take);
+    if steps.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "nothing to undo. A delete is undone from the Recycle Bin",
         ));
-    };
+    }
+    // Newest first: a batch that created a folder and then filled it has
+    // to be emptied before the folder goes, and the same argument holds
+    // for any two steps that touched the same place.
+    for step in steps.into_iter().rev() {
+        undo_step(step)?;
+    }
+    Ok(())
+}
+
+/// Reverses one recorded step, journaling the attempt.
+fn undo_step(step: Undoable) -> io::Result<()> {
     let (operation, targets, result) = match step {
         Undoable::Rename { from, to } => {
             let targets = vec![from.display().to_string(), to.display().to_string()];
@@ -733,21 +749,15 @@ pub fn undo() -> io::Result<()> {
 /// # Errors
 /// Returns an error if something other than `from` already exists at `to`,
 /// or if the rename fails.
-pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
-    let result = refuse_if_occupied_by_another(from, to).and_then(|()| fs::rename(from, to));
-    remember_if_done(
-        &result,
-        Undoable::Rename {
+pub fn rename(items: &[(String, String)]) -> io::Result<()> {
+    batch("rename", items, |from, to| {
+        refuse_if_occupied_by_another(from, to)?;
+        fs::rename(from, to)?;
+        Ok(Undoable::Rename {
             from: to.to_path_buf(),
             to: from.to_path_buf(),
-        },
-    );
-    journal(
-        "rename",
-        &[from.display().to_string(), to.display().to_string()],
-        &result,
-    );
-    result
+        })
+    })
 }
 
 /// Copies the file at `from` to `to`, journaling the attempt. Refuses to
@@ -756,19 +766,41 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
 /// # Errors
 /// Returns an error if something already exists at `to`, or if the copy
 /// fails.
-pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
-    let result = refuse_if_exists(to).and_then(|()| fs::copy(from, to).map(|_| ()));
-    remember_if_done(
-        &result,
-        Undoable::Remove {
+pub fn copy(items: &[(String, String)]) -> io::Result<()> {
+    batch("copy", items, |from, to| {
+        refuse_if_exists(to)?;
+        fs::copy(from, to)?;
+        Ok(Undoable::Remove {
             path: to.to_path_buf(),
-        },
-    );
-    journal(
-        "copy",
-        &[from.display().to_string(), to.display().to_string()],
-        &result,
-    );
+        })
+    })
+}
+
+/// Runs `act` over every pair, stopping at the first failure, and records
+/// what actually landed as the one operation `Undo` reverses.
+///
+/// The steps are remembered even when the batch failed part way through.
+/// A reader who pastes three files and has the second refused is left with
+/// one file they did not have before; leaving that un-undoable would make
+/// the mess permanent, and Ctrl+Z is exactly what they would reach for.
+fn batch(
+    operation: &str,
+    items: &[(String, String)],
+    mut act: impl FnMut(&Path, &Path) -> io::Result<Undoable>,
+) -> io::Result<()> {
+    let mut steps = Vec::new();
+    let mut targets = Vec::new();
+    let result = (|| {
+        for (from, to) in items {
+            let (from, to) = (Path::new(from), Path::new(to));
+            targets.push(from.display().to_string());
+            targets.push(to.display().to_string());
+            steps.push(act(from, to)?);
+        }
+        Ok(())
+    })();
+    remember_undo(steps);
+    journal(operation, &targets, &result);
     result
 }
 
@@ -809,10 +841,10 @@ pub fn write_file(path: &Path, content: &str) -> io::Result<()> {
         // destroys work rather than moving it.
         let previous = fs::read_to_string(path)?;
         write_atomically(path, content)?;
-        remember_undo(Some(Undoable::Restore {
+        remember_undo(vec![Undoable::Restore {
             path: path.to_path_buf(),
             content: previous,
-        }));
+        }]);
         Ok(())
     })();
     journal("write_file", &[path.display().to_string()], &result);
@@ -836,7 +868,7 @@ pub fn delete(paths: &[String]) -> io::Result<()> {
     })();
     // A delete goes to the recycle bin, which this service cannot pull back
     // out; leaving a stale step here would undo the wrong thing.
-    remember_undo(None);
+    remember_undo(Vec::new());
     journal("delete", paths, &result);
     result
 }
@@ -927,10 +959,8 @@ pub fn handle_request(request: &Request) -> Response {
             })
         }
         Request::Open { path } => open(Path::new(path)),
-        Request::Rename { from, to } => {
-            respond_to_operation(rename(Path::new(from), Path::new(to)))
-        }
-        Request::Copy { from, to } => respond_to_operation(copy(Path::new(from), Path::new(to))),
+        Request::Rename { items } => respond_to_operation(rename(items)),
+        Request::Copy { items } => respond_to_operation(copy(items)),
         Request::Delete { paths } => respond_to_operation(delete(paths)),
         Request::Extract {
             archive,
@@ -1001,6 +1031,12 @@ mod tests {
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
     use plugin_api::PluginCore;
+
+    /// One source-and-destination pair, for the tests that move a single
+    /// file through an interface that now takes a batch.
+    fn one(from: &Path, to: &Path) -> Vec<(String, String)> {
+        vec![(from.display().to_string(), to.display().to_string())]
+    }
     use protocol::{Request, Response};
     use std::fs;
     use std::io;
@@ -1440,7 +1476,7 @@ public class OrderBook {
         let to = dir.join("new.txt");
         fs::write(&from, "content").unwrap();
 
-        rename(&from, &to).unwrap();
+        rename(&one(&from, &to)).unwrap();
 
         assert!(!from.exists());
         assert_eq!(fs::read_to_string(&to).unwrap(), "content");
@@ -1456,7 +1492,7 @@ public class OrderBook {
         let to = dir.join("copy.txt");
         fs::write(&from, "content").unwrap();
 
-        copy(&from, &to).unwrap();
+        copy(&one(&from, &to)).unwrap();
 
         assert_eq!(fs::read_to_string(&from).unwrap(), "content");
         assert_eq!(fs::read_to_string(&to).unwrap(), "content");
@@ -1473,7 +1509,7 @@ public class OrderBook {
         fs::write(&from, "content").unwrap();
         fs::write(&to, "precious").unwrap();
 
-        let err = rename(&from, &to).unwrap_err();
+        let err = rename(&one(&from, &to)).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&from).unwrap(), "content");
@@ -1491,7 +1527,7 @@ public class OrderBook {
         fs::write(&from, "content").unwrap();
         fs::write(&to, "precious").unwrap();
 
-        let err = copy(&from, &to).unwrap_err();
+        let err = copy(&one(&from, &to)).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&to).unwrap(), "precious");
@@ -1506,7 +1542,7 @@ public class OrderBook {
         let path = dir.join("unchanged.txt");
         fs::write(&path, "content").unwrap();
 
-        rename(&path, &path).unwrap();
+        rename(&one(&path, &path)).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "content");
 
@@ -1563,6 +1599,93 @@ public class OrderBook {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// D6 settles "batch operations" and "undo of the immediately
+    /// preceding operation" in the same breath, so a move of several files
+    /// is one operation and one undo puts all of it back.
+    #[test]
+    fn one_undo_reverses_a_whole_batch_rename() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let names = ["one", "two", "three"];
+        let items: Vec<(String, String)> = names
+            .iter()
+            .map(|name| {
+                let from = dir.join(format!("{name}.txt"));
+                fs::write(&from, *name).unwrap();
+                (
+                    from.display().to_string(),
+                    dir.join(format!("{name}.moved")).display().to_string(),
+                )
+            })
+            .collect();
+
+        rename(&items).unwrap();
+        for name in names {
+            assert!(dir.join(format!("{name}.moved")).exists());
+            assert!(!dir.join(format!("{name}.txt")).exists());
+        }
+
+        undo().unwrap();
+
+        for name in names {
+            assert!(
+                dir.join(format!("{name}.txt")).exists(),
+                "{name}.txt should have come back from one undo"
+            );
+            assert!(!dir.join(format!("{name}.moved")).exists());
+        }
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A batch that fails part way still records what it managed, so the
+    /// reader can put it back.
+    ///
+    /// Copying three files with the second refused leaves one file they
+    /// did not have before. Remembering nothing - which is what recording
+    /// only a wholly successful operation would do - would make that
+    /// permanent, and Ctrl+Z is exactly what a reader reaches for when an
+    /// operation reports a failure.
+    #[test]
+    fn a_batch_that_fails_part_way_can_still_be_undone() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let first = dir.join("first.txt");
+        let second = dir.join("second.txt");
+        fs::write(&first, "first").unwrap();
+        fs::write(&second, "second").unwrap();
+        let landed = dir.join("landed.txt");
+        // The second destination already exists, so `copy` refuses it.
+        let occupied = dir.join("occupied.txt");
+        fs::write(&occupied, "in the way").unwrap();
+
+        let err = copy(&[
+            (first.display().to_string(), landed.display().to_string()),
+            (second.display().to_string(), occupied.display().to_string()),
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert!(landed.exists(), "the first copy did land");
+        assert_eq!(fs::read_to_string(&occupied).unwrap(), "in the way");
+
+        undo().unwrap();
+
+        assert!(
+            !landed.exists(),
+            "the half of the batch that landed has to be undoable, or a \
+             failed paste leaves a mess that cannot be cleared"
+        );
+        assert_eq!(
+            fs::read_to_string(&occupied).unwrap(),
+            "in the way",
+            "and the file that was in the way is not the batch's to touch"
+        );
+        assert_eq!(fs::read_to_string(&first).unwrap(), "first");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn undo_puts_a_renamed_file_back() {
         let dir = std::env::temp_dir().join(unique_socket_name());
@@ -1570,7 +1693,7 @@ public class OrderBook {
         let from = dir.join("before.txt");
         let to = dir.join("after.txt");
         fs::write(&from, "content").unwrap();
-        rename(&from, &to).unwrap();
+        rename(&one(&from, &to)).unwrap();
 
         undo().unwrap();
 
@@ -1587,7 +1710,7 @@ public class OrderBook {
         let from = dir.join("source.txt");
         let to = dir.join("copy.txt");
         fs::write(&from, "content").unwrap();
-        copy(&from, &to).unwrap();
+        copy(&one(&from, &to)).unwrap();
 
         undo().unwrap();
 
@@ -1949,8 +2072,7 @@ public class OrderBook {
         fs::write(&from, "content").unwrap();
 
         let response = round_trip(Request::Rename {
-            from: from.to_string_lossy().into_owned(),
-            to: to.to_string_lossy().into_owned(),
+            items: one(&from, &to),
         });
 
         assert_eq!(response, Response::Done);
@@ -1969,8 +2091,7 @@ public class OrderBook {
         fs::write(&from, "content").unwrap();
 
         let response = round_trip(Request::Copy {
-            from: from.to_string_lossy().into_owned(),
-            to: to.to_string_lossy().into_owned(),
+            items: one(&from, &to),
         });
 
         assert_eq!(response, Response::Done);
@@ -2035,8 +2156,7 @@ public class OrderBook {
         let to = dir.join("wherever.txt");
 
         let response = round_trip(Request::Rename {
-            from: from.to_string_lossy().into_owned(),
-            to: to.to_string_lossy().into_owned(),
+            items: one(&from, &to),
         });
 
         assert!(matches!(response, Response::Error { .. }));

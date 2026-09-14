@@ -447,14 +447,14 @@ enum AfterOperation {
 /// Picks a default name for a new entry, de-duplicated against `existing`
 /// (e.g. `"New folder"`, then `"New folder (2)"`, `"New folder (3)"`, ...)
 /// so create never sends a request that is doomed to collide.
-fn dedup_name(existing: &[DirectoryEntry], base: &str) -> String {
-    if !existing.iter().any(|entry| entry.name == base) {
+fn dedup_name(taken: &[String], base: &str) -> String {
+    if !taken.iter().any(|name| name == base) {
         return base.to_owned();
     }
     let mut n = 2;
     loop {
         let candidate = format!("{base} ({n})");
-        if !existing.iter().any(|entry| entry.name == candidate) {
+        if !taken.iter().any(|name| name == &candidate) {
             return candidate;
         }
         n += 1;
@@ -965,7 +965,11 @@ pub struct App {
     history: Vec<PathBuf>,
     history_index: usize,
     /// What Ctrl+C or Ctrl+X put aside for the next Ctrl+V.
-    clipboard: Option<(PathBuf, ClipboardMode)>,
+    /// Every file put aside by the last Ctrl+C or Ctrl+X, and which it
+    /// was. A set rather than one path: the pane supports a multiple
+    /// selection and Delete already honours it, so Copy taking only the
+    /// lead row dropped the rest without a word.
+    clipboard: Option<(Vec<PathBuf>, ClipboardMode)>,
     /// Every selected contents row. `content_selected` is the lead row -
     /// the one the preview and the rename/copy prompts act on - and is kept
     /// inside this set whenever the set is non-empty.
@@ -1249,7 +1253,7 @@ impl App {
     /// always collides, and accepting it copies the file onto itself.
     pub fn request_copy(&mut self) {
         if let Some((path, name)) = self.selected_entry_path() {
-            let input = dedup_name(&self.contents, &name);
+            let input = dedup_name(&self.content_names(), &name);
             self.mode = Mode::CopyInput { path, input };
         }
     }
@@ -1284,7 +1288,7 @@ impl App {
 
     fn request_create(&mut self, is_dir: bool) {
         let base = if is_dir { "New folder" } else { "New file" };
-        let name = dedup_name(&self.contents, base);
+        let name = dedup_name(&self.content_names(), base);
         let path = self.selected_dir_path().join(&name);
         let request = if is_dir {
             Request::CreateDirectory {
@@ -1320,15 +1324,19 @@ impl App {
         let request = match mode {
             Mode::RenameInput { path, input } if !input.is_empty() => Some((
                 Request::Rename {
-                    from: path.to_string_lossy().into_owned(),
-                    to: sibling_path(&path, &input),
+                    items: vec![(
+                        path.to_string_lossy().into_owned(),
+                        sibling_path(&path, &input),
+                    )],
                 },
                 input,
             )),
             Mode::CopyInput { path, input } if !input.is_empty() => Some((
                 Request::Copy {
-                    from: path.to_string_lossy().into_owned(),
-                    to: sibling_path(&path, &input),
+                    items: vec![(
+                        path.to_string_lossy().into_owned(),
+                        sibling_path(&path, &input),
+                    )],
                 },
                 input,
             )),
@@ -1666,6 +1674,15 @@ impl App {
     }
 
     /// Every selected row, in listing order.
+    /// The names in the browsed folder, for the collision checks that only
+    /// care what a thing is called.
+    fn content_names(&self) -> Vec<String> {
+        self.contents
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect()
+    }
+
     fn selected_indices(&self) -> Vec<usize> {
         self.selection.iter().copied().collect()
     }
@@ -1773,49 +1790,81 @@ impl App {
     }
 
     fn set_clipboard(&mut self, mode: ClipboardMode) {
-        let Some((path, name)) = self.selected_entry_path() else {
+        // The whole selection, read the way `request_delete` reads it, so
+        // the two agree about what "selected" means.
+        let indices = self.selected_indices();
+        let dir = self.selected_dir_path();
+        let paths: Vec<PathBuf> = indices
+            .iter()
+            .filter_map(|index| self.contents.get(*index))
+            .map(|entry| dir.join(&entry.name))
+            .collect();
+        if paths.is_empty() {
             return;
-        };
+        }
         let verb = match mode {
             ClipboardMode::Copy => "copied",
             ClipboardMode::Cut => "cut",
         };
-        self.clipboard = Some((path, mode));
-        self.status = Some(format!("{name} {verb}"));
+        // Named when there is one, counted when there are several - the
+        // same rule that already produces "Delete 2 items?".
+        let what = match indices.len() {
+            1 => self
+                .contents
+                .get(indices[0])
+                .map_or_else(String::new, |entry| entry.name.clone()),
+            count => format!("{count} items"),
+        };
+        self.clipboard = Some((paths, mode));
+        self.status = Some(format!("{what} {verb}"));
     }
 
     /// Ctrl+V: copies or moves whatever the clipboard holds into the folder
     /// being browsed. The destination name is de-duplicated, since both
     /// operations refuse to replace an existing entry.
     pub fn paste_from_clipboard(&mut self) {
-        let Some((source, mode)) = self.clipboard.clone() else {
-            return;
-        };
-        let Some(name) = source
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-        else {
+        let Some((sources, mode)) = self.clipboard.clone() else {
             return;
         };
         let destination_dir = self.selected_dir_path();
-        // Pasting back into the folder it came from has to land beside the
-        // original rather than on it.
-        let name = if source.parent() == Some(destination_dir.as_path()) {
-            dedup_name(&self.contents, &name)
-        } else {
-            name
-        };
-        let destination = destination_dir.join(&name);
-        let from = source.to_string_lossy().into_owned();
-        let to = destination.to_string_lossy().into_owned();
+        // Each name is de-duplicated against the destination *and* against
+        // the names this paste has already claimed, or two files landing
+        // beside each other would both ask for the same free name.
+        let mut taken = self.content_names();
+        let mut items = Vec::new();
+        let mut last = None;
+        for source in &sources {
+            let Some(name) = source
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+            else {
+                continue;
+            };
+            // Pasting back into the folder it came from has to land beside
+            // the original rather than on it.
+            let name = if source.parent() == Some(destination_dir.as_path()) {
+                dedup_name(&taken, &name)
+            } else {
+                name
+            };
+            taken.push(name.clone());
+            items.push((
+                source.to_string_lossy().into_owned(),
+                destination_dir.join(&name).to_string_lossy().into_owned(),
+            ));
+            last = Some(name);
+        }
+        if items.is_empty() {
+            return;
+        }
         let request = match mode {
-            ClipboardMode::Copy => Request::Copy { from, to },
-            ClipboardMode::Cut => Request::Rename { from, to },
+            ClipboardMode::Copy => Request::Copy { items },
+            ClipboardMode::Cut => Request::Rename { items },
         };
         if mode == ClipboardMode::Cut {
             self.clipboard = None;
         }
-        self.reselect = Some(name);
+        self.reselect = last;
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("working...".to_owned());
     }

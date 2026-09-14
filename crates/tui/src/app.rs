@@ -561,12 +561,16 @@ impl App {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
         let request = match mode {
             Mode::RenameInput { path, input } if !input.is_empty() => Some(Request::Rename {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
+                items: vec![(
+                    path.to_string_lossy().into_owned(),
+                    sibling_path(&path, &input),
+                )],
             }),
             Mode::CopyInput { path, input } if !input.is_empty() => Some(Request::Copy {
-                from: path.to_string_lossy().into_owned(),
-                to: sibling_path(&path, &input),
+                items: vec![(
+                    path.to_string_lossy().into_owned(),
+                    sibling_path(&path, &input),
+                )],
             }),
             Mode::ExtractInput { path, input } if !input.is_empty() => Some(Request::Extract {
                 archive: path.to_string_lossy().into_owned(),
