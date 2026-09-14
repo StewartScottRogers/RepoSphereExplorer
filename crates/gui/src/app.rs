@@ -7,7 +7,8 @@
 use crate::document::Document;
 use crate::editor;
 use plugin_api::{
-    Class, FolderPresentation, Graphic, Icon, PluginPresentation, Span, TEXT_VIEW, UNKNOWN_ICON,
+    Class, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span, TEXT_VIEW,
+    UNKNOWN_ICON,
 };
 use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
 use std::collections::HashMap;
@@ -719,6 +720,26 @@ struct Edit {
     /// place a caret in, or cannot receive typing for, opens in the
     /// plain one instead, and the status bar says why.
     coloured: bool,
+}
+
+/// Where the file begins inside `preview`, or `None` when the Preview
+/// does not end with it.
+///
+/// Anchored at the end rather than searched for, and that is the whole
+/// of the rule: `present` is the plugin's summary followed by the
+/// content, so whatever else is above, the file is the last lines. A
+/// summary line that happens to repeat a line of the file therefore
+/// changes nothing - the tail either matches whole or it does not.
+///
+/// `None` for a Preview that is all summary, which is most of the
+/// plugins that read a structured format rather than a language.
+fn file_starts_in_preview(preview: &[String], text: &str) -> Option<usize> {
+    let file: Vec<&str> = text.lines().collect();
+    if file.is_empty() {
+        return None;
+    }
+    let from = preview.len().checked_sub(file.len())?;
+    (preview[from..] == file[..]).then_some(from)
 }
 
 /// One coloured run of a line in the Text view.
@@ -2290,7 +2311,8 @@ impl App {
         let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
             return Vec::new();
         };
-        if self.file_views().get(self.file_view_index) != Some(&TEXT_VIEW) {
+        let showing = self.file_views().get(self.file_view_index).copied();
+        if showing != Some(TEXT_VIEW) && showing != Some(PREVIEW_VIEW) {
             return Vec::new();
         }
         let Some(text) = data.get("content").and_then(serde_json::Value::as_str) else {
@@ -2306,7 +2328,33 @@ impl App {
         if spans.is_empty() {
             return Vec::new();
         }
-        colour_lines(text, &spans)
+        let coloured = colour_lines(text, &spans);
+        if showing == Some(TEXT_VIEW) {
+            return coloured;
+        }
+
+        // The Preview is the plugin's summary and then, for a source
+        // language, the file itself - the same bytes the Text tab
+        // colours. Leaving one plain and the other coloured reads as the
+        // colouring being broken rather than as two views doing
+        // different jobs.
+        let preview = present(plugin, data);
+        let Some(from) = file_starts_in_preview(&preview, text) else {
+            // A Preview that is all summary - `msbuild` prints no file -
+            // is left exactly as it was.
+            return Vec::new();
+        };
+        let mut lines: Vec<Vec<ColouredRun>> = preview[..from]
+            .iter()
+            .map(|line| {
+                vec![ColouredRun {
+                    text: line.clone(),
+                    class: Class::Plain,
+                }]
+            })
+            .collect();
+        lines.extend(coloured);
+        lines
     }
 
     /// Which view the pane is showing, as an index into [`Self::file_views`].
@@ -2459,6 +2507,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    use super::{Class, file_starts_in_preview};
 
     use super::{
         App, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp, icon_for,
@@ -4551,6 +4601,108 @@ third",
             std::fs::read_to_string(&path).expect("the file is still there"),
             original,
             "and the file is untouched"
+        );
+    }
+    /// The rule that finds the file inside a Preview, on the shapes it
+    /// meets. It is the only judgement in #492; everything else draws.
+    #[test]
+    fn the_file_is_found_at_the_end_of_a_preview_or_not_at_all() {
+        let owned = |lines: &[&str]| -> Vec<String> {
+            lines.iter().map(|line| (*line).to_owned()).collect()
+        };
+
+        // Summary, then the file.
+        let preview = owned(&["functions: main", "fn main() {}", "// done"]);
+        assert_eq!(
+            file_starts_in_preview(&preview, "fn main() {}\n// done\n"),
+            Some(1)
+        );
+
+        // All file and no summary.
+        let preview = owned(&["fn main() {}"]);
+        assert_eq!(file_starts_in_preview(&preview, "fn main() {}\n"), Some(0));
+
+        // All summary and no file, which is what msbuild prints.
+        let preview = owned(&["Software development kit: Microsoft.NET.Sdk"]);
+        assert_eq!(file_starts_in_preview(&preview, "fn main() {}\n"), None);
+
+        // A summary line repeating a line of the file changes nothing,
+        // because the tail either matches whole or it does not.
+        let preview = owned(&["fn main() {}", "functions: main", "fn main() {}"]);
+        assert_eq!(
+            file_starts_in_preview(&preview, "fn main() {}\n"),
+            Some(2),
+            "the last one is the file, not the first"
+        );
+
+        // A Preview shorter than the file cannot contain it.
+        let preview = owned(&["fn main() {}"]);
+        assert_eq!(file_starts_in_preview(&preview, "one\ntwo\nthree\n"), None);
+
+        // Nothing to find.
+        assert!(file_starts_in_preview(&preview, "").is_none());
+    }
+
+    #[test]
+    fn a_previews_file_half_is_coloured_and_its_summary_is_not() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "rust",
+            serde_json::json!({
+                "content": "fn main() {}\n",
+                "truncated": false,
+                "functions": ["main"],
+                "structs": [],
+                "traits": [],
+            }),
+        );
+
+        // The Preview is what a plugin shows first, so this is the view
+        // already selected.
+        let lines = app.file_lines();
+        assert!(
+            !lines.is_empty(),
+            "the Preview should now be coloured at all"
+        );
+
+        let summary = &lines[0];
+        assert_eq!(summary.len(), 1, "a summary line is one plain run");
+        assert_eq!(summary[0].class, Class::Plain);
+
+        let file = lines.last().expect("the file half is there");
+        assert!(
+            file.iter().any(|run| run.class == Class::Keyword),
+            "and the file half has the colours the Text tab gives it: {file:?}"
+        );
+    }
+
+    #[test]
+    fn a_preview_that_is_all_summary_is_left_exactly_as_it_was() {
+        // `msbuild` prints what it found and never the file, so there is
+        // nothing here to colour and nothing should change.
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "msbuild",
+            serde_json::json!({
+                "content": "<Project><PropertyGroup/></Project>",
+                "sdk": "Microsoft.NET.Sdk",
+                "target_frameworks": ["net9.0"],
+                "output_type": "Library",
+                "properties": [],
+                "packages": [],
+                "project_references": [],
+                "imports": [],
+                "unversioned": [],
+                "truncated": false,
+            }),
+        );
+
+        assert!(
+            app.file_lines().is_empty(),
+            "no coloured lines means the pane draws the plain text it \
+             always drew"
         );
     }
 }
