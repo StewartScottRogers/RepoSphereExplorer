@@ -229,6 +229,10 @@ fn a_keystroke_reaches_rust_verbatim_with_its_modifiers() {
         let seen = Rc::clone(&seen);
         ui.on_key(move |text, shift, control| {
             seen.borrow_mut().push((text.to_string(), shift, control));
+            // This test is about what the surface reports, not about
+            // what becomes of a key it does not want; saying it was
+            // used keeps every keystroke here.
+            true
         });
     }
 

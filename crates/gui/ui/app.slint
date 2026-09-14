@@ -420,6 +420,10 @@ component CommandButton inherits Rectangle {
 
     command-text := Text {
         text: label;
+        // Reported so a test can ask what the toolbars are offering,
+        // which is the only way to check a row of buttons from outside.
+        accessible-role: text;
+        accessible-label: label;
         color: button-enabled ? Palette.foreground : Theme.dim-text;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -953,8 +957,9 @@ component CodeEditor inherits Rectangle {
     callback pressed(int, int);
     callback dragged(int, int);
     callback double-pressed(int, int);
-    // The keystroke, verbatim, for Rust to make sense of.
-    callback key(string, bool, bool);
+    // The keystroke, verbatim, for Rust to make sense of. True when
+    // the editor used it; false leaves it for the window behind.
+    callback key(string, bool, bool) -> bool;
 
     property <length> row-height: 16px;
     property <length> gutter: 4px;
@@ -962,6 +967,14 @@ component CodeEditor inherits Rectangle {
     property <length> size: 12px;
 
     forward-focus: keys;
+
+    // The surface takes the keyboard the moment it exists, not on the
+    // first click. It is created when the editor opens, so this is that
+    // moment - and without it a reader who opened the editor from the
+    // Edit tab had their first keystrokes go to the window's own focus
+    // scope, which is the Contents pane's type-ahead. From the outside:
+    // the editor does not insert at the caret.
+    init => { keys.focus(); }
 
     // Off-screen, and the only thing that knows how wide a character is.
     // Forty of them rather than one, so that rounding in the font's
@@ -976,8 +989,13 @@ component CodeEditor inherits Rectangle {
 
     keys := FocusScope {
         key-pressed(event) => {
-            key(event.text, event.modifiers.shift, event.modifiers.control);
-            return accept;
+            // Accepting every key was simple and wrong: Escape, Ctrl+S
+            // and F5 have no meaning down here, so they died in this
+            // handler and a reader editing a file had no keyboard way
+            // to save it or to put it back. A rejected key goes on to
+            // the window's own scope, which knows what to do with it.
+            return key(event.text, event.modifiers.shift, event.modifiers.control)
+                ? accept : reject;
         }
     }
 
@@ -1102,7 +1120,7 @@ export component CodeEditorHarness inherits Window {
     out property <length> cell-width <=> editor.cell-width;
     out property <int> visible-rows <=> editor.visible-rows;
     callback pressed(int, int);
-    callback key(string, bool, bool);
+    callback key(string, bool, bool) -> bool;
 
     width: 600px;
     height: 320px;
@@ -1128,7 +1146,7 @@ export component CodeEditorHarness inherits Window {
         selection-end-column: root.selection-end-column;
         longest-line: root.longest-line;
         pressed(line, column) => { root.pressed(line, column); }
-        key(text, shift, control) => { root.key(text, shift, control); }
+        key(text, shift, control) => { return root.key(text, shift, control); }
     }
 }
 
@@ -1152,7 +1170,14 @@ export component MainWindow inherits Window {
     in property <int> file-view-index;
     // Tab metrics, shared by what is drawn and what a click is mapped
     // through, so the two cannot disagree.
-    private property <length> tab-w: 80px;
+    // Tabs share the strip rather than taking a fixed width each. At
+    // 80px apiece a third tab fell off the right-hand edge of a
+    // default-width File pane - so #495's Edit tab, the only sign the
+    // pane gives that an editor exists, was invisible until somebody
+    // widened the pane.
+    private property <length> tab-w: file-tabs.length > 0
+        ? file-pane.width / file-tabs.length
+        : 80px;
     private property <length> tab-h: 24px;
     callback file-view-selected(int);
     // The strip above the File pane: the plugin's views and then the way
@@ -1161,6 +1186,20 @@ export component MainWindow inherits Window {
     in property <[string]> file-tabs;
     in property <int> file-tab-index;
     callback file-tab-selected(int);
+    // The editor's own commands, shown in the File pane while it is
+    // open. The window's toolbar is about managing files, which is not
+    // where anybody looks while typing into one.
+    in property <bool> edit-modified;
+    in property <bool> edit-can-undo;
+    in property <bool> edit-can-redo;
+    in property <bool> edit-has-selection;
+    in property <int> edit-line;
+    in property <int> edit-column;
+    callback edit-undo-requested();
+    callback edit-redo-requested();
+    callback edit-cut-requested();
+    callback edit-copy-requested();
+    callback edit-paste-requested();
     // A picture for the previewed file, when its type is one.
     in property <image> file-graphic;
     in property <bool> file-has-graphic;
@@ -1240,8 +1279,16 @@ export component MainWindow inherits Window {
     // rather than from the editor inside it, because Slint cannot name
     // an element that sits inside an `if`. The 22px is the pane heading
     // above the editor; being a row out either way costs nothing.
-    out property <int> edit-visible-rows: floor((file-pane.height - 22px) / 16px);
-    callback edit-key(string, bool, bool);
+    // The 22px is the pane heading; the 46px is the editor's own command
+    // row and the caret readout below it, which sit between the heading
+    // and the text. Without them a page moved three rows further than
+    // the reader could see, every time.
+    out property <int> edit-visible-rows:
+        floor((file-pane.height - 22px - (editing-file ? 46px : 0px)) / 16px);
+    // True when the editing surface used the key. A false one falls
+    // through to the window's own scope; see `key-scope` below for the
+    // short list that still means something while a file is open.
+    callback edit-key(string, bool, bool) -> bool;
     callback edit-pressed(int, int);
     callback edit-requested();
     callback save-requested();
@@ -1288,8 +1335,47 @@ export component MainWindow inherits Window {
 
     forward-focus: key-scope;
 
+    // The editing surface takes the keyboard when it opens, and its
+    // focus scope is destroyed when it closes - leaving Slint's focus on
+    // an item that no longer exists and every key after it delivered to
+    // nobody. The whole window's keyboard was dead after a save or a
+    // close until the window was deactivated and brought back.
+    changed editing-file => {
+        if (!editing-file) { key-scope.focus(); }
+    }
+
+    // And the same when the reader clicks another pane while the editor
+    // is open: the pane they clicked is drawn focused, so the keyboard
+    // has to follow it rather than staying in a surface that is no
+    // longer the thing they are looking at.
+    changed focus-pane => {
+        if (editing-file && focus-pane != 2) { key-scope.focus(); }
+    }
+
     key-scope := FocusScope {
         key-pressed(event) => {
+            // A key that gets here while the editor has the keyboard is
+            // one the editing surface did not want. Four of them still
+            // mean something; the rest are the Contents pane's - rename,
+            // new file, the arrows, the type-ahead - and must not fire
+            // into a file somebody is in the middle of typing.
+            //
+            // Once the reader clicks another pane the file is still open
+            // but the editor is no longer the focused pane, and the pane
+            // they clicked has to answer its own keys - otherwise the
+            // pane drawn as focused is not the one listening.
+            if (editing-file && focus-pane == 2) {
+                if (event.text == Key.Escape) {
+                    cancel-requested();
+                } else if (event.modifiers.control && (event.text == "s" || event.text == "S")) {
+                    save-requested();
+                } else if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
+                    undo-requested();
+                } else if (event.text == Key.F5) {
+                    refresh-requested();
+                }
+                return accept;
+            }
             if (event.text == Key.Escape) {
                 cancel-requested();
             } else if (event.text == Key.Delete) {
@@ -1636,6 +1722,74 @@ export component MainWindow inherits Window {
                         // The editor, when a file is open in it. The plugin
                         // decides which types get here; the pane just draws
                         // what it is handed.
+                        // The editor's own commands, laid out the way a
+                        // Windows editor lays them out: what is done to
+                        // the text, then the clipboard, then the way out.
+                        // Greyed when they do not apply, like the
+                        // window's toolbar above.
+                        if editing-file: Rectangle {
+                            height: 26px;
+                            background: Theme.panel;
+                            HorizontalLayout {
+                                padding-left: 4px;
+                                padding-right: 4px;
+                                spacing: 2px;
+                                alignment: start;
+                                CommandButton {
+                                    label: edit-modified ? "Save *" : "Save";
+                                    button-enabled: edit-modified;
+                                    activated => { save-requested(); }
+                                }
+                                CommandSeparator { }
+                                CommandButton {
+                                    label: "Undo";
+                                    button-enabled: edit-can-undo;
+                                    activated => { edit-undo-requested(); }
+                                }
+                                CommandButton {
+                                    label: "Redo";
+                                    button-enabled: edit-can-redo;
+                                    activated => { edit-redo-requested(); }
+                                }
+                                CommandSeparator { }
+                                CommandButton {
+                                    label: "Cut";
+                                    button-enabled: edit-has-selection;
+                                    activated => { edit-cut-requested(); }
+                                }
+                                CommandButton {
+                                    label: "Copy";
+                                    button-enabled: edit-has-selection;
+                                    activated => { edit-copy-requested(); }
+                                }
+                                CommandButton {
+                                    label: "Paste";
+                                    activated => { edit-paste-requested(); }
+                                }
+                                CommandSeparator { }
+                                CommandButton {
+                                    label: "Close";
+                                    activated => { cancel-requested(); }
+                                }
+                            }
+                        }
+                        // Where the caret is, which is what every Windows
+                        // editor puts at the bottom of its window.
+                        if editing-file: Rectangle {
+                            height: 20px;
+                            background: Theme.panel;
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                alignment: start;
+                                caret-readout := Text {
+                                    text: "Ln " + edit-line + ", Col " + edit-column;
+                                    color: Theme.dim-text;
+                                    vertical-alignment: center;
+                                    accessible-role: text;
+                                    accessible-label: self.text;
+                                }
+                            }
+                        }
                         // Both editors live in here rather than beside
                         // each other, so that how many rows a page is can
                         // be measured. An element inside an `if` cannot
@@ -1655,7 +1809,7 @@ export component MainWindow inherits Window {
                                 selection-end-column: edit-selection-end-column;
                                 longest-line: edit-longest-line;
                                 focused: focus-pane == 2;
-                                key(text, shift, control) => { edit-key(text, shift, control); }
+                                key(text, shift, control) => { return edit-key(text, shift, control); }
                                 pressed(line, column) => { edit-pressed(line, column); }
                             }
                             // The file the coloured surface cannot serve

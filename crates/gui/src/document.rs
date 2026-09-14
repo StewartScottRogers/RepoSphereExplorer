@@ -107,6 +107,18 @@ impl Document {
         }
     }
 
+    /// Whether there is a step to go back to.
+    #[must_use]
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Whether there is a step that was undone to put back.
+    #[must_use]
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
     // -- reading the text ------------------------------------------------
 
     /// Which line `offset` is on, counting from zero.

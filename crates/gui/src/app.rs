@@ -713,6 +713,9 @@ pub fn chevron_hit(x: f32, depth: usize) -> bool {
 struct Edit {
     /// Where a save goes.
     path: PathBuf,
+    /// The file as it was opened, so the pane can say whether there is
+    /// anything to save without the reader having to try it.
+    original: String,
     /// The text and the caret.
     document: Document,
     /// Whether the hand-written surface is drawing it, or Slint's plain
@@ -720,6 +723,24 @@ struct Edit {
     /// place a caret in, or cannot receive typing for, opens in the
     /// plain one instead, and the status bar says why.
     coloured: bool,
+}
+
+/// A command the editor offers in its own row.
+///
+/// Named rather than passed as a keystroke so a caller cannot ask for
+/// something the row does not offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCommand {
+    /// Go back a step.
+    Undo,
+    /// Put back a step that was undone.
+    Redo,
+    /// Take the selection to the clipboard.
+    Cut,
+    /// Put the selection on the clipboard.
+    Copy,
+    /// Insert what is on the clipboard.
+    Paste,
 }
 
 /// The tab that opens the editor, and the one shown while it is open.
@@ -1049,6 +1070,17 @@ impl App {
     /// Shows `view` in the file pane, back at the type's first view. A view
     /// chosen for one file says nothing about the next, which may not even
     /// offer it.
+    /// Plants a completed listing, for a test that has one from the
+    /// service rather than a hand-written fixture.
+    pub fn apply_contents_result_for_test(&mut self, indices: &[usize], response: Response) {
+        self.apply_contents_result(indices, Ok(response));
+    }
+
+    /// Plants a completed file view, for the same reason.
+    pub fn show_file_view_for_test(&mut self, view: Response) {
+        self.show_file_view(Some(view));
+    }
+
     fn show_file_view(&mut self, view: Option<Response>) {
         self.file_view = view;
         self.file_view_index = 0;
@@ -1911,6 +1943,68 @@ impl App {
         })
     }
 
+    /// Whether the file has been changed since it was opened.
+    ///
+    /// Compared against the text rather than counted from the undo
+    /// stack, so typing a letter and taking it out again leaves nothing
+    /// to save - which is what a reader means by unchanged.
+    #[must_use]
+    pub fn edit_modified(&self) -> bool {
+        self.editing_file
+            .as_ref()
+            .is_some_and(|edit| edit.document.text() != edit.original)
+    }
+
+    /// Whether the editor has a step to go back to.
+    #[must_use]
+    pub fn edit_can_undo(&self) -> bool {
+        self.editing_file
+            .as_ref()
+            .is_some_and(|edit| edit.document.can_undo())
+    }
+
+    /// Whether it has one to put back.
+    #[must_use]
+    pub fn edit_can_redo(&self) -> bool {
+        self.editing_file
+            .as_ref()
+            .is_some_and(|edit| edit.document.can_redo())
+    }
+
+    /// Whether anything is selected, which is what Cut and Copy need.
+    #[must_use]
+    pub fn edit_has_selection(&self) -> bool {
+        self.editing_file
+            .as_ref()
+            .is_some_and(|edit| edit.document.selection().is_some())
+    }
+
+    /// The caret's line and column, counted from one.
+    ///
+    /// One-based because that is what every editor a reader has used
+    /// shows, and what every compiler error they will paste it into
+    /// means.
+    #[must_use]
+    pub fn edit_position(&self) -> (usize, usize) {
+        let (line, column) = self.edit_caret();
+        (line + 1, column + 1)
+    }
+
+    /// One of the editor's own commands, run from the pane's row.
+    ///
+    /// Routed through the same keystroke handler the keyboard uses, so
+    /// a button and its shortcut cannot come to mean different things.
+    pub fn edit_command(&mut self, command: EditCommand, clipboard: &mut dyn editor::Clipboard) {
+        let (text, control) = match command {
+            EditCommand::Undo => ("z", true),
+            EditCommand::Redo => ("y", true),
+            EditCommand::Cut => ("x", true),
+            EditCommand::Copy => ("c", true),
+            EditCommand::Paste => ("v", true),
+        };
+        self.edit_key(clipboard, text, false, control, 1);
+    }
+
     /// A keystroke, for the editor to make sense of.
     pub fn edit_key(
         &mut self,
@@ -1957,6 +2051,7 @@ impl App {
         }
         self.editing_file = Some(Edit {
             path,
+            original: text.clone(),
             document: Document::new(text),
             coloured,
         });
@@ -2056,8 +2151,25 @@ impl App {
         if !matches!(self.mode, Mode::Normal) {
             return;
         }
+        // While the editor is open this is the editor's undo. It used to
+        // be the filesystem's whatever was on screen, so the button
+        // marked Undo reached past what somebody was typing and put back
+        // a file they had deleted earlier - with nothing to tell the two
+        // apart. In every Windows application, Undo inside an editor
+        // undoes typing.
+        if self.editing_file() {
+            self.undo_edit();
+            return;
+        }
         self.pending_operation = Some(spawn_request(Request::Undo));
         self.status = Some("undoing...".to_owned());
+    }
+
+    /// The editor's undo, with no clipboard to reach for.
+    pub fn undo_edit(&mut self) {
+        if let Some(edit) = self.editing_file.as_mut() {
+            edit.document.undo();
+        }
     }
 
     /// F5: re-reads the folder being browsed.
@@ -2323,14 +2435,44 @@ impl App {
             self.sort_key = key;
             self.sort_ascending = true;
         }
+        // A selection is a set of files, not a set of row numbers. The
+        // lead row followed its file across the reorder from the start;
+        // the set behind it did not, so the highlight, and every
+        // operation that reads it, kept pointing at whatever landed on
+        // the old numbers. Delete after a sort named a file the reader
+        // had never picked.
         let selected = self
             .contents
             .get(self.content_selected)
             .map(|entry| entry.name.clone());
+        let anchored = self
+            .contents
+            .get(self.anchor)
+            .map(|entry| entry.name.clone());
+        let held: Vec<String> = self
+            .selection
+            .iter()
+            .filter_map(|index| self.contents.get(*index))
+            .map(|entry| entry.name.clone())
+            .collect();
+
         self.sort_contents();
+
+        let row_of = |name: &str, contents: &[DirectoryEntry]| {
+            contents.iter().position(|entry| entry.name == name)
+        };
         self.content_selected = selected
-            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .as_deref()
+            .and_then(|name| row_of(name, &self.contents))
             .unwrap_or(0);
+        self.anchor = anchored
+            .as_deref()
+            .and_then(|name| row_of(name, &self.contents))
+            .unwrap_or(self.content_selected);
+        self.selection = held
+            .iter()
+            .filter_map(|name| row_of(name, &self.contents))
+            .collect();
     }
 
     /// The column currently sorted on, as a UI column index.
@@ -2659,7 +2801,9 @@ impl App {
 mod tests {
     use std::path::Path;
 
-    use super::{Class, ColouredRun, colour_summary_line, file_starts_in_preview, summary_label};
+    use super::{
+        Class, ColouredRun, EditCommand, colour_summary_line, file_starts_in_preview, summary_label,
+    };
 
     use super::{
         App, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp, icon_for,
@@ -5103,5 +5247,151 @@ third",
             "a single-view type still shows a strip, because of the Edit \
              tab: {tabs:?}"
         );
+    }
+    /// An app editing a small text file, for the command row's tests.
+    fn app_editing(text: &str) -> App {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": text, "truncated": false }),
+        );
+        app.begin_file_edit();
+        app
+    }
+
+    /// **The defect this work order is named for.**
+    ///
+    /// `Undo` in the window's toolbar sent `Request::Undo` to the
+    /// service, which undoes the last *file operation* - a rename, a
+    /// delete, a copy. While somebody was typing, the button marked Undo
+    /// reached past their text and put back a file they had deleted
+    /// earlier, and nothing told the two apart.
+    #[test]
+    fn the_windows_undo_undoes_typing_while_the_editor_is_open() {
+        let mut app = app_editing("hello");
+        let mut clipboard = NoClipboard;
+        app.edit_key(&mut clipboard, "x", false, false, 20);
+        assert_eq!(app.edit_text(), "xhello");
+
+        app.undo();
+
+        assert_eq!(app.edit_text(), "hello", "it undid the typing");
+        assert_ne!(
+            app.status_text(),
+            "undoing...",
+            "and did not send an undo to the filesystem"
+        );
+    }
+
+    #[test]
+    fn the_windows_undo_is_still_the_filesystems_when_no_editor_is_open() {
+        let mut app = app_with_one_content_entry();
+        app.undo();
+        assert_eq!(
+            app.status_text(),
+            "undoing...",
+            "outside the editor it is what it always was"
+        );
+    }
+
+    #[test]
+    fn the_row_says_whether_there_is_anything_to_save() {
+        let mut app = app_editing("hello");
+        assert!(!app.edit_modified(), "nothing typed yet");
+
+        let mut clipboard = NoClipboard;
+        app.edit_key(&mut clipboard, "x", false, false, 20);
+        assert!(app.edit_modified());
+
+        // Typed and taken out again is unchanged, which is what a reader
+        // means by it - counting undo steps would say otherwise.
+        app.undo();
+        assert!(!app.edit_modified());
+    }
+
+    #[test]
+    fn undo_and_redo_grey_when_there_is_nothing_to_do() {
+        let mut app = app_editing("hello");
+        assert!(!app.edit_can_undo(), "nothing typed, nothing to undo");
+        assert!(!app.edit_can_redo());
+
+        let mut clipboard = NoClipboard;
+        app.edit_key(&mut clipboard, "x", false, false, 20);
+        assert!(app.edit_can_undo());
+        assert!(!app.edit_can_redo(), "nothing undone yet");
+
+        app.edit_command(EditCommand::Undo, &mut clipboard);
+        assert!(app.edit_can_redo(), "and now there is");
+    }
+
+    #[test]
+    fn cut_and_copy_grey_until_something_is_selected() {
+        let mut app = app_editing("hello world");
+        assert!(!app.edit_has_selection());
+
+        let mut clipboard = NoClipboard;
+        app.edit_key(&mut clipboard, "a", false, true, 20);
+        assert!(app.edit_has_selection(), "control-a selected it all");
+    }
+
+    #[test]
+    fn each_command_in_the_row_does_what_its_shortcut_does() {
+        // Routed through the same handler, so a button and its shortcut
+        // cannot come to mean different things.
+        let mut app = app_editing("alpha beta");
+        let mut clipboard = Board::default();
+
+        app.edit_key(&mut clipboard, "a", false, true, 20);
+        app.edit_command(EditCommand::Copy, &mut clipboard);
+        assert_eq!(clipboard.0.as_deref(), Some("alpha beta"), "Copy");
+
+        app.edit_command(EditCommand::Cut, &mut clipboard);
+        assert_eq!(app.edit_text(), "", "Cut");
+
+        app.edit_command(EditCommand::Paste, &mut clipboard);
+        assert_eq!(app.edit_text(), "alpha beta", "Paste");
+
+        app.edit_command(EditCommand::Undo, &mut clipboard);
+        assert_eq!(app.edit_text(), "", "Undo");
+
+        app.edit_command(EditCommand::Redo, &mut clipboard);
+        assert_eq!(app.edit_text(), "alpha beta", "Redo");
+    }
+
+    #[test]
+    fn the_caret_is_reported_from_one_as_every_editor_shows_it() {
+        let mut app = app_editing("one\ntwo\nthree");
+        assert_eq!(app.edit_position(), (1, 1), "the very start is Ln 1, Col 1");
+
+        let mut clipboard = NoClipboard;
+        app.edit_key(
+            &mut clipboard,
+            &char::from(slint::platform::Key::DownArrow).to_string(),
+            false,
+            false,
+            20,
+        );
+        app.edit_key(
+            &mut clipboard,
+            &char::from(slint::platform::Key::RightArrow).to_string(),
+            false,
+            false,
+            20,
+        );
+        assert_eq!(app.edit_position(), (2, 2));
+    }
+
+    /// A clipboard that remembers, for the commands that use one.
+    #[derive(Default)]
+    struct Board(Option<String>);
+
+    impl crate::editor::Clipboard for Board {
+        fn read(&mut self) -> Option<String> {
+            self.0.clone()
+        }
+        fn write(&mut self, text: &str) {
+            self.0 = Some(text.to_owned());
+        }
     }
 }
