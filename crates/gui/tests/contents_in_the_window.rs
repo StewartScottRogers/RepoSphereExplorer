@@ -425,6 +425,9 @@ fn a_typed_letter_jumps_to_the_matching_row() {
         std::fs::write(directory.join(name), "x").expect("the fixture is written");
     }
     let (ui, app) = window_on(&directory);
+    // The window opens with the tree focused, and a letter goes to the
+    // pane the reader is in. Clicking a row is how they get here.
+    ui.invoke_content_row_clicked(0);
     assert_eq!(selected_name(&app), "alpha.txt");
 
     press(&ui, "c");
@@ -433,6 +436,37 @@ fn a_typed_letter_jumps_to_the_matching_row() {
         selected_name(&app),
         "charlie.txt",
         "a typed letter should jump to the next name beginning with it"
+    );
+}
+
+/// The mirror of `folders_in_the_window`'s tree type-ahead: with the
+/// listing focused, a letter moves the listing and leaves the tree alone.
+///
+/// It used to move the listing whichever pane was focused, which is how
+/// the two tests above passed while the defect was live - the window
+/// opens on the tree, so they were being answered by the wrong pane.
+#[test]
+fn a_typed_letter_with_the_listing_focused_leaves_the_tree_alone() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = scratch("type-ahead-listing-only");
+    for name in ["alpha.txt", "bravo.txt", "charlie.txt"] {
+        std::fs::write(directory.join(name), "x").expect("the fixture is written");
+    }
+    let (ui, app) = window_on(&directory);
+    ui.invoke_content_row_clicked(0);
+    let tree_before = app.borrow().folder_selected();
+
+    press(&ui, "c");
+
+    assert_eq!(
+        selected_name(&app),
+        "charlie.txt",
+        "the focused pane is the listing, so the letter moves the listing"
+    );
+    assert_eq!(
+        app.borrow().folder_selected(),
+        tree_before,
+        "and the tree, which is not the focused pane, does not move"
     );
 }
 
@@ -760,6 +794,9 @@ fn type_ahead_after_a_sort_jumps_to_the_row_it_names() {
         std::fs::write(directory.join(name), "x".repeat(size)).expect("the fixture is written");
     }
     let (ui, app) = window_on(&directory);
+    // Type-ahead answers the focused pane, and the window opens on the
+    // tree; a reader clicks into the listing before typing in it.
+    ui.invoke_content_row_clicked(0);
     ui.invoke_content_sort_requested(1);
 
     press(&ui, "b");

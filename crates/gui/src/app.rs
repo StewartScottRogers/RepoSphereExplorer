@@ -2211,6 +2211,19 @@ impl App {
         if !matches!(self.mode, Mode::Normal) || prefix.is_empty() {
             return;
         }
+        // The letter goes to the pane that is drawn as the focused one.
+        // It always went to the listing, so with the tree focused - which
+        // is how the window opens - the arrows moved the tree and a typed
+        // letter jumped the listing behind it.
+        //
+        // The tree gets its own rather than going silent, because a
+        // Repos Directory is a list of repository folders and three
+        // letters is how anybody reaches one of them. Explorer's
+        // navigation pane does the same.
+        if matches!(self.focus, Pane::Folders) {
+            self.type_ahead_in_tree(prefix);
+            return;
+        }
         let prefix = prefix.to_lowercase();
         let count = self.contents.len();
         let found = (1..=count)
@@ -2223,6 +2236,28 @@ impl App {
             });
         if let Some(index) = found {
             self.select_content(index);
+        }
+    }
+
+    /// Type-ahead over the visible tree rows. Only what is on screen: a
+    /// letter should reach what the reader can see, and a collapsed
+    /// folder's children are not part of the list they are looking at.
+    fn type_ahead_in_tree(&mut self, prefix: &str) {
+        let prefix = prefix.to_lowercase();
+        let rows = self.root.flatten();
+        let count = rows.len();
+        if count == 0 {
+            return;
+        }
+        let found = (1..=count)
+            .map(|step| (self.folder_selected + step) % count)
+            .find(|index| {
+                rows.get(*index)
+                    .and_then(|(_, indices)| self.root.node_at(indices))
+                    .is_some_and(|node| node.name.to_lowercase().starts_with(&prefix))
+            });
+        if let Some(index) = found {
+            self.select_folder(index);
         }
     }
 
