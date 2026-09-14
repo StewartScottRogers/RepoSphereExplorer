@@ -150,6 +150,25 @@ jobs:
           "${binary}" --version
           echo "path=${binary}" >> "${GITHUB_OUTPUT}"
 
+      # The prompt lives in `.github/reviewer-prompt.md` rather than here
+      # because it is used twice - once, and again if the first pass ends
+      # without leaving a review. Two copies of a hundred lines of
+      # instructions would drift apart, and the drift would be invisible.
+      - name: Build the reviewer's prompt
+        id: prompt
+        if: steps.hold.outputs.stand_aside == ''
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          text=$(sed -e "s/{{PR}}/${PR}/g" -e "s|{{REPO}}|${REPO}|g"             .github/reviewer-prompt.md)
+          {
+            echo "text<<REVIEWER_PROMPT_EOF"
+            echo "${text}"
+            echo "REVIEWER_PROMPT_EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - uses: anthropics/claude-code-action@v1
         id: reviewer
         if: steps.hold.outputs.stand_aside == ''
@@ -158,61 +177,41 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
             --max-turns 150
-            --allowedTools "Bash(cargo *),Bash(gh *)"
-          prompt: |
-            You are an independent reviewer for pull request #${{ github.event.pull_request.number }}
-            in ${{ github.repository }}. You did not write this PR and have no
-            memory of writing it - treat every claim it makes as unverified
-            until you check it yourself.
+            --allowedTools "Bash(cargo *),Bash(gh *),Read,Grep,Glob"
+          prompt: ${{ steps.prompt.outputs.text }}
 
-            1. Read the PR diff (`gh pr diff ${{ github.event.pull_request.number }}`)
-               and its description (`gh pr view ${{ github.event.pull_request.number }} --json body,title`).
-               Find the `Closes #N` reference in the body and read that issue
-               (`gh issue view N`) to learn what was actually asked for and its
-               stated acceptance checks.
-            2. Independently run, in this checked-out branch, what is cheap
-               and specific to this diff:
+      # Twice - on #483 and #485 - the reviewer finished clean and left no
+      # review: `is_error: false`, twenty-three turns, two denied tool
+      # calls, nothing posted. Re-running the same job by hand then passed
+      # both times, which is a person on the floor for a job that is
+      # supposed to run without one.
+      #
+      # The denials are the likeliest cause and are addressed above: the
+      # prompt told it to read CLAUDE.md and to grep, and the allowlist
+      # gave it neither. But that is inferred from a counter, so this step
+      # prints what was actually denied, and the retry below covers the
+      # case where the cause turns out to be something else.
+      - name: Did a review land
+        id: first-pass
+        if: always() && steps.hold.outputs.stand_aside == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/review-landed.sh
 
-               - `cargo fmt --all -- --check`
-               - `cargo clippy -p <crate> --all-targets --all-features -- -D warnings`
-                 and `cargo test -p <crate>`, for each crate the diff
-                 touches. `gh pr diff ${{ github.event.pull_request.number }} --name-only`
-                 names them: a path under `crates/plugins/foo/` is
-                 `-p plugin-foo`, one under `crates/foo/` is `-p foo`.
-
-               Do **not** run the whole workspace. `cargo test
-               --all-features` across a hundred and fifty crates is
-               eighteen minutes and thousands of lines, and reading it
-               spends the budget you need for steps 3 and 4 - which are
-               the part only you do. It also duplicates the required
-               `fmt / clippy / test` check, which is running on this same
-               commit right now and which branch protection will not let
-               this pull request merge without. Your job is the diff, not
-               a second copy of that run.
-
-               Do not trust the PR description's claim that anything
-               passed - run the above yourself and read the actual output.
-               Also re-check any acceptance checks from the issue that are
-               checkable this way (e.g. a named grep, a specific file
-               existing).
-            3. Check the diff against this repo's CLAUDE.md rules, in
-               particular rule 4 (surgical: does every changed line trace to
-               the issue?) and rule 5 (no speculative structure: no
-               abstraction for a single caller, no unrequested configurability).
-            4. Check that any new behavior has a real, meaningful test - one
-               that actually exercises the claimed behavior, not just a test
-               that happens to exist nearby.
-            5. If everything holds up, approve with a summary of what you
-               independently verified:
-               `gh pr review ${{ github.event.pull_request.number }} --approve --body "..."`
-            6. If something doesn't hold up, name the specific problem and do
-               not approve:
-               `gh pr review ${{ github.event.pull_request.number }} --request-changes --body "..."`
-
-            Make exactly one pass/fail judgment call, the way a human reviewer
-            would - do not build a scoring rubric. Never edit any file, never
-            open a PR, never push a commit; you only have Bash(cargo *) and
-            Bash(gh *) available, no Edit or Write tool and no git access.
+      - uses: anthropics/claude-code-action@v1
+        id: retry
+        if: always() && steps.hold.outputs.stand_aside == ''
+          && steps.first-pass.outputs.landed == 'false'
+        with:
+          path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --max-turns 150
+            --allowedTools "Bash(cargo *),Bash(gh *),Read,Grep,Glob"
+          prompt: ${{ steps.prompt.outputs.text }}
 
       # A green tick on this check used to mean one of two different things.
       # The action declines to run when the pull request modifies the
@@ -226,6 +225,10 @@ jobs:
       #
       # So: find out whether a review actually landed, and if it did not,
       # say which case it was and go red. Work order #300.
+      #
+      # It now runs after the retry rather than after the only attempt, so
+      # red here means the reviewer declined to answer twice - work order
+      # #486, where declining once was costing a manual re-run.
       - name: Confirm a review actually landed
         if: always()
         env:
@@ -234,6 +237,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           AGENT_OUTCOME: ${{ steps.reviewer.outcome }}
+          RETRY_OUTCOME: ${{ steps.retry.outcome }}
           STAND_ASIDE: ${{ steps.hold.outputs.stand_aside }}
         run: |
           set -euo pipefail
@@ -266,7 +270,9 @@ jobs:
             exit 0
           fi
 
-          echo "::error::Not reviewed. The agent step finished as '${AGENT_OUTCOME}' and"
-          echo "::error::left no review on ${HEAD_SHA}. Check the log above: a runtime"
-          echo "::error::that failed to install is work order #298's failure mode."
+          echo "::error::Not reviewed, twice. The first pass finished as"
+          echo "::error::'${AGENT_OUTCOME}' and the retry as '${RETRY_OUTCOME}', and neither"
+          echo "::error::left a review on ${HEAD_SHA}. The 'Did a review land' step above"
+          echo "::error::prints what the agent was denied; a runtime that failed to"
+          echo "::error::install is work order #298's failure mode."
           exit 1
