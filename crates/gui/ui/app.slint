@@ -967,6 +967,14 @@ component CodeEditor inherits Rectangle {
 
     forward-focus: keys;
 
+    // The surface takes the keyboard the moment it exists, not on the
+    // first click. It is created when the editor opens, so this is that
+    // moment - and without it a reader who opened the editor from the
+    // Edit tab had their first keystrokes go to the window's own focus
+    // scope, which is the Contents pane's type-ahead. From the outside:
+    // the editor does not insert at the caret.
+    init => { keys.focus(); }
+
     // Off-screen, and the only thing that knows how wide a character is.
     // Forty of them rather than one, so that rounding in the font's
     // metrics is divided away rather than multiplied up.

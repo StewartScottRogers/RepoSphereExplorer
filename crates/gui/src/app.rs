@@ -1070,6 +1070,17 @@ impl App {
     /// Shows `view` in the file pane, back at the type's first view. A view
     /// chosen for one file says nothing about the next, which may not even
     /// offer it.
+    /// Plants a completed listing, for a test that has one from the
+    /// service rather than a hand-written fixture.
+    pub fn apply_contents_result_for_test(&mut self, indices: &[usize], response: Response) {
+        self.apply_contents_result(indices, Ok(response));
+    }
+
+    /// Plants a completed file view, for the same reason.
+    pub fn show_file_view_for_test(&mut self, view: Response) {
+        self.show_file_view(Some(view));
+    }
+
     fn show_file_view(&mut self, view: Option<Response>) {
         self.file_view = view;
         self.file_view_index = 0;

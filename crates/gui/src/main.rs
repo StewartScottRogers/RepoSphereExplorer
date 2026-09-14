@@ -21,110 +21,6 @@ use std::time::Duration;
 const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(2);
 const SERVICE_START_POLL: Duration = Duration::from_millis(100);
 
-/// The editing surface's own callbacks: a keystroke and a click.
-///
-/// Apart from `main` because it is the only part of the wiring that
-/// holds something of its own - the clipboard - and because `main` was
-/// already at the length the lints allow.
-fn wire_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        let mut clipboard = SystemClipboard::default();
-        ui.on_edit_key(move |text, shift, control| {
-            let Some(ui) = ui_weak.upgrade() else {
-                return;
-            };
-            // A page is what the pane is showing, not a number chosen
-            // here: at least one row, so a pane too short to show any
-            // still moves.
-            let rows = usize::try_from(ui.get_edit_visible_rows())
-                .unwrap_or(20)
-                .max(1);
-            let mut app = app.borrow_mut();
-            app.edit_key(&mut clipboard, &text, shift, control, rows);
-            sync_ui(&ui, &app);
-        });
-    }
-    macro_rules! on_edit_command {
-        ($setter:ident, $command:ident) => {{
-            let app = Rc::clone(app);
-            let ui_weak = ui.as_weak();
-            let mut clipboard = SystemClipboard::default();
-            ui.$setter(move || {
-                let mut app = app.borrow_mut();
-                app.edit_command(gui::app::EditCommand::$command, &mut clipboard);
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-    on_edit_command!(on_edit_undo_requested, Undo);
-    on_edit_command!(on_edit_redo_requested, Redo);
-    on_edit_command!(on_edit_cut_requested, Cut);
-    on_edit_command!(on_edit_copy_requested, Copy);
-    on_edit_command!(on_edit_paste_requested, Paste);
-
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_edit_pressed(move |line, column| {
-            let mut app = app.borrow_mut();
-            app.edit_click(
-                usize::try_from(line).unwrap_or(0),
-                usize::try_from(column).unwrap_or(0),
-                false,
-            );
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-}
-
-/// The machine's clipboard.
-///
-/// Slint 1.17.1 keeps the clipboard on its `Platform` trait, where an
-/// application cannot reach it, so this goes to `copypasta` - which
-/// Slint's own windowing backend already depends on, so nothing new is
-/// being trusted or built.
-///
-/// Every call can fail, and every failure is the same thing to a reader:
-/// the clipboard did not work this time. There is nothing useful to do
-/// about it and nothing worth interrupting them with, so a failed copy
-/// leaves the clipboard as it was and a failed paste inserts nothing.
-#[derive(Default)]
-struct SystemClipboard {
-    context: Option<copypasta::ClipboardContext>,
-}
-
-impl SystemClipboard {
-    /// The context, opened on first use. Opening it at startup would
-    /// take a platform resource for a window that may never edit
-    /// anything.
-    fn context(&mut self) -> Option<&mut copypasta::ClipboardContext> {
-        if self.context.is_none() {
-            self.context = copypasta::ClipboardContext::new().ok();
-        }
-        self.context.as_mut()
-    }
-}
-
-impl gui::editor::Clipboard for SystemClipboard {
-    fn read(&mut self) -> Option<String> {
-        use copypasta::ClipboardProvider as _;
-        self.context()?.get_contents().ok()
-    }
-
-    fn write(&mut self, text: &str) {
-        use copypasta::ClipboardProvider as _;
-        if let Some(context) = self.context() {
-            let _ = context.set_contents(text.to_owned());
-        }
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if env::args().any(|arg| arg == "--self-update") {
         return self_update();
@@ -203,7 +99,7 @@ fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_rows(ui, app);
     wire_commands(ui, app);
     wire_content_operations(ui, app);
-    wire_editor(ui, app);
+    gui::wire_editor(ui, app);
 }
 
 /// Wires the callbacks that carry a row index or a signed delta.

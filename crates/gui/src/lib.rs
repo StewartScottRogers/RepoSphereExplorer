@@ -19,9 +19,11 @@ pub use app::PRESENTATION_PLUGINS;
 
 use app::App;
 use plugin_api::{Class, Graphic, Icon};
+use slint::ComponentHandle as _;
 use slint::{Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 thread_local! {
     /// Rendered icons, keyed by the label and tint they were drawn from.
@@ -225,6 +227,118 @@ fn sync_editor(ui: &MainWindow, app: &App) {
             ui.set_edit_selection_end_column(row_index(end_column));
         }
         None => ui.set_edit_selection_start_line(-1),
+    }
+}
+
+/// The machine's clipboard, for [`wire_editor`].
+///
+/// Slint 1.17.1 keeps its own on the `Platform` trait where an
+/// application cannot reach it, so this goes through `copypasta` -
+/// which Slint's own windowing backend already depends on.
+///
+/// Every call can fail, and every failure is the same thing to a
+/// reader: the clipboard did not work this time. A failed copy leaves
+/// it as it was and a failed paste inserts nothing.
+#[derive(Default)]
+struct SystemClipboard {
+    context: Option<copypasta::ClipboardContext>,
+}
+
+impl SystemClipboard {
+    /// Opened on first use: a window that never edits anything should
+    /// not hold a platform resource.
+    fn context(&mut self) -> Option<&mut copypasta::ClipboardContext> {
+        if self.context.is_none() {
+            self.context = copypasta::ClipboardContext::new().ok();
+        }
+        self.context.as_mut()
+    }
+}
+
+impl editor::Clipboard for SystemClipboard {
+    fn read(&mut self) -> Option<String> {
+        use copypasta::ClipboardProvider as _;
+        self.context()?.get_contents().ok()
+    }
+
+    fn write(&mut self, text: &str) {
+        use copypasta::ClipboardProvider as _;
+        if let Some(context) = self.context() {
+            let _ = context.set_contents(text.to_owned());
+        }
+    }
+}
+
+/// A clipboard for the editor's callbacks to hold.
+fn clipboard() -> SystemClipboard {
+    SystemClipboard::default()
+}
+
+/// The editing surface's own callbacks: a keystroke, a click, and the
+/// commands in the pane's row.
+///
+/// In the library rather than in `main` so that a test can wire a real
+/// window to a real `App` exactly as the application does. Every test
+/// before this one held one half or the other, and the half nobody had
+/// was the half that decides whether typing lands where the caret is.
+///
+/// Apart from `main` because it is the only part of the wiring that
+/// holds something of its own - the clipboard - and because `main` was
+/// already at the length the lints allow.
+pub fn wire_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        let mut clipboard = clipboard();
+        ui.on_edit_key(move |text, shift, control| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            // A page is what the pane is showing, not a number chosen
+            // here: at least one row, so a pane too short to show any
+            // still moves.
+            let rows = usize::try_from(ui.get_edit_visible_rows())
+                .unwrap_or(20)
+                .max(1);
+            let mut app = app.borrow_mut();
+            app.edit_key(&mut clipboard, &text, shift, control, rows);
+            sync_ui(&ui, &app);
+        });
+    }
+    macro_rules! on_edit_command {
+        ($setter:ident, $command:ident) => {{
+            let app = Rc::clone(app);
+            let ui_weak = ui.as_weak();
+            let mut clipboard = clipboard();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.edit_command(app::EditCommand::$command, &mut clipboard);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+    on_edit_command!(on_edit_undo_requested, Undo);
+    on_edit_command!(on_edit_redo_requested, Redo);
+    on_edit_command!(on_edit_cut_requested, Cut);
+    on_edit_command!(on_edit_copy_requested, Copy);
+    on_edit_command!(on_edit_paste_requested, Paste);
+
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_edit_pressed(move |line, column| {
+            let mut app = app.borrow_mut();
+            app.edit_click(
+                usize::try_from(line).unwrap_or(0),
+                usize::try_from(column).unwrap_or(0),
+                false,
+            );
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
     }
 }
 
