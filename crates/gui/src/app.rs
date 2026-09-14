@@ -722,6 +722,14 @@ struct Edit {
     coloured: bool,
 }
 
+/// The tab that opens the editor, and the one shown while it is open.
+///
+/// Two words rather than one, because a tab reading `Edit` while an
+/// editor is already open would look like a button that had stopped
+/// working.
+const EDIT_TAB: &str = "Edit";
+const EDITING_TAB: &str = "Editing";
+
 /// A line drawn in no colour at all, as one run.
 fn plain_line(line: &str) -> Vec<ColouredRun> {
     vec![ColouredRun {
@@ -2450,6 +2458,54 @@ impl App {
             .collect();
         lines.extend(coloured);
         lines
+    }
+
+    /// The tab strip above the File pane: the plugin's views, and then
+    /// the pane's own way in to the editor.
+    ///
+    /// Editing is not a plugin's idea of the file - it is something the
+    /// application offers - so it is appended here rather than added to
+    /// `PluginPresentation::views`, which would make every plugin
+    /// responsible for a thing none of them does.
+    ///
+    /// While the editor is open the plugin's views are not offered at
+    /// all. They would be one stray click away from discarding what
+    /// somebody has typed, and the way out is Save or Escape, which say
+    /// what they did.
+    #[must_use]
+    pub fn file_tabs(&self) -> Vec<String> {
+        if self.editing_file() {
+            return vec![EDITING_TAB.to_owned()];
+        }
+        let mut tabs: Vec<String> = self.file_views().into_iter().map(str::to_owned).collect();
+        if self.can_edit() {
+            tabs.push(EDIT_TAB.to_owned());
+        }
+        tabs
+    }
+
+    /// Which tab is active, as an index into [`Self::file_tabs`].
+    #[must_use]
+    pub fn file_tab_index(&self) -> usize {
+        if self.editing_file() {
+            0
+        } else {
+            self.file_view_index
+        }
+    }
+
+    /// Chooses the tab at `index`: a view, or the editor.
+    pub fn select_file_tab(&mut self, index: usize) {
+        if self.editing_file() {
+            // Only the one tab while editing, and it is already active.
+            return;
+        }
+        let views = self.file_views().len();
+        if index < views {
+            self.select_file_view(index);
+        } else if index == views {
+            self.begin_file_edit();
+        }
     }
 
     /// Which view the pane is showing, as an index into [`Self::file_views`].
@@ -4929,6 +4985,123 @@ third",
         assert!(
             msbuild.is_none(),
             "a project's summary is prose, not a list of names"
+        );
+    }
+    /// An editor nobody can find is an editor nobody has.
+    ///
+    /// The only way in used to be a toolbar button called Edit, sitting
+    /// beside Cut, Copy, Rename and Delete - where it reads as another
+    /// thing done *to* a file - and greyed out on every fresh launch,
+    /// because the first row of a repos listing is a folder.
+    #[test]
+    fn an_editable_file_offers_a_way_into_the_editor_in_the_pane_itself() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+
+        assert_eq!(
+            app.file_tabs(),
+            vec!["Preview", "Text", "Edit"],
+            "the plugin's views, and then the pane's own"
+        );
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_edited_offers_no_way_in_rather_than_a_dead_one() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view("image", serde_json::json!({ "width": 4 }));
+
+        assert_eq!(
+            app.file_tabs(),
+            vec!["Preview"],
+            "nothing to wonder about: the affordance is absent rather \
+             than greyed"
+        );
+    }
+
+    #[test]
+    fn choosing_the_edit_tab_opens_the_editor() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        assert!(!app.editing_file());
+
+        let edit = app.file_tabs().len() - 1;
+        app.select_file_tab(edit);
+
+        assert!(app.editing_file(), "the same thing the toolbar button does");
+    }
+
+    #[test]
+    fn the_editor_offers_only_itself_while_it_is_open() {
+        // The plugin's views would be one stray click away from
+        // discarding what somebody has typed. The way out is Save or
+        // Escape, both of which say what they did.
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        app.begin_file_edit();
+
+        assert_eq!(app.file_tabs(), vec!["Editing"]);
+        assert_eq!(app.file_tab_index(), 0);
+
+        app.select_file_tab(0);
+        assert!(app.editing_file(), "and choosing it again changes nothing");
+    }
+
+    #[test]
+    fn leaving_the_editor_returns_to_the_view_that_was_showing() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        app.select_file_tab(1);
+        assert_eq!(app.file_tab_index(), 1, "the Text view");
+
+        app.begin_file_edit();
+        app.cancel_file_edit();
+
+        assert_eq!(
+            app.file_tabs(),
+            vec!["Preview", "Text", "Edit"],
+            "the views are offered again"
+        );
+        assert_eq!(
+            app.file_tab_index(),
+            1,
+            "and the Text view is still the one"
+        );
+    }
+
+    #[test]
+    fn a_type_with_one_view_still_gets_its_edit_tab() {
+        // The strip is hidden when there is only one thing to choose, so
+        // without this the only way in would be hidden for exactly the
+        // types that offer a single view.
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "dotenv",
+            serde_json::json!({ "content": "A=1", "truncated": false, "keys": [] }),
+        );
+
+        let tabs = app.file_tabs();
+        assert!(
+            tabs.len() > 1 && tabs.last().map(String::as_str) == Some("Edit"),
+            "a single-view type still shows a strip, because of the Edit \
+             tab: {tabs:?}"
         );
     }
 }

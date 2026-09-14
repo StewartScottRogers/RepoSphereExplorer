@@ -1,11 +1,13 @@
-//! The File pane's view switcher, driven through Slint's own hit-testing.
+//! The File pane's tab strip, driven through Slint's own hit-testing.
 //!
-//! A type that offers more than one view gets a tab per view; a type that
-//! offers one gets no switcher at all, so the single-view types look exactly
-//! as they did before. A click has to reach `file-view-selected` with the
-//! index of the tab it landed on: the pane draws whichever view the
-//! application hands back, so a click that maps to the wrong tab - or to
-//! nothing - leaves a switcher that only looks like one.
+//! More than one tab gets a strip; one tab gets none. A click has to reach
+//! `file-tab-selected` with the index of the tab it landed on: the pane
+//! draws whatever the application hands back, so a click that maps to the
+//! wrong tab - or to nothing - leaves a strip that only looks like one.
+//!
+//! What is in the strip is the application's business and is tested in
+//! `app`: the plugin's views, then an Edit tab for a file that can be
+//! edited, and while the editor is open nothing but `Editing`.
 
 use gui::MainWindow;
 use i_slint_backend_testing::ElementHandle;
@@ -18,10 +20,10 @@ use std::rc::Rc;
 const TAB_WIDTH: f32 = 80.0;
 const TAB_HEIGHT: f32 = 24.0;
 
-/// A shown window whose File pane is previewing a type offering `views`.
+/// A shown window whose File pane offers `views` as its tabs.
 fn window_with_views(views: &[&str]) -> MainWindow {
     let ui = MainWindow::new().expect("the window should build");
-    ui.set_file_views(ModelRc::new(VecModel::from(
+    ui.set_file_tabs(ModelRc::new(VecModel::from(
         views
             .iter()
             .map(|name| SharedString::from(*name))
@@ -61,7 +63,7 @@ fn click_tab(ui: &MainWindow, index: usize) {
 /// The view index the window last asked for, after clicking tab `index`.
 fn asked_for(ui: &MainWindow, index: usize) -> i32 {
     let chosen = Rc::new(Cell::new(-1));
-    ui.on_file_view_selected({
+    ui.on_file_tab_selected({
         let chosen = Rc::clone(&chosen);
         move |view| chosen.set(view)
     });
@@ -109,13 +111,37 @@ fn clicking_a_tab_asks_for_the_view_it_landed_on() {
 }
 
 #[test]
-fn the_editor_replaces_the_switcher_rather_than_sitting_under_it() {
+fn one_tab_draws_no_strip_at_all() {
+    // This is what keeps an open editor from having anything to click:
+    // `App::file_tabs` returns the single `Editing` tab while it is open,
+    // and a single tab draws nothing. Switching views under an editor
+    // would be a way to lose typed text.
     i_slint_backend_testing::init_no_event_loop();
-    let ui = window_with_views(&["Preview", "Text"]);
-    ui.set_editing_file(true);
+    let ui = window_with_views(&["Editing"]);
 
     assert!(
         switcher(&ui).is_none(),
-        "an open editor is the pane; switching views under it would be a way to lose typed text"
+        "one tab is not a choice, so there is nothing to draw"
+    );
+}
+
+/// Clicking the Edit tab asks for the Edit tab, and not for a view.
+///
+/// The whole of #495 is that nothing in the pane said an editor existed.
+/// This is the click a reader now makes instead of hunting a toolbar
+/// button: the last tab, on a file that can be edited. `App::file_tabs`
+/// puts it there and `App::select_file_tab` opens the editor on it;
+/// this is the middle link, that the strip maps the click to the right
+/// index.
+#[test]
+fn clicking_the_edit_tab_asks_for_the_edit_tab() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = window_with_views(&["Preview", "Text", "Edit"]);
+
+    assert_eq!(
+        asked_for(&ui, 2),
+        2,
+        "the last tab is the way into the editor, so a click on it has to \
+         arrive as the last index rather than as a view"
     );
 }

@@ -272,6 +272,8 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
         app.file_views().into_iter().map(str::to_owned).collect(),
     ));
     ui.set_file_view_index(row_index(app.file_view_index()));
+    ui.set_file_tabs(string_model(app.file_tabs()));
+    ui.set_file_tab_index(row_index(app.file_tab_index()));
     ui.set_file_lines(ModelRc::new(VecModel::from(
         app.file_lines()
             .into_iter()
