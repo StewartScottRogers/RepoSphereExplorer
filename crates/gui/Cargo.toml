@@ -20,6 +20,10 @@ plugin-antlr = { path = "../plugins/antlr" }
 plugin-apacheconf = { path = "../plugins/apacheconf" }
 plugin-api = { path = "../plugin-api" }
 syntax = { path = "../syntax" }
+# Already in the tree through three other crates; made direct here so the
+# caret moves by grapheme cluster rather than by byte, which is what a
+# reader sees.
+unicode-segmentation = "1"
 plugin-ada = { path = "../plugins/ada" }
 plugin-apk = { path = "../plugins/apk" }
 plugin-apkpkg = { path = "../plugins/apkpkg" }

@@ -3125,6 +3125,7 @@ dependencies = [
  "slint",
  "slint-build",
  "syntax",
+ "unicode-segmentation",
  "updater",
 ]
 

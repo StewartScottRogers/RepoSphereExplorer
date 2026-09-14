@@ -12,6 +12,8 @@ pub use generated::{ColouredRun, ContentRow, FolderRow, MainWindow, Theme};
 pub mod app;
 pub mod settings;
 
+pub mod document;
+
 pub use app::PRESENTATION_PLUGINS;
 
 use app::App;
