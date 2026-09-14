@@ -7,11 +7,12 @@
 //! tag byte overlaps too much other binary content to serve as one.
 
 use pkcs8::PrivateKeyInfoRef;
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use spki::SubjectPublicKeyInfoRef;
 use std::io;
 use std::path::Path;
+use syntax::Language;
 use x509_parser::prelude::{FromDer, X509Certificate, X509CertificationRequest};
 
 /// The lowercase extensions this type claims, without their dot.
@@ -193,6 +194,27 @@ fn entry_for(label: &str, der: &[u8]) -> PemEntry {
 #[derive(Debug, Default)]
 pub struct CertificateCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CERTIFICATE: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[],
+    quotes: &[],
+    keywords: &[
+        "BEGIN",
+        "CERTIFICATE",
+        "END",
+        "KEY",
+        "PRIVATE",
+        "PUBLIC",
+        "REQUEST",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for CertificateCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -227,6 +249,10 @@ impl PluginCore for CertificateCore {
 pub struct CertificatePresentation;
 
 impl PluginPresentation for CertificatePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CERTIFICATE)
+    }
+
     fn name(&self) -> &'static str {
         "certificate"
     }

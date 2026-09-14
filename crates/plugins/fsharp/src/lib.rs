@@ -1,9 +1,10 @@
 //! F# file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -77,6 +78,87 @@ fn has_fsharp_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct FSharpCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const FSHARP: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("(*", "*)")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "and",
+        "as",
+        "assert",
+        "base",
+        "begin",
+        "class",
+        "default",
+        "delegate",
+        "do",
+        "done",
+        "downcast",
+        "downto",
+        "elif",
+        "else",
+        "end",
+        "exception",
+        "extern",
+        "false",
+        "finally",
+        "for",
+        "fun",
+        "function",
+        "global",
+        "if",
+        "in",
+        "inherit",
+        "inline",
+        "interface",
+        "internal",
+        "lazy",
+        "let",
+        "match",
+        "member",
+        "module",
+        "mutable",
+        "namespace",
+        "new",
+        "not",
+        "null",
+        "of",
+        "open",
+        "or",
+        "override",
+        "private",
+        "public",
+        "rec",
+        "return",
+        "select",
+        "static",
+        "struct",
+        "then",
+        "to",
+        "true",
+        "try",
+        "type",
+        "upcast",
+        "use",
+        "val",
+        "void",
+        "when",
+        "while",
+        "with",
+        "yield",
+    ],
+    types: &[
+        "bool", "byte", "char", "decimal", "float", "float32", "int", "int64", "list", "option",
+        "seq", "string", "unit",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for FSharpCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -113,6 +195,10 @@ impl PluginCore for FSharpCore {
 pub struct FSharpPresentation;
 
 impl PluginPresentation for FSharpPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &FSHARP)
+    }
+
     fn name(&self) -> &'static str {
         "fsharp"
     }

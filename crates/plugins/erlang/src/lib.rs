@@ -1,9 +1,10 @@
 //! Erlang file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -101,6 +102,23 @@ fn has_erlang_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ErlangCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ERLANG: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "after", "and", "andalso", "band", "begin", "bnot", "bor", "bsl", "bsr", "bxor", "case",
+        "catch", "cond", "div", "end", "fun", "if", "let", "not", "of", "or", "orelse", "receive",
+        "rem", "try", "when", "xor",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ErlangCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -138,6 +156,10 @@ impl PluginCore for ErlangCore {
 pub struct ErlangPresentation;
 
 impl PluginPresentation for ErlangPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ERLANG)
+    }
+
     fn name(&self) -> &'static str {
         "erlang"
     }

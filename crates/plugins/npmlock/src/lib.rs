@@ -3,11 +3,12 @@
 //! Registered before `json`, which would otherwise claim it on the
 //! extension. `lockfileVersion` is a key no other JSON document carries.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -135,6 +136,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct NpmlockCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const NPMLOCK: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["false", "null", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for NpmlockCore {
     fn name(&self) -> &'static str {
         "npmlock"
@@ -171,6 +185,10 @@ impl PluginCore for NpmlockCore {
 pub struct NpmlockPresentation;
 
 impl PluginPresentation for NpmlockPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &NPMLOCK)
+    }
+
     fn name(&self) -> &'static str {
         "npmlock"
     }

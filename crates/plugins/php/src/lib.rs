@@ -1,9 +1,10 @@
 //! PHP file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -98,6 +99,93 @@ fn has_php_open_tag(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct PhpCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PHP: Language = Language {
+    line_comment: &["//", "#"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "and",
+        "array",
+        "as",
+        "break",
+        "callable",
+        "case",
+        "catch",
+        "class",
+        "clone",
+        "const",
+        "continue",
+        "declare",
+        "default",
+        "do",
+        "echo",
+        "else",
+        "elseif",
+        "empty",
+        "enddeclare",
+        "endfor",
+        "endforeach",
+        "endif",
+        "endswitch",
+        "endwhile",
+        "enum",
+        "extends",
+        "false",
+        "final",
+        "finally",
+        "fn",
+        "for",
+        "foreach",
+        "function",
+        "global",
+        "goto",
+        "if",
+        "implements",
+        "include",
+        "include_once",
+        "instanceof",
+        "insteadof",
+        "interface",
+        "isset",
+        "list",
+        "match",
+        "namespace",
+        "new",
+        "null",
+        "or",
+        "print",
+        "private",
+        "protected",
+        "public",
+        "readonly",
+        "require",
+        "require_once",
+        "return",
+        "static",
+        "switch",
+        "throw",
+        "trait",
+        "true",
+        "try",
+        "unset",
+        "use",
+        "var",
+        "while",
+        "xor",
+        "yield",
+    ],
+    types: &[
+        "array", "bool", "callable", "float", "int", "iterable", "mixed", "object", "string",
+        "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for PhpCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -135,6 +223,10 @@ impl PluginCore for PhpCore {
 pub struct PhpPresentation;
 
 impl PluginPresentation for PhpPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PHP)
+    }
+
     fn name(&self) -> &'static str {
         "php"
     }

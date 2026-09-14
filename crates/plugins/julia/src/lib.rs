@@ -1,9 +1,10 @@
 //! Julia file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -94,6 +95,58 @@ fn has_julia_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct JuliaCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const JULIA: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[("#=", "=#")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "baremodule",
+        "begin",
+        "break",
+        "catch",
+        "const",
+        "continue",
+        "do",
+        "else",
+        "elseif",
+        "end",
+        "export",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "global",
+        "if",
+        "import",
+        "in",
+        "let",
+        "local",
+        "macro",
+        "module",
+        "mutable",
+        "primitive",
+        "quote",
+        "return",
+        "struct",
+        "true",
+        "try",
+        "type",
+        "using",
+        "where",
+        "while",
+    ],
+    types: &[
+        "Any", "Array", "Bool", "Char", "Dict", "Float32", "Float64", "Int", "Int32", "Int64",
+        "Nothing", "String", "Symbol", "Vector",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for JuliaCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -131,6 +184,10 @@ impl PluginCore for JuliaCore {
 pub struct JuliaPresentation;
 
 impl PluginPresentation for JuliaPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &JULIA)
+    }
+
     fn name(&self) -> &'static str {
         "julia"
     }

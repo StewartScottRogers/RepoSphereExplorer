@@ -5,11 +5,12 @@
 //! writes. It claims the project extensions itself, so `xml` never sees
 //! them.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["csproj", "vbproj", "fsproj", "props", "targets"];
@@ -205,6 +206,28 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct MsbuildCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const MSBUILD: Language = Language {
+    line_comment: &[],
+    block_comment: &[("<!--", "-->")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "Import",
+        "ItemGroup",
+        "PackageReference",
+        "Project",
+        "ProjectReference",
+        "PropertyGroup",
+        "Target",
+        "UsingTask",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for MsbuildCore {
     fn name(&self) -> &'static str {
         "msbuild"
@@ -235,6 +258,10 @@ impl PluginCore for MsbuildCore {
 pub struct MsbuildPresentation;
 
 impl PluginPresentation for MsbuildPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &MSBUILD)
+    }
+
     fn name(&self) -> &'static str {
         "msbuild"
     }

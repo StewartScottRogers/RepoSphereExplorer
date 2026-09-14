@@ -8,11 +8,12 @@
 //! what it builds, what it needs, and what it can be told to do
 //! differently - so those are what this reads.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -381,6 +382,34 @@ fn read(path: &Path) -> io::Result<MesonView> {
 #[derive(Debug, Default)]
 pub struct MesonCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const MESON: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "and",
+        "break",
+        "continue",
+        "elif",
+        "else",
+        "endforeach",
+        "endif",
+        "false",
+        "foreach",
+        "if",
+        "in",
+        "not",
+        "or",
+        "true",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for MesonCore {
     fn name(&self) -> &'static str {
         "meson"
@@ -405,6 +434,10 @@ impl PluginCore for MesonCore {
 pub struct MesonPresentation;
 
 impl PluginPresentation for MesonPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &MESON)
+    }
+
     fn name(&self) -> &'static str {
         "meson"
     }

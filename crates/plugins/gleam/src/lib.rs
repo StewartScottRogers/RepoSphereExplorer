@@ -8,11 +8,12 @@
 //! not Gleam at all, and the public functions that say nothing about
 //! what they return.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["gleam"];
@@ -275,6 +276,22 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GleamCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GLEAM: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "as", "assert", "case", "const", "external", "fn", "if", "import", "let", "opaque",
+        "panic", "pub", "todo", "try", "type", "use",
+    ],
+    types: &["Bool", "Float", "Int", "List", "Nil", "Result", "String"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for GleamCore {
     fn name(&self) -> &'static str {
         "gleam"
@@ -305,6 +322,10 @@ impl PluginCore for GleamCore {
 pub struct GleamPresentation;
 
 impl PluginPresentation for GleamPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GLEAM)
+    }
+
     fn name(&self) -> &'static str {
         "gleam"
     }

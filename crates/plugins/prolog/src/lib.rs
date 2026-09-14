@@ -1,9 +1,10 @@
 //! Prolog file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -95,6 +96,37 @@ fn has_prolog_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct PrologCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PROLOG: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "assert",
+        "asserta",
+        "assertz",
+        "between",
+        "fail",
+        "findall",
+        "forall",
+        "halt",
+        "is",
+        "member",
+        "nb_getval",
+        "nb_setval",
+        "not",
+        "retract",
+        "true",
+        "write",
+        "writeln",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for PrologCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -131,6 +163,10 @@ impl PluginCore for PrologCore {
 pub struct PrologPresentation;
 
 impl PluginPresentation for PrologPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PROLOG)
+    }
+
     fn name(&self) -> &'static str {
         "prolog"
     }

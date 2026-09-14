@@ -6,11 +6,12 @@
 //! parameters and return type - and the routines promised in the
 //! interface that were never written, which will not link.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["pas", "pp", "dpr", "lpr", "inc"];
@@ -292,6 +293,61 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct PascalCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PASCAL: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("{", "}"), ("(*", "*)")],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "and",
+        "array",
+        "begin",
+        "case",
+        "const",
+        "div",
+        "do",
+        "downto",
+        "else",
+        "end",
+        "file",
+        "for",
+        "function",
+        "goto",
+        "if",
+        "implementation",
+        "in",
+        "interface",
+        "label",
+        "mod",
+        "nil",
+        "not",
+        "of",
+        "or",
+        "packed",
+        "procedure",
+        "program",
+        "record",
+        "repeat",
+        "set",
+        "then",
+        "to",
+        "type",
+        "unit",
+        "until",
+        "uses",
+        "var",
+        "while",
+        "with",
+    ],
+    types: &[
+        "Boolean", "Byte", "Char", "Integer", "LongInt", "Real", "ShortInt", "String", "Word",
+    ],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for PascalCore {
     fn name(&self) -> &'static str {
         "pascal"
@@ -322,6 +378,10 @@ impl PluginCore for PascalCore {
 pub struct PascalPresentation;
 
 impl PluginPresentation for PascalPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PASCAL)
+    }
+
     fn name(&self) -> &'static str {
         "pascal"
     }

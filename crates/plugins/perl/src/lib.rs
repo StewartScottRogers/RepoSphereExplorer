@@ -1,9 +1,10 @@
 //! Perl file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -94,6 +95,62 @@ fn has_perl_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct PerlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PERL: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "and",
+        "bless",
+        "cmp",
+        "continue",
+        "do",
+        "else",
+        "elsif",
+        "eq",
+        "eval",
+        "exists",
+        "for",
+        "foreach",
+        "ge",
+        "gt",
+        "if",
+        "last",
+        "le",
+        "local",
+        "lt",
+        "my",
+        "ne",
+        "next",
+        "no",
+        "not",
+        "or",
+        "our",
+        "package",
+        "print",
+        "printf",
+        "redo",
+        "ref",
+        "require",
+        "return",
+        "sub",
+        "tr",
+        "unless",
+        "unshift",
+        "until",
+        "use",
+        "wantarray",
+        "while",
+        "xor",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for PerlCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -131,6 +188,10 @@ impl PluginCore for PerlCore {
 pub struct PerlPresentation;
 
 impl PluginPresentation for PerlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PERL)
+    }
+
     fn name(&self) -> &'static str {
         "perl"
     }

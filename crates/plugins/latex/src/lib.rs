@@ -5,11 +5,12 @@
 //! would need the whole TeX engine and would still refuse a document that
 //! does not compile.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::Language;
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["tex", "sty", "cls", "ltx"];
@@ -210,6 +211,35 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct LatexCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const LATEX: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[],
+    quotes: &[],
+    keywords: &[
+        "begin",
+        "chapter",
+        "cite",
+        "documentclass",
+        "emph",
+        "end",
+        "item",
+        "label",
+        "newcommand",
+        "ref",
+        "section",
+        "subsection",
+        "textbf",
+        "textit",
+        "usepackage",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for LatexCore {
     fn name(&self) -> &'static str {
         "latex"
@@ -240,6 +270,10 @@ impl PluginCore for LatexCore {
 pub struct LatexPresentation;
 
 impl PluginPresentation for LatexPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &LATEX)
+    }
+
     fn name(&self) -> &'static str {
         "latex"
     }

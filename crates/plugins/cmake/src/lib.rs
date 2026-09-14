@@ -5,11 +5,12 @@
 //! differently. The options are the second half of that: they are the
 //! knobs, and their defaults are what happens if nobody touches them.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -341,6 +342,44 @@ fn read(path: &Path) -> io::Result<CmakeView> {
 #[derive(Debug, Default)]
 pub struct CmakeCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CMAKE: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "add_executable",
+        "add_library",
+        "add_subdirectory",
+        "else",
+        "elseif",
+        "endforeach",
+        "endfunction",
+        "endif",
+        "endmacro",
+        "endwhile",
+        "find_package",
+        "foreach",
+        "function",
+        "if",
+        "include",
+        "install",
+        "macro",
+        "message",
+        "option",
+        "project",
+        "return",
+        "set",
+        "target_link_libraries",
+        "while",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: true,
+};
+
 impl PluginCore for CmakeCore {
     fn name(&self) -> &'static str {
         "cmake"
@@ -373,6 +412,10 @@ impl PluginCore for CmakeCore {
 pub struct CmakePresentation;
 
 impl PluginPresentation for CmakePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CMAKE)
+    }
+
     fn name(&self) -> &'static str {
         "cmake"
     }

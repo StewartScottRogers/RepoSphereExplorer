@@ -1,9 +1,10 @@
 //! Vue single-file component file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -63,6 +64,22 @@ fn has_vue_sfc_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct VueCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const VUE: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "as", "await", "const", "default", "else", "export", "function", "if", "import", "let",
+        "new", "return", "script", "style", "template",
+    ],
+    types: &["boolean", "number", "string"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for VueCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -99,6 +116,10 @@ impl PluginCore for VueCore {
 pub struct VuePresentation;
 
 impl PluginPresentation for VuePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &VUE)
+    }
+
     fn name(&self) -> &'static str {
         "vue"
     }

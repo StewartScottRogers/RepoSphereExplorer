@@ -1,9 +1,10 @@
 //! PowerShell file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -93,6 +94,68 @@ fn parse_definitions(content: &str) -> Vec<String> {
 #[derive(Debug, Default)]
 pub struct PowerShellCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const POWERSHELL: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[("<#", "#>")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "begin",
+        "break",
+        "catch",
+        "class",
+        "continue",
+        "data",
+        "define",
+        "do",
+        "dynamicparam",
+        "else",
+        "elseif",
+        "end",
+        "enum",
+        "exit",
+        "filter",
+        "finally",
+        "for",
+        "foreach",
+        "from",
+        "function",
+        "hidden",
+        "if",
+        "in",
+        "inlinescript",
+        "param",
+        "process",
+        "return",
+        "static",
+        "switch",
+        "throw",
+        "trap",
+        "try",
+        "until",
+        "using",
+        "var",
+        "while",
+        "workflow",
+    ],
+    types: &[
+        "bool",
+        "decimal",
+        "double",
+        "hashtable",
+        "int",
+        "long",
+        "object",
+        "string",
+        "switch",
+        "xml",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for PowerShellCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -129,6 +192,10 @@ impl PluginCore for PowerShellCore {
 pub struct PowerShellPresentation;
 
 impl PluginPresentation for PowerShellPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &POWERSHELL)
+    }
+
     fn name(&self) -> &'static str {
         "powershell"
     }

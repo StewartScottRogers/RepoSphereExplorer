@@ -1,9 +1,10 @@
 //! GraphQL schema file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -87,6 +88,35 @@ fn has_graphql_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GraphQlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GRAPHQL: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "directive",
+        "enum",
+        "extend",
+        "fragment",
+        "implements",
+        "input",
+        "interface",
+        "mutation",
+        "on",
+        "query",
+        "scalar",
+        "schema",
+        "subscription",
+        "type",
+        "union",
+    ],
+    types: &["Boolean", "Float", "ID", "Int", "String"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for GraphQlCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -123,6 +153,10 @@ impl PluginCore for GraphQlCore {
 pub struct GraphQlPresentation;
 
 impl PluginPresentation for GraphQlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GRAPHQL)
+    }
+
     fn name(&self) -> &'static str {
         "graphql"
     }

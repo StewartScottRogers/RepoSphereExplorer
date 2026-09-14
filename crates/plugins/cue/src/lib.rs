@@ -9,11 +9,12 @@
 //! The constraints are written into the fields rather than declared
 //! apart from them, so they are read where they sit.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -272,6 +273,19 @@ fn read(path: &Path) -> io::Result<CueView> {
 #[derive(Debug, Default)]
 pub struct CueCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CUE: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["for", "if", "import", "in", "let", "package"],
+    types: &["bool", "bytes", "float", "int", "number", "string"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for CueCore {
     fn name(&self) -> &'static str {
         "cue"
@@ -296,6 +310,10 @@ impl PluginCore for CueCore {
 pub struct CuePresentation;
 
 impl PluginPresentation for CuePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CUE)
+    }
+
     fn name(&self) -> &'static str {
         "cue"
     }

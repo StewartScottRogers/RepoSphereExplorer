@@ -3,11 +3,12 @@
 //! `table`, `root_type` and `namespace` declarations, and the
 //! `file_identifier` a schema sets - markers no sibling has.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["fbs"];
@@ -202,6 +203,35 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct FlatbuffersCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const FLATBUFFERS: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "attribute",
+        "enum",
+        "file_extension",
+        "file_identifier",
+        "include",
+        "namespace",
+        "root_type",
+        "rpc_service",
+        "struct",
+        "table",
+        "union",
+    ],
+    types: &[
+        "bool", "byte", "double", "float", "int", "int16", "int32", "int64", "int8", "long",
+        "short", "string", "ubyte", "uint", "uint16", "uint32", "uint64", "uint8", "ulong",
+        "ushort",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for FlatbuffersCore {
     fn name(&self) -> &'static str {
         "flatbuffers"
@@ -232,6 +262,10 @@ impl PluginCore for FlatbuffersCore {
 pub struct FlatbuffersPresentation;
 
 impl PluginPresentation for FlatbuffersPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &FLATBUFFERS)
+    }
+
     fn name(&self) -> &'static str {
         "flatbuffers"
     }

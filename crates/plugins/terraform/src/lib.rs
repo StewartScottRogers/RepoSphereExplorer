@@ -1,9 +1,10 @@
 //! Terraform (HCL) file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -90,6 +91,37 @@ fn has_terraform_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct TerraformCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const TERRAFORM: Language = Language {
+    line_comment: &["#", "//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "count",
+        "data",
+        "depends_on",
+        "false",
+        "for",
+        "for_each",
+        "if",
+        "in",
+        "locals",
+        "module",
+        "null",
+        "output",
+        "provider",
+        "resource",
+        "terraform",
+        "true",
+        "variable",
+    ],
+    types: &["bool", "list", "map", "number", "object", "set", "string"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for TerraformCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -126,6 +158,10 @@ impl PluginCore for TerraformCore {
 pub struct TerraformPresentation;
 
 impl PluginPresentation for TerraformPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &TERRAFORM)
+    }
+
     fn name(&self) -> &'static str {
         "terraform"
     }

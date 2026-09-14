@@ -5,11 +5,12 @@
 //! solution folders, the build configurations, and the projects a build
 //! passes over because they are selected but not built.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["sln"];
@@ -230,6 +231,28 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct SolutionCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SOLUTION: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "Debug",
+        "EndGlobal",
+        "EndGlobalSection",
+        "EndProject",
+        "Global",
+        "GlobalSection",
+        "Project",
+        "Release",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for SolutionCore {
     fn name(&self) -> &'static str {
         "solution"
@@ -260,6 +283,10 @@ impl PluginCore for SolutionCore {
 pub struct SolutionPresentation;
 
 impl PluginPresentation for SolutionPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SOLUTION)
+    }
+
     fn name(&self) -> &'static str {
         "solution"
     }

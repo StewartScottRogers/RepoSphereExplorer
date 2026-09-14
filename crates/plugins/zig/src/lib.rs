@@ -6,11 +6,12 @@
 //! the tests, the comptime blocks - and the functions that take memory
 //! from an allocator with nothing anywhere in them to give it back.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["zig"];
@@ -263,6 +264,94 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ZigCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ZIG: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "align",
+        "allowzero",
+        "and",
+        "anyframe",
+        "anytype",
+        "asm",
+        "async",
+        "await",
+        "break",
+        "callconv",
+        "catch",
+        "comptime",
+        "const",
+        "continue",
+        "defer",
+        "else",
+        "enum",
+        "errdefer",
+        "error",
+        "export",
+        "extern",
+        "false",
+        "fn",
+        "for",
+        "if",
+        "inline",
+        "linksection",
+        "noalias",
+        "nosuspend",
+        "null",
+        "opaque",
+        "or",
+        "orelse",
+        "packed",
+        "pub",
+        "resume",
+        "return",
+        "struct",
+        "suspend",
+        "switch",
+        "test",
+        "threadlocal",
+        "true",
+        "try",
+        "undefined",
+        "union",
+        "unreachable",
+        "usingnamespace",
+        "var",
+        "volatile",
+        "while",
+    ],
+    types: &[
+        "anyerror",
+        "bool",
+        "c_int",
+        "c_uint",
+        "comptime_float",
+        "comptime_int",
+        "f16",
+        "f32",
+        "f64",
+        "i16",
+        "i32",
+        "i64",
+        "i8",
+        "isize",
+        "noreturn",
+        "type",
+        "u16",
+        "u32",
+        "u64",
+        "u8",
+        "usize",
+        "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ZigCore {
     fn name(&self) -> &'static str {
         "zig"
@@ -293,6 +382,10 @@ impl PluginCore for ZigCore {
 pub struct ZigPresentation;
 
 impl PluginPresentation for ZigPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ZIG)
+    }
+
     fn name(&self) -> &'static str {
         "zig"
     }

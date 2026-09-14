@@ -4,11 +4,12 @@
 //! manual page and nothing else uses it. Numeric extensions - `.1`, `.8` -
 //! are claimed too, since no sibling wants them.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::Language;
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["1", "2", "3", "5", "7", "8", "man", "roff", "troff"];
@@ -199,6 +200,21 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct RoffCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ROFF: Language = Language {
+    line_comment: &[".\\\""],
+    block_comment: &[],
+    quotes: &[],
+    keywords: &[
+        "B", "BR", "I", "IR", "PP", "SH", "SS", "TH", "TP", "br", "fi", "nf", "sp",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for RoffCore {
     fn name(&self) -> &'static str {
         "roff"
@@ -229,6 +245,10 @@ impl PluginCore for RoffCore {
 pub struct RoffPresentation;
 
 impl PluginPresentation for RoffPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ROFF)
+    }
+
     fn name(&self) -> &'static str {
         "roff"
     }

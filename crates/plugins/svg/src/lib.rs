@@ -5,10 +5,11 @@
 //! own width/height when explicit attributes are absent) rather than pixel
 //! dimensions, and the presentation half labels it a vector image.
 
-use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation};
+use plugin_api::{Graphic, Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -120,6 +121,35 @@ fn has_svg_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct SvgCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SVG: Language = Language {
+    line_comment: &[],
+    block_comment: &[("<!--", "-->")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "circle",
+        "defs",
+        "ellipse",
+        "g",
+        "line",
+        "linearGradient",
+        "path",
+        "polygon",
+        "polyline",
+        "rect",
+        "stop",
+        "svg",
+        "text",
+        "tspan",
+        "use",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for SvgCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -171,6 +201,10 @@ impl PluginCore for SvgCore {
 pub struct SvgPresentation;
 
 impl PluginPresentation for SvgPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SVG)
+    }
+
     fn name(&self) -> &'static str {
         "svg"
     }

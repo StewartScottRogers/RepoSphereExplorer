@@ -1,9 +1,10 @@
 //! OCaml file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -81,6 +82,68 @@ fn has_ocaml_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct OCamlCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const OCAML: Language = Language {
+    line_comment: &[],
+    block_comment: &[("(*", "*)")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "and",
+        "as",
+        "assert",
+        "begin",
+        "class",
+        "do",
+        "done",
+        "downto",
+        "else",
+        "end",
+        "exception",
+        "external",
+        "for",
+        "fun",
+        "function",
+        "functor",
+        "if",
+        "in",
+        "include",
+        "inherit",
+        "initializer",
+        "lazy",
+        "let",
+        "match",
+        "method",
+        "module",
+        "mutable",
+        "new",
+        "nonrec",
+        "object",
+        "of",
+        "open",
+        "or",
+        "private",
+        "rec",
+        "sig",
+        "struct",
+        "then",
+        "to",
+        "try",
+        "type",
+        "val",
+        "virtual",
+        "when",
+        "while",
+        "with",
+    ],
+    types: &[
+        "array", "bool", "char", "float", "int", "list", "option", "string", "unit",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for OCamlCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -117,6 +180,10 @@ impl PluginCore for OCamlCore {
 pub struct OCamlPresentation;
 
 impl PluginPresentation for OCamlPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &OCAML)
+    }
+
     fn name(&self) -> &'static str {
         "ocaml"
     }

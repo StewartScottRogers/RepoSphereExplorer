@@ -9,11 +9,12 @@
 //! The content hash is the other half: it is what tells Composer
 //! whether the `composer.json` beside it has changed since.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 ///
@@ -159,6 +160,19 @@ fn read(path: &Path) -> io::Result<ComposerlockView> {
 #[derive(Debug, Default)]
 pub struct ComposerlockCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const COMPOSERLOCK: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["false", "null", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for ComposerlockCore {
     fn name(&self) -> &'static str {
         "composerlock"
@@ -189,6 +203,10 @@ impl PluginCore for ComposerlockCore {
 pub struct ComposerlockPresentation;
 
 impl PluginPresentation for ComposerlockPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &COMPOSERLOCK)
+    }
+
     fn name(&self) -> &'static str {
         "composerlock"
     }

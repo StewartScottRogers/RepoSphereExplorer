@@ -4,11 +4,12 @@
 //! and `[branch "main"]` are subsection headers no general INI file
 //! writes, and the keys inside them are git's own.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["gitconfig"];
@@ -203,6 +204,30 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GitconfigCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GITCONFIG: Language = Language {
+    line_comment: &["#", ";"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "alias",
+        "branch",
+        "core",
+        "credential",
+        "diff",
+        "merge",
+        "pull",
+        "push",
+        "remote",
+        "user",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for GitconfigCore {
     fn name(&self) -> &'static str {
         "gitconfig"
@@ -233,6 +258,10 @@ impl PluginCore for GitconfigCore {
 pub struct GitconfigPresentation;
 
 impl PluginPresentation for GitconfigPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GITCONFIG)
+    }
+
     fn name(&self) -> &'static str {
         "gitconfig"
     }

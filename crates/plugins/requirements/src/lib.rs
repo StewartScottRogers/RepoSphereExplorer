@@ -5,11 +5,12 @@
 //! extras, the markers, the includes, the index addresses and the hash
 //! pins, and says which lines are not pinned to one version.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -265,6 +266,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct RequirementsCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const REQUIREMENTS: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for RequirementsCore {
     fn name(&self) -> &'static str {
         "requirements"
@@ -302,6 +316,10 @@ impl PluginCore for RequirementsCore {
 pub struct RequirementsPresentation;
 
 impl PluginPresentation for RequirementsPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &REQUIREMENTS)
+    }
+
     fn name(&self) -> &'static str {
         "requirements"
     }

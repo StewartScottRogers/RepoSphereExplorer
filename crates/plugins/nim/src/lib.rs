@@ -1,9 +1,10 @@
 //! Nim file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -83,6 +84,88 @@ fn has_nim_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct NimCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const NIM: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[("#[", "]#")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "addr",
+        "and",
+        "as",
+        "asm",
+        "bind",
+        "block",
+        "break",
+        "case",
+        "cast",
+        "concept",
+        "const",
+        "continue",
+        "converter",
+        "defer",
+        "discard",
+        "distinct",
+        "div",
+        "do",
+        "elif",
+        "else",
+        "end",
+        "enum",
+        "except",
+        "export",
+        "finally",
+        "for",
+        "from",
+        "func",
+        "if",
+        "import",
+        "include",
+        "interface",
+        "is",
+        "isnot",
+        "iterator",
+        "let",
+        "macro",
+        "method",
+        "mixin",
+        "mod",
+        "nil",
+        "not",
+        "notin",
+        "object",
+        "of",
+        "or",
+        "out",
+        "proc",
+        "ptr",
+        "raise",
+        "ref",
+        "return",
+        "shl",
+        "shr",
+        "static",
+        "template",
+        "try",
+        "tuple",
+        "type",
+        "using",
+        "var",
+        "when",
+        "while",
+        "xor",
+        "yield",
+    ],
+    types: &[
+        "bool", "char", "cstring", "float", "float32", "float64", "int", "int16", "int32", "int64",
+        "int8", "seq", "string", "uint", "uint32", "uint64", "uint8",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for NimCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -119,6 +202,10 @@ impl PluginCore for NimCore {
 pub struct NimPresentation;
 
 impl PluginPresentation for NimPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &NIM)
+    }
+
     fn name(&self) -> &'static str {
         "nim"
     }

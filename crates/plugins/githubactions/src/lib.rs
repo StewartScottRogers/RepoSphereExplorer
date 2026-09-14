@@ -3,11 +3,12 @@
 //! A specialisation of YAML: `on:` alongside `jobs:` whose entries carry
 //! `runs-on` or `steps` is a workflow and nothing else.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -260,6 +261,38 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GithubactionsCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GITHUBACTIONS: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "concurrency",
+        "defaults",
+        "env",
+        "if",
+        "jobs",
+        "name",
+        "needs",
+        "on",
+        "outputs",
+        "permissions",
+        "run",
+        "runs-on",
+        "secrets",
+        "steps",
+        "strategy",
+        "uses",
+        "with",
+        "workflow_dispatch",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for GithubactionsCore {
     fn name(&self) -> &'static str {
         "githubactions"
@@ -296,6 +329,10 @@ impl PluginCore for GithubactionsCore {
 pub struct GithubactionsPresentation;
 
 impl PluginPresentation for GithubactionsPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GITHUBACTIONS)
+    }
+
     fn name(&self) -> &'static str {
         "githubactions"
     }

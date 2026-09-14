@@ -3,11 +3,12 @@
 //! A specialisation of JSON: `version: 3` alongside `mappings` and
 //! `sources` is the source map shape and nothing else's.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["map"];
@@ -100,6 +101,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct SourcemapCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SOURCEMAP: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["false", "null", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for SourcemapCore {
     fn name(&self) -> &'static str {
         "sourcemap"
@@ -137,6 +151,10 @@ impl PluginCore for SourcemapCore {
 pub struct SourcemapPresentation;
 
 impl PluginPresentation for SourcemapPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SOURCEMAP)
+    }
+
     fn name(&self) -> &'static str {
         "sourcemap"
     }

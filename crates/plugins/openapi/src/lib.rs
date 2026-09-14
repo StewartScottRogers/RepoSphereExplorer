@@ -4,11 +4,12 @@
 //! `paths`, or the older `swagger` key. The YAML form of the same
 //! document is left to a later work order; this reads the JSON one.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -215,6 +216,35 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct OpenapiCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const OPENAPI: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "components",
+        "delete",
+        "false",
+        "get",
+        "info",
+        "null",
+        "openapi",
+        "parameters",
+        "patch",
+        "paths",
+        "post",
+        "put",
+        "responses",
+        "schemas",
+        "true",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for OpenapiCore {
     fn name(&self) -> &'static str {
         "openapi"
@@ -250,6 +280,10 @@ impl PluginCore for OpenapiCore {
 pub struct OpenapiPresentation;
 
 impl PluginPresentation for OpenapiPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &OPENAPI)
+    }
+
     fn name(&self) -> &'static str {
         "openapi"
     }

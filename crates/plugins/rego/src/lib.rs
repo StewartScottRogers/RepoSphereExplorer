@@ -10,11 +10,12 @@
 //! a set rather than deciding it, so a partial `deny` collects every
 //! reason a request was refused instead of stopping at the first.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -233,6 +234,22 @@ fn read(path: &Path) -> io::Result<RegoView> {
 #[derive(Debug, Default)]
 pub struct RegoCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const REGO: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "as", "default", "else", "every", "false", "import", "in", "not", "null", "package",
+        "some", "true", "with",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for RegoCore {
     fn name(&self) -> &'static str {
         "rego"
@@ -257,6 +274,10 @@ impl PluginCore for RegoCore {
 pub struct RegoPresentation;
 
 impl PluginPresentation for RegoPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &REGO)
+    }
+
     fn name(&self) -> &'static str {
         "rego"
     }

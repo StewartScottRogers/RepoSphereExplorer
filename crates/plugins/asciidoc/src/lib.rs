@@ -4,11 +4,12 @@
 //! and `[source]` block attributes are markers no sibling claims; the
 //! extension settles what is left.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::Language;
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["adoc", "asciidoc", "asc"];
@@ -149,6 +150,30 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct AsciidocCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ASCIIDOC: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[],
+    quotes: &[],
+    keywords: &[
+        "CAUTION",
+        "IMPORTANT",
+        "NOTE",
+        "TIP",
+        "WARNING",
+        "image",
+        "include",
+        "link",
+        "source",
+        "toc",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for AsciidocCore {
     fn name(&self) -> &'static str {
         "asciidoc"
@@ -179,6 +204,10 @@ impl PluginCore for AsciidocCore {
 pub struct AsciidocPresentation;
 
 impl PluginPresentation for AsciidocPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ASCIIDOC)
+    }
+
     fn name(&self) -> &'static str {
         "asciidoc"
     }

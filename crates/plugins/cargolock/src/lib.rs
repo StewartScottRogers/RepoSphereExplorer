@@ -4,11 +4,12 @@
 //! is TOML, and `Cargo.lock` has no extension the tiebreak can use. The
 //! `[[package]]` tables under a leading `version = ` key are the marker.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["lock"];
@@ -231,6 +232,26 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CargolockCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CARGOLOCK: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "checksum",
+        "dependencies",
+        "name",
+        "package",
+        "source",
+        "version",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for CargolockCore {
     fn name(&self) -> &'static str {
         "cargolock"
@@ -261,6 +282,10 @@ impl PluginCore for CargolockCore {
 pub struct CargolockPresentation;
 
 impl PluginPresentation for CargolockPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CARGOLOCK)
+    }
+
     fn name(&self) -> &'static str {
         "cargolock"
     }

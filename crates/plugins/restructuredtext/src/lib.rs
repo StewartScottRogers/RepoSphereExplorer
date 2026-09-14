@@ -1,9 +1,10 @@
 //! reStructuredText file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::Language;
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -100,6 +101,29 @@ fn has_rst_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct RestructuredTextCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const RESTRUCTUREDTEXT: Language = Language {
+    line_comment: &[".."],
+    block_comment: &[],
+    quotes: &[],
+    keywords: &[
+        "code-block",
+        "deprecated",
+        "figure",
+        "image",
+        "literalinclude",
+        "note",
+        "toctree",
+        "versionadded",
+        "warning",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for RestructuredTextCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -138,6 +162,10 @@ impl PluginCore for RestructuredTextCore {
 pub struct RestructuredTextPresentation;
 
 impl PluginPresentation for RestructuredTextPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &RESTRUCTUREDTEXT)
+    }
+
     fn name(&self) -> &'static str {
         "restructuredtext"
     }

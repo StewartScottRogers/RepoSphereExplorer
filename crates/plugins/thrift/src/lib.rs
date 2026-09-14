@@ -4,11 +4,12 @@
 //! declarations, whose fields carry explicit numbers - a shape no sibling
 //! has.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["thrift"];
@@ -305,6 +306,36 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ThriftCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const THRIFT: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "const",
+        "enum",
+        "exception",
+        "extends",
+        "include",
+        "namespace",
+        "optional",
+        "required",
+        "service",
+        "struct",
+        "throws",
+        "typedef",
+        "union",
+    ],
+    types: &[
+        "binary", "bool", "byte", "double", "i16", "i32", "i64", "list", "map", "set", "string",
+        "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ThriftCore {
     fn name(&self) -> &'static str {
         "thrift"
@@ -335,6 +366,10 @@ impl PluginCore for ThriftCore {
 pub struct ThriftPresentation;
 
 impl PluginPresentation for ThriftPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &THRIFT)
+    }
+
     fn name(&self) -> &'static str {
         "thrift"
     }

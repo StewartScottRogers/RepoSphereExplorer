@@ -6,11 +6,12 @@
 //! required, the metatables set - and the names assigned without
 //! `local`, which every other file in the program can also see.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["lua", "rockspec"];
@@ -226,6 +227,22 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct LuaCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const LUA: Language = Language {
+    line_comment: &["--"],
+    block_comment: &[("--[[", "]]")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
+        "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for LuaCore {
     fn name(&self) -> &'static str {
         "lua"
@@ -256,6 +273,10 @@ impl PluginCore for LuaCore {
 pub struct LuaPresentation;
 
 impl PluginPresentation for LuaPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &LUA)
+    }
+
     fn name(&self) -> &'static str {
         "lua"
     }

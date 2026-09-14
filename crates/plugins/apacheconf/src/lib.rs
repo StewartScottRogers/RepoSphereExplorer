@@ -6,11 +6,12 @@
 //! loaded, the rewrite rules, the certificate paths, and the containers
 //! that serve a directory listing to anyone who asks.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 ///
@@ -246,6 +247,36 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ApacheconfCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const APACHECONF: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "Alias",
+        "AllowOverride",
+        "Directory",
+        "DocumentRoot",
+        "ErrorLog",
+        "Files",
+        "IfModule",
+        "Listen",
+        "LoadModule",
+        "Location",
+        "Options",
+        "Order",
+        "Require",
+        "ServerName",
+        "ServerRoot",
+        "VirtualHost",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for ApacheconfCore {
     fn name(&self) -> &'static str {
         "apacheconf"
@@ -276,6 +307,10 @@ impl PluginCore for ApacheconfCore {
 pub struct ApacheconfPresentation;
 
 impl PluginPresentation for ApacheconfPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &APACHECONF)
+    }
+
     fn name(&self) -> &'static str {
         "apacheconf"
     }

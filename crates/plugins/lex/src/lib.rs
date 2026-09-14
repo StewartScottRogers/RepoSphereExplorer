@@ -4,11 +4,12 @@
 //! file's rules section is pattern-action pairs with no `:` and no `;`,
 //! and it carries `%option` or `%x` declarations Yacc never writes.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["l", "ll", "lpp"];
@@ -228,6 +229,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct LexCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const LEX: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["char", "int", "return", "yylex", "yywrap"],
+    types: &["char", "int", "void"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for LexCore {
     fn name(&self) -> &'static str {
         "lex"
@@ -258,6 +272,10 @@ impl PluginCore for LexCore {
 pub struct LexPresentation;
 
 impl PluginPresentation for LexPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &LEX)
+    }
+
     fn name(&self) -> &'static str {
         "lex"
     }

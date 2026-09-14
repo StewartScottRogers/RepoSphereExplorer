@@ -5,11 +5,12 @@
 //! task with the module it calls, the roles, the handlers, the variable
 //! names, and whether privilege escalation is asked for.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -307,6 +308,34 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct AnsibleCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ANSIBLE: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "become",
+        "gather_facts",
+        "handlers",
+        "hosts",
+        "loop",
+        "name",
+        "notify",
+        "register",
+        "roles",
+        "tags",
+        "tasks",
+        "vars",
+        "when",
+        "with_items",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for AnsibleCore {
     fn name(&self) -> &'static str {
         "ansible"
@@ -343,6 +372,10 @@ impl PluginCore for AnsibleCore {
 pub struct AnsiblePresentation;
 
 impl PluginPresentation for AnsiblePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ANSIBLE)
+    }
+
     fn name(&self) -> &'static str {
         "ansible"
     }

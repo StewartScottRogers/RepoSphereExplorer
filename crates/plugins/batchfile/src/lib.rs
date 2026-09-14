@@ -7,11 +7,12 @@
 //! checks - and the labels nothing reaches, and the jumps with nowhere
 //! to land.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["bat", "cmd"];
@@ -238,6 +239,22 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct BatchfileCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const BATCHFILE: Language = Language {
+    line_comment: &["REM ", "rem ", "::"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "call", "cd", "copy", "del", "echo", "else", "endlocal", "exit", "for", "goto", "if", "md",
+        "move", "pause", "rd", "rem", "set", "setlocal", "shift", "start",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: true,
+};
+
 impl PluginCore for BatchfileCore {
     fn name(&self) -> &'static str {
         "batchfile"
@@ -268,6 +285,10 @@ impl PluginCore for BatchfileCore {
 pub struct BatchfilePresentation;
 
 impl PluginPresentation for BatchfilePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &BATCHFILE)
+    }
+
     fn name(&self) -> &'static str {
         "batchfile"
     }

@@ -4,11 +4,12 @@
 //! `type` alongside `properties`, is a schema and not the data it
 //! describes.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -195,6 +196,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct JsonschemaCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const JSONSCHEMA: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["false", "null", "true"],
+    types: &["array", "boolean", "integer", "number", "object", "string"],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for JsonschemaCore {
     fn name(&self) -> &'static str {
         "jsonschema"
@@ -230,6 +244,10 @@ impl PluginCore for JsonschemaCore {
 pub struct JsonschemaPresentation;
 
 impl PluginPresentation for JsonschemaPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &JSONSCHEMA)
+    }
+
     fn name(&self) -> &'static str {
         "jsonschema"
     }

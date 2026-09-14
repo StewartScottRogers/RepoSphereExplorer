@@ -6,11 +6,12 @@
 //! written as http://, which is how a Caddyfile turns off the
 //! certificate Caddy would otherwise obtain and renew by itself.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -236,6 +237,36 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct CaddyfileCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const CADDYFILE: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &[
+        "bind",
+        "encode",
+        "file_server",
+        "handle",
+        "header",
+        "import",
+        "log",
+        "php_fastcgi",
+        "redir",
+        "respond",
+        "reverse_proxy",
+        "rewrite",
+        "root",
+        "route",
+        "tls",
+        "try_files",
+    ],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for CaddyfileCore {
     fn name(&self) -> &'static str {
         "caddyfile"
@@ -266,6 +297,10 @@ impl PluginCore for CaddyfileCore {
 pub struct CaddyfilePresentation;
 
 impl PluginPresentation for CaddyfilePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &CADDYFILE)
+    }
+
     fn name(&self) -> &'static str {
         "caddyfile"
     }

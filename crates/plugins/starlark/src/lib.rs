@@ -12,11 +12,12 @@
 //! is a promise to everybody in the repository, and one that is not is
 //! a private detail.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -335,6 +336,22 @@ fn read(path: &Path) -> io::Result<StarlarkView> {
 #[derive(Debug, Default)]
 pub struct StarlarkCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const STARLARK: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "False", "None", "True", "and", "break", "continue", "def", "elif", "else", "for", "if",
+        "in", "lambda", "load", "not", "or", "pass", "return",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for StarlarkCore {
     fn name(&self) -> &'static str {
         "starlark"
@@ -359,6 +376,10 @@ impl PluginCore for StarlarkCore {
 pub struct StarlarkPresentation;
 
 impl PluginPresentation for StarlarkPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &STARLARK)
+    }
+
     fn name(&self) -> &'static str {
         "starlark"
     }

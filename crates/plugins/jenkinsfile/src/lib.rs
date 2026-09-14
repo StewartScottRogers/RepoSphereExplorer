@@ -5,11 +5,12 @@
 //! and whether it is parallel or conditional, the parameters, the
 //! environment names, the post conditions, and the stages with no steps.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &[];
@@ -101,6 +102,37 @@ struct Walk {
     /// read - `agent` on its own line says nothing until the next one.
     awaiting_agent: Option<usize>,
 }
+
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const JENKINSFILE: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "agent",
+        "always",
+        "any",
+        "echo",
+        "environment",
+        "failure",
+        "node",
+        "parallel",
+        "pipeline",
+        "post",
+        "script",
+        "sh",
+        "stage",
+        "stages",
+        "steps",
+        "success",
+        "when",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
 
 impl Walk {
     /// The label of the block this line sits directly inside.
@@ -310,6 +342,10 @@ impl PluginCore for JenkinsfileCore {
 pub struct JenkinsfilePresentation;
 
 impl PluginPresentation for JenkinsfilePresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &JENKINSFILE)
+    }
+
     fn name(&self) -> &'static str {
         "jenkinsfile"
     }

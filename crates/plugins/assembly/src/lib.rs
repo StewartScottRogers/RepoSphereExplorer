@@ -1,9 +1,10 @@
 //! Assembly file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -115,6 +116,23 @@ fn has_assembly_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct AssemblyCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ASSEMBLY: Language = Language {
+    line_comment: &[";"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "add", "and", "call", "cmp", "dec", "div", "extern", "global", "inc", "je", "jg", "jl",
+        "jmp", "jne", "lea", "mov", "mul", "nop", "or", "pop", "push", "ret", "section", "sub",
+        "syscall", "test", "xor",
+    ],
+    types: &["byte", "dword", "qword", "word"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for AssemblyCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -152,6 +170,10 @@ impl PluginCore for AssemblyCore {
 pub struct AssemblyPresentation;
 
 impl PluginPresentation for AssemblyPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ASSEMBLY)
+    }
+
     fn name(&self) -> &'static str {
         "assembly"
     }

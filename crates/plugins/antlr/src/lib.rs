@@ -3,11 +3,12 @@
 //! A `grammar`, `lexer grammar` or `parser grammar` declaration is the
 //! marker, and nothing else writes one.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["g4"];
@@ -266,6 +267,22 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct AntlrCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const ANTLR: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "channels", "fragment", "grammar", "import", "lexer", "mode", "options", "parser",
+        "returns", "skip", "tokens",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for AntlrCore {
     fn name(&self) -> &'static str {
         "antlr"
@@ -296,6 +313,10 @@ impl PluginCore for AntlrCore {
 pub struct AntlrPresentation;
 
 impl PluginPresentation for AntlrPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &ANTLR)
+    }
+
     fn name(&self) -> &'static str {
         "antlr"
     }

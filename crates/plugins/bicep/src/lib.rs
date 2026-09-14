@@ -9,11 +9,12 @@
 //! group or a tenant - and getting it wrong is the difference between
 //! creating something and being told you cannot.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -302,6 +303,35 @@ fn read(path: &Path) -> io::Result<BicepView> {
 #[derive(Debug, Default)]
 pub struct BicepCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const BICEP: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "existing",
+        "false",
+        "for",
+        "if",
+        "import",
+        "metadata",
+        "module",
+        "null",
+        "output",
+        "param",
+        "resource",
+        "targetScope",
+        "true",
+        "type",
+        "var",
+    ],
+    types: &["array", "bool", "int", "object", "string"],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for BicepCore {
     fn name(&self) -> &'static str {
         "bicep"
@@ -326,6 +356,10 @@ impl PluginCore for BicepCore {
 pub struct BicepPresentation;
 
 impl PluginPresentation for BicepPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &BICEP)
+    }
+
     fn name(&self) -> &'static str {
         "bicep"
     }

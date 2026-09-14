@@ -7,11 +7,12 @@
 //! environments at once, with markers deciding which packages apply
 //! where; Poetry records one, with an `optional` flag per package.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 ///
@@ -341,6 +342,19 @@ fn read(path: &Path) -> io::Result<PythonlockView> {
 #[derive(Debug, Default)]
 pub struct PythonlockCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PYTHONLOCK: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"')],
+    keywords: &["false", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for PythonlockCore {
     fn name(&self) -> &'static str {
         "pythonlock"
@@ -371,6 +385,10 @@ impl PluginCore for PythonlockCore {
 pub struct PythonlockPresentation;
 
 impl PluginPresentation for PythonlockPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PYTHONLOCK)
+    }
+
     fn name(&self) -> &'static str {
         "pythonlock"
     }

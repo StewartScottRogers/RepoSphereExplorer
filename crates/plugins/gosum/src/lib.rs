@@ -10,11 +10,12 @@
 //! without downloading everything. A module with only the second is one
 //! whose version graph was read and whose code was never needed.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::Language;
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -201,6 +202,19 @@ fn read(path: &Path) -> io::Result<GosumView> {
 #[derive(Debug, Default)]
 pub struct GosumCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GOSUM: Language = Language {
+    line_comment: &["%"],
+    block_comment: &[],
+    quotes: &[],
+    keywords: &[],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for GosumCore {
     fn name(&self) -> &'static str {
         "gosum"
@@ -231,6 +245,10 @@ impl PluginCore for GosumCore {
 pub struct GosumPresentation;
 
 impl PluginPresentation for GosumPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GOSUM)
+    }
+
     fn name(&self) -> &'static str {
         "gosum"
     }

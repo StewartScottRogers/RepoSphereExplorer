@@ -3,11 +3,12 @@
 //! A `syntax = "proto3";` declaration settles it outright; otherwise
 //! `message`, `service` and `rpc` together are a shape no sibling has.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["proto"];
@@ -332,6 +333,26 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ProtobufCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const PROTOBUF: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "enum", "extend", "import", "map", "message", "oneof", "option", "optional", "package",
+        "public", "repeated", "required", "reserved", "returns", "rpc", "service", "stream",
+        "syntax", "to", "weak",
+    ],
+    types: &[
+        "bool", "bytes", "double", "fixed32", "fixed64", "float", "int32", "int64", "sfixed32",
+        "sfixed64", "sint32", "sint64", "string", "uint32", "uint64",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ProtobufCore {
     fn name(&self) -> &'static str {
         "protobuf"
@@ -362,6 +383,10 @@ impl PluginCore for ProtobufCore {
 pub struct ProtobufPresentation;
 
 impl PluginPresentation for ProtobufPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &PROTOBUF)
+    }
+
     fn name(&self) -> &'static str {
         "protobuf"
     }

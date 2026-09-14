@@ -1,9 +1,10 @@
 //! Swift file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -104,6 +105,101 @@ fn has_swift_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct SwiftCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SWIFT: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "actor",
+        "any",
+        "as",
+        "associatedtype",
+        "async",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "continue",
+        "convenience",
+        "defer",
+        "deinit",
+        "didSet",
+        "do",
+        "else",
+        "enum",
+        "extension",
+        "fallthrough",
+        "false",
+        "fileprivate",
+        "final",
+        "for",
+        "func",
+        "get",
+        "guard",
+        "if",
+        "import",
+        "in",
+        "indirect",
+        "init",
+        "inout",
+        "internal",
+        "is",
+        "lazy",
+        "let",
+        "mutating",
+        "nil",
+        "nonisolated",
+        "open",
+        "operator",
+        "private",
+        "protocol",
+        "public",
+        "repeat",
+        "required",
+        "rethrows",
+        "return",
+        "self",
+        "set",
+        "some",
+        "static",
+        "struct",
+        "subscript",
+        "super",
+        "switch",
+        "throw",
+        "throws",
+        "true",
+        "try",
+        "typealias",
+        "var",
+        "weak",
+        "where",
+        "while",
+        "willSet",
+    ],
+    types: &[
+        "Any",
+        "Array",
+        "Bool",
+        "Character",
+        "Dictionary",
+        "Double",
+        "Float",
+        "Int",
+        "Optional",
+        "Set",
+        "String",
+        "UInt",
+        "Void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for SwiftCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -141,6 +237,10 @@ impl PluginCore for SwiftCore {
 pub struct SwiftPresentation;
 
 impl PluginPresentation for SwiftPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SWIFT)
+    }
+
     fn name(&self) -> &'static str {
         "swift"
     }

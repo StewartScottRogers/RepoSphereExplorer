@@ -1,9 +1,10 @@
 //! Tcl file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -99,6 +100,52 @@ fn parse_definitions(content: &str) -> (Vec<String>, Vec<String>) {
 #[derive(Debug, Default)]
 pub struct TclCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const TCL: Language = Language {
+    line_comment: &["#"],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "append",
+        "array",
+        "break",
+        "catch",
+        "continue",
+        "else",
+        "elseif",
+        "expr",
+        "for",
+        "foreach",
+        "global",
+        "if",
+        "incr",
+        "info",
+        "lappend",
+        "lindex",
+        "list",
+        "llength",
+        "lsort",
+        "namespace",
+        "proc",
+        "puts",
+        "regexp",
+        "regsub",
+        "return",
+        "set",
+        "source",
+        "string",
+        "switch",
+        "upvar",
+        "variable",
+        "while",
+    ],
+    types: &[],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for TclCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -136,6 +183,10 @@ impl PluginCore for TclCore {
 pub struct TclPresentation;
 
 impl PluginPresentation for TclPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &TCL)
+    }
+
     fn name(&self) -> &'static str {
         "tcl"
     }

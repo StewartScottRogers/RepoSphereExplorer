@@ -3,11 +3,12 @@
 //! A specialisation of JSON: `name`, `start_url` and `display` together
 //! are a shape no other document has.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 pub const EXTENSIONS: &[&str] = &["webmanifest"];
@@ -144,6 +145,19 @@ fn looks_like_it(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct WebmanifestCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const WEBMANIFEST: Language = Language {
+    line_comment: &[],
+    block_comment: &[],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &["false", "null", "true"],
+    types: &[],
+    calls: false,
+    ignore_case: false,
+};
+
 impl PluginCore for WebmanifestCore {
     fn name(&self) -> &'static str {
         "webmanifest"
@@ -180,6 +194,10 @@ impl PluginCore for WebmanifestCore {
 pub struct WebmanifestPresentation;
 
 impl PluginPresentation for WebmanifestPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &WEBMANIFEST)
+    }
+
     fn name(&self) -> &'static str {
         "webmanifest"
     }

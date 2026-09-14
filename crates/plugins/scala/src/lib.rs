@@ -1,9 +1,10 @@
 //! Scala file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -110,6 +111,66 @@ fn has_scala_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct ScalaCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const SCALA: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "case",
+        "catch",
+        "class",
+        "def",
+        "do",
+        "else",
+        "enum",
+        "extends",
+        "false",
+        "final",
+        "finally",
+        "for",
+        "forSome",
+        "given",
+        "if",
+        "implicit",
+        "import",
+        "lazy",
+        "match",
+        "new",
+        "null",
+        "object",
+        "override",
+        "package",
+        "private",
+        "protected",
+        "return",
+        "sealed",
+        "super",
+        "then",
+        "this",
+        "throw",
+        "trait",
+        "true",
+        "try",
+        "type",
+        "using",
+        "val",
+        "var",
+        "while",
+        "with",
+        "yield",
+    ],
+    types: &[
+        "Any", "AnyRef", "AnyVal", "Boolean", "Byte", "Char", "Double", "Float", "Int", "List",
+        "Long", "Map", "Nothing", "Option", "Seq", "Set", "Short", "String", "Unit",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for ScalaCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -147,6 +208,10 @@ impl PluginCore for ScalaCore {
 pub struct ScalaPresentation;
 
 impl PluginPresentation for ScalaPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &SCALA)
+    }
+
     fn name(&self) -> &'static str {
         "scala"
     }

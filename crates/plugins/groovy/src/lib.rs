@@ -1,9 +1,10 @@
 //! Groovy file type plugin: core and presentation halves.
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Icon, PluginCore, PluginPresentation, Span};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use syntax::{Language, Quote};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -125,6 +126,78 @@ fn has_groovy_syntax(text: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct GroovyCore;
 
+/// How this language is coloured, for the shared tokeniser. GUIDANCE.md
+/// §3.6: the plugin describes its own format, the pane paints what it is
+/// told.
+const GROOVY: Language = Language {
+    line_comment: &["//"],
+    block_comment: &[("/*", "*/")],
+    quotes: &[Quote::simple('"'), Quote::simple('\'')],
+    keywords: &[
+        "abstract",
+        "as",
+        "assert",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "def",
+        "default",
+        "do",
+        "else",
+        "enum",
+        "extends",
+        "false",
+        "final",
+        "finally",
+        "for",
+        "goto",
+        "if",
+        "implements",
+        "import",
+        "in",
+        "instanceof",
+        "interface",
+        "new",
+        "null",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "static",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "throws",
+        "trait",
+        "true",
+        "try",
+        "while",
+    ],
+    types: &[
+        "BigDecimal",
+        "List",
+        "Map",
+        "String",
+        "boolean",
+        "byte",
+        "char",
+        "def",
+        "double",
+        "float",
+        "int",
+        "long",
+        "short",
+        "void",
+    ],
+    calls: true,
+    ignore_case: false,
+};
+
 impl PluginCore for GroovyCore {
     fn extensions(&self) -> &'static [&'static str] {
         EXTENSIONS
@@ -162,6 +235,10 @@ impl PluginCore for GroovyCore {
 pub struct GroovyPresentation;
 
 impl PluginPresentation for GroovyPresentation {
+    fn classify(&self, text: &str) -> Vec<Span> {
+        syntax::classify(text, &GROOVY)
+    }
+
     fn name(&self) -> &'static str {
         "groovy"
     }
