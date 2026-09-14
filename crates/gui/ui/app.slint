@@ -1247,8 +1247,12 @@ export component MainWindow inherits Window {
     callback content-sort-requested(int);
     // Address bar and history navigation.
     in property <[string]> breadcrumbs;
+    // The browsed folder as one string. Only for noticing that it changed;
+    // what is drawn comes from `breadcrumbs`.
+    in property <string> address-path;
     in property <bool> can-go-back;
     in property <bool> can-go-forward;
+    in property <bool> can-go-up;
     // The address bar as a text field, while a path is being typed.
     in property <string> path-input;
     in property <bool> editing-path;
@@ -1298,6 +1302,19 @@ export component MainWindow inherits Window {
     // and expands in place when asked.
     property <int> max-crumbs: 5;
     property <bool> crumbs-expanded: false;
+
+    // Expanding is for the path in front of the reader, not for every path
+    // afterwards. Nothing put this back, so one click on the ellipsis left
+    // every folder for the rest of the session drawing its full path - and
+    // a long one pushes the tail, the part that says where you are, off
+    // the end of the bar.
+    //
+    // Watched on the path rather than on `breadcrumbs`, which `sync_ui`
+    // rebuilds on every timer tick: that would collapse the bar a tenth of
+    // a second after the reader expanded it.
+    changed address-path => {
+        crumbs-expanded = false;
+    }
     property <int> first-crumb: crumbs-expanded || breadcrumbs.length <= max-crumbs
         ? 0
         : breadcrumbs.length - max-crumbs;
@@ -1573,6 +1590,7 @@ export component MainWindow inherits Window {
                     CommandSeparator { }
                     NavButton {
                         glyph: "\u{2191}";
+                        button-enabled: can-go-up;
                         activated => { parent-requested(); }
                     }
                     Rectangle {
