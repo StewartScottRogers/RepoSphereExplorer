@@ -722,6 +722,106 @@ struct Edit {
     coloured: bool,
 }
 
+/// A line drawn in no colour at all, as one run.
+fn plain_line(line: &str) -> Vec<ColouredRun> {
+    vec![ColouredRun {
+        text: line.to_owned(),
+        class: Class::Plain,
+    }]
+}
+
+/// The class the names after a summary label are, or `None` for a label
+/// nobody has mapped.
+///
+/// **A whitelist, and it has to be.** The obvious rule - colour whatever
+/// comes before the first colon - was tried against every fixture in
+/// the repository and produced labels like `10.0.0.10 - - [08/Sep/2026`,
+/// `{"id"` and `[0]`: an access log's address, a JSON key, an array
+/// index. A plugin that pretty-prints its content rather than appending
+/// it has no summary to speak of, and there is no telling the two apart
+/// from the shape of a line.
+///
+/// So only the labels that name code entities are coloured, and every
+/// other line is left exactly as it was. Guessing a class from an
+/// unknown label is how a reader comes to trust a colour that means
+/// nothing.
+fn class_for_label(label: &str) -> Option<Class> {
+    match label {
+        "functions" | "methods" | "procedures" => Some(Class::Function),
+        "classes" | "structs" | "traits" | "enums" | "types" | "interfaces" | "records" => {
+            Some(Class::Type)
+        }
+        _ => None,
+    }
+}
+
+/// A summary line split into its label and the values after it.
+///
+/// `None` for an indented line, which is a value belonging to the label
+/// above it rather than a label of its own, and for a line with no
+/// colon at all.
+fn summary_label(line: &str) -> Option<(&str, &str)> {
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let (label, values) = line.split_once(':')?;
+    Some((label, values))
+}
+
+/// A summary line as coloured runs, or `None` when it is a line this
+/// knows nothing about and should not touch.
+///
+/// The label is drawn as a keyword because that is what it is: the
+/// reserved word of the small format a plugin's summary is written in.
+/// The names after it take the class the label says they are, so a type
+/// looks the same whether a reader met it here or in the file below.
+fn colour_summary_line(line: &str) -> Option<Vec<ColouredRun>> {
+    let (label, values) = summary_label(line)?;
+    let class = class_for_label(label)?;
+
+    let mut runs = vec![
+        ColouredRun {
+            text: label.to_owned(),
+            class: Class::Keyword,
+        },
+        ColouredRun {
+            text: ":".to_owned(),
+            class: Class::Punctuation,
+        },
+    ];
+    let mut rest = values;
+    while !rest.is_empty() {
+        let (name, after) = rest.split_once(',').unwrap_or((rest, ""));
+        if !name.is_empty() {
+            // The space before a name belongs to nothing, so it is drawn
+            // plain rather than given the name's colour.
+            let trimmed = name.trim_start();
+            let spaces = name.len() - trimmed.len();
+            if spaces > 0 {
+                runs.push(ColouredRun {
+                    text: name[..spaces].to_owned(),
+                    class: Class::Plain,
+                });
+            }
+            if !trimmed.is_empty() {
+                runs.push(ColouredRun {
+                    text: trimmed.to_owned(),
+                    class,
+                });
+            }
+        }
+        if after.is_empty() && !rest.contains(',') {
+            break;
+        }
+        runs.push(ColouredRun {
+            text: ",".to_owned(),
+            class: Class::Punctuation,
+        });
+        rest = after;
+    }
+    Some(runs)
+}
+
 /// Where the file begins inside `preview`, or `None` when the Preview
 /// does not end with it.
 ///
@@ -2346,12 +2446,7 @@ impl App {
         };
         let mut lines: Vec<Vec<ColouredRun>> = preview[..from]
             .iter()
-            .map(|line| {
-                vec![ColouredRun {
-                    text: line.clone(),
-                    class: Class::Plain,
-                }]
-            })
+            .map(|line| colour_summary_line(line).unwrap_or_else(|| plain_line(line)))
             .collect();
         lines.extend(coloured);
         lines
@@ -2508,7 +2603,7 @@ impl App {
 mod tests {
     use std::path::Path;
 
-    use super::{Class, file_starts_in_preview};
+    use super::{Class, ColouredRun, colour_summary_line, file_starts_in_preview, summary_label};
 
     use super::{
         App, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp, icon_for,
@@ -4666,9 +4761,17 @@ third",
             "the Preview should now be coloured at all"
         );
 
+        // `functions: main` is a label this knows, so it is drawn as a
+        // label and a name rather than as one run. A line it does not
+        // know would be the single plain run this used to assert, and
+        // `a_label_nobody_has_mapped_leaves_its_line_completely_alone`
+        // is where that is checked.
         let summary = &lines[0];
-        assert_eq!(summary.len(), 1, "a summary line is one plain run");
-        assert_eq!(summary[0].class, Class::Plain);
+        assert_eq!(summary[0].class, Class::Keyword, "the label");
+        assert!(
+            summary.iter().any(|run| run.class == Class::Function),
+            "and the name it says is a function: {summary:?}"
+        );
 
         let file = lines.last().expect("the file half is there");
         assert!(
@@ -4703,6 +4806,129 @@ third",
             app.file_lines().is_empty(),
             "no coloured lines means the pane draws the plain text it \
              always drew"
+        );
+    }
+    /// What a coloured line is made of, as (class, text) pairs.
+    fn runs_of(line: &[ColouredRun]) -> Vec<(Class, &str)> {
+        line.iter()
+            .map(|run| (run.class, run.text.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn a_summary_line_is_its_label_and_then_the_names_it_says_they_are() {
+        let line = colour_summary_line("functions: index, spawn, main")
+            .expect("a mapped label is coloured");
+        assert_eq!(
+            runs_of(&line),
+            vec![
+                (Class::Keyword, "functions"),
+                (Class::Punctuation, ":"),
+                (Class::Plain, " "),
+                (Class::Function, "index"),
+                (Class::Punctuation, ","),
+                (Class::Plain, " "),
+                (Class::Function, "spawn"),
+                (Class::Punctuation, ","),
+                (Class::Plain, " "),
+                (Class::Function, "main"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_type_label_gives_its_names_the_colour_a_type_has_in_the_file() {
+        let line = colour_summary_line("structs: Entry, Progress").expect("mapped");
+        assert!(
+            runs_of(&line)
+                .iter()
+                .filter(|(class, _)| *class == Class::Type)
+                .map(|(_, text)| *text)
+                .eq(["Entry", "Progress"]),
+            "so a type looks the same wherever a reader meets it: {:?}",
+            runs_of(&line)
+        );
+    }
+
+    /// The rule that made a whitelist necessary rather than tidy.
+    ///
+    /// Colouring whatever comes before the first colon was tried against
+    /// every fixture in the repository. It produced labels like
+    /// `10.0.0.10 - - [08/Sep/2026`, `{"id"` and `[0]` - an access log's
+    /// address, a JSON key, an array index - because a plugin that
+    /// pretty-prints its content rather than appending it has no summary
+    /// to speak of, and nothing in the shape of a line tells the two
+    /// apart.
+    #[test]
+    fn a_label_nobody_has_mapped_leaves_its_line_completely_alone() {
+        for line in [
+            "10.0.0.10 - - [08/Sep/2026:04:11:22 +0000] \"GET / HTTP/1.1\" 200",
+            "{\"id\": 4, \"name\": \"ada\"}",
+            "[0]: the first element",
+            "Title: A Markdown fixture",
+            "Comments: 14",
+            "Produces: Library",
+        ] {
+            assert!(
+                colour_summary_line(line).is_none(),
+                "nothing in {line:?} is a label this knows, so it should be \
+                 left as it is"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shapes_a_summary_line_comes_in() {
+        // A value continued on an indented line below its label is not a
+        // label of its own, whatever punctuation it holds.
+        assert!(summary_label("  Microsoft.NET.Test.Sdk 17.13.0").is_none());
+        assert!(summary_label("  nested: thing").is_none());
+
+        // No colon at all.
+        assert!(summary_label("Packages").is_none());
+
+        // A colon inside a value: the first one is the label's.
+        assert_eq!(
+            summary_label("Remote: https://github.com/a/b.git"),
+            Some(("Remote", " https://github.com/a/b.git"))
+        );
+
+        // A label with a count after it, which several plugins print.
+        assert_eq!(summary_label("Packages (4):"), Some(("Packages (4)", "")));
+        assert!(
+            colour_summary_line("Packages (4):").is_none(),
+            "and it is not one of the mapped labels, so it stays plain"
+        );
+    }
+
+    #[test]
+    fn one_name_and_no_comma_is_still_one_name() {
+        let line = colour_summary_line("functions: main").expect("mapped");
+        assert_eq!(
+            runs_of(&line),
+            vec![
+                (Class::Keyword, "functions"),
+                (Class::Punctuation, ":"),
+                (Class::Plain, " "),
+                (Class::Function, "main"),
+            ]
+        );
+    }
+
+    #[test]
+    fn three_plugins_of_different_shapes_get_what_they_should() {
+        // rust names its items, python names classes and functions, and
+        // msbuild names none of them - it prints what it found about a
+        // project, and every line of it should be left alone.
+        let rust = colour_summary_line("structs: Entry, Progress");
+        let python = colour_summary_line("classes: State, Task");
+        let also_python = colour_summary_line("functions: retrying, draining");
+        let msbuild = colour_summary_line("Software development kit: Microsoft.NET.Sdk");
+
+        assert!(rust.is_some() && python.is_some() && also_python.is_some());
+        assert!(
+            msbuild.is_none(),
+            "a project's summary is prose, not a list of names"
         );
     }
 }
