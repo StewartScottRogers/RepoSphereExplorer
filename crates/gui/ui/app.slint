@@ -1227,6 +1227,10 @@ export component MainWindow inherits Window {
     callback new-folder-requested();
     callback new-file-requested();
     callback selection-moved(int);
+    // The same movements with Shift held: the range grows to where the
+    // key would have moved, rather than the selection jumping there.
+    callback selection-extended(int);
+    callback edge-extended(int);
     callback pane-cycled(int);
     // Whether the selected contents row previewed as an archive.
     in property <bool> content-is-archive;
@@ -1433,17 +1437,17 @@ export component MainWindow inherits Window {
             } else if (event.text == Key.F5) {
                 refresh-requested();
             } else if (event.text == Key.Home) {
-                edge-requested(0);
+                if (event.modifiers.shift) { edge-extended(0); } else { edge-requested(0); }
             } else if (event.text == Key.End) {
-                edge-requested(1);
+                if (event.modifiers.shift) { edge-extended(1); } else { edge-requested(1); }
             } else if (event.text == Key.PageUp) {
-                selection-moved(-10);
+                if (event.modifiers.shift) { selection-extended(-10); } else { selection-moved(-10); }
             } else if (event.text == Key.PageDown) {
-                selection-moved(10);
+                if (event.modifiers.shift) { selection-extended(10); } else { selection-moved(10); }
             } else if (event.text == Key.UpArrow) {
-                selection-moved(-1);
+                if (event.modifiers.shift) { selection-extended(-1); } else { selection-moved(-1); }
             } else if (event.text == Key.DownArrow) {
-                selection-moved(1);
+                if (event.modifiers.shift) { selection-extended(1); } else { selection-moved(1); }
             } else if (event.text == Key.RightArrow) {
                 pane-cycled(1);
             } else if (event.text == Key.LeftArrow) {
