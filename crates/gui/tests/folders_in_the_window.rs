@@ -58,87 +58,9 @@ fn scratch(name: &str) -> PathBuf {
     directory
 }
 
-/// `main`'s wiring, copied because every part of it is private.
-fn wire(ui: &MainWindow, app: &Rc<RefCell<App>>) {
-    let index = |i: i32| usize::try_from(i).unwrap_or(usize::MAX);
-
-    macro_rules! on_row_event {
-        ($setter:ident, $method:ident) => {{
-            let app = Rc::clone(app);
-            let ui_weak = ui.as_weak();
-            ui.$setter(move |i| {
-                let mut app = app.borrow_mut();
-                app.$method(index(i));
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-    macro_rules! on_delta_event {
-        ($setter:ident, $method:ident) => {{
-            let app = Rc::clone(app);
-            let ui_weak = ui.as_weak();
-            ui.$setter(move |delta| {
-                let mut app = app.borrow_mut();
-                app.$method(delta);
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-    macro_rules! on_event {
-        ($setter:ident, $method:ident) => {{
-            let app = Rc::clone(app);
-            let ui_weak = ui.as_weak();
-            ui.$setter(move || {
-                let mut app = app.borrow_mut();
-                app.$method();
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-
-    {
-        // The folders pane's click carries where in the row it landed.
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_folder_row_clicked(move |i, x| {
-            let mut app = app.borrow_mut();
-            app.click_folder(index(i), x);
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    on_row_event!(on_folder_row_double_clicked, toggle_folder);
-    on_row_event!(on_content_row_clicked, select_content);
-    on_delta_event!(on_selection_moved, move_selection);
-    on_delta_event!(on_pane_cycled, cycle_focus);
-    on_event!(on_cancel_requested, cancel_pending);
-    on_event!(on_return_pressed, handle_return);
-    on_event!(on_edit_requested, begin_file_edit);
-    on_event!(on_refresh_requested, refresh);
-    {
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_key_text(move |text| {
-            let mut app = app.borrow_mut();
-            app.handle_key_text(&text);
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-
-    // The editor's own callbacks, through the crate's wiring rather
-    // than a copy of it: a copy drifts, and a test of a copy proves
-    // nothing about what a reader gets.
-    gui::wire_editor(ui, app);
-}
+// The window's callbacks come from the crate's own wiring, which is what
+// `main` calls. A copy here would be a second thing to keep right, and a
+// test of a copy proves nothing about what a reader gets.
 
 /// Ticks the application until `done`, the way the window's timer does.
 fn pump(ui: &MainWindow, app: &Rc<RefCell<App>>, what: &str, done: impl Fn(&App) -> bool) {
@@ -166,7 +88,7 @@ fn window_on(directory: &Path) -> (MainWindow, Rc<RefCell<App>>) {
     ensure_service();
     let app = Rc::new(RefCell::new(App::new(directory.to_path_buf())));
     let ui = MainWindow::new().expect("the window should build");
-    wire(&ui, &app);
+    gui::wire_callbacks(&ui, &app);
     sync_ui(&ui, &app.borrow());
     ui.show().expect("the window should show");
     ui.window()

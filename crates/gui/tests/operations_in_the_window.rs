@@ -90,129 +90,9 @@ fn file(dir: &Path, name: &str, body: &str) {
 // Wiring, mirroring `main.rs`.
 // ---------------------------------------------------------------------
 
-macro_rules! on_plain {
-    ($ui:expr, $app:expr, $setter:ident, $method:ident) => {{
-        let app = Rc::clone($app);
-        let weak = $ui.as_weak();
-        $ui.$setter(move || {
-            let mut app = app.borrow_mut();
-            app.$method();
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }};
-}
-
-macro_rules! on_index {
-    ($ui:expr, $app:expr, $setter:ident, $method:ident) => {{
-        let app = Rc::clone($app);
-        let weak = $ui.as_weak();
-        $ui.$setter(move |i| {
-            let mut app = app.borrow_mut();
-            app.$method(usize::try_from(i).unwrap_or(usize::MAX));
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }};
-}
-
-macro_rules! on_delta {
-    ($ui:expr, $app:expr, $setter:ident, $method:ident) => {{
-        let app = Rc::clone($app);
-        let weak = $ui.as_weak();
-        $ui.$setter(move |delta| {
-            let mut app = app.borrow_mut();
-            app.$method(delta);
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }};
-}
-
-/// The row and selection callbacks.
-fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
-    on_index!(ui, app, on_content_row_clicked, select_content);
-    on_index!(ui, app, on_content_row_ctrl_clicked, toggle_content);
-    on_index!(ui, app, on_content_row_shift_clicked, extend_selection_to);
-    on_index!(ui, app, on_content_row_double_clicked, open_content);
-    on_delta!(ui, app, on_selection_moved, move_selection);
-    on_delta!(ui, app, on_pane_cycled, cycle_focus);
-    {
-        let app = Rc::clone(app);
-        let weak = ui.as_weak();
-        ui.on_content_rows_marqueed(move |from, to| {
-            let mut app = app.borrow_mut();
-            app.select_range(
-                usize::try_from(from).unwrap_or(usize::MAX),
-                usize::try_from(to).unwrap_or(usize::MAX),
-            );
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    {
-        let app = Rc::clone(app);
-        let weak = ui.as_weak();
-        ui.on_edge_requested(move |last| {
-            let mut app = app.borrow_mut();
-            app.select_edge(last != 0);
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-}
-
-/// The command and operation callbacks these tests reach.
-///
-/// `repos-root-requested` is deliberately left unwired: it would write the
-/// developer's own configured Repos Directory, and nothing here asks for it.
-fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
-    on_plain!(ui, app, on_cancel_requested, cancel_pending);
-    on_plain!(ui, app, on_delete_requested, request_delete);
-    on_plain!(ui, app, on_content_delete_requested, request_delete);
-    on_plain!(ui, app, on_return_pressed, handle_return);
-    on_plain!(ui, app, on_backspace_pressed, backspace);
-    on_plain!(ui, app, on_parent_requested, navigate_to_parent);
-    on_plain!(ui, app, on_content_rename_requested, request_rename);
-    on_plain!(ui, app, on_content_copy_requested, request_copy);
-    on_plain!(ui, app, on_content_extract_requested, request_extract);
-    on_plain!(ui, app, on_new_folder_requested, request_new_folder);
-    on_plain!(ui, app, on_new_file_requested, request_new_file);
-    on_plain!(ui, app, on_clipboard_copy_requested, copy_to_clipboard);
-    on_plain!(ui, app, on_clipboard_cut_requested, cut_to_clipboard);
-    on_plain!(ui, app, on_clipboard_paste_requested, paste_from_clipboard);
-    on_plain!(ui, app, on_select_all_requested, select_all);
-    on_plain!(ui, app, on_undo_requested, undo);
-    on_plain!(ui, app, on_refresh_requested, refresh);
-    {
-        let app = Rc::clone(app);
-        let weak = ui.as_weak();
-        ui.on_key_text(move |text| {
-            let mut app = app.borrow_mut();
-            app.handle_key_text(&text);
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    {
-        let app = Rc::clone(app);
-        let weak = ui.as_weak();
-        ui.on_content_open_requested(move || {
-            let mut app = app.borrow_mut();
-            let selected = app.content_selected();
-            app.open_content(selected);
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-}
+// The window's callbacks come from the crate's own wiring, which is
+// what `main` calls. A copy here would be a second thing to keep
+// right, and a test of a copy proves nothing about what a reader gets.
 
 // ---------------------------------------------------------------------
 // The harness.
@@ -226,8 +106,7 @@ fn window_at(root: &Path) -> (MainWindow, Rc<RefCell<App>>) {
     let app = Rc::new(RefCell::new(App::new(root.to_path_buf())));
     let ui = MainWindow::new().expect("the window should build");
     sync_ui(&ui, &app.borrow());
-    wire_rows(&ui, &app);
-    wire_commands(&ui, &app);
+    gui::wire_callbacks(&ui, &app);
     ui.show().expect("the window should show");
     pump(&ui, &app);
     (ui, app)
