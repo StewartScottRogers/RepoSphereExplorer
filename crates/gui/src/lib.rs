@@ -7,12 +7,13 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::{ColouredRun, ContentRow, FolderRow, MainWindow, Theme};
+pub use generated::{CodeEditorHarness, ColouredRun, ContentRow, FolderRow, MainWindow, Theme};
 
 pub mod app;
 pub mod settings;
 
 pub mod document;
+pub mod editor;
 
 pub use app::PRESENTATION_PLUGINS;
 

@@ -910,6 +910,228 @@ component ContentsPane inherits Rectangle {
     }
 }
 
+// A monospace editing surface: coloured rows, a caret, a selection, and
+// a keyboard.
+//
+// Every decision is in Rust - `gui::document` for what the caret does,
+// `gui::editor` for what a key and a click mean. This draws what it is
+// told and reports where a pointer landed, nothing else. That is the
+// same split as `scroll_offset_for` and `chevron_hit`, and for the same
+// reason: a rule written here cannot be exercised without an event loop.
+//
+// **Fixed-width, and not as a preference** (GUIDANCE.md §3.6). Slint
+// offers no way to ask where character *n* of a string sits, so a caret
+// can only be placed where the column and the pixel are related by
+// arithmetic. `cell-width` is measured once from a run of the same font
+// rather than guessed, and Rust is handed the same number so that a
+// click and the caret cannot disagree.
+component CodeEditor inherits Rectangle {
+    in property <[[ColouredRun]]> lines;
+    // Where the caret is, in rows and columns.
+    in property <int> caret-line;
+    in property <int> caret-column;
+    // The selection, as two points. A start line of -1 means none.
+    in property <int> selection-start-line: -1;
+    in property <int> selection-start-column;
+    in property <int> selection-end-line;
+    in property <int> selection-end-column;
+    in property <bool> focused;
+    // How wide the widest line is, in columns, so the surface can scroll
+    // sideways rather than wrap - a wrapped line of code puts its second
+    // half under a column it has nothing to do with. Rust counts it;
+    // asking Slint would close a binding loop through the rows' width.
+    in property <int> longest-line;
+
+    in-out property <length> scroll-y;
+    out property <length> viewport-height: scroll.visible-height;
+    out property <int> visible-rows: floor(scroll.visible-height / row-height);
+
+    // One character's width, measured rather than assumed. Rust reads
+    // this to turn a click into a column, so the two halves cannot drift.
+    out property <length> cell-width: measure.preferred-width / 40;
+
+    callback pressed(int, int);
+    callback dragged(int, int);
+    callback double-pressed(int, int);
+    // The keystroke, verbatim, for Rust to make sense of.
+    callback key(string, bool, bool);
+
+    property <length> row-height: 16px;
+    property <length> gutter: 4px;
+    property <string> face: "Consolas, Menlo, monospace";
+    property <length> size: 12px;
+
+    forward-focus: keys;
+
+    // Off-screen, and the only thing that knows how wide a character is.
+    // Forty of them rather than one, so that rounding in the font's
+    // metrics is divided away rather than multiplied up.
+    measure := Text {
+        text: "0000000000000000000000000000000000000000";
+        font-family: face;
+        font-size: size;
+        visible: false;
+        x: -10000px;
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            key(event.text, event.modifiers.shift, event.modifiers.control);
+            return accept;
+        }
+    }
+
+    scroll := ScrollView {
+        viewport-y <=> root.scroll-y;
+        VerticalLayout {
+            alignment: start;
+            body := Rectangle {
+                width: max(root.width, longest-line * cell-width + 2 * gutter);
+                height: max(lines.length * row-height, root.height);
+
+                // The selection, as three rectangles: the tail of the
+                // first line, every whole line between, and the head of
+                // the last. One rectangle cannot do it, and one per line
+                // would be a rectangle per line of the document.
+                if selection-start-line >= 0: band-head := Rectangle {
+                    x: gutter + selection-start-column * cell-width;
+                    y: selection-start-line * row-height;
+                    width: selection-start-line == selection-end-line
+                        ? (selection-end-column - selection-start-column) * cell-width
+                        : parent.width - self.x;
+                    height: row-height;
+                    background: Theme.accent.transparentize(0.6);
+                }
+                if selection-start-line >= 0 && selection-end-line > selection-start-line + 1: band-middle := Rectangle {
+                    x: gutter;
+                    y: (selection-start-line + 1) * row-height;
+                    width: parent.width - gutter;
+                    height: (selection-end-line - selection-start-line - 1) * row-height;
+                    background: Theme.accent.transparentize(0.6);
+                }
+                if selection-start-line >= 0 && selection-end-line > selection-start-line: band-tail := Rectangle {
+                    x: gutter;
+                    y: selection-end-line * row-height;
+                    width: selection-end-column * cell-width;
+                    height: row-height;
+                    background: Theme.accent.transparentize(0.6);
+                }
+
+                for line[row] in lines: editor-row := Rectangle {
+                    y: row * row-height;
+                    height: row-height;
+                    width: 100%;
+                    HorizontalLayout {
+                        alignment: start;
+                        padding-left: gutter;
+                        for run in line: editor-run := Text {
+                            text: run.text;
+                            color: Theme.syntax-colour(run.class);
+                            font-family: face;
+                            font-size: size;
+                            vertical-alignment: center;
+                            accessible-role: text;
+                            accessible-label: run.text;
+                        }
+                    }
+                }
+
+                // Named so a test can ask where it is, which is the one
+                // thing about this surface that cannot be checked by
+                // reading the code.
+                caret := Rectangle {
+                    x: gutter + caret-column * cell-width;
+                    y: caret-line * row-height;
+                    width: 1px;
+                    height: row-height;
+                    background: focused ? Palette.foreground : transparent;
+                }
+
+                // One touch area for the whole surface. Slint 1.17.1
+                // leaves every per-row `TouchArea` but the first
+                // unresponsive, which the folders and contents panes both
+                // already work around.
+                surface := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => {
+                        keys.focus();
+                        pressed(row-at(surface.mouse-y), column-at(surface.mouse-x));
+                    }
+                    double-clicked => {
+                        double-pressed(row-at(surface.mouse-y), column-at(surface.mouse-x));
+                    }
+                    moved => {
+                        if (surface.pressed) {
+                            dragged(row-at(surface.mouse-y), column-at(surface.mouse-x));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The exact inverse of where the caret is drawn: the caret for
+    // column n sits at `gutter + n * cell-width`, so a click there gives
+    // back n. Rounding rather than flooring because a click in the
+    // right-hand half of a character belongs to the boundary after it,
+    // which is where every editor puts the caret.
+    public pure function column-at(x: length) -> int {
+        max(0, round((x - gutter) / cell-width))
+    }
+    pure function row-at(y: length) -> int {
+        clamp(floor(y / row-height), 0, max(lines.length - 1, 0))
+    }
+
+}
+
+
+/// A window holding nothing but the editor, so #479 can be driven before
+/// #480 puts it in the File pane. Deleted by that work order, which is
+/// what makes it a harness rather than a second front end.
+export component CodeEditorHarness inherits Window {
+    in property <[[ColouredRun]]> lines;
+    in property <int> caret-line;
+    in property <int> caret-column;
+    in property <int> selection-start-line: -1;
+    in property <int> selection-start-column;
+    in property <int> selection-end-line;
+    in property <int> selection-end-column;
+    in property <int> longest-line;
+    in-out property <length> scroll-y <=> editor.scroll-y;
+    out property <length> cell-width <=> editor.cell-width;
+    out property <int> visible-rows <=> editor.visible-rows;
+    callback pressed(int, int);
+    callback key(string, bool, bool);
+
+    width: 600px;
+    height: 320px;
+
+    // The surface is the only thing in this window, so it has the
+    // keyboard from the start rather than waiting to be clicked.
+    init => { editor.focus(); }
+
+    public pure function column-at(x: length) -> int {
+        editor.column-at(x)
+    }
+
+    editor := CodeEditor {
+        width: 100%;
+        height: 100%;
+        focused: true;
+        lines: root.lines;
+        caret-line: root.caret-line;
+        caret-column: root.caret-column;
+        selection-start-line: root.selection-start-line;
+        selection-start-column: root.selection-start-column;
+        selection-end-line: root.selection-end-line;
+        selection-end-column: root.selection-end-column;
+        longest-line: root.longest-line;
+        pressed(line, column) => { root.pressed(line, column); }
+        key(text, shift, control) => { root.key(text, shift, control); }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "Repos Explorer";
     preferred-width: 1000px;
