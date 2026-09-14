@@ -1880,6 +1880,35 @@ public class OrderBook {
     /// wire path (`protocol::write_message`/`read_message` over a real
     /// local socket) that every front end actually uses, rather than
     /// calling [`handle_request`] in-process.
+    /// The far end of the editor's save: the bytes actually land.
+    ///
+    /// The graphical front end's own tests stop at the text a save would
+    /// carry, because the save crosses a process boundary by design.
+    /// This is the other side of it.
+    #[test]
+    fn writing_a_file_puts_the_bytes_on_disk() {
+        let directory = std::env::temp_dir().join("repos-explorer-write-file");
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        let path = directory.join("demo.rs");
+        std::fs::write(&path, "before\n").expect("the fixture is written");
+
+        let response = round_trip(Request::WriteFile {
+            path: path.to_string_lossy().into_owned(),
+            content: "// hifn main() {}\n".to_owned(),
+        });
+
+        assert!(
+            matches!(response, Response::Done),
+            "the service says it wrote it: {response:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("the file is still there"),
+            "// hifn main() {}\n",
+            "and it wrote what it was given, over what was there"
+        );
+    }
+
     fn round_trip(request: Request) -> Response {
         let (listener, name) = bind_unique();
         let client = std::thread::spawn(move || {

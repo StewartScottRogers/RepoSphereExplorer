@@ -1217,6 +1217,26 @@ export component MainWindow inherits Window {
     in property <[[ColouredRun]]> file-lines;
     in property <bool> can-edit;
     in-out property <string> edit-text;
+    // The coloured surface's half of the editor. `editing-in-colour` is
+    // false for a file it cannot serve - see `editor::code_editor_suits`
+    // - and the plain box below takes it instead.
+    in property <bool> editing-in-colour;
+    in property <[[ColouredRun]]> edit-lines;
+    in property <int> edit-caret-line;
+    in property <int> edit-caret-column;
+    in property <int> edit-selection-start-line: -1;
+    in property <int> edit-selection-start-column;
+    in property <int> edit-selection-end-line;
+    in property <int> edit-selection-end-column;
+    in property <int> edit-longest-line;
+    // How many rows a page up or down moves by: what the pane is showing,
+    // rather than a number chosen here. Measured from the File pane
+    // rather than from the editor inside it, because Slint cannot name
+    // an element that sits inside an `if`. The 22px is the pane heading
+    // above the editor; being a row out either way costs nothing.
+    out property <int> edit-visible-rows: floor((file-pane.height - 22px) / 16px);
+    callback edit-key(string, bool, bool);
+    callback edit-pressed(int, int);
     callback edit-requested();
     callback save-requested();
     callback path-edit-requested();
@@ -1595,7 +1615,7 @@ export component MainWindow inherits Window {
                         contents-width = clamp(contents-width + delta, 200px, root.width - folders-width - 160px);
                     }
                 }
-                Rectangle {
+                file-pane := Rectangle {
                     horizontal-stretch: 1;
                     border-width: 1px;
                     border-color: focus-pane == 2 ? Theme.accent : Theme.border;
@@ -1610,9 +1630,38 @@ export component MainWindow inherits Window {
                         // The editor, when a file is open in it. The plugin
                         // decides which types get here; the pane just draws
                         // what it is handed.
-                        if editing-file: TextEdit {
-                            text <=> edit-text;
-                            wrap: no-wrap;
+                        // Both editors live in here rather than beside
+                        // each other, so that how many rows a page is can
+                        // be measured. An element inside an `if` cannot
+                        // be named from outside it, and a page that was a
+                        // fixed number of rows would be a different
+                        // distance in every window size.
+                        if editing-file: Rectangle {
+                            if editing-in-colour: CodeEditor {
+                                width: 100%;
+                                height: 100%;
+                                lines: edit-lines;
+                                caret-line: edit-caret-line;
+                                caret-column: edit-caret-column;
+                                selection-start-line: edit-selection-start-line;
+                                selection-start-column: edit-selection-start-column;
+                                selection-end-line: edit-selection-end-line;
+                                selection-end-column: edit-selection-end-column;
+                                longest-line: edit-longest-line;
+                                focused: focus-pane == 2;
+                                key(text, shift, control) => { edit-key(text, shift, control); }
+                                pressed(line, column) => { edit-pressed(line, column); }
+                            }
+                            // The file the coloured surface cannot serve
+                            // gets Slint's own box, which can: it has the
+                            // input method and the bidirectional layout
+                            // that the hand-written one does not.
+                            if !editing-in-colour: TextEdit {
+                                width: 100%;
+                                height: 100%;
+                                text <=> edit-text;
+                                wrap: no-wrap;
+                            }
                         }
 
                         // The type's own views, when it offers more than

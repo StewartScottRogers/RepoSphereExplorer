@@ -392,8 +392,39 @@ accident:
   Putting it back means laying a line out by direction runs, which is
   most of a text shaper.
 
-None may be quietly dropped: the work order that replaces the plain
-editor either covers each or records it here as still outstanding.
+**Where each of those stands, now that the surface has replaced the plain
+editor (work order #480).** None was quietly dropped.
+
+- **Input method editor (IME) composition: still outstanding.** The
+  surface reads keys through a `FocusScope`, which never sees a
+  composition, so a script that needs one cannot be typed into it at
+  all. Putting it back means handling the composition events and drawing
+  the pre-edit run, which Slint 1.17.1 offers no way to receive outside
+  its own `TextInput`.
+- **Right-to-left text: still outstanding.** The caret is placed by
+  arithmetic on a fixed cell width, which assumes one direction and one
+  cell per character. Putting it back means laying a line out by
+  direction runs, which is most of a text shaper.
+- **Accessibility: partly.** The surface reports its rows to a screen
+  reader as text, which is what it draws. It does not report a caret
+  position or a selection, which `TextInput` does. Putting it back means
+  the accessible value and text-selection properties, kept current as
+  the document changes.
+
+**What is done instead of leaving the first two to fail quietly.** A file
+holding right-to-left text, or text from a script that needs an input
+method, **opens in the plain editor** - which has both - and the status
+bar says why. So those files are edited no worse than before; they
+simply lose the colour while being edited. `editor::code_editor_suits`
+is the rule, and it is one character strict: a Chinese name inside an
+otherwise English file is enough, because a caret that cannot reach the
+middle of a line is worse than a line without colour.
+
+**Clipboard: done.** Cut, copy and paste, including a multi-line paste
+and a paste over a selection. Slint keeps its own clipboard on the
+`Platform` trait where an application cannot reach it, so this goes
+through `copypasta`, which Slint's own windowing backend already
+depends on.
 
 ## 4. Distribution — GitHub is the whole supply chain
 
