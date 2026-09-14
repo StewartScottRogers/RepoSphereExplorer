@@ -143,6 +143,15 @@ fn press(ui: &MainWindow, key: Key) {
         .dispatch_event(WindowEvent::KeyReleased { text });
 }
 
+/// A typed character, as a keyboard sends one.
+fn press_text(ui: &MainWindow, text: &str) {
+    let text = slint::SharedString::from(text);
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text });
+}
+
 /// Opens the editor on `demo.rs`, the way the Edit tab does, and clicks
 /// the surface - which is what gives it the keyboard.
 fn open_the_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
@@ -424,5 +433,81 @@ fn the_selected_folder_row_is_brought_on_screen() {
         "selecting a row far down the tree has to scroll the pane to it; \
          the offset stayed at {}",
         ui.get_folders_scroll_y()
+    );
+}
+
+/// A typed letter reaches the pane that is drawn as the focused one.
+///
+/// The window opens on the tree, and a letter used to move the *listing*
+/// regardless - so the arrows walked the tree while typing jumped
+/// something the reader was not looking at. The tree gets type-ahead of
+/// its own rather than going silent: a Repos Directory is a list of
+/// repository folders, and three letters is how anybody reaches one.
+#[test]
+fn a_typed_letter_with_the_tree_focused_moves_the_tree() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = scratch("tree-type-ahead");
+    for name in ["alpha", "bravo", "charlie"] {
+        std::fs::create_dir_all(directory.join(name)).expect("the fixture is written");
+    }
+    let (ui, app) = window_on(&directory);
+    pump(&ui, &app, "the tree's children", |app| {
+        app.folder_rows().len() >= 4
+    });
+    assert_eq!(
+        app.borrow().folder_selected(),
+        0,
+        "the tree starts on its root, which is the focused pane"
+    );
+    let listing_before = app.borrow().content_selected();
+
+    press_text(&ui, "c");
+
+    let selected = app.borrow().folder_selected();
+    let name = app
+        .borrow()
+        .folder_rows()
+        .get(selected)
+        .map(|row| row.name.clone())
+        .unwrap_or_default();
+    assert_eq!(
+        name, "charlie",
+        "a letter typed with the tree focused should jump the tree to the \
+         next folder beginning with it; it landed on row {selected}"
+    );
+    assert_eq!(
+        app.borrow().content_selected(),
+        listing_before,
+        "and the listing, which is not the focused pane, does not move"
+    );
+}
+
+/// Type-ahead in the tree walks what is drawn, not what is hidden: a
+/// collapsed folder's children are not part of the list the reader can
+/// see, so a letter must not jump into them.
+#[test]
+fn tree_type_ahead_only_reaches_rows_that_are_drawn() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = scratch("tree-type-ahead-hidden");
+    std::fs::create_dir_all(directory.join("alpha").join("zulu")).expect("the fixture is written");
+    std::fs::create_dir_all(directory.join("bravo")).expect("the fixture is written");
+    let (ui, app) = window_on(&directory);
+    pump(&ui, &app, "the tree's children", |app| {
+        app.folder_rows().len() >= 3
+    });
+    let drawn = app.borrow().folder_rows().len();
+
+    press_text(&ui, "z");
+
+    assert_eq!(
+        app.borrow().folder_rows().len(),
+        drawn,
+        "nothing should have been expanded"
+    );
+    assert_eq!(
+        app.borrow().folder_selected(),
+        0,
+        "zulu is inside a collapsed folder, so it is not on screen and a \
+         typed letter has nothing to jump to"
     );
 }
