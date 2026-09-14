@@ -1155,6 +1155,12 @@ export component MainWindow inherits Window {
     private property <length> tab-w: 80px;
     private property <length> tab-h: 24px;
     callback file-view-selected(int);
+    // The strip above the File pane: the plugin's views and then the way
+    // in to the editor. Built in Rust so the pane does not have to know
+    // which is which.
+    in property <[string]> file-tabs;
+    in property <int> file-tab-index;
+    callback file-tab-selected(int);
     // A picture for the previewed file, when its type is one.
     in property <image> file-graphic;
     in property <bool> file-has-graphic;
@@ -1670,23 +1676,27 @@ export component MainWindow inherits Window {
                         // click back to its tab, for the same Slint for-loop
                         // bug the row panes work around: a TouchArea created
                         // inside a for loop never reports a click.
-                        if !editing-file && file-views.length > 1: Rectangle {
+                        // Shown whenever there is more than one thing to
+                        // choose, which now includes a single-view file
+                        // that can be edited - that Edit tab is the only
+                        // sign the pane gives that an editor exists.
+                        if file-tabs.length > 1: Rectangle {
                             height: tab-h;
                             background: Theme.panel;
                             Rectangle {
-                                x: file-view-index * tab-w;
+                                x: file-tab-index * tab-w;
                                 y: 0;
                                 width: tab-w;
                                 height: tab-h;
                                 background: Theme.accent;
                             }
-                            for name[i] in file-views: Text {
+                            for name[i] in file-tabs: Text {
                                 text: name;
                                 x: i * tab-w;
                                 y: 0;
                                 width: tab-w;
                                 height: tab-h;
-                                color: i == file-view-index
+                                color: i == file-tab-index
                                     ? Theme.on-accent
                                     : Palette.foreground;
                                 vertical-alignment: center;
@@ -1696,7 +1706,7 @@ export component MainWindow inherits Window {
                                 width: 100%;
                                 height: 100%;
                                 clicked => {
-                                    file-view-selected(clamp(floor(tab-touch.mouse-x / tab-w), 0, file-views.length - 1));
+                                    file-tab-selected(clamp(floor(tab-touch.mouse-x / tab-w), 0, file-tabs.length - 1));
                                 }
                             }
                         }
