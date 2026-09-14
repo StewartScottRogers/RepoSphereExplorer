@@ -12,3 +12,6 @@ Thumbs.db
 # any depth, and it silently swallowed `samples/purescript/src/Data/`,
 # whose fixtures were then never committed at all.
 /data/
+
+# Scratch worktrees created for parallel agents; never part of a change.
+.claude/worktrees/

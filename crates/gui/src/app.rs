@@ -1183,6 +1183,16 @@ impl App {
 
     /// Asks for confirmation before deleting the selected contents row.
     pub fn request_delete(&mut self) {
+        // A prompt already on screen owns the keyboard. Delete inside a
+        // rename box is a reader clearing the pre-filled name, not asking
+        // to delete anything - and arming a confirmation there left the
+        // file one keystroke from the Recycle Bin, because the first
+        // letter of the new name is answering a question the reader never
+        // saw asked. `move_selection`, `select_all` and `undo` all guard
+        // the same way.
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
         let indices = self.selected_indices();
         if indices.is_empty() {
             return;
@@ -2740,10 +2750,31 @@ impl App {
     /// prompt is pending.
     #[must_use]
     pub fn prompt_row(&self) -> i32 {
-        match &self.mode {
-            Mode::Normal => -1,
-            _ => i32::try_from(self.content_selected).unwrap_or(-1),
-        }
+        // The row comes from the path the prompt will act on, not from
+        // wherever the selection happens to be now. Reading the live
+        // selection meant a click on another row carried the prompt onto
+        // it while the text, and the file it would act on, stayed behind:
+        // "Delete target.txt?" drawn over keep.txt, and `y` taking
+        // target.txt. The words were right and the position was wrong,
+        // and the position is what the eye reads.
+        let path = match &self.mode {
+            Mode::ConfirmDelete { paths, .. } => match paths.first() {
+                Some(path) => path,
+                None => return -1,
+            },
+            Mode::RenameInput { path, .. }
+            | Mode::CopyInput { path, .. }
+            | Mode::ExtractInput { path, .. } => path,
+            // Nothing else is drawn on a row: the address bar's two
+            // prompts live in the address bar, and Normal has no prompt.
+            Mode::Normal | Mode::PathInput { .. } | Mode::ReposRootInput { .. } => return -1,
+        };
+        let dir = self.selected_dir_path();
+        self.contents
+            .iter()
+            .position(|entry| dir.join(&entry.name) == *path)
+            .and_then(|index| i32::try_from(index).ok())
+            .unwrap_or(-1)
     }
 
     /// Whether the pending prompt takes typed text, as opposed to the
