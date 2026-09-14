@@ -326,6 +326,20 @@ impl Document {
         self.place(at, extend);
     }
 
+    /// Puts the caret at `offset`, dropping any selection. What a click
+    /// does.
+    pub fn place_caret(&mut self, offset: usize) {
+        self.desired_column = None;
+        self.place(offset, false);
+    }
+
+    /// Extends the selection to `offset`, keeping the anchor. What a
+    /// shift-click and a drag do.
+    pub fn select_to(&mut self, offset: usize) {
+        self.desired_column = None;
+        self.place(offset, true);
+    }
+
     // -- selecting -------------------------------------------------------
 
     /// Selects everything.
