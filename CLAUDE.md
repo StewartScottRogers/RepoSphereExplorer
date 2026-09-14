@@ -109,3 +109,16 @@ and what it would take to revisit them.
 13. **Spell out an acronym before using it.** First use gives the full term,
     with the acronym in parentheses after it. This applies to documentation,
     commit messages, work orders and user-facing strings.
+14. **Test the join, not only the halves.** A rule in Rust and the markup
+    that calls it are two halves, and a test of each proves nothing about
+    the seam between them. The editor was reported as "does not insert at
+    the caret" while forty-odd tests passed: `document` and `editor` knew
+    what a keystroke meant and had never met a window, `code_editor` and
+    `editor_chrome` knew what was drawn and had no `App` behind them, and
+    the fault - opening the editor never gave it the keyboard - lived only
+    where the two are wired together. Where behaviour needs both, build a
+    real `MainWindow` on a real `App` through the same wiring `main` uses
+    (`gui::wire_editor`) and dispatch real events;
+    `crates/gui/tests/editing_in_the_window.rs` is the pattern. Wiring the
+    application does must live in the library, not in `main.rs`, or the
+    test is exercising a copy of it that can drift.
