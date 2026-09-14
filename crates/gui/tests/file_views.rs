@@ -109,13 +109,25 @@ fn clicking_a_tab_asks_for_the_view_it_landed_on() {
 }
 
 #[test]
-fn the_editor_replaces_the_switcher_rather_than_sitting_under_it() {
+fn the_strip_stays_up_while_editing_so_a_reader_can_see_which_tab_is_active() {
     i_slint_backend_testing::init_no_event_loop();
-    let ui = window_with_views(&["Preview", "Text"]);
+    let ui = window_with_views(&["Preview", "Text", "Edit"]);
     ui.set_editing_file(true);
+    ui.set_file_view_index(2);
 
     assert!(
-        switcher(&ui).is_none(),
-        "an open editor is the pane; switching views under it would be a way to lose typed text"
+        switcher(&ui).is_some(),
+        "hiding the strip would hide which tab opened the editor"
+    );
+}
+
+#[test]
+fn a_type_offering_one_view_plus_an_edit_tab_still_gets_a_switcher() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = window_with_views(&["Preview", "Edit"]);
+
+    assert!(
+        switcher(&ui).is_some(),
+        "a single-view type gains a switcher once editing gives it a second tab"
     );
 }

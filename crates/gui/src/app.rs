@@ -16,6 +16,13 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 
+/// The File pane's own trailing tab, appended after whatever
+/// [`plugin_api::PluginPresentation::views`] offers. Not a
+/// [`plugin_api::PREVIEW_VIEW`] or [`plugin_api::TEXT_VIEW`] sibling: the
+/// pane appends it in [`App::pane_views`], since editing is the pane's
+/// affordance, not a plugin's rendering of the file.
+const EDIT_VIEW: &str = "Edit";
+
 /// Every presentation plugin linked into this front end.
 ///
 /// Hand-registered: a registration macro would be structure with no second
@@ -2467,6 +2474,54 @@ impl App {
         }
     }
 
+    /// The tab strip's full set of tabs: the plugin's own [`Self::file_views`],
+    /// then the pane's own Edit tab when the file can be edited.
+    ///
+    /// Appended here rather than by a plugin - editing is not a plugin's
+    /// idea of the file, it is something the pane offers, so it does not
+    /// belong in `PluginPresentation::views`. Appended unconditionally
+    /// on editability, never on how many views the plugin already offers:
+    /// a type with one view still gets the Edit tab, which is what keeps
+    /// the only way into the editor from disappearing for it.
+    #[must_use]
+    pub fn pane_views(&self) -> Vec<&'static str> {
+        let mut views = self.file_views();
+        if self.editable_text().is_some() {
+            views.push(EDIT_VIEW);
+        }
+        views
+    }
+
+    /// Which of [`Self::pane_views`] is showing: the Edit tab while the
+    /// editor is open, whatever [`Self::file_view_index`] says otherwise -
+    /// that index still names the view editing will return to.
+    #[must_use]
+    pub fn pane_view_index(&self) -> usize {
+        if self.editing_file.is_some() {
+            self.pane_views().len().saturating_sub(1)
+        } else {
+            self.file_view_index
+        }
+    }
+
+    /// A click on the tab strip, by [`Self::pane_views`] index: one of the
+    /// plugin's own views switches what the pane shows, same as
+    /// [`Self::select_file_view`]; the trailing Edit tab opens the editor,
+    /// exactly as the toolbar button does. Ignored while the editor is
+    /// already open - Save and Escape are the only way out of it, so a tab
+    /// click there must not be a second one.
+    pub fn select_pane_view(&mut self, index: usize) {
+        if self.editing_file.is_some() {
+            return;
+        }
+        let views = self.file_views();
+        if index < views.len() {
+            self.file_view_index = index;
+        } else if index == views.len() {
+            self.begin_file_edit();
+        }
+    }
+
     /// Display text for the file pane, in whichever view is selected.
     #[must_use]
     pub fn file_text(&self) -> String {
@@ -3115,6 +3170,64 @@ third",
         app.begin_file_edit();
 
         assert!(!app.editing_file());
+    }
+
+    #[test]
+    fn an_editable_file_gets_a_trailing_edit_tab() {
+        let app = app_with_editable_file();
+
+        assert_eq!(app.pane_views(), vec![PREVIEW_VIEW, TEXT_VIEW, "Edit"]);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_edited_has_no_edit_tab() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view("image", serde_json::json!({ "width": 4, "height": 4 }));
+
+        assert_eq!(app.pane_views(), vec![PREVIEW_VIEW]);
+    }
+
+    #[test]
+    fn clicking_the_edit_tab_opens_the_editor() {
+        let mut app = app_with_editable_file();
+        let edit_index = app.pane_views().len() - 1;
+
+        app.select_pane_view(edit_index);
+
+        assert!(app.editing_file());
+    }
+
+    #[test]
+    fn a_tab_click_is_ignored_while_the_editor_is_open() {
+        let mut app = app_with_editable_file();
+        app.select_file_view(1);
+        app.begin_file_edit();
+
+        app.select_pane_view(0);
+
+        assert_eq!(
+            app.file_view_index(),
+            1,
+            "Save or Escape are the only way out"
+        );
+    }
+
+    #[test]
+    fn leaving_the_editor_returns_to_the_view_that_was_showing_before() {
+        let mut app = app_with_editable_file();
+        app.select_file_view(1);
+
+        app.begin_file_edit();
+        assert_eq!(
+            app.pane_view_index(),
+            app.pane_views().len() - 1,
+            "the Edit tab is the active one while editing"
+        );
+
+        app.save_file_edit();
+
+        assert_eq!(app.file_view_index(), 1, "back to the view shown before");
     }
 
     #[test]
