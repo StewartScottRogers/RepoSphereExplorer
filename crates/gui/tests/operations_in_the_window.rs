@@ -850,12 +850,11 @@ fn one_undo_puts_back_a_whole_multi_file_paste() {
     ui.invoke_clipboard_paste_requested();
     pump(&ui, &app);
 
-    // `dedup_name` appends after the whole filename rather than before
-    // the extension, so the copies are "one.txt (2)" and not "one (2).txt".
-    // That is this codebase's existing convention, enshrined by a unit
-    // test; #509 questions it. What matters here is that all three got
-    // distinct names, which is what a per-file de-duplication buys.
-    let copies = ["one.txt (2)", "three.txt (2)", "two.txt (2)"];
+    // Numbered in front of the extension, so each copy is still a text
+    // file - #509, fixed since this test was written. What matters here is
+    // that all three got distinct names, which is what a per-file
+    // de-duplication buys.
+    let copies = ["one (2).txt", "three (2).txt", "two (2).txt"];
     for name in copies {
         assert!(
             directory.join(name).exists(),

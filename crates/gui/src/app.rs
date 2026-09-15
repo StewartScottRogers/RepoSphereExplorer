@@ -451,13 +451,34 @@ fn dedup_name(taken: &[String], base: &str) -> String {
     if !taken.iter().any(|name| name == base) {
         return base.to_owned();
     }
+    let (stem, extension) = split_extension(base);
     let mut n = 2;
     loop {
-        let candidate = format!("{base} ({n})");
+        let candidate = format!("{stem} ({n}){extension}");
         if !taken.iter().any(|name| name == &candidate) {
             return candidate;
         }
         n += 1;
+    }
+}
+
+/// A name split into what to number and what to keep on the end.
+///
+/// The count used to go after the whole filename, so a copy of `notes.txt`
+/// was `notes.txt (2)` - a name with no extension at all. To this
+/// application that is not a text file: no plugin recognises it, the File
+/// pane cannot preview it, and the listing gives it the generic icon. In a
+/// Repos Explorer, where the plugin registry is how a file becomes
+/// readable, an operation that strips a file's type is more than cosmetic.
+///
+/// A leading dot is part of the name, not a separator, so `.gitignore`
+/// numbers as `.gitignore (2)` rather than growing a stray dot. A name with
+/// no dot at all, and a folder, keep today's behaviour because there is no
+/// extension to sit in front of.
+fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(at) if at > 0 => name.split_at(at),
+        _ => (name, ""),
     }
 }
 
@@ -4396,11 +4417,90 @@ third",
         assert_ne!(app.status_text(), "Rename to: doomed.txt_  (Enter/Esc)");
     }
 
+    /// A copy that loses its extension loses the plugin that made the
+    /// original readable - the File pane cannot preview it and the listing
+    /// cannot type it. The count goes in front of the extension, the way
+    /// every file manager does it.
+    #[test]
+    fn a_copy_keeps_the_extension_that_makes_it_readable() {
+        let taken = vec!["notes.txt".to_owned()];
+
+        assert_eq!(super::dedup_name(&taken, "notes.txt"), "notes (2).txt");
+    }
+
+    /// Names that have no extension to sit in front of keep the old shape.
+    #[test]
+    fn a_name_with_nothing_to_protect_is_numbered_at_the_end() {
+        let makefile = vec!["Makefile".to_owned()];
+        assert_eq!(super::dedup_name(&makefile, "Makefile"), "Makefile (2)");
+
+        let folder = vec!["src".to_owned()];
+        assert_eq!(super::dedup_name(&folder, "src"), "src (2)");
+    }
+
+    /// A leading dot is the name, not a separator: `.gitignore` is not a
+    /// file called nothing with a `gitignore` extension.
+    #[test]
+    fn a_dotfile_is_numbered_without_growing_a_stray_dot() {
+        let taken = vec![".gitignore".to_owned()];
+
+        assert_eq!(super::dedup_name(&taken, ".gitignore"), ".gitignore (2)");
+    }
+
+    /// Only the last dot separates, so a doubled extension keeps the half
+    /// that names the type.
+    #[test]
+    fn only_the_last_dot_separates_the_extension() {
+        let taken = vec!["archive.tar.gz".to_owned()];
+
+        assert_eq!(
+            super::dedup_name(&taken, "archive.tar.gz"),
+            "archive.tar (2).gz"
+        );
+    }
+
+    /// Counting past the first free name still keeps the extension.
+    #[test]
+    fn the_second_copy_of_a_file_is_numbered_three() {
+        let taken = vec![
+            "notes.txt".to_owned(),
+            "notes (2).txt".to_owned(),
+            "notes (3).txt".to_owned(),
+        ];
+
+        assert_eq!(super::dedup_name(&taken, "notes.txt"), "notes (4).txt");
+    }
+
+    /// The point of the change, said in the application's own terms: the
+    /// copy is recognised by the same plugin as the original.
+    #[test]
+    fn a_pasted_copy_is_still_the_type_it_was_copied_from() {
+        let taken = vec!["notes.txt".to_owned()];
+
+        let copy = super::dedup_name(&taken, "notes.txt");
+
+        let original = super::PRESENTATION_PLUGINS
+            .iter()
+            .find(|plugin| plugin.extensions().contains(&"txt"));
+        assert!(
+            std::path::Path::new(&copy)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("txt")),
+            "the copy is named {copy}, which no longer says what it is"
+        );
+        assert!(
+            original.is_some(),
+            "the fixture only means something while a plugin claims .txt"
+        );
+    }
+
     #[test]
     fn requesting_a_copy_prefills_a_name_that_does_not_collide() {
         let mut app = app_with_one_content_entry();
         app.request_copy();
-        assert_eq!(app.status_text(), "Copy to: doomed.txt (2)_  (Enter/Esc)");
+        // Before the extension, so the copy is still a text file. See
+        // `a_copy_keeps_the_extension_that_makes_it_readable`.
+        assert_eq!(app.status_text(), "Copy to: doomed (2).txt_  (Enter/Esc)");
     }
 
     #[test]
