@@ -804,3 +804,126 @@ fn a_checkout_that_is_also_a_cargo_project_reports_both() {
          folder already reports (D12); it reads:\n{pane}"
     );
 }
+
+// ---------------------------------------------------------------------
+// Branch and uncommitted changes on every repository row (#535).
+// ---------------------------------------------------------------------
+
+/// What the Contents pane draws after the row named `name`: its branch
+/// and the marker beside it.
+fn branch_and_marker(ui: &MainWindow, name: &str) -> (String, String) {
+    let row = ui
+        .get_content_rows()
+        .iter()
+        .find(|row| row.name.trim_end_matches('/') == name)
+        .unwrap_or_else(|| panic!("{name} is not in the listing: {:?}", listing(ui)));
+    (row.branch.to_string(), row.marker.to_string())
+}
+
+/// Ticks the way `main`'s timer does - apply what arrived, draw, ask for
+/// the statuses of the rows on screen - until no row still says its status
+/// is not known.
+fn settle_statuses(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        {
+            let mut app = app.borrow_mut();
+            app.tick();
+            sync_ui(ui, &app);
+            gui::ask_for_visible_statuses(ui, &mut app);
+        }
+        if ui
+            .get_content_rows()
+            .iter()
+            .all(|row| row.marker != gui::app::NOT_KNOWN_YET_MARKER)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!(
+        "the statuses never arrived; the rows read {:?}",
+        ui.get_content_rows()
+            .iter()
+            .map(|row| format!("{} {} {}", row.name, row.branch, row.marker))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn every_checkout_row_draws_its_branch_before_any_status_has_arrived() {
+    let _serial = serially();
+    let root = scratch("branches-first");
+    checkout(&root, "alpha", "main", None, 1);
+    checkout(&root, "beta", "develop", None, 1);
+    plain_folder(&root, "notes", 1);
+    // Opened and settled, but nothing has asked for a status yet: the
+    // listing is on screen without waiting for one.
+    let (ui, _app) = window_at(&root);
+
+    assert_eq!(
+        branch_and_marker(&ui, "alpha"),
+        ("main".to_owned(), gui::app::NOT_KNOWN_YET_MARKER.to_owned()),
+        "the branch is drawn at once, and the changes say they are not known yet"
+    );
+    assert_eq!(
+        branch_and_marker(&ui, "beta"),
+        (
+            "develop".to_owned(),
+            gui::app::NOT_KNOWN_YET_MARKER.to_owned()
+        )
+    );
+    assert_eq!(
+        branch_and_marker(&ui, "notes"),
+        (String::new(), String::new()),
+        "a plain folder has neither"
+    );
+}
+
+#[test]
+fn each_checkout_row_marks_uncommitted_changes_as_they_really_are() {
+    let _serial = serially();
+    let root = scratch("markers");
+    checkout(&root, "alpha", "main", None, 2);
+    let beta = checkout(&root, "beta", "main", None, 2);
+    // Committed, then edited: a tracked file that differs from the index.
+    file(
+        &beta,
+        "tracked-1.txt",
+        "the body after somebody edited it, which is a different length\n",
+    );
+    let gamma = checkout(&root, "gamma", "main", None, 1);
+    git(&gamma, &["checkout", "--quiet", "--detach"]);
+    // Untracked files are not counted, and must not make a row look dirty.
+    let delta = checkout(&root, "delta", "main", None, 1);
+    file(&delta, "untracked.txt", "new\n");
+    let (ui, app) = window_at(&root);
+
+    settle_statuses(&ui, &app);
+
+    assert_eq!(
+        branch_and_marker(&ui, "alpha"),
+        ("main".to_owned(), String::new()),
+        "a checkout committed a moment ago has no marker"
+    );
+    assert_eq!(
+        branch_and_marker(&ui, "beta"),
+        ("main".to_owned(), gui::app::CHANGED_MARKER.to_owned()),
+        "an edited tracked file marks its row"
+    );
+    assert_eq!(
+        branch_and_marker(&ui, "gamma"),
+        ("detached".to_owned(), String::new()),
+        "a detached head says so"
+    );
+    assert_eq!(
+        branch_and_marker(&ui, "delta"),
+        ("main".to_owned(), String::new())
+    );
+    let status = ui.get_status_text().to_string();
+    assert!(
+        status.contains("4 repositories, 1 with uncommitted changes"),
+        "the status bar sums the listing up; it reads: {status}"
+    );
+    assert!(!status.contains("not known"), "{status}");
+}

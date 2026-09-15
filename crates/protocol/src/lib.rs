@@ -128,6 +128,17 @@ pub enum Request {
         /// The most matches to return; the reply says if there were more.
         limit: usize,
     },
+    /// Whether the working copy at `path` has uncommitted changes to the
+    /// files it tracks.
+    ///
+    /// A pass over every tracked file of one checkout, which is why a
+    /// listing does not carry it: a front end asks for the repository rows
+    /// it has on screen, one request each, after the listing has landed.
+    /// The reply is [`Response::WorkingTree`].
+    WorkingTreeStatus {
+        /// The working copy's own folder.
+        path: String,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -257,6 +268,28 @@ pub enum Response {
         /// `matches` is not everything.
         cut_short: bool,
     },
+    /// The answer to [`Request::WorkingTreeStatus`].
+    WorkingTree {
+        /// The folder that was asked about, as the request named it.
+        path: String,
+        /// What its tracked files look like, or `None` when the folder is
+        /// not a working copy or its index could not be read - which is
+        /// "cannot tell", never "no changes".
+        status: Option<WorkingTreeSummary>,
+    },
+}
+
+/// Whether a working copy has uncommitted changes to the files it tracks,
+/// as [`Response::WorkingTree`] carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkingTreeSummary {
+    /// How many tracked files differ from what was last staged.
+    pub changed: usize,
+    /// Whether the service stopped before examining every tracked file, so
+    /// that nothing changed means "nothing found", not "nothing".
+    pub partial: bool,
+    /// The same answer as a line for a reader: `3 tracked files changed`.
+    pub summary: String,
 }
 
 /// One configured Repos Directory.
@@ -400,7 +433,7 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 mod tests {
     use super::{
         DirectoryEntry, MAX_MESSAGE_BYTES, NameMatch, PluginView, ReposRoot, RepositoryInfo,
-        Request, Response, VERSION, read_message, socket_name, write_message,
+        Request, Response, VERSION, WorkingTreeSummary, read_message, socket_name, write_message,
     };
     use std::io::{self, Read, Write};
 
@@ -472,6 +505,31 @@ mod tests {
 
         let decoded: Request = read_message(buf.as_slice()).unwrap();
         assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn round_trips_a_working_tree_status_through_the_wire_format() {
+        let request = Request::WorkingTreeStatus {
+            path: "/repos/alpha".to_owned(),
+        };
+        let response = Response::WorkingTree {
+            path: "/repos/alpha".to_owned(),
+            status: Some(WorkingTreeSummary {
+                changed: 3,
+                partial: false,
+                summary: "3 tracked files changed".to_owned(),
+            }),
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+        write_message(&mut buf, &response).unwrap();
+
+        let mut reader = buf.as_slice();
+        let decoded: Request = read_message(&mut reader).unwrap();
+        assert_eq!(decoded, request);
+        let decoded: Response = read_message(&mut reader).unwrap();
+        assert_eq!(decoded, response);
     }
 
     #[test]

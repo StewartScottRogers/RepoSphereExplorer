@@ -161,6 +161,44 @@ pub fn scroll_offset_for(selected: usize, viewport_height: f32, current: f32) ->
     }
 }
 
+/// The rows of a pane on screen - every row any part of which shows -
+/// given where it is scrolled, how tall it is and how many rows it holds.
+///
+/// Empty before the pane has been laid out, since nothing is on screen yet.
+#[must_use]
+pub fn visible_rows(
+    scroll_y: f32,
+    viewport_height: f32,
+    row_count: usize,
+) -> std::ops::Range<usize> {
+    if viewport_height <= 0.0 {
+        return 0..0;
+    }
+    let top = -scroll_y;
+    let bottom = top + viewport_height;
+    // `u16`, as in `scroll_offset_for`: it converts exactly, and nobody
+    // scrolls a listing longer than that.
+    let count = u16::try_from(row_count).unwrap_or(u16::MAX);
+    let first = (0..count)
+        .find(|&index| (f32::from(index) + 1.0) * ROW_HEIGHT > top)
+        .unwrap_or(count);
+    let end = (first..count)
+        .find(|&index| f32::from(index) * ROW_HEIGHT >= bottom)
+        .unwrap_or(count);
+    usize::from(first)..usize::from(end)
+}
+
+/// Asks for the working-tree status of the repository rows the Contents
+/// pane has on screen. `main` calls this on every tick, after drawing, so
+/// scrolling asks for the rows it brings into view.
+pub fn ask_for_visible_statuses(ui: &MainWindow, app: &mut App) {
+    app.ask_for_statuses(visible_rows(
+        ui.get_content_scroll_y(),
+        ui.get_content_viewport_height(),
+        slint::Model::row_count(&ui.get_content_rows()),
+    ));
+}
+
 /// A [`Class`] as the number `Theme.syntax-colour` maps to a brush.
 ///
 /// A number rather than a colour because the palette lives in
@@ -649,6 +687,8 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
                 size: row.size.into(),
                 kind: row.kind.into(),
                 modified: row.modified.into(),
+                branch: row.branch.into(),
+                marker: row.marker.into(),
                 selected: app.is_selected(index),
             })
             .collect::<Vec<_>>(),
@@ -747,7 +787,21 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ROW_HEIGHT, scroll_offset_for};
+    use super::{ROW_HEIGHT, scroll_offset_for, visible_rows};
+
+    #[test]
+    fn the_rows_on_screen_are_the_ones_any_part_of_which_shows() {
+        let viewport = 5.0 * ROW_HEIGHT;
+        assert_eq!(visible_rows(0.0, viewport, 100), 0..5);
+        assert_eq!(visible_rows(0.0, viewport, 3), 0..3, "a short listing");
+        assert_eq!(
+            visible_rows(-ROW_HEIGHT / 2.0, viewport, 100),
+            0..6,
+            "half a row scrolled off the top, half of another on at the bottom"
+        );
+        assert_eq!(visible_rows(-40.0 * ROW_HEIGHT, viewport, 100), 40..45);
+        assert_eq!(visible_rows(0.0, 0.0, 100), 0..0, "not laid out yet");
+    }
 
     /// Offsets are whole multiples of a row height, so anything inside a
     /// pixel is the same answer. Stated once rather than comparing floats

@@ -36,6 +36,8 @@ fn row(name: &str) -> ContentRow {
         modified: SharedString::new(),
         selected: false,
         is_repository: false,
+        branch: SharedString::new(),
+        marker: SharedString::new(),
     }
 }
 

@@ -5,7 +5,7 @@ pub mod repos;
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream};
 use plugin_api::{FolderCore, PluginCore};
-use protocol::{DirectoryEntry, NameMatch, PluginView, Request, Response};
+use protocol::{DirectoryEntry, NameMatch, PluginView, Request, Response, WorkingTreeSummary};
 use serde::Serialize;
 use std::fs;
 use std::io;
@@ -1061,6 +1061,21 @@ fn respond_to_operation(operation: io::Result<()>) -> Response {
     }
 }
 
+/// Whether the working copy at `path` has uncommitted changes to its
+/// tracked files, or `None` when `path` is not a working copy or its index
+/// could not be read.
+///
+/// One pass over one checkout's tracked files, read and never driven (D10).
+#[must_use]
+pub fn working_tree_status(path: &Path) -> Option<WorkingTreeSummary> {
+    let status = plugin_directory::repository::describe_with_status(path)?.status?;
+    Some(WorkingTreeSummary {
+        changed: status.changed,
+        partial: status.partial,
+        summary: status.summary(),
+    })
+}
+
 /// Computes the response for one request.
 #[must_use]
 pub fn handle_request(request: &Request) -> Response {
@@ -1095,6 +1110,10 @@ pub fn handle_request(request: &Request) -> Response {
         Request::ReposRoots => Response::ReposRoots {
             roots: repos::roots(),
             default: repos::default_root().to_string_lossy().into_owned(),
+        },
+        Request::WorkingTreeStatus { path } => Response::WorkingTree {
+            path: path.clone(),
+            status: working_tree_status(Path::new(path)),
         },
         Request::FindNames { query, limit } => match repos::active_root() {
             Some(root) => {
@@ -1177,7 +1196,7 @@ mod tests {
         CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, bind, copy, create_directory,
         create_file, delete, extract, find_names, folder_plugins_among, guarded, handle_request,
         journal_to, list_directory, most_specific, open, rename, repos, serve_one, sniff_among,
-        undo, view_file, with_source_text, write_atomically, write_file,
+        undo, view_file, with_source_text, working_tree_status, write_atomically, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -4272,5 +4291,25 @@ public class OrderBook {
         assert_eq!(paths_of(&matches), ["scratch/todo.txt"]);
         assert!(!matches[0].is_dir);
         assert_eq!(matches[0].repository, None);
+    }
+
+    #[test]
+    fn a_folder_that_is_not_a_working_copy_has_no_working_tree_status() {
+        let dir = std::env::temp_dir().join(format!("rse-no-working-tree-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let answer = handle_request(&protocol::Request::WorkingTreeStatus {
+            path: dir.display().to_string(),
+        });
+
+        assert_eq!(working_tree_status(&dir), None);
+        assert_eq!(
+            answer,
+            protocol::Response::WorkingTree {
+                path: dir.display().to_string(),
+                status: None,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

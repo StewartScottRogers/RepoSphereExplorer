@@ -821,6 +821,8 @@ fn found_row(found_match: &protocol::NameMatch) -> ContentRow {
         None => ("-".to_owned(), path),
     };
     ContentRow {
+        branch: String::new(),
+        marker: String::new(),
         icon: icon_for(name, found_match.is_dir),
         is_dir: found_match.is_dir,
         name: if found_match.is_dir {
@@ -1037,6 +1039,28 @@ fn colour_lines(text: &str, spans: &[Span]) -> Vec<Vec<ColouredRun>> {
     lines
 }
 
+/// Drawn beside a repository row's branch when its tracked files have
+/// uncommitted changes.
+pub const CHANGED_MARKER: &str = "\u{25cf}";
+
+/// Drawn beside a repository row's branch until its status has been asked
+/// for and answered. Nothing at all would read as "no changes".
+pub const NOT_KNOWN_YET_MARKER: &str = "\u{2026}";
+
+/// Drawn beside a repository row's branch when the answer came back and
+/// cannot say: the index could not be read, or the count stopped short
+/// without finding a change.
+pub const CANNOT_TELL_MARKER: &str = "?";
+
+/// What the Contents pane knows about one repository row's working tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RowStatus {
+    /// Asked for, not answered yet.
+    Waiting,
+    /// Answered: the summary, or `None` when the service could not tell.
+    Answered(Option<protocol::WorkingTreeSummary>),
+}
+
 /// One contents row, as the details view renders it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentRow {
@@ -1056,6 +1080,12 @@ pub struct ContentRow {
     pub kind: String,
     /// Formatted modified time, empty when the filesystem reports none.
     pub modified: String,
+    /// A working copy's branch - `detached` when it is on none - drawn
+    /// after its name. Empty for any other row.
+    pub branch: String,
+    /// Beside the branch: [`CHANGED_MARKER`], [`NOT_KNOWN_YET_MARKER`],
+    /// [`CANNOT_TELL_MARKER`], or empty for no uncommitted changes.
+    pub marker: String,
 }
 
 /// The three-pane explorer's state.
@@ -1112,6 +1142,14 @@ pub struct App {
     /// other folder, and that join would name a file the reader never
     /// picked. That is the defect the terminal front end had until #524.
     found: Option<Found>,
+    /// Working-tree status of the listing's repository rows that have been
+    /// asked about, by entry name. Cleared when a listing lands, along with
+    /// every request still outstanding, so an answer about one folder's
+    /// `alpha` is never drawn on another folder's.
+    row_statuses: HashMap<String, RowStatus>,
+    /// Status requests in flight: the entry name each is for, and its
+    /// answer.
+    pending_statuses: Vec<(String, Receiver<io::Result<Response>>)>,
     shown_file_path: Option<PathBuf>,
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
@@ -1176,6 +1214,8 @@ impl App {
             pending_file_path: None,
             pending_find: None,
             found: None,
+            row_statuses: HashMap::new(),
+            pending_statuses: Vec::new(),
             shown_file_path: None,
             mode: Mode::Normal,
             pending_operation: None,
@@ -1302,6 +1342,117 @@ impl App {
         {
             self.apply_find_result(&query, result);
         }
+        let mut answered = Vec::new();
+        self.pending_statuses
+            .retain(|(name, rx)| match rx.try_recv() {
+                Ok(result) => {
+                    answered.push((name.clone(), result));
+                    false
+                }
+                Err(mpsc::TryRecvError::Empty) => true,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    answered.push((name.clone(), Err(io::Error::other("no answer"))));
+                    false
+                }
+            });
+        for (name, result) in answered {
+            self.apply_status_result(&name, result);
+        }
+    }
+
+    /// Asks the service for the working-tree status of each repository row
+    /// in `rows` - the rows on screen - that has not been asked about since
+    /// the listing landed.
+    ///
+    /// One request per row, made after the listing is drawn rather than
+    /// before: the branch is in the listing already, and the changes cost a
+    /// pass over a checkout's tracked files that a listing of forty
+    /// checkouts must not wait for (GUIDANCE.md 3.5, rule 9). A row already
+    /// asked about is never asked again, answered or not.
+    pub fn ask_for_statuses(&mut self, rows: std::ops::Range<usize>) {
+        if self.found.is_some() {
+            return;
+        }
+        let folder = self.selected_dir_path();
+        let end = rows.end.min(self.contents.len());
+        let start = rows.start.min(end);
+        for entry in self.contents.get(start..end).unwrap_or_default() {
+            if entry.repository.is_none() || self.row_statuses.contains_key(&entry.name) {
+                continue;
+            }
+            self.row_statuses
+                .insert(entry.name.clone(), RowStatus::Waiting);
+            let request = Request::WorkingTreeStatus {
+                path: folder.join(&entry.name).to_string_lossy().into_owned(),
+            };
+            self.pending_statuses
+                .push((entry.name.clone(), spawn_request(request)));
+        }
+    }
+
+    /// Plants a status answer for the row named `name`, for a test that
+    /// cannot wait on a real checkout.
+    pub fn apply_status_result_for_test(&mut self, name: &str, response: Response) {
+        self.apply_status_result(name, Ok(response));
+    }
+
+    /// Records the answer for the row named `name` - if that row was asked
+    /// about in the listing on screen. A row never asked about, or asked
+    /// about in a listing since replaced, has nowhere for it to go.
+    fn apply_status_result(&mut self, name: &str, result: io::Result<Response>) {
+        let status = match result {
+            Ok(Response::WorkingTree { status, .. }) => status,
+            _ => None,
+        };
+        if let Some(row) = self.row_statuses.get_mut(name) {
+            *row = RowStatus::Answered(status);
+        }
+    }
+
+    /// The marker drawn beside the branch of the repository row `name`.
+    fn marker_for(&self, name: &str) -> &'static str {
+        match self.row_statuses.get(name) {
+            None | Some(RowStatus::Waiting) => NOT_KNOWN_YET_MARKER,
+            Some(RowStatus::Answered(Some(status))) if status.changed > 0 => CHANGED_MARKER,
+            Some(RowStatus::Answered(Some(status))) if !status.partial => "",
+            Some(RowStatus::Answered(_)) => CANNOT_TELL_MARKER,
+        }
+    }
+
+    /// `, 12 repositories, 3 with uncommitted changes` for a listing that
+    /// holds working copies, and nothing for one that holds none.
+    fn repositories_summary(&self) -> String {
+        let markers: Vec<&str> = self
+            .contents
+            .iter()
+            .filter(|entry| entry.repository.is_some())
+            .map(|entry| self.marker_for(&entry.name))
+            .collect();
+        if markers.is_empty() {
+            return String::new();
+        }
+        let noun = if markers.len() == 1 {
+            "repository"
+        } else {
+            "repositories"
+        };
+        let changed = markers
+            .iter()
+            .filter(|marker| **marker == CHANGED_MARKER)
+            .count();
+        let not_known = markers
+            .iter()
+            .filter(|marker| matches!(**marker, NOT_KNOWN_YET_MARKER | CANNOT_TELL_MARKER))
+            .count();
+        let not_known = if not_known == 0 {
+            String::new()
+        } else {
+            format!(" ({not_known} not known)")
+        };
+        format!(
+            ", {} {noun}, {changed} with uncommitted changes{not_known}",
+            markers.len()
+        )
     }
 
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
@@ -1311,6 +1462,11 @@ impl App {
                 if let Some(node) = self.root.node_at_mut(indices) {
                     node.set_children_from(&entries);
                 }
+                // A new listing, even of the same folder, starts its
+                // statuses again: what was known belonged to the rows it
+                // replaces.
+                self.row_statuses.clear();
+                self.pending_statuses.clear();
                 self.contents = entries;
                 self.sort_contents();
                 // A listing arriving after an operation is the same folder
@@ -1333,7 +1489,8 @@ impl App {
                 Response::FileView { .. }
                 | Response::Done
                 | Response::ReposRoots { .. }
-                | Response::Names { .. },
+                | Response::Names { .. }
+                | Response::WorkingTree { .. },
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
@@ -3064,6 +3221,20 @@ impl App {
                 kind: format_kind_of(&entry.name, entry.is_dir, entry.repository.as_ref()),
                 modified: format_timestamp(entry.modified),
                 is_repository: entry.repository.is_some(),
+                branch: entry
+                    .repository
+                    .as_ref()
+                    .map_or_else(String::new, |repository| {
+                        repository
+                            .branch
+                            .clone()
+                            .unwrap_or_else(|| "detached".to_owned())
+                    }),
+                marker: if entry.repository.is_some() {
+                    self.marker_for(&entry.name).to_owned()
+                } else {
+                    String::new()
+                },
             })
             .collect()
     }
@@ -3351,7 +3522,8 @@ impl App {
                 Response::Directory { .. }
                 | Response::Done
                 | Response::ReposRoots { .. }
-                | Response::Names { .. },
+                | Response::Names { .. }
+                | Response::WorkingTree { .. },
             )
             | None => String::new(),
         }
@@ -3464,7 +3636,11 @@ impl App {
         let count = self.contents.len();
         let noun = if count == 1 { "item" } else { "items" };
         let total_size: u64 = self.contents.iter().map(|entry| entry.size).sum();
-        let header = format!("{count} {noun}, {}", format_size(total_size));
+        let header = format!(
+            "{count} {noun}, {}{}",
+            format_size(total_size),
+            self.repositories_summary()
+        );
         let selected = self.selected_count();
         if selected > 1 {
             return format!("{header} — {selected} selected");
@@ -3500,8 +3676,8 @@ mod tests {
     };
 
     use super::{
-        App, PathBuf, UNKNOWN_ICON, chevron_hit, format_kind, format_timestamp, icon_for,
-        strip_verbatim_prefix,
+        App, CANNOT_TELL_MARKER, CHANGED_MARKER, NOT_KNOWN_YET_MARKER, PathBuf, UNKNOWN_ICON,
+        chevron_hit, format_kind, format_timestamp, icon_for, strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, Response};
@@ -6530,5 +6706,207 @@ third",
             app.status_text()
                 .contains("no Repos Directory is configured")
         );
+    }
+
+    // ---- branch and uncommitted changes on every repository row (#535) ----
+
+    /// An application listing `names`, each a checkout on branch `main`, and
+    /// `plain.txt`, which is not.
+    fn app_listing_checkouts(names: &[&str]) -> App {
+        let mut app = App::new(std::env::temp_dir());
+        let mut listed: Vec<DirectoryEntry> = names
+            .iter()
+            .map(|name| DirectoryEntry {
+                name: (*name).to_owned(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+                repository: Some(RepositoryInfo {
+                    provider: None,
+                    branch: Some("main".to_owned()),
+                    remote: None,
+                }),
+            })
+            .collect();
+        listed.push(DirectoryEntry {
+            name: "plain.txt".to_owned(),
+            is_dir: false,
+            size: 1,
+            modified: None,
+            repository: None,
+        });
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: listed }));
+        app
+    }
+
+    fn marker_of(app: &App, name: &str) -> String {
+        app.content_rows()
+            .into_iter()
+            .find(|row| row.name.trim_end_matches('/') == name)
+            .map_or_else(|| panic!("no row named {name}"), |row| row.marker)
+    }
+
+    fn working_tree(changed: usize, partial: bool) -> Response {
+        Response::WorkingTree {
+            path: String::new(),
+            status: Some(protocol::WorkingTreeSummary {
+                changed,
+                partial,
+                summary: String::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_listing_draws_branches_before_any_status_is_known() {
+        let app = app_listing_checkouts(&["alpha", "beta"]);
+
+        let rows = app.content_rows();
+        assert_eq!(rows[0].branch, "main");
+        assert_eq!(rows[0].marker, NOT_KNOWN_YET_MARKER, "unknown, not clean");
+        assert_eq!(rows[2].branch, "", "a plain file has no branch");
+        assert_eq!(rows[2].marker, "");
+        assert!(
+            app.status_text()
+                .contains("2 repositories, 0 with uncommitted changes (2 not known)"),
+            "{}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn each_answer_marks_its_own_row() {
+        let mut app = app_listing_checkouts(&["alpha", "beta", "gamma", "delta"]);
+        app.ask_for_statuses(0..4);
+
+        app.apply_status_result_for_test("alpha", working_tree(0, false));
+        app.apply_status_result_for_test("beta", working_tree(2, false));
+        app.apply_status_result_for_test(
+            "gamma",
+            Response::WorkingTree {
+                path: String::new(),
+                status: None,
+            },
+        );
+        app.apply_status_result_for_test("delta", working_tree(0, true));
+
+        assert_eq!(marker_of(&app, "alpha"), "", "no changes");
+        assert_eq!(marker_of(&app, "beta"), CHANGED_MARKER);
+        assert_eq!(
+            marker_of(&app, "gamma"),
+            CANNOT_TELL_MARKER,
+            "unreadable is not clean"
+        );
+        assert_eq!(
+            marker_of(&app, "delta"),
+            CANNOT_TELL_MARKER,
+            "a count that stopped short without a change cannot say clean"
+        );
+        assert!(
+            app.status_text()
+                .contains("4 repositories, 1 with uncommitted changes (2 not known)"),
+            "{}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn a_row_detached_from_any_branch_says_detached() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "loose".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(RepositoryInfo {
+                        provider: None,
+                        branch: None,
+                        remote: None,
+                    }),
+                }],
+            }),
+        );
+
+        assert_eq!(app.content_rows()[0].branch, "detached");
+    }
+
+    #[test]
+    fn statuses_are_asked_for_the_rows_on_screen_and_only_once() {
+        let mut app = app_listing_checkouts(&["alpha", "beta", "gamma", "delta"]);
+
+        app.ask_for_statuses(0..2);
+        assert_eq!(
+            app.pending_statuses.len(),
+            2,
+            "one request per row on screen"
+        );
+        // An answer for a row that was never on screen has nowhere to go.
+        app.apply_status_result_for_test("delta", working_tree(5, false));
+        assert_eq!(marker_of(&app, "delta"), NOT_KNOWN_YET_MARKER);
+
+        app.apply_status_result_for_test("alpha", working_tree(1, false));
+        app.ask_for_statuses(0..3);
+        assert_eq!(
+            app.pending_statuses.len(),
+            3,
+            "only gamma is new; alpha and beta were asked already"
+        );
+        assert_eq!(
+            marker_of(&app, "alpha"),
+            CHANGED_MARKER,
+            "and alpha keeps its answer"
+        );
+
+        app.ask_for_statuses(1..40);
+        assert_eq!(
+            app.pending_statuses.len(),
+            4,
+            "a range past the end stops at it"
+        );
+    }
+
+    #[test]
+    fn a_new_listing_abandons_the_statuses_of_the_old_one() {
+        let mut app = app_listing_checkouts(&["alpha"]);
+        app.ask_for_statuses(0..1);
+
+        // Somewhere else, which has an `alpha` of its own.
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: app.contents.clone(),
+            }),
+        );
+        app.apply_status_result_for_test("alpha", working_tree(3, false));
+
+        assert!(
+            app.pending_statuses.is_empty(),
+            "the outstanding request is dropped"
+        );
+        assert_eq!(
+            marker_of(&app, "alpha"),
+            NOT_KNOWN_YET_MARKER,
+            "a late answer about the old folder is not drawn on the new one"
+        );
+    }
+
+    #[test]
+    fn search_results_ask_for_no_statuses() {
+        let mut app = app_listing_checkouts(&["alpha"]);
+        app.apply_find_result_for_test(
+            "a",
+            Response::Names {
+                root: "/repos".to_owned(),
+                matches: Vec::new(),
+                cut_short: false,
+            },
+        );
+
+        app.ask_for_statuses(0..10);
+
+        assert!(app.pending_statuses.is_empty());
     }
 }

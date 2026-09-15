@@ -66,6 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.tick();
         if let Some(ui) = tick_ui.upgrade() {
             sync_ui(&ui, &app);
+            gui::ask_for_visible_statuses(&ui, &mut app);
         }
     });
 
