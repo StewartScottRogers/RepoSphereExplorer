@@ -282,12 +282,23 @@ pub struct App {
     root: FolderNode,
     tree_selected: usize,
     contents: Vec<DirectoryEntry>,
+    /// The folder `contents` was listed from.
+    ///
+    /// Not the same as `selected_dir_path()`, which reads the tree cursor:
+    /// between a move in the Folders pane and the reply arriving, the two
+    /// name different folders, and every command that joined a row's name
+    /// onto the tree cursor's path was addressing a file the reader could
+    /// not see.
+    contents_dir: PathBuf,
     contents_selected: usize,
     focus: Focus,
     file_view: Option<Response>,
     status: Option<String>,
     mode: Mode,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
+    /// The folder the outstanding listing was asked for, so `contents_dir`
+    /// can follow the entries rather than the cursor.
+    pending_contents_dir: Option<PathBuf>,
     pending_file: Option<Receiver<io::Result<Response>>>,
     pending_operation: Option<Receiver<io::Result<Response>>>,
     /// Set once the user has asked to quit.
@@ -303,12 +314,14 @@ impl App {
             root: FolderNode::root(root),
             tree_selected: 0,
             contents: Vec::new(),
+            contents_dir: PathBuf::new(),
             contents_selected: 0,
             focus: Focus::Folders,
             file_view: None,
             status: None,
             mode: Mode::Normal,
             pending_contents: None,
+            pending_contents_dir: None,
             pending_file: None,
             pending_operation: None,
             should_quit: false,
@@ -347,6 +360,7 @@ impl App {
             path: path.to_string_lossy().into_owned(),
         };
         self.pending_contents = Some((indices, spawn_request(request)));
+        self.pending_contents_dir = Some(path.clone());
         self.status = Some(format!("loading {}...", path.display()));
     }
 
@@ -356,7 +370,7 @@ impl App {
             self.pending_file = None;
             return;
         };
-        let path = self.selected_dir_path().join(&entry.name);
+        let path = self.contents_dir.join(&entry.name);
         let request = Request::ViewFile {
             path: path.to_string_lossy().into_owned(),
         };
@@ -409,6 +423,14 @@ impl App {
                     node.set_children_from(&entries);
                 }
                 self.contents = entries;
+                // A listing that arrived without a recorded request - a
+                // test planting one, or a reload path that did not go
+                // through `load_contents_for_selected` - falls back to the
+                // cursor, which is what every caller used to do.
+                self.contents_dir = self
+                    .pending_contents_dir
+                    .take()
+                    .unwrap_or_else(|| self.selected_dir_path());
                 self.contents_selected = 0;
                 self.load_file_view();
             }
@@ -466,7 +488,7 @@ impl App {
         let Some(entry) = self.contents.get(self.contents_selected) else {
             return;
         };
-        let path = self.selected_dir_path().join(&entry.name);
+        let path = self.contents_dir.join(&entry.name);
         self.mode = Mode::ConfirmDelete {
             path,
             name: entry.name.clone(),
@@ -497,7 +519,7 @@ impl App {
         let Some(entry) = self.contents.get(self.contents_selected) else {
             return;
         };
-        let path = self.selected_dir_path().join(&entry.name);
+        let path = self.contents_dir.join(&entry.name);
         self.mode = Mode::RenameInput {
             path,
             input: entry.name.clone(),
@@ -508,7 +530,7 @@ impl App {
         let Some(entry) = self.contents.get(self.contents_selected) else {
             return;
         };
-        let path = self.selected_dir_path().join(&entry.name);
+        let path = self.contents_dir.join(&entry.name);
         self.mode = Mode::CopyInput {
             path,
             input: entry.name.clone(),
@@ -519,7 +541,7 @@ impl App {
         let Some(entry) = self.contents.get(self.contents_selected) else {
             return;
         };
-        let path = self.selected_dir_path().join(&entry.name);
+        let path = self.contents_dir.join(&entry.name);
         let suggested = std::path::Path::new(&entry.name).file_stem().map_or_else(
             || entry.name.clone(),
             |stem| stem.to_string_lossy().into_owned(),
@@ -815,9 +837,13 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Focus, FolderNode};
+    use super::{App, Focus, FolderNode, Mode, render_app};
     use protocol::{DirectoryEntry, ReposRoot, Response};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
+    use ratatui::style::Color;
+    use std::path::{Path, PathBuf};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
         names
@@ -952,7 +978,13 @@ mod tests {
     }
 
     fn app_with_one_content_entry() -> App {
-        let mut app = App::new(std::env::temp_dir());
+        // A notional folder that does not exist, and is named per process
+        // so two runs cannot meet. Rooting this at `temp_dir()` itself
+        // meant confirming a delete sent a real `Request::Delete` for
+        // `<temp>/note.txt` - so on a machine with the service running and
+        // such a file present, running the tests recycled it.
+        let mut app =
+            App::new(std::env::temp_dir().join(format!("rse-tui-notional-{}", std::process::id())));
         app.apply_contents_result(
             &[],
             Ok(Response::Directory {
@@ -1256,6 +1288,1153 @@ mod tests {
         assert_eq!(
             super::contents_label(&checkout),
             "local-only/  [repository]"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Helpers for the tests below.
+    // ---------------------------------------------------------------------
+
+    /// A directory under the temp directory that is never created and never
+    /// written to.
+    ///
+    /// `App` touches no file itself - every path it holds is a string it
+    /// hands to the service - so naming a directory nothing answers to keeps
+    /// these tests off any real file even on a machine where a service
+    /// happens to be listening.
+    fn notional_root(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("rse-tui-tests-{}-{tag}", std::process::id()))
+    }
+
+    /// An app showing `listing` as the contents of `root`, with nothing left
+    /// in flight, so a test starts from a settled screen.
+    fn app_showing(root: &Path, listing: &[(&str, bool)]) -> App {
+        let mut app = App::new(root.to_path_buf());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(listing),
+            }),
+        );
+        app.pending_contents = None;
+        app.pending_file = None;
+        app
+    }
+
+    /// Which mode the app is in, as a word a failure message can carry.
+    fn mode_of(app: &App) -> &'static str {
+        match app.mode {
+            Mode::Normal => "normal",
+            Mode::ConfirmDelete { .. } => "confirm-delete",
+            Mode::RenameInput { .. } => "rename",
+            Mode::CopyInput { .. } => "copy",
+            Mode::ExtractInput { .. } => "extract",
+        }
+    }
+
+    /// The path the open prompt is about, whichever prompt it is.
+    fn prompt_path(app: &App) -> Option<&Path> {
+        match &app.mode {
+            Mode::ConfirmDelete { path, .. }
+            | Mode::RenameInput { path, .. }
+            | Mode::CopyInput { path, .. }
+            | Mode::ExtractInput { path, .. } => Some(path.as_path()),
+            Mode::Normal => None,
+        }
+    }
+
+    /// What `render_app` puts on a `width` x `height` terminal, one string
+    /// per row.
+    fn drawn_rows(width: u16, height: u16, app: &App) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test terminal");
+        terminal
+            .draw(|frame| render_app(frame, frame.area(), app))
+            .expect("a draw into the test backend");
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// As [`drawn_rows`], run together into one string.
+    fn drawn(width: u16, height: u16, app: &App) -> String {
+        drawn_rows(width, height, app).concat()
+    }
+
+    // ---------------------------------------------------------------------
+    // Which file an operation is about.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn delete_names_the_file_in_the_listing_the_reader_can_see() {
+        let root = notional_root("stale-listing-delete");
+        let mut app = app_showing(
+            &root,
+            &[("alpha", true), ("beta", true), ("notes.txt", false)],
+        );
+
+        // Walk the folders cursor down to "beta". Its listing has been asked
+        // for but has not arrived, so the contents pane is still showing the
+        // root's - which is what the reader is looking at and picking from.
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Down);
+        assert_eq!(
+            app.contents.len(),
+            3,
+            "the pane is still showing the root's listing while beta's is fetched"
+        );
+
+        app.handle_key(KeyCode::Tab);
+        app.handle_key(KeyCode::Delete);
+
+        assert_eq!(
+            prompt_path(&app),
+            Some(root.join("alpha").as_path()),
+            "the question must be about the row the reader picked, in the folder \
+             they can see - not about a namesake in whichever folder the tree \
+             cursor has since landed on"
+        );
+    }
+
+    #[test]
+    fn a_listing_that_lands_under_an_open_prompt_does_not_change_which_file_it_names() {
+        let root = notional_root("prompt-holds-its-file");
+        let mut app = app_showing(&root, &[("alpha", true), ("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Delete);
+
+        // A listing asked for earlier arrives while the question stands.
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("zebra.txt", false)]),
+            }),
+        );
+
+        assert_eq!(
+            app.contents_selected, 0,
+            "the listing under the question has moved out from under it"
+        );
+        assert_eq!(
+            prompt_path(&app),
+            Some(root.join("notes.txt").as_path()),
+            "but the question is still about the file it was asked about"
+        );
+        assert_eq!(app.status_line(), "Delete notes.txt? y/n");
+    }
+
+    #[test]
+    fn the_prompt_sits_on_the_last_row_and_names_the_file_it_holds() {
+        let root = notional_root("prompt-on-the-status-row");
+        let mut app = app_showing(&root, &[("alpha", true), ("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Delete);
+
+        let rows = drawn_rows(40, 8, &app);
+
+        assert!(
+            rows[7].starts_with("Delete notes.txt? y/n"),
+            "the question belongs on the status row, naming its own file: {:?}",
+            rows[7]
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Key dispatch: no key means one thing in two modes at once.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn no_command_key_runs_while_a_delete_confirmation_is_open() {
+        let root = notional_root("delete-question-is-modal");
+        let mut app = app_showing(&root, &[("alpha", true), ("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Delete);
+        assert_eq!(prompt_path(&app), Some(root.join("notes.txt").as_path()));
+
+        for code in [
+            KeyCode::Char('q'),
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Delete,
+            KeyCode::Char('r'),
+            KeyCode::Char('c'),
+            KeyCode::Char('x'),
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Enter,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Backspace,
+        ] {
+            app.handle_key(code);
+            assert_eq!(
+                mode_of(&app),
+                "confirm-delete",
+                "{code:?} got out from under an unanswered question"
+            );
+        }
+
+        assert!(
+            !app.should_quit,
+            "q must not quit out from under a question"
+        );
+        assert_eq!(
+            app.focus,
+            Focus::Contents,
+            "Tab must not move focus away from the pane the question is about"
+        );
+        assert_eq!(
+            app.contents_selected, 1,
+            "and the listing must not move under it"
+        );
+        assert!(
+            app.pending_operation.is_none(),
+            "no command ran while the question stood"
+        );
+        assert_eq!(app.status_line(), "Delete notes.txt? y/n");
+    }
+
+    #[test]
+    fn delete_pressed_inside_a_rename_prompt_does_not_arm_a_deletion() {
+        let root = notional_root("delete-inside-a-rename");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('r'));
+
+        app.handle_key(KeyCode::Delete);
+
+        assert_eq!(
+            mode_of(&app),
+            "rename",
+            "Delete inside a rename turned it into a deletion"
+        );
+        assert_eq!(
+            app.status_line(),
+            "Rename to: notes.txt_  (Enter/Esc)",
+            "and it must not have edited the name either"
+        );
+
+        // The next keystroke belongs to the rename, not to a question that
+        // was never asked.
+        app.handle_key(KeyCode::Char('y'));
+        assert_eq!(app.status_line(), "Rename to: notes.txty_  (Enter/Esc)");
+        assert!(app.pending_operation.is_none());
+    }
+
+    #[test]
+    fn q_typed_into_a_rename_prompt_is_a_letter_not_a_quit() {
+        let root = notional_root("q-inside-a-rename");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('r'));
+
+        app.handle_key(KeyCode::Char('q'));
+
+        assert!(!app.should_quit, "q while typing a name must not quit");
+        assert_eq!(app.status_line(), "Rename to: notes.txtq_  (Enter/Esc)");
+    }
+
+    #[test]
+    fn a_prompt_holds_the_listing_still_while_it_is_open() {
+        let root = notional_root("listing-held-still");
+        let mut app = app_showing(&root, &[("alpha", true), ("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Char('c'));
+
+        app.handle_key(KeyCode::Up);
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Tab);
+
+        assert_eq!(
+            app.contents_selected, 1,
+            "movement keys must not move the listing an open prompt is about"
+        );
+        assert_eq!(app.focus, Focus::Contents);
+        assert_eq!(mode_of(&app), "copy");
+        assert_eq!(
+            app.status_line(),
+            "Copy to: notes.txt_  (Enter/Esc)",
+            "and they must not have been typed into the name either"
+        );
+    }
+
+    #[test]
+    fn the_operation_keys_only_answer_in_the_pane_that_holds_files() {
+        let root = notional_root("operations-are-per-pane");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+
+        for focus in [Focus::Folders, Focus::File] {
+            app.focus = focus;
+            for code in [
+                KeyCode::Delete,
+                KeyCode::Char('r'),
+                KeyCode::Char('c'),
+                KeyCode::Char('x'),
+            ] {
+                app.handle_key(code);
+                assert_eq!(
+                    mode_of(&app),
+                    "normal",
+                    "{code:?} acted on the contents pane while {focus:?} had focus"
+                );
+            }
+        }
+
+        assert!(app.pending_operation.is_none());
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn j_and_k_move_the_pane_that_has_focus_and_leave_the_other_where_it_was() {
+        let root = notional_root("vim-keys-follow-focus");
+        let mut app = app_showing(&root, &[("alpha", true), ("beta", true)]);
+
+        app.handle_key(KeyCode::Char('j'));
+        assert_eq!(app.tree_selected, 1, "the tree has focus, so j moved it");
+        assert_eq!(
+            app.contents_selected, 0,
+            "the listing moved on a key meant for the tree"
+        );
+
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('j'));
+        assert_eq!(app.contents_selected, 1);
+        assert_eq!(
+            app.tree_selected, 1,
+            "the tree moved on a key meant for the listing"
+        );
+
+        app.focus = Focus::File;
+        app.handle_key(KeyCode::Char('j'));
+        app.handle_key(KeyCode::Char('k'));
+        assert_eq!(
+            (app.tree_selected, app.contents_selected),
+            (1, 1),
+            "the preview pane has no rows, so its movement keys move nothing"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Selection arithmetic at the edges.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn the_listing_stops_at_each_end_however_often_the_key_is_pressed() {
+        let root = notional_root("listing-edges");
+        let mut app = app_showing(&root, &[("a", false), ("b", false), ("c", false)]);
+        app.focus = Focus::Contents;
+
+        for _ in 0..6 {
+            app.handle_key(KeyCode::Down);
+        }
+        assert_eq!(app.contents_selected, 2, "the last row is the last row");
+
+        for _ in 0..6 {
+            app.handle_key(KeyCode::Up);
+        }
+        assert_eq!(app.contents_selected, 0, "and the first is the first");
+    }
+
+    #[test]
+    fn an_empty_listing_ignores_every_key_that_would_need_a_row() {
+        let root = notional_root("empty-listing");
+        let mut app = app_showing(&root, &[]);
+        app.focus = Focus::Contents;
+
+        for code in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Enter,
+            KeyCode::Right,
+            KeyCode::Delete,
+            KeyCode::Char('r'),
+            KeyCode::Char('c'),
+            KeyCode::Char('x'),
+        ] {
+            app.handle_key(code);
+            assert_eq!(
+                mode_of(&app),
+                "normal",
+                "{code:?} opened a prompt over a listing with nothing in it"
+            );
+        }
+
+        assert_eq!(app.contents_selected, 0);
+        assert!(app.pending_operation.is_none());
+        assert!(!app.should_quit);
+        assert!(
+            app.file_view.is_none(),
+            "and there is nothing to preview either"
+        );
+    }
+
+    #[test]
+    fn a_tree_with_only_its_root_does_not_move_or_ask_for_anything() {
+        let mut app = App::new(notional_root("one-row-tree"));
+        app.pending_contents = None;
+
+        app.handle_key(KeyCode::Up);
+        app.handle_key(KeyCode::Down);
+
+        assert_eq!(app.tree_selected, 0);
+        assert!(
+            app.pending_contents.is_none(),
+            "nothing moved, so nothing should have been fetched again"
+        );
+    }
+
+    #[test]
+    fn a_tree_cursor_past_the_last_row_falls_back_to_the_root() {
+        let root = notional_root("tree-cursor-past-the-end");
+        let mut app = app_showing(&root, &[("alpha", true)]);
+        app.tree_selected = 99;
+
+        assert_eq!(
+            app.selected_dir_path(),
+            root,
+            "a row that is not there resolves to the root, not to a panic"
+        );
+
+        app.load_contents_for_selected();
+        assert!(
+            app.pending_contents.is_none(),
+            "and a row that is not there is not fetched"
+        );
+
+        let rows = drawn_rows(40, 8, &app);
+        assert_eq!(rows.len(), 8, "and the screen still draws");
+    }
+
+    #[test]
+    fn a_refreshed_listing_puts_the_selection_back_at_the_top() {
+        // Nothing here remembers the row by name across a reload: once an
+        // operation finishes and the listing comes back, the first row is
+        // selected again wherever the reader had been. Recorded because the
+        // graphical front end does put the selection back.
+        let root = notional_root("reload-resets-the-row");
+        let mut app = app_showing(&root, &[("a", false), ("b", false), ("c", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Down);
+        assert_eq!(app.contents_selected, 2);
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a", false), ("b", false), ("c", false)]),
+            }),
+        );
+
+        assert_eq!(app.contents_selected, 0);
+    }
+
+    // ---------------------------------------------------------------------
+    // Layout against a terminal with no room in it.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn the_three_panes_draw_into_a_terminal_with_no_room_for_them() {
+        let app = app_showing(
+            &notional_root("tiny-terminal"),
+            &[("alpha", true), ("notes.txt", false)],
+        );
+
+        for (width, height) in [
+            (0, 0),
+            (0, 4),
+            (4, 0),
+            (1, 1),
+            (2, 1),
+            (3, 2),
+            (8, 3),
+            (1, 40),
+        ] {
+            let rows = drawn_rows(width, height, &app);
+            assert_eq!(
+                rows.len(),
+                height as usize,
+                "{width}x{height} did not fill the terminal it was given"
+            );
+        }
+    }
+
+    #[test]
+    fn a_terminal_one_row_tall_gives_that_row_to_the_status_line() {
+        let app = app_showing(&notional_root("one-row-tall"), &[("notes.txt", false)]);
+
+        let rows = drawn_rows(30, 1, &app);
+
+        assert!(
+            rows[0].starts_with("Tab: switch pane"),
+            "with room for one row it should be the one that says what the keys do: {:?}",
+            rows[0]
+        );
+    }
+
+    #[test]
+    fn a_terminal_narrower_than_the_pane_titles_still_fills_every_row() {
+        let app = app_showing(&notional_root("narrower-than-a-title"), &[("a.txt", false)]);
+
+        let rows = drawn_rows(6, 3, &app);
+
+        assert_eq!(rows.len(), 3);
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row.chars().count(),
+                6,
+                "row {index} came out {} cells wide: {row:?}",
+                row.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_wider_than_its_pane_is_cut_to_the_pane() {
+        let long = "an-extremely-long-file-name-that-no-pane-here-could-possibly-hold.txt";
+        let app = app_showing(&notional_root("long-names"), &[(long, false)]);
+
+        let rows = drawn_rows(40, 6, &app);
+
+        assert!(
+            !rows.iter().any(|row| row.contains(long)),
+            "the name spilled out of the pane that is meant to hold it: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("an-extr")),
+            "and the start of it should still be readable: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn multibyte_names_draw_at_every_width_without_splitting_a_character() {
+        let app = app_showing(
+            &notional_root("multibyte-listing"),
+            &[("日本語のフォルダ", true), ("café-notes.txt", false)],
+        );
+
+        for width in 1..24_u16 {
+            let text = drawn(width, 6, &app);
+            assert!(
+                !text.contains('\u{fffd}'),
+                "a pane {width} cells wide cut a character in half"
+            );
+        }
+    }
+
+    #[test]
+    fn a_multibyte_name_survives_the_whole_prompt_round_trip() {
+        let root = notional_root("multibyte-prompt");
+        let mut app = app_showing(&root, &[("日本語.tar.gz", false)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('x'));
+        assert_eq!(app.status_line(), "Extract to: 日本語.tar_  (Enter/Esc)");
+
+        // Backspace takes a character off, not a byte: taking a byte off the
+        // end of "語" is where a name like this panics.
+        app.handle_key(KeyCode::Backspace);
+        assert_eq!(app.status_line(), "Extract to: 日本語.ta_  (Enter/Esc)");
+
+        app.handle_key(KeyCode::Esc);
+        app.handle_key(KeyCode::Char('r'));
+        assert_eq!(app.status_line(), "Rename to: 日本語.tar.gz_  (Enter/Esc)");
+        for _ in 0..7 {
+            app.handle_key(KeyCode::Backspace);
+        }
+        assert_eq!(app.status_line(), "Rename to: 日本語_  (Enter/Esc)");
+    }
+
+    // ---------------------------------------------------------------------
+    // What a confirmed prompt asks the service for.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn a_new_name_lands_beside_the_old_one_rather_than_inside_it() {
+        let old = PathBuf::from("/repos/project").join("notes.txt");
+
+        assert_eq!(
+            super::sibling_path(&old, "read-me.txt"),
+            PathBuf::from("/repos/project")
+                .join("read-me.txt")
+                .to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn a_name_with_nothing_to_sit_beside_is_used_as_it_stands() {
+        assert_eq!(
+            super::sibling_path(Path::new("/"), "read-me.txt"),
+            "read-me.txt",
+            "a path with no parent leaves the bare name, not an empty one"
+        );
+    }
+
+    #[test]
+    fn a_typed_name_containing_a_separator_leaves_the_folder_it_was_meant_to_stay_in() {
+        // `Mode::RenameInput` is documented as a new name "within its own
+        // directory", but nothing holds the typed text to a single
+        // component: `..` walks out, and the service takes the destination
+        // as given. Recorded so the next reader can see that it is the
+        // prompt, not the service, that would have to say no.
+        let old = PathBuf::from("/repos/project").join("notes.txt");
+
+        assert_eq!(
+            super::sibling_path(&old, "../../escaped.txt"),
+            PathBuf::from("/repos/project")
+                .join("../../escaped.txt")
+                .to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn a_whitespace_only_name_is_accepted_and_sent_as_typed() {
+        // Only an *empty* name is refused. A name of one space is sent, and
+        // would create a file called " ". Recorded rather than asserted as
+        // right: the graphical front end does the same for these three
+        // prompts, so it is a shared decision, not a slip in one of them.
+        let root = notional_root("whitespace-name");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('r'));
+        for _ in 0.."notes.txt".len() {
+            app.handle_key(KeyCode::Backspace);
+        }
+        app.handle_key(KeyCode::Char(' '));
+        assert_eq!(app.status_line(), "Rename to:  _  (Enter/Esc)");
+
+        app.handle_key(KeyCode::Enter);
+
+        assert!(app.pending_operation.is_some());
+        assert_eq!(mode_of(&app), "normal");
+    }
+
+    #[test]
+    fn an_empty_copy_or_extract_name_sends_nothing_and_closes_the_prompt() {
+        let root = notional_root("empty-names");
+
+        for key in [KeyCode::Char('c'), KeyCode::Char('x')] {
+            let mut app = app_showing(&root, &[("bundle.zip", false)]);
+            app.focus = Focus::Contents;
+            app.handle_key(key);
+            for _ in 0.."bundle.zip".len() {
+                app.handle_key(KeyCode::Backspace);
+            }
+
+            app.handle_key(KeyCode::Enter);
+
+            assert!(
+                app.pending_operation.is_none(),
+                "{key:?} sent a request with no name in it"
+            );
+            assert_eq!(
+                mode_of(&app),
+                "normal",
+                "{key:?} left its prompt open with nothing to confirm"
+            );
+            assert!(app.status_line().starts_with("Tab: switch pane"));
+        }
+    }
+
+    #[test]
+    fn the_extract_prompt_suggests_what_is_left_after_the_last_extension() {
+        let root = notional_root("extract-stems");
+
+        for (name, suggested) in [
+            ("bundle.tar.gz", "bundle.tar"),
+            (".zip", ".zip"),
+            ("no-extension", "no-extension"),
+        ] {
+            let mut app = app_showing(&root, &[(name, false)]);
+            app.focus = Focus::Contents;
+
+            app.handle_key(KeyCode::Char('x'));
+
+            assert_eq!(
+                app.status_line(),
+                format!("Extract to: {suggested}_  (Enter/Esc)")
+            );
+        }
+    }
+
+    #[test]
+    fn extract_pressed_on_a_folder_suggests_the_folder_itself() {
+        // Nothing asks whether the row is an archive, so `x` on a folder
+        // prefills that folder's own name - and confirming it would ask the
+        // service to extract a directory into the very path it sits at. The
+        // service answers; the prompt never questions it.
+        let root = notional_root("extract-a-folder");
+        let mut app = app_showing(&root, &[("src", true)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('x'));
+
+        assert_eq!(app.status_line(), "Extract to: src_  (Enter/Esc)");
+        assert_eq!(
+            super::sibling_path(&root.join("src"), "src"),
+            root.join("src").to_string_lossy(),
+            "the destination it would send is the folder being extracted"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Cancelling, and what arrives afterwards.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn a_prompt_covers_the_status_it_was_opened_over_and_gives_it_back() {
+        let root = notional_root("status-under-a-prompt");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.status = Some("permission denied".to_owned());
+
+        app.handle_key(KeyCode::Char('c'));
+        assert_eq!(app.status_line(), "Copy to: notes.txt_  (Enter/Esc)");
+
+        app.handle_key(KeyCode::Esc);
+        assert_eq!(
+            app.status_line(),
+            "permission denied",
+            "the message the prompt covered is still true underneath it"
+        );
+    }
+
+    #[test]
+    fn esc_cancels_what_is_in_flight_first_and_quits_on_the_next_press() {
+        let mut app = App::new(notional_root("esc-twice"));
+        assert!(
+            app.pending_contents.is_some(),
+            "a new app is already asking for its root's listing"
+        );
+
+        app.handle_key(KeyCode::Esc);
+        assert!(!app.should_quit, "the first Esc had something to cancel");
+        assert_eq!(app.status.as_deref(), Some("cancelled"));
+
+        app.handle_key(KeyCode::Esc);
+        assert!(app.should_quit, "the second had nothing left, so it quits");
+    }
+
+    #[test]
+    fn esc_after_a_delete_is_confirmed_stops_the_waiting_but_not_the_deletion() {
+        // What "cancel" can mean here is narrow, and this records the edge:
+        // dropping the receiver means the reply is never applied, so the
+        // listing is not reloaded and the deleted row stays on screen -
+        // under a line that says "cancelled" - while the service carries the
+        // deletion out regardless.
+        let root = notional_root("cancel-after-confirm");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Delete);
+        app.handle_key(KeyCode::Char('y'));
+        assert!(app.pending_operation.is_some());
+
+        app.handle_key(KeyCode::Esc);
+
+        assert!(app.pending_operation.is_none());
+        assert_eq!(app.status.as_deref(), Some("cancelled"));
+        assert_eq!(
+            app.contents.len(),
+            1,
+            "the row whose deletion is under way is still listed"
+        );
+        assert!(
+            app.pending_contents.is_none(),
+            "and nothing was asked for that would put that right"
+        );
+    }
+
+    #[test]
+    fn tick_turns_a_failed_file_request_into_something_the_pane_can_show() {
+        let mut app = App::new(notional_root("failed-file-request"));
+        app.pending_contents = None;
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Err(std::io::Error::other("the service went away")))
+            .expect("the receiver is still held");
+        app.pending_file = Some(rx);
+
+        app.tick();
+
+        assert!(app.pending_file.is_none());
+        match &app.file_view {
+            Some(Response::Error { message }) => assert!(
+                message.contains("the service went away"),
+                "the failure should be the one that happened: {message}"
+            ),
+            other => panic!("a failed request must still leave something to show: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tick_applies_a_finished_operation_and_leaves_an_unfinished_one_alone() {
+        let mut app = App::new(notional_root("operation-tick"));
+        app.pending_contents = None;
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.pending_operation = Some(rx);
+
+        app.tick();
+        assert!(
+            app.pending_operation.is_some(),
+            "a request that has not answered yet is still waited on"
+        );
+
+        tx.send(Ok(Response::Error {
+            message: "no such file".to_owned(),
+        }))
+        .expect("the receiver is still held");
+        app.tick();
+
+        assert!(app.pending_operation.is_none());
+        assert_eq!(app.status.as_deref(), Some("no such file"));
+    }
+
+    #[test]
+    fn a_reply_that_is_not_a_listing_says_so_rather_than_emptying_the_pane() {
+        let root = notional_root("wrong-reply-to-a-listing");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+
+        app.apply_contents_result(&[], Ok(Response::Done));
+
+        assert_eq!(app.status.as_deref(), Some("expected a directory listing"));
+        assert_eq!(
+            app.contents.len(),
+            1,
+            "and what was already listed stays listed"
+        );
+    }
+
+    #[test]
+    fn a_reply_that_is_not_an_operation_result_is_not_taken_for_success() {
+        let root = notional_root("wrong-reply-to-an-operation");
+        let mut app = app_showing(&root, &[]);
+
+        app.apply_operation_result(Ok(Response::Directory {
+            entries: Vec::new(),
+        }));
+
+        assert_eq!(
+            app.status.as_deref(),
+            Some("unexpected response to operation")
+        );
+        assert!(
+            app.pending_contents.is_none(),
+            "a reply nobody understands must not trigger the reload that success does"
+        );
+    }
+
+    #[test]
+    fn a_broken_connection_during_a_listing_is_reported_on_the_status_line() {
+        let root = notional_root("broken-listing");
+        let mut app = app_showing(&root, &[]);
+
+        app.apply_contents_result(&[], Err(std::io::Error::other("connection reset")));
+
+        assert_eq!(app.status.as_deref(), Some("connection reset"));
+    }
+
+    // ---------------------------------------------------------------------
+    // The folders tree.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn a_refreshed_listing_keeps_the_branches_the_reader_had_opened() {
+        let mut root = FolderNode::root("/root".into());
+        root.set_children_from(&entries(&[("keep", true), ("gone", true)]));
+        let children = root.children.as_mut().expect("children were just set");
+        children[0].expanded = true;
+        children[0].set_children_from(&entries(&[("deep", true)]));
+
+        root.set_children_from(&entries(&[("fresh", true), ("keep", true)]));
+
+        let children = root.children.as_ref().expect("children were just set");
+        let names: Vec<&str> = children.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["fresh", "keep"],
+            "the order is the listing's, and a folder that has gone is gone"
+        );
+        assert!(
+            children[1].expanded,
+            "a refresh must not fold up a branch the reader opened"
+        );
+        assert_eq!(
+            children[1]
+                .children
+                .as_ref()
+                .expect("what was already fetched is kept")
+                .len(),
+            1
+        );
+        assert!(
+            !children[0].expanded && children[0].children.is_none(),
+            "a folder seen for the first time starts closed and unfetched"
+        );
+    }
+
+    #[test]
+    fn a_root_path_with_no_final_component_is_named_by_the_path_itself() {
+        let path = PathBuf::from("/");
+        let root = FolderNode::root(path.clone());
+
+        assert_eq!(root.name, path.display().to_string());
+        assert!(root.expanded, "the root opens showing what it holds");
+        assert!(root.children.is_none(), "and has not asked for it yet");
+    }
+
+    #[test]
+    fn a_row_that_is_not_in_the_tree_resolves_to_nothing() {
+        let mut root = FolderNode::root("/root".into());
+        assert!(
+            root.node_at(&[0]).is_none(),
+            "a child of a node with no children yet"
+        );
+
+        root.set_children_from(&entries(&[("a", true)]));
+        assert!(root.node_at(&[0]).is_some());
+        assert!(root.node_at(&[1]).is_none(), "one past the last child");
+        assert!(root.node_at(&[0, 0]).is_none(), "a grandchild that is not");
+        assert_eq!(
+            root.node_at(&[]).map(|node| node.name.clone()),
+            Some(root.name.clone()),
+            "and the empty path is the root itself"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_root_hides_everything_below_it_and_left_again_does_nothing() {
+        let root = notional_root("collapse-the-root");
+        let mut app = app_showing(&root, &[("alpha", true)]);
+        assert_eq!(app.root.flatten().len(), 2);
+
+        app.handle_key(KeyCode::Left);
+        assert_eq!(app.root.flatten().len(), 1);
+        assert_eq!(app.tree_selected, 0);
+
+        app.handle_key(KeyCode::Left);
+        assert_eq!(
+            app.tree_selected, 0,
+            "there is nothing above the root to step out to"
+        );
+        assert!(
+            app.pending_contents.is_none(),
+            "and nothing was fetched for a move that did not happen"
+        );
+    }
+
+    #[test]
+    fn left_on_a_folder_with_nothing_open_steps_out_to_its_parent() {
+        let root = notional_root("step-out-to-the-parent");
+        let mut app = app_showing(&root, &[("alpha", true), ("beta", true)]);
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Down);
+        assert_eq!(app.tree_selected, 2);
+        app.pending_contents = None;
+
+        app.handle_key(KeyCode::Left);
+
+        assert_eq!(app.tree_selected, 0);
+        assert!(
+            app.pending_contents.is_some(),
+            "stepping out is a move, so the parent's listing is fetched"
+        );
+    }
+
+    #[test]
+    fn left_on_an_open_folder_closes_it_and_stays_on_it() {
+        let root = notional_root("close-a-branch-in-place");
+        let mut app = app_showing(&root, &[("alpha", true)]);
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Right);
+        app.apply_contents_result(
+            &[0],
+            Ok(Response::Directory {
+                entries: entries(&[("deep", true)]),
+            }),
+        );
+        assert_eq!(app.root.flatten().len(), 3);
+        app.pending_contents = None;
+
+        app.handle_key(KeyCode::Left);
+
+        assert_eq!(app.root.flatten().len(), 2, "the branch folded up");
+        assert_eq!(
+            app.tree_selected, 1,
+            "and the folder the reader closed is still the selected one"
+        );
+        assert!(
+            app.pending_contents.is_none(),
+            "closing a branch is not a move, so nothing is fetched again"
+        );
+    }
+
+    #[test]
+    fn enter_on_a_folder_row_opens_it_in_the_tree_and_hands_focus_back() {
+        let root = notional_root("drill-into-a-folder");
+        let mut app = app_showing(&root, &[("alpha", true), ("notes.txt", false)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Enter);
+
+        assert_eq!(app.tree_selected, 1);
+        assert_eq!(
+            app.focus,
+            Focus::Folders,
+            "the tree is where the reader now is, so that is where the cursor goes"
+        );
+        assert_eq!(app.selected_dir_path(), root.join("alpha"));
+        assert!(app.pending_contents.is_some());
+    }
+
+    #[test]
+    fn enter_on_a_file_row_goes_nowhere() {
+        let root = notional_root("drill-into-a-file");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Enter);
+
+        assert_eq!(app.focus, Focus::Contents);
+        assert_eq!(app.tree_selected, 0);
+        assert!(app.pending_contents.is_none());
+    }
+
+    #[test]
+    fn enter_on_a_row_the_tree_has_never_heard_of_goes_nowhere() {
+        let root = notional_root("drill-into-a-ghost");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.contents = entries(&[("ghost", true)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Enter);
+
+        assert_eq!(
+            app.focus,
+            Focus::Contents,
+            "a row with no folder behind it must not move the tree"
+        );
+        assert_eq!(app.tree_selected, 0);
+        assert!(app.pending_contents.is_none());
+    }
+
+    // ---------------------------------------------------------------------
+    // What the panes actually show.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn only_the_focused_panes_border_is_drawn_in_the_focus_colour() {
+        let root = notional_root("focus-colour");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.focus = Focus::Contents;
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("a test terminal");
+        terminal
+            .draw(|frame| render_app(frame, frame.area(), &app))
+            .expect("a draw into the test backend");
+        let buffer = terminal.backend().buffer().clone();
+
+        assert_ne!(
+            buffer[(0, 0)].fg,
+            Color::Yellow,
+            "the folders pane does not have focus"
+        );
+        assert_eq!(
+            buffer[(10, 0)].fg,
+            Color::Yellow,
+            "the contents pane does, and its border is how a reader can tell"
+        );
+    }
+
+    #[test]
+    fn the_highlight_sits_on_the_row_the_listing_says_is_selected() {
+        let root = notional_root("highlighted-row");
+        let mut app = app_showing(&root, &[("first.txt", false), ("second.txt", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        assert_eq!(app.contents_selected, 1);
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("a test terminal");
+        terminal
+            .draw(|frame| render_app(frame, frame.area(), &app))
+            .expect("a draw into the test backend");
+        let buffer = terminal.backend().buffer().clone();
+
+        assert_eq!(
+            buffer[(11, 2)].bg,
+            Color::Cyan,
+            "the second row is the selected one"
+        );
+        assert_ne!(
+            buffer[(11, 1)].bg,
+            Color::Cyan,
+            "and the first one is not, or the reader cannot tell them apart"
+        );
+    }
+
+    #[test]
+    fn an_empty_contents_pane_draws_no_highlight_at_all() {
+        let root = notional_root("nothing-to-highlight");
+        let mut app = app_showing(&root, &[]);
+        app.focus = Focus::Contents;
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("a test terminal");
+        terminal
+            .draw(|frame| render_app(frame, frame.area(), &app))
+            .expect("a draw into the test backend");
+        let buffer = terminal.backend().buffer().clone();
+
+        for y in 1..5_u16 {
+            for x in 11..23_u16 {
+                assert_ne!(
+                    buffer[(x, y)].bg,
+                    Color::Cyan,
+                    "a listing with nothing in it must not point at a row ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_keeps_its_name_exactly_and_a_folder_gains_a_slash() {
+        let listing = entries(&[("notes.txt", false), ("src", true)]);
+
+        assert_eq!(super::contents_label(&listing[0]), "notes.txt");
+        assert_eq!(super::contents_label(&listing[1]), "src/");
+    }
+
+    #[test]
+    fn roots_with_none_of_them_active_fall_back_to_the_default_and_say_so() {
+        let opening = super::opening_from(
+            None,
+            Some((
+                vec![ReposRoot {
+                    path: "/home/ada/repos".to_owned(),
+                    active: false,
+                }],
+                "/var/tmp".to_owned(),
+            )),
+        );
+
+        assert_eq!(
+            opening.root,
+            PathBuf::from("/var/tmp"),
+            "a list with nothing marked active is as good as no list"
+        );
+        assert!(
+            opening
+                .notice
+                .expect("a root nobody chose should be explained")
+                .contains("No Repos Directory set")
+        );
+    }
+
+    #[test]
+    fn an_explicit_path_wins_even_when_the_service_cannot_be_asked() {
+        let opening = super::opening_from(Some(PathBuf::from("/somewhere/else")), None);
+
+        assert_eq!(opening.root, PathBuf::from("/somewhere/else"));
+        assert_eq!(
+            opening.notice, None,
+            "nothing to explain: the reader said where"
         );
     }
 }

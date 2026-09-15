@@ -471,4 +471,236 @@ mod tests {
             "and the project lines are added: {contents}"
         );
     }
+
+    /// Everything [`render`] puts on a `width` x `height` terminal.
+    fn drawn(width: u16, height: u16, response: &Response) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test terminal");
+        terminal
+            .draw(|frame| render(frame, frame.area(), response))
+            .expect("a draw into the test backend");
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect()
+    }
+
+    #[test]
+    fn a_view_from_a_plugin_this_front_end_does_not_carry_is_named_not_left_blank() {
+        let response = Response::FileView {
+            plugin: "no-such-plugin".to_owned(),
+            data: serde_json::json!({ "content": "unreachable" }),
+            also: Vec::new(),
+        };
+
+        let contents = drawn(44, 6, &response);
+
+        assert!(
+            contents.contains("no presentation for plugin"),
+            "a missing presentation half should say which one: {contents}"
+        );
+        assert!(
+            contents.contains("no-such-plugin"),
+            "and name it: {contents}"
+        );
+    }
+
+    #[test]
+    fn a_folder_plugin_this_front_end_does_not_carry_is_named_too() {
+        let response = Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::json!({ "content": "folder", "truncated": false }),
+            also: vec![protocol::PluginView {
+                plugin: "no-such-folder-plugin".to_owned(),
+                data: serde_json::json!({}),
+            }],
+        };
+
+        let contents = drawn(50, 8, &response);
+
+        assert!(
+            contents.contains("folder"),
+            "the folder still says what it is: {contents}"
+        );
+        assert!(
+            contents.contains("no presentation for folder plugin"),
+            "and the gap is named rather than silently dropped: {contents}"
+        );
+    }
+
+    #[test]
+    fn every_folder_view_is_added_below_the_ones_before_it() {
+        // A folder is several things at once, and each plugin that
+        // recognises it adds its own lines - so two of them must both be
+        // there, not one in place of the other.
+        let cargo = serde_json::json!({
+            "kind": "package",
+            "package": {
+                "name": "instrument-log",
+                "version": "2.3.0",
+                "edition": "2024",
+                "rust_version": null,
+                "description": null
+            },
+            "members": [],
+            "dependencies": 3,
+            "dev_dependencies": 0,
+            "build_dependencies": 0
+        });
+        let response = Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::json!({ "content": "the folder itself", "truncated": false }),
+            also: vec![
+                protocol::PluginView {
+                    plugin: "project-cargo".to_owned(),
+                    data: cargo,
+                },
+                protocol::PluginView {
+                    plugin: "second-folder-plugin".to_owned(),
+                    data: serde_json::json!({}),
+                },
+            ],
+        };
+
+        let contents = drawn(60, 16, &response);
+
+        assert!(contents.contains("the folder itself"), "{contents}");
+        assert!(contents.contains("instrument-log"), "{contents}");
+        assert!(contents.contains("second-folder-plugin"), "{contents}");
+    }
+
+    #[test]
+    fn a_repos_roots_reply_is_drawn_as_the_list_it_is() {
+        let response = Response::ReposRoots {
+            roots: vec![
+                protocol::ReposRoot {
+                    path: "/home/ada/repos".to_owned(),
+                    active: true,
+                },
+                protocol::ReposRoot {
+                    path: "/mnt/work".to_owned(),
+                    active: false,
+                },
+            ],
+            default: "/home/ada/repos".to_owned(),
+        };
+
+        let contents = drawn(44, 8, &response);
+
+        assert!(contents.contains("Repos Directory"), "{contents}");
+        assert!(contents.contains("/home/ada/repos"), "{contents}");
+        assert!(
+            contents.contains("/mnt/work"),
+            "every root is listed, not only the active one: {contents}"
+        );
+    }
+
+    #[test]
+    fn a_finished_operation_says_so_rather_than_leaving_the_pane_empty() {
+        let contents = drawn(20, 4, &Response::Done);
+
+        assert!(contents.contains("done"), "{contents}");
+    }
+
+    #[test]
+    fn an_error_is_drawn_as_the_message_the_service_sent() {
+        let response = Response::Error {
+            message: "permission denied".to_owned(),
+        };
+
+        let contents = drawn(30, 4, &response);
+
+        assert!(contents.contains("permission denied"), "{contents}");
+    }
+
+    #[test]
+    fn every_kind_of_reply_draws_into_an_area_with_no_room_for_its_border() {
+        let replies = [
+            Response::Done,
+            Response::Error {
+                message: "boom".to_owned(),
+            },
+            Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "src".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: None,
+                }],
+            },
+            Response::FileView {
+                plugin: "text".to_owned(),
+                data: serde_json::json!({ "content": "hi", "truncated": false }),
+                also: Vec::new(),
+            },
+            Response::ReposRoots {
+                roots: Vec::new(),
+                default: "/home/ada/repos".to_owned(),
+            },
+        ];
+
+        for response in &replies {
+            for (width, height) in [(0, 0), (1, 1), (2, 1), (1, 2), (3, 3)] {
+                let contents = drawn(width, height, response);
+                assert_eq!(
+                    contents.chars().count(),
+                    usize::from(width) * usize::from(height),
+                    "{response:?} at {width}x{height} did not fill the area it was given"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_listing_of_multibyte_names_draws_into_a_pane_too_narrow_for_them() {
+        let response = Response::Directory {
+            entries: vec![
+                DirectoryEntry {
+                    name: "日本語のフォルダ".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: None,
+                },
+                DirectoryEntry {
+                    name: "café-notes.txt".to_owned(),
+                    is_dir: false,
+                    size: 0,
+                    modified: None,
+                    repository: None,
+                },
+            ],
+        };
+
+        for width in 1..20_u16 {
+            let contents = drawn(width, 5, &response);
+            assert!(
+                !contents.contains('\u{fffd}'),
+                "a pane {width} cells wide cut a character in half"
+            );
+        }
+    }
+
+    #[test]
+    fn a_request_to_a_socket_nobody_is_listening_on_fails_rather_than_hanging() {
+        // This is the failure `app::opening` leans on: with no service to
+        // answer, it must come back as an error so the front end can fall
+        // back and say why, rather than block a launch.
+        let name = unique_socket_name();
+
+        let result = send_request(
+            name.as_str()
+                .to_ns_name::<GenericNamespaced>()
+                .expect("a valid namespaced socket name"),
+            &Request::ReposRoots,
+        );
+
+        assert!(
+            result.is_err(),
+            "connecting to a socket that was never created should fail"
+        );
+    }
 }
