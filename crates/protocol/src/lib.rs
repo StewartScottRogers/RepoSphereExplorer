@@ -279,9 +279,10 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::{
-        DirectoryEntry, MAX_MESSAGE_BYTES, ReposRoot, RepositoryInfo, Request, Response,
-        read_message, write_message,
+        DirectoryEntry, MAX_MESSAGE_BYTES, PluginView, ReposRoot, RepositoryInfo, Request,
+        Response, VERSION, read_message, socket_name, write_message,
     };
+    use std::io::{self, Read, Write};
 
     #[test]
     fn refuses_a_length_prefix_larger_than_the_message_limit() {
@@ -435,5 +436,552 @@ mod tests {
             ),
             other => panic!("expected roots, got {other:?}"),
         }
+    }
+
+    /// A reader that hands back one byte per call, so a framing routine that
+    /// assumes a single `read` fills its buffer is caught.
+    struct OneByteAtATime<'a> {
+        bytes: &'a [u8],
+    }
+
+    impl Read for OneByteAtATime<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if buf.is_empty() || self.bytes.is_empty() {
+                return Ok(0);
+            }
+            buf[0] = self.bytes[0];
+            self.bytes = &self.bytes[1..];
+            Ok(1)
+        }
+    }
+
+    /// A reader that records how much of the stream was actually consumed.
+    struct CountingReader<'a> {
+        bytes: &'a [u8],
+        consumed: usize,
+    }
+
+    impl Read for CountingReader<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let read = self.bytes.read(buf)?;
+            self.consumed += read;
+            Ok(read)
+        }
+    }
+
+    /// A writer that accepts the four-byte prefix and then reports the peer
+    /// has gone, the way a closed socket does mid-message.
+    struct HangsUpAfterTheLengthPrefix {
+        accepted: usize,
+    }
+
+    impl Write for HangsUpAfterTheLengthPrefix {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.accepted >= 4 {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "the peer hung up",
+                ));
+            }
+            self.accepted += buf.len();
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A JSON array nested `depth` deep around a single string.
+    fn nested_value(depth: usize) -> serde_json::Value {
+        let mut value = serde_json::Value::String("leaf".to_owned());
+        for _ in 0..depth {
+            value = serde_json::Value::Array(vec![value]);
+        }
+        value
+    }
+
+    fn frame_of<T: serde::Serialize>(value: &T) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, value).expect("the message encodes");
+        buffer
+    }
+
+    #[test]
+    fn a_length_prefix_cut_short_ends_the_read_rather_than_guessing_a_length() {
+        let err = read_message::<Request, _>([0u8, 0, 12].as_slice()).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn a_length_prefix_split_across_reads_is_reassembled() {
+        let frame = frame_of(&Request::ListDirectory {
+            path: "/home/ada/repos".to_owned(),
+        });
+
+        let decoded: Request = read_message(OneByteAtATime {
+            bytes: frame.as_slice(),
+        })
+        .expect("a dribbling reader still yields one whole message");
+
+        assert_eq!(
+            decoded,
+            Request::ListDirectory {
+                path: "/home/ada/repos".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn a_length_of_zero_is_an_error_rather_than_an_empty_message() {
+        let frame = [0u8, 0, 0, 0];
+
+        let err = read_message::<Request, _>(frame.as_slice()).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_length_of_exactly_the_message_limit_is_inside_the_cap() {
+        // The cap is a maximum, not an exclusive bound: a frame announcing
+        // exactly MAX_MESSAGE_BYTES must be read, so it fails for running out
+        // of payload rather than for being too large.
+        let mut frame = MAX_MESSAGE_BYTES.to_be_bytes().to_vec();
+        frame.extend_from_slice(b"\"Undo\"");
+
+        let err = read_message::<Request, _>(frame.as_slice()).unwrap_err();
+
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::UnexpectedEof,
+            "the limit itself is accepted, then the short payload ends the read"
+        );
+    }
+
+    #[test]
+    fn a_length_over_the_limit_is_refused_before_a_byte_of_payload_is_touched() {
+        // Four bytes must not be able to make the reader commit to 4 GiB, so
+        // the refusal has to happen off the prefix alone.
+        let mut frame = (MAX_MESSAGE_BYTES + 1).to_be_bytes().to_vec();
+        frame.extend_from_slice(&vec![b'x'; 4096]);
+        let mut reader = CountingReader {
+            bytes: frame.as_slice(),
+            consumed: 0,
+        };
+
+        let err = read_message::<Request, _>(&mut reader).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            reader.consumed, 4,
+            "only the length prefix is read; the payload is never pulled in"
+        );
+    }
+
+    #[test]
+    fn the_largest_possible_length_prefix_is_refused_rather_than_allocated() {
+        let mut frame = u32::MAX.to_be_bytes().to_vec();
+        frame.extend_from_slice(b"nothing like four gibibytes follows");
+        let mut reader = CountingReader {
+            bytes: frame.as_slice(),
+            consumed: 0,
+        };
+
+        let err = read_message::<Response, _>(&mut reader).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.consumed, 4);
+    }
+
+    #[test]
+    fn a_payload_shorter_than_its_prefix_claims_ends_the_read() {
+        let mut frame = 4096u32.to_be_bytes().to_vec();
+        frame.extend_from_slice(b"\"Undo\"");
+
+        let err = read_message::<Request, _>(frame.as_slice()).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn a_stream_that_stops_mid_payload_ends_the_read() {
+        let mut frame = frame_of(&Request::ListDirectory {
+            path: "/home/ada/repos".to_owned(),
+        });
+        frame.truncate(frame.len() - 3);
+
+        let err = read_message::<Request, _>(OneByteAtATime {
+            bytes: frame.as_slice(),
+        })
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn reading_one_message_leaves_the_next_one_in_the_stream() {
+        // The service reads request after request from one connection, so a
+        // read that over-ran its own frame would eat the following message.
+        let mut stream = frame_of(&Request::Undo);
+        stream.extend_from_slice(&frame_of(&Request::CreateFile {
+            path: "notes.md".to_owned(),
+        }));
+        let mut reader = stream.as_slice();
+
+        let first: Request = read_message(&mut reader).expect("the first message");
+        let second: Request = read_message(&mut reader).expect("the second message");
+
+        assert_eq!(first, Request::Undo);
+        assert_eq!(
+            second,
+            Request::CreateFile {
+                path: "notes.md".to_owned()
+            }
+        );
+        assert!(reader.is_empty(), "both frames are consumed exactly");
+    }
+
+    #[test]
+    fn a_payload_that_is_not_utf8_is_an_error_rather_than_a_panic() {
+        let payload = [0xffu8, 0xfe, 0x00, 0x80];
+        let mut frame = u32::try_from(payload.len()).unwrap().to_be_bytes().to_vec();
+        frame.extend_from_slice(&payload);
+
+        let err = read_message::<Request, _>(frame.as_slice()).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_payload_naming_a_variant_this_build_does_not_know_is_an_error() {
+        let payload = br#"{"Teleport":{"path":"/somewhere"}}"#;
+        let mut frame = u32::try_from(payload.len()).unwrap().to_be_bytes().to_vec();
+        frame.extend_from_slice(payload);
+
+        let err = read_message::<Request, _>(frame.as_slice()).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_write_that_fails_after_the_prefix_surfaces_the_io_error() {
+        let mut writer = HangsUpAfterTheLengthPrefix { accepted: 0 };
+
+        let err = write_message(
+            &mut writer,
+            &Request::ListDirectory {
+                path: "/home/ada/repos".to_owned(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn every_request_variant_survives_the_wire_unchanged() {
+        let requests = vec![
+            Request::ListDirectory {
+                path: String::new(),
+            },
+            Request::ViewFile {
+                path: "a.txt".to_owned(),
+            },
+            Request::Open {
+                path: ".".to_owned(),
+            },
+            Request::Rename { items: Vec::new() },
+            Request::Rename {
+                items: vec![
+                    ("old".to_owned(), "new".to_owned()),
+                    (String::new(), String::new()),
+                ],
+            },
+            Request::Copy {
+                items: vec![("from".to_owned(), "to".to_owned())],
+            },
+            Request::Copy { items: Vec::new() },
+            Request::Delete { paths: Vec::new() },
+            Request::Delete {
+                paths: vec!["one".to_owned(), String::new()],
+            },
+            Request::Extract {
+                archive: "a.zip".to_owned(),
+                destination: String::new(),
+            },
+            Request::CreateDirectory {
+                path: "d".to_owned(),
+            },
+            Request::ReposRoots,
+            Request::SetReposRoot {
+                path: "Z:\\repos".to_owned(),
+            },
+            Request::WriteFile {
+                path: "f".to_owned(),
+                content: String::new(),
+            },
+            Request::Undo,
+            Request::CreateFile {
+                path: "f".to_owned(),
+            },
+        ];
+
+        for request in requests {
+            let frame = frame_of(&request);
+            let decoded: Request = read_message(frame.as_slice()).expect("the frame decodes");
+            assert_eq!(decoded, request, "{request:?} did not survive the wire");
+        }
+    }
+
+    #[test]
+    fn every_response_variant_survives_the_wire_unchanged() {
+        let responses = vec![
+            Response::Directory {
+                entries: Vec::new(),
+            },
+            Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: String::new(),
+                    is_dir: false,
+                    size: u64::MAX,
+                    modified: Some(0),
+                    repository: Some(RepositoryInfo::default()),
+                }],
+            },
+            Response::FileView {
+                plugin: String::new(),
+                data: serde_json::Value::Null,
+                also: Vec::new(),
+            },
+            Response::FileView {
+                plugin: "folder".to_owned(),
+                data: serde_json::json!({ "kind": "folder" }),
+                also: vec![
+                    PluginView {
+                        plugin: "project-cargo".to_owned(),
+                        data: serde_json::json!({ "members": [] }),
+                    },
+                    PluginView {
+                        plugin: String::new(),
+                        data: serde_json::Value::Bool(false),
+                    },
+                ],
+            },
+            Response::Error {
+                message: String::new(),
+            },
+            Response::ReposRoots {
+                roots: Vec::new(),
+                default: String::new(),
+            },
+            Response::Done,
+        ];
+
+        for response in responses {
+            let frame = frame_of(&response);
+            let decoded: Response = read_message(frame.as_slice()).expect("the frame decodes");
+            assert_eq!(decoded, response, "{response:?} did not survive the wire");
+        }
+    }
+
+    #[test]
+    fn a_path_of_awkward_characters_survives_the_wire_unchanged() {
+        // Paths are whatever the platform allows: quotes and backslashes that
+        // JSON must escape, control characters, and text outside the basic
+        // multilingual plane.
+        let awkward =
+            "Z:\\repos\\\"quoted\"\\line\nbreak\\tab\there\\nul\u{0}\\\u{1f600}\\\u{202e}rtl";
+        let request = Request::SetReposRoot {
+            path: awkward.to_owned(),
+        };
+
+        let frame = frame_of(&request);
+        let decoded: Request = read_message(frame.as_slice()).expect("the frame decodes");
+
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn an_entry_with_no_modified_time_keeps_that_absence_across_the_wire() {
+        // `None` has to arrive as `None`: a filesystem that reports no
+        // timestamp must not come out the other side as the epoch.
+        let response = Response::Directory {
+            entries: vec![DirectoryEntry {
+                name: "src".to_owned(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+                repository: Some(RepositoryInfo {
+                    provider: None,
+                    branch: Some("main".to_owned()),
+                    remote: None,
+                }),
+            }],
+        };
+
+        let frame = frame_of(&response);
+        let decoded: Response = read_message(frame.as_slice()).expect("the frame decodes");
+
+        match decoded {
+            Response::Directory { entries } => {
+                assert!(entries[0].modified.is_none());
+                let repository = entries[0].repository.as_ref().expect("a working copy");
+                assert!(repository.provider.is_none());
+                assert!(repository.remote.is_none());
+                assert_eq!(repository.branch.as_deref(), Some("main"));
+            }
+            other => panic!("expected a listing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_deeply_nested_file_view_survives_the_wire_unchanged() {
+        let response = Response::FileView {
+            plugin: "json".to_owned(),
+            data: serde_json::json!({ "root": nested_value(60) }),
+            also: Vec::new(),
+        };
+
+        let frame = frame_of(&response);
+        let decoded: Response = read_message(frame.as_slice()).expect("the frame decodes");
+
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn a_file_view_nested_past_the_decoder_limit_is_refused_rather_than_overflowing() {
+        // Hostile input must not take the stack with it. Nesting beyond what
+        // the decoder will follow has to come back as an error.
+        let response = Response::FileView {
+            plugin: "json".to_owned(),
+            data: nested_value(512),
+            also: Vec::new(),
+        };
+        let frame = frame_of(&response);
+
+        let err = read_message::<Response, _>(frame.as_slice()).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_file_view_from_an_older_service_without_the_also_list_still_reads() {
+        // `also` arrived with the folder plugins; a reply written before it
+        // has no such field, and must still be a file view rather than an
+        // error.
+        let older = r#"{"FileView":{"plugin":"text","data":{"content":"hi"}}}"#;
+
+        let response: Response = serde_json::from_str(older).expect("an older reply still reads");
+
+        match response {
+            Response::FileView { also, plugin, .. } => {
+                assert_eq!(plugin, "text");
+                assert!(also.is_empty());
+            }
+            other => panic!("expected a file view, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_also_list_is_left_off_the_wire_entirely() {
+        // The field is skipped when empty, which is what lets an older front
+        // end read a newer service's reply to a plain file.
+        let frame = frame_of(&Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::Value::Null,
+            also: Vec::new(),
+        });
+        let json = String::from_utf8(frame[4..].to_vec()).expect("the payload is text");
+
+        assert!(!json.contains("also"), "{json} still carries an empty list");
+    }
+
+    #[test]
+    fn an_entry_missing_both_of_its_optional_fields_still_reads() {
+        let older = r#"{"Directory":{"entries":[{"name":"src","is_dir":true,"size":0}]}}"#;
+
+        let response: Response = serde_json::from_str(older).expect("an older entry still reads");
+
+        match response {
+            Response::Directory { entries } => {
+                assert!(entries[0].modified.is_none());
+                assert!(entries[0].repository.is_none());
+            }
+            other => panic!("expected a listing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_entry_carrying_a_field_this_build_does_not_know_still_reads() {
+        // The other direction of the same compatibility promise: a front end
+        // built before a field was added must not choke on a newer service.
+        let newer = r#"{"Directory":{"entries":[{"name":"src","is_dir":true,"size":0,"modified":null,"ahead_by":3}]}}"#;
+
+        let response: Response = serde_json::from_str(newer).expect("a newer entry still reads");
+
+        match response {
+            Response::Directory { entries } => assert_eq!(entries[0].name, "src"),
+            other => panic!("expected a listing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nothing_on_the_wire_carries_the_protocol_version() {
+        // VERSION is 2, but no frame names it and nothing negotiates it, so a
+        // peer speaking another version is indistinguishable from this one and
+        // a mismatch cannot be detected. Whoever adds a handshake should find
+        // this test failing.
+        let frame = frame_of(&Request::Undo);
+        let json = String::from_utf8(frame[4..].to_vec()).expect("the payload is text");
+        assert_eq!(json, "\"Undo\"");
+        assert!(
+            !json.contains(&VERSION.to_string()),
+            "{json} names the protocol version"
+        );
+
+        let from_another_version: Request =
+            read_message(frame.as_slice()).expect("accepted without a version check");
+        assert_eq!(from_another_version, Request::Undo);
+    }
+
+    // Ignored, not deleted: this is the proof of #517, not a chore.
+    // `write_message` has no depth limit and `read_message` inherits
+    // serde_json's 128 levels, so this crate can write a message its own
+    // peer refuses. Reachable through the JSON plugin, which puts a whole
+    // parsed document in the view. The guard belongs on the write side,
+    // where it can still become an error that names the cause - which is
+    // a change to the service's response path, not to a test.
+    #[ignore = "see #517: write_message will emit what read_message refuses"]
+    #[test]
+    fn a_file_view_this_build_writes_can_be_read_back_by_its_peer() {
+        // FAILS, and is meant to: the pair is asymmetric. `write_message`
+        // accepts any depth, while `read_message` stops at the decoder's
+        // recursion limit - 125 levels of view data, measured, once the
+        // `FileView` envelope has taken its own two. The json plugin puts the
+        // whole parsed document in that view data
+        // (crates/plugins/json/src/lib.rs:31), and its own parse allows more
+        // nesting than the envelope leaves room for, so a file in that band
+        // is read by the service, written to the socket, and then refused by
+        // the front end as invalid data - a generic failure on the far side
+        // of the process boundary, for a file whose only fault is depth.
+        // A guard belongs on the write side, where the message can still be
+        // turned into a `Response::Error` naming the cause.
+        let response = Response::FileView {
+            plugin: "json".to_owned(),
+            data: nested_value(126),
+            also: Vec::new(),
+        };
+
+        let frame = frame_of(&response);
+        let decoded: Response =
+            read_message(frame.as_slice()).expect("what this crate wrote, this crate can read");
+
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn the_socket_name_is_valid_on_this_platform() {
+        socket_name().expect("SOCKET_NAME resolves on the platform this test runs on");
     }
 }
