@@ -723,6 +723,23 @@ struct Edit {
     /// place a caret in, or cannot receive typing for, opens in the
     /// plain one instead, and the status bar says why.
     coloured: bool,
+    /// The presentation half that opened this file, so the colouring
+    /// follows the document rather than the preview.
+    ///
+    /// Taken once, when the editor opens. Reading it from `file_view`
+    /// instead meant clicking another file in the Contents pane
+    /// re-tokenised the open document as that file's type: open a `.rs`
+    /// file, click a `.json` one, and the Rust somebody was typing lost
+    /// its Rust colouring while its text and caret sat untouched.
+    plugin: Option<&'static str>,
+}
+
+/// The presentation half registered under `name`.
+fn plugin_presentation_named(name: &str) -> Option<&'static dyn PluginPresentation> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .copied()
+        .find(|candidate| candidate.name() == name)
 }
 
 /// A command the editor offers in its own row.
@@ -980,6 +997,11 @@ pub struct App {
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
     pending_file: Option<Receiver<io::Result<Response>>>,
+    /// The file the outstanding preview was asked for, and the file the
+    /// pane is showing now. Compared so that re-reading the file already
+    /// on screen keeps the view the reader chose.
+    pending_file_path: Option<PathBuf>,
+    shown_file_path: Option<PathBuf>,
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
     after_operation: Option<AfterOperation>,
@@ -1040,6 +1062,8 @@ impl App {
             focus: Pane::Folders,
             pending_contents: None,
             pending_file: None,
+            pending_file_path: None,
+            shown_file_path: None,
             mode: Mode::Normal,
             pending_operation: None,
             after_operation: None,
@@ -1086,20 +1110,37 @@ impl App {
     }
 
     fn show_file_view(&mut self, view: Option<Response>) {
+        self.show_file_view_of(view, None);
+    }
+
+    /// Plants `view`, which is a view of `path`.
+    ///
+    /// The chosen view resets when the file changes - a tab picked for one
+    /// file says nothing about the next. It must not reset when the *same*
+    /// file comes back, which is what F5 does: the refresh kept the
+    /// reader's row and then dropped them from the Text tab onto Preview,
+    /// and so did a second click on the row they were already on.
+    fn show_file_view_of(&mut self, view: Option<Response>, path: Option<PathBuf>) {
+        let same_file = path.is_some() && path == self.shown_file_path;
         self.file_view = view;
-        self.file_view_index = 0;
+        self.shown_file_path = path;
+        if !same_file {
+            self.file_view_index = 0;
+        }
     }
 
     fn load_file_view(&mut self) {
         let Some(entry) = self.contents.get(self.content_selected) else {
             self.show_file_view(None);
             self.pending_file = None;
+            self.pending_file_path = None;
             return;
         };
         let path = self.selected_dir_path().join(&entry.name);
         let request = Request::ViewFile {
             path: path.to_string_lossy().into_owned(),
         };
+        self.pending_file_path = Some(path);
         self.pending_file = Some(spawn_request(request));
     }
 
@@ -1117,9 +1158,11 @@ impl App {
             && let Ok(result) = rx.try_recv()
         {
             self.pending_file = None;
-            self.show_file_view(Some(result.unwrap_or_else(|err| Response::Error {
+            let asked_for = self.pending_file_path.take();
+            let view = result.unwrap_or_else(|err| Response::Error {
                 message: err.to_string(),
-            })));
+            });
+            self.show_file_view_of(Some(view), asked_for);
         }
         if let Some(rx) = &self.pending_operation
             && let Ok(result) = rx.try_recv()
@@ -1992,8 +2035,9 @@ impl App {
             return Vec::new();
         }
         let text = edit.document.text();
-        let spans = self
-            .file_view_plugin()
+        let spans = edit
+            .plugin
+            .and_then(plugin_presentation_named)
             .map(|plugin| plugin.classify(text))
             .filter(|spans| !spans.is_empty())
             .unwrap_or_else(|| vec![Span::new(0, text.len(), Class::Plain)]);
@@ -2005,10 +2049,7 @@ impl App {
         let Some(Response::FileView { plugin, .. }) = &self.file_view else {
             return None;
         };
-        PRESENTATION_PLUGINS
-            .iter()
-            .copied()
-            .find(|candidate| candidate.name() == plugin)
+        plugin_presentation_named(plugin)
     }
 
     /// Where the caret is, as a line and a column.
@@ -2156,11 +2197,13 @@ impl App {
                     .to_owned(),
             );
         }
+        let plugin = self.file_view_plugin().map(PluginPresentation::name);
         self.editing_file = Some(Edit {
             path,
             original: text.clone(),
             document: Document::new(text),
             coloured,
+            plugin,
         });
         self.focus = Pane::File;
     }
@@ -2185,6 +2228,14 @@ impl App {
             return;
         };
         let (path, text) = (edit.path.clone(), edit.document.text().to_owned());
+        // The write reloads the folder, and a reload with nothing to put
+        // the selection back on lands it at row 0. Every other operation
+        // that reloads says where to land first; this one did not, so
+        // saving the last file in a folder threw the reader onto the
+        // first one and started previewing it.
+        self.reselect = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
         self.editing_file = None;
         self.pending_operation = Some(spawn_request(Request::WriteFile {
             path: path.to_string_lossy().into_owned(),
@@ -2393,6 +2444,21 @@ impl App {
     #[must_use]
     pub const fn can_go_back(&self) -> bool {
         self.history_index > 0
+    }
+
+    /// Whether anything has been asked of the service and not yet answered.
+    ///
+    /// For tests that drive a real window: the status bar is not a
+    /// reliable "still working" signal, because a file preview is
+    /// requested without setting one. A test that watched the status
+    /// alone settled while the preview was still in flight and then
+    /// asserted about a pane holding the file before it - which passed or
+    /// failed depending on how long the plugin took.
+    #[must_use]
+    pub const fn is_busy(&self) -> bool {
+        self.pending_contents.is_some()
+            || self.pending_file.is_some()
+            || self.pending_operation.is_some()
     }
 
     /// The browsed folder as one string, for the markup to notice that it
@@ -2707,6 +2773,17 @@ impl App {
     /// rather than as three lines describing it.
     #[must_use]
     pub fn file_graphic(&self) -> Option<Graphic> {
+        // The picture belongs to the Preview: it is what the plugin
+        // renders. The Text tab is the file read plainly, and a fixed
+        // band of rendered drawing above it is the Preview intruding on
+        // the one view that exists to get away from it. An SVG is a
+        // picture and text at once, so it has both tabs and this is
+        // reachable - read the file's markup and the drawing of it was
+        // still there, taking a fifth of the pane, with no way to dismiss
+        // it.
+        if self.file_views().get(self.file_view_index) != Some(&PREVIEW_VIEW) {
+            return None;
+        }
         match &self.file_view {
             Some(Response::FileView { plugin, data, .. }) => present_graphic(plugin, data),
             _ => None,
