@@ -412,6 +412,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_parent_requested, navigate_to_parent);
     on_event!(on_back_requested, go_back);
     on_event!(on_forward_requested, go_forward);
+    on_event!(on_find_requested, begin_find);
     on_event!(on_clipboard_copy_requested, copy_to_clipboard);
     on_event!(on_clipboard_cut_requested, cut_to_clipboard);
     {
@@ -720,6 +721,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_address_path(app.address_path().into());
     ui.set_path_input(app.path_input().into());
     ui.set_editing_path(app.editing_path());
+    ui.set_showing_found(app.showing_found());
     ui.set_editing_file(app.editing_file());
     ui.set_can_edit(app.can_edit());
     ui.set_can_open(app.can_open());

@@ -115,6 +115,19 @@ pub enum Request {
         /// The path of the file to create.
         path: String,
     },
+    /// Finds every file and folder in the active Repos Directory whose name
+    /// contains `query`, ignoring case. Walks what `git` would: files a
+    /// `.gitignore`, `.ignore` or global exclude rules out are skipped, and
+    /// nothing under `.git` is ever returned.
+    ///
+    /// The reply is [`Response::Names`]. An empty or whitespace-only query
+    /// finds nothing rather than everything.
+    FindNames {
+        /// Part of a file or folder name.
+        query: String,
+        /// The most matches to return; the reply says if there were more.
+        limit: usize,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -160,6 +173,21 @@ pub struct RepositoryInfo {
     /// The address the checkout tracks, as written in its own
     /// configuration.
     pub remote: Option<String>,
+}
+
+/// One file or folder found by [`Request::FindNames`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NameMatch {
+    /// Its path relative to the Repos Directory, with `/` between the
+    /// components on every platform.
+    pub path: String,
+    /// Whether it is itself a directory.
+    pub is_dir: bool,
+    /// The nearest working copy holding it - the match itself when it is
+    /// one - as a path relative to the Repos Directory, `/`-separated, and
+    /// empty when that working copy is the Repos Directory itself. `None`
+    /// when no working copy holds it.
+    pub repository: Option<String>,
 }
 
 /// One view of a path, and the plugin that should present it.
@@ -217,6 +245,18 @@ pub enum Response {
     },
     /// An operation (rename, copy, delete, extract) completed successfully.
     Done,
+    /// The answer to [`Request::FindNames`].
+    Names {
+        /// The Repos Directory that was searched, which every match's path
+        /// is relative to, so a front end opens the folder that was actually
+        /// searched rather than guessing at one it has open.
+        root: String,
+        /// The matches, in the order the walk met them.
+        matches: Vec<NameMatch>,
+        /// Whether there were more matches than the request's limit, so
+        /// `matches` is not everything.
+        cut_short: bool,
+    },
 }
 
 /// One configured Repos Directory.
@@ -359,8 +399,8 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::{
-        DirectoryEntry, MAX_MESSAGE_BYTES, PluginView, ReposRoot, RepositoryInfo, Request,
-        Response, VERSION, read_message, socket_name, write_message,
+        DirectoryEntry, MAX_MESSAGE_BYTES, NameMatch, PluginView, ReposRoot, RepositoryInfo,
+        Request, Response, VERSION, read_message, socket_name, write_message,
     };
     use std::io::{self, Read, Write};
 
@@ -432,6 +472,75 @@ mod tests {
 
         let decoded: Request = read_message(buf.as_slice()).unwrap();
         assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn round_trips_a_find_names_request_through_the_wire_format() {
+        let request = Request::FindNames {
+            query: "Cargo.toml".to_owned(),
+            limit: 500,
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+
+        let decoded: Request = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn round_trips_the_names_found_through_the_wire_format() {
+        let response = Response::Names {
+            root: "/repos".to_owned(),
+            matches: vec![
+                NameMatch {
+                    path: "explorer/crates/service/Cargo.toml".to_owned(),
+                    is_dir: false,
+                    repository: Some("explorer".to_owned()),
+                },
+                NameMatch {
+                    path: "scratch/docker-compose".to_owned(),
+                    is_dir: true,
+                    repository: None,
+                },
+            ],
+            cut_short: true,
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &response).unwrap();
+
+        let decoded: Response = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn a_full_page_of_names_is_far_inside_the_message_limit() {
+        // The front end asks for the first 500. Long, deeply nested paths
+        // in a long-named checkout, to measure the worst of a real page.
+        let path = format!("{}/Cargo.toml", "a-fairly-long-folder-name".repeat(8));
+        let response = Response::Names {
+            root: "/repos".to_owned(),
+            matches: vec![
+                NameMatch {
+                    path,
+                    is_dir: false,
+                    repository: Some("a-long-repository-name".to_owned()),
+                };
+                500
+            ],
+            cut_short: true,
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &response).unwrap();
+
+        assert!(
+            buf.len() < 256 * 1024,
+            "500 matches took {} bytes",
+            buf.len()
+        );
+        assert!(buf.len() < MAX_MESSAGE_BYTES as usize);
     }
 
     #[test]

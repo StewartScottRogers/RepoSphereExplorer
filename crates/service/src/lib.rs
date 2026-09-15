@@ -5,7 +5,7 @@ pub mod repos;
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream};
 use plugin_api::{FolderCore, PluginCore};
-use protocol::{DirectoryEntry, PluginView, Request, Response};
+use protocol::{DirectoryEntry, NameMatch, PluginView, Request, Response};
 use serde::Serialize;
 use std::fs;
 use std::io;
@@ -317,6 +317,88 @@ pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(entries)
+}
+
+/// The most matches one search sends, whatever the request asks for.
+pub const MAX_FIND_NAMES: usize = 500;
+
+/// Every file and folder under `root` whose name contains `query`, ignoring
+/// case, stopping at `limit`; and whether there were more than that.
+///
+/// Walks what `git` would see: `.gitignore`, `.ignore` and global exclude
+/// rules apply, `.git` is never entered, and symbolic links are not
+/// followed, so the walk cannot leave `root`. Ignore files above `root` are
+/// not read - the Repos Directory is where the search starts and ends.
+/// Hidden files are searched: `.github` and `.env` are things a reader
+/// looks for.
+///
+/// Split from the request handler, which resolves `root` as the active
+/// Repos Directory, so it can be tested without touching the machine's
+/// configuration.
+#[must_use]
+pub fn find_names(root: &Path, query: &str, limit: usize) -> (Vec<NameMatch>, bool) {
+    let wanted = query.trim().to_lowercase();
+    if wanted.is_empty() {
+        return (Vec::new(), false);
+    }
+    let walk = ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .parents(false)
+        .follow_links(false)
+        .sort_by_file_name(std::cmp::Ord::cmp)
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .build();
+
+    let mut working_copies = std::collections::HashMap::new();
+    let mut matches = Vec::new();
+    // An unreadable folder is skipped, not the end of the search.
+    for entry in walk.flatten() {
+        if entry.depth() == 0
+            || !entry
+                .file_name()
+                .to_string_lossy()
+                .to_lowercase()
+                .contains(&wanted)
+        {
+            continue;
+        }
+        if matches.len() == limit {
+            return (matches, true);
+        }
+        let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
+        let nearest = if is_dir {
+            Some(entry.path())
+        } else {
+            entry.path().parent()
+        };
+        let repository = nearest
+            .into_iter()
+            .flat_map(Path::ancestors)
+            .take_while(|folder| folder.starts_with(root))
+            .find(|folder| {
+                *working_copies
+                    .entry(folder.to_path_buf())
+                    .or_insert_with(|| repos::describe(folder).is_some())
+            })
+            .map(|folder| relative_to(root, folder));
+        matches.push(NameMatch {
+            path: relative_to(root, entry.path()),
+            is_dir,
+            repository,
+        });
+    }
+    (matches, false)
+}
+
+/// `path` relative to `root`, with `/` between its components on every
+/// platform, as [`NameMatch`] carries it.
+fn relative_to(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Reads a bounded prefix from the start of the file at `path`.
@@ -1014,6 +1096,23 @@ pub fn handle_request(request: &Request) -> Response {
             roots: repos::roots(),
             default: repos::default_root().to_string_lossy().into_owned(),
         },
+        Request::FindNames { query, limit } => match repos::active_root() {
+            Some(root) => {
+                // The front end asks for what it wants to show, but the
+                // service decides what it will walk and send: a limit is a
+                // number anybody on the socket can make enormous.
+                let limit = (*limit).min(MAX_FIND_NAMES);
+                let (matches, cut_short) = find_names(&root, query, limit);
+                Response::Names {
+                    root: root.to_string_lossy().into_owned(),
+                    matches,
+                    cut_short,
+                }
+            }
+            None => Response::Error {
+                message: "no Repos Directory is configured to search".to_owned(),
+            },
+        },
         Request::SetReposRoot { path } => {
             let target = Path::new(path);
             let outcome = repos::set_active_root(target);
@@ -1076,9 +1175,9 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 mod tests {
     use super::{
         CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, bind, copy, create_directory,
-        create_file, delete, extract, folder_plugins_among, guarded, handle_request, journal_to,
-        list_directory, most_specific, open, rename, repos, serve_one, sniff_among, undo,
-        view_file, with_source_text, write_atomically, write_file,
+        create_file, delete, extract, find_names, folder_plugins_among, guarded, handle_request,
+        journal_to, list_directory, most_specific, open, rename, repos, serve_one, sniff_among,
+        undo, view_file, with_source_text, write_atomically, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -3985,5 +4084,193 @@ public class OrderBook {
             earlier_survives,
             "and the folder created before it must not be undone in its place"
         );
+    }
+
+    /// A fake checkout at `root/name`: a `.git` directory with the two files
+    /// a clone has, which is all the working copy marker needs. No `git`
+    /// runs.
+    fn checkout(root: &Path, name: &str) -> std::path::PathBuf {
+        let dir = root.join(name);
+        let git = dir.join(".git");
+        fs::create_dir_all(&git).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(
+            git.join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/owner/name.git\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    /// The paths of `find_names`' matches, in order.
+    fn paths_of(matches: &[protocol::NameMatch]) -> Vec<&str> {
+        matches.iter().map(|found| found.path.as_str()).collect()
+    }
+
+    #[test]
+    fn finds_a_name_in_every_repository_and_says_which() {
+        let root = scratch();
+        fs::write(checkout(&root, "alpha").join("Cargo.toml"), "").unwrap();
+        let beta_crate = checkout(&root, "beta").join("crates").join("core");
+        fs::create_dir_all(&beta_crate).unwrap();
+        fs::write(beta_crate.join("Cargo.toml"), "").unwrap();
+
+        let (matches, cut_short) = find_names(&root, "Cargo.toml", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            paths_of(&matches),
+            ["alpha/Cargo.toml", "beta/crates/core/Cargo.toml"]
+        );
+        assert_eq!(matches[0].repository.as_deref(), Some("alpha"));
+        assert_eq!(matches[1].repository.as_deref(), Some("beta"));
+        assert!(!cut_short, "two matches is everything");
+    }
+
+    #[test]
+    fn a_nested_checkout_is_the_nearest_repository() {
+        let root = scratch();
+        let inner = checkout(&checkout(&root, "outer"), "inner");
+        fs::write(inner.join("notes.md"), "").unwrap();
+
+        let (matches, _) = find_names(&root, "notes", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(matches[0].repository.as_deref(), Some("outer/inner"));
+    }
+
+    #[test]
+    fn a_file_a_gitignore_excludes_is_not_found() {
+        let root = scratch();
+        let repo = checkout(&root, "app");
+        fs::write(repo.join(".gitignore"), "target/\n*.log\n").unwrap();
+        fs::create_dir_all(repo.join("target").join("debug")).unwrap();
+        fs::write(repo.join("target").join("debug").join("index.js"), "").unwrap();
+        fs::write(repo.join("index.log"), "").unwrap();
+        fs::write(repo.join("index.rs"), "").unwrap();
+
+        let (matches, _) = find_names(&root, "index", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(paths_of(&matches), ["app/index.rs"]);
+    }
+
+    /// What the `ignore` crate does, pinned: like `git`, it honours a
+    /// `.gitignore` only inside a working copy, while a `.ignore` applies
+    /// anywhere.
+    #[test]
+    fn a_gitignore_outside_a_working_copy_does_not_apply_but_an_ignore_file_does() {
+        let root = scratch();
+        let loose = root.join("loose");
+        fs::create_dir_all(&loose).unwrap();
+        fs::write(loose.join(".gitignore"), "kept.txt\n").unwrap();
+        fs::write(loose.join(".ignore"), "hidden.txt\n").unwrap();
+        fs::write(loose.join("kept.txt"), "").unwrap();
+        fs::write(loose.join("hidden.txt"), "").unwrap();
+
+        let (matches, _) = find_names(&root, ".txt", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(paths_of(&matches), ["loose/kept.txt"]);
+    }
+
+    #[test]
+    fn nothing_under_git_is_ever_found() {
+        let root = scratch();
+        let repo = checkout(&root, "app");
+        fs::write(repo.join("HEAD.md"), "").unwrap();
+
+        let (heads, _) = find_names(&root, "head", 500);
+        let (configs, _) = find_names(&root, "config", 500);
+        let (gits, _) = find_names(&root, "git", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(paths_of(&heads), ["app/HEAD.md"]);
+        assert!(configs.is_empty(), "found {configs:?}");
+        assert!(gits.is_empty(), "found {gits:?}");
+    }
+
+    #[test]
+    fn stops_at_the_limit_and_says_it_was_cut_short() {
+        let root = scratch();
+        for n in 0..5 {
+            fs::write(root.join(format!("page{n}.html")), "").unwrap();
+        }
+
+        let (limited, cut_short) = find_names(&root, "page", 3);
+        let (exact, exact_cut_short) = find_names(&root, "page", 5);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            paths_of(&limited),
+            ["page0.html", "page1.html", "page2.html"]
+        );
+        assert!(cut_short, "two more matched");
+        assert_eq!(exact.len(), 5);
+        assert!(!exact_cut_short, "exactly the limit is everything");
+    }
+
+    #[test]
+    fn a_query_matching_nothing_finds_nothing() {
+        let root = scratch();
+        fs::write(checkout(&root, "app").join("main.rs"), "").unwrap();
+
+        let (matches, cut_short) = find_names(&root, "docker-compose", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert!(matches.is_empty());
+        assert!(!cut_short);
+    }
+
+    #[test]
+    fn an_empty_query_finds_nothing_rather_than_everything() {
+        let root = scratch();
+        fs::write(root.join("anything.txt"), "").unwrap();
+
+        let (empty, _) = find_names(&root, "", 500);
+        let (blank, _) = find_names(&root, "   ", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert!(empty.is_empty());
+        assert!(blank.is_empty());
+    }
+
+    #[test]
+    fn the_match_ignores_case() {
+        let root = scratch();
+        fs::write(root.join("AppSettings.JSON"), "").unwrap();
+
+        let (matches, _) = find_names(&root, "appsettings.json", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(paths_of(&matches), ["AppSettings.JSON"]);
+    }
+
+    #[test]
+    fn a_matching_folder_is_found_as_a_folder() {
+        let root = scratch();
+        fs::create_dir_all(checkout(&root, "app").join("docker-compose")).unwrap();
+
+        let (matches, _) = find_names(&root, "compose", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(paths_of(&matches), ["app/docker-compose"]);
+        assert!(matches[0].is_dir);
+        assert_eq!(matches[0].repository.as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn a_match_outside_every_repository_names_none() {
+        let root = scratch();
+        let loose = root.join("scratch");
+        fs::create_dir_all(&loose).unwrap();
+        fs::write(loose.join("todo.txt"), "").unwrap();
+
+        let (matches, _) = find_names(&root, "todo", 500);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(paths_of(&matches), ["scratch/todo.txt"]);
+        assert!(!matches[0].is_dir);
+        assert_eq!(matches[0].repository, None);
     }
 }

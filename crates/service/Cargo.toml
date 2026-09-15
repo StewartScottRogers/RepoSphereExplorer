@@ -9,6 +9,10 @@ repository.workspace = true
 
 [dependencies]
 dirs = "6"
+# Walks the Repos Directory for Request::FindNames the way git and ripgrep do,
+# applying .gitignore, .ignore and global excludes. Work order #536 calls for
+# it: reimplementing gitignore semantics correctly is a project of its own.
+ignore = "0.4"
 interprocess = "2.4"
 plugin-ansible = { path = "../plugins/ansible" }
 plugin-antlr = { path = "../plugins/antlr" }

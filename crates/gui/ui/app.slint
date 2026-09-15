@@ -531,6 +531,9 @@ component ContentsPane inherits Rectangle {
     // Which column the list is sorted by, and which way, so the header can
     // show the indicator Explorer shows.
     in property <int> sort-column;
+    // While a search's results fill the pane, its columns hold a result's
+    // repository and folder rather than a size, type and date.
+    in property <bool> showing-found;
     in property <bool> sort-ascending;
     callback sort-requested(int);
     // Whether the selected row previewed as an archive; Extract is greyed
@@ -628,7 +631,7 @@ component ContentsPane inherits Rectangle {
                 ColumnHeader {
                     width: size-column;
                     horizontal-stretch: 0;
-                    label: "Size";
+                    label: showing-found ? "" : "Size";
                     align-right: true;
                     active: sort-column == 1;
                     ascending: sort-ascending;
@@ -638,7 +641,7 @@ component ContentsPane inherits Rectangle {
                     width: kind-column;
                     horizontal-stretch: 0;
                     align-right: true;
-                    label: "Type";
+                    label: showing-found ? "Repository" : "Type";
                     active: sort-column == 2;
                     ascending: sort-ascending;
                     activated => { sort-requested(2); }
@@ -647,7 +650,7 @@ component ContentsPane inherits Rectangle {
                     width: modified-column;
                     horizontal-stretch: 0;
                     align-right: true;
-                    label: "Modified";
+                    label: showing-found ? "" : "Modified";
                     active: sort-column == 3;
                     ascending: sort-ascending;
                     activated => { sort-requested(3); }
@@ -1313,6 +1316,8 @@ export component MainWindow inherits Window {
     in property <bool> can-open;
     in property <string> web-provider;
     callback open-web-requested();
+    in property <bool> showing-found;
+    callback find-requested();
     in-out property <string> edit-text;
     // The coloured surface's half of the editor. `editing-in-colour` is
     // false for a file it cannot serve - see `editor::code_editor_suits`
@@ -1453,6 +1458,8 @@ export component MainWindow inherits Window {
                 content-rename-requested();
             } else if (event.text == Key.UpArrow && event.modifiers.alt) {
                 parent-requested();
+            } else if (event.modifiers.control && event.modifiers.shift && (event.text == "f" || event.text == "F")) {
+                find-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
                 new-folder-requested();
             } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
@@ -1766,7 +1773,8 @@ export component MainWindow inherits Window {
                     prompt-text: content-prompt-text;
                     prompt-row: content-prompt-row;
                     prompt-editable: content-prompt-editable;
-                    sort-column: content-sort-column;
+                    sort-column: showing-found ? -1 : content-sort-column;
+                    showing-found: showing-found;
                     sort-ascending: content-sort-ascending;
                     sort-requested(c) => { content-sort-requested(c); }
                     new-folder-requested => { new-folder-requested(); }
