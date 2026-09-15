@@ -37,6 +37,8 @@ fn row(name: &str) -> ContentRow {
     ContentRow {
         icon: Image::default(),
         is_repository: false,
+        branch: SharedString::new(),
+        marker: SharedString::new(),
         name: SharedString::from(name),
         size: SharedString::new(),
         kind: SharedString::new(),

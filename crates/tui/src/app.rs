@@ -439,7 +439,8 @@ impl App {
                 Response::FileView { .. }
                 | Response::Done
                 | Response::ReposRoots { .. }
-                | Response::Names { .. },
+                | Response::Names { .. }
+                | Response::WorkingTree { .. },
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }

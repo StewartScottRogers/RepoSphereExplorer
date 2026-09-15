@@ -294,6 +294,17 @@ pub(crate) fn render_with_block(
             );
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
+        // Nor does it ask for working-tree status; a reply is shown as its
+        // summary.
+        Response::WorkingTree { status, .. } => {
+            let text = status
+                .as_ref()
+                .map_or("working tree status unknown", |status| {
+                    status.summary.as_str()
+                })
+                .to_owned();
+            frame.render_widget(Paragraph::new(text).block(block), area);
+        }
         // The terminal front end does not search yet; a reply that somehow
         // arrives is shown as the paths it names.
         Response::Names { matches, .. } => {

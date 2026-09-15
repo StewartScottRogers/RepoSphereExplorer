@@ -243,6 +243,13 @@ export struct ContentRow {
     size: string,
     kind: string,
     modified: string,
+    // A working copy's branch, "detached" when it is on none; empty for any
+    // other row.
+    branch: string,
+    // Beside the branch: a dot for uncommitted changes to tracked files, an
+    // ellipsis until that is known, "?" when it cannot be told, empty for
+    // none.
+    marker: string,
     // Whether this row is a source control working copy. The Repos Directory
     // is a workspace, so which of its folders are checkouts is the first
     // thing a reader is looking for.
@@ -724,6 +731,26 @@ component ContentsPane inherits Rectangle {
                                     vertical-alignment: center;
                                     horizontal-stretch: 1;
                                     min-width: 24px;
+                                }
+                                // The branch and its marker share the Name
+                                // column rather than taking one of their own:
+                                // the pane is narrow, and a fixed Branch
+                                // column would cut every repository name to a
+                                // few letters to leave room for a word most
+                                // rows would repeat.
+                                Text {
+                                    text: row.branch;
+                                    color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 0;
+                                    max-width: 120px;
+                                }
+                                Text {
+                                    text: row.marker;
+                                    color: row.selected ? Theme.on-accent : Theme.accent;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 0;
                                 }
                             }
                             Text {
