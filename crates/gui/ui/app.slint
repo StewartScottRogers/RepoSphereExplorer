@@ -477,7 +477,7 @@ component ContextMenuItem inherits Rectangle {
     callback activated();
 
     height: item-height;
-    background: touch.has-hover ? Theme.accent : transparent;
+    background: touch.has-hover && item-enabled ? Theme.accent : transparent;
     // Named for assistive technology, and so a test can find the item by
     // the label the user reads rather than by its position in the menu.
     accessible-role: button;
@@ -505,8 +505,16 @@ component ContextMenuItem inherits Rectangle {
     touch := TouchArea {
         width: 100%;
         height: 100%;
-        enabled: item-enabled;
-        clicked => { activated(); }
+        // Always enabled, so a greyed item swallows the press rather than
+        // letting it through. A disabled TouchArea is transparent to the
+        // pointer, and the row menu sits directly over the Contents
+        // pane's own overlay area - so pressing a greyed item selected
+        // whatever row happened to be behind it.
+        clicked => {
+            if (item-enabled) {
+                activated();
+            }
+        }
     }
 }
 
@@ -543,7 +551,12 @@ component ContentsPane inherits Rectangle {
     callback row-double-clicked(int);
     callback open-requested();
     callback rename-requested();
+    // Duplicating a file under a new name, which is what the "Copy to..."
+    // item does. Distinct from the clipboard's Copy, which is what the
+    // Ctrl+C beside that item means.
+    in property <bool> can-open;
     callback copy-requested();
+    callback clipboard-copy-requested();
     callback delete-requested();
     callback extract-requested();
     callback new-folder-requested();
@@ -879,6 +892,7 @@ component ContentsPane inherits Rectangle {
                         VerticalLayout {
                             ContextMenuItem {
                                 label: "Open";
+                                item-enabled: can-open;
                                 item-height: menu-item-height;
                                 activated => { open-context = -1; open-requested(); }
                             }
@@ -891,6 +905,15 @@ component ContentsPane inherits Rectangle {
                             ContextMenuItem {
                                 label: "Copy";
                                 shortcut: "Ctrl+C";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; clipboard-copy-requested(); }
+                            }
+                            ContextMenuItem {
+                                // The other Copy: duplicate this file here
+                                // under a name you type. It carried the
+                                // Ctrl+C label above until that shortcut
+                                // turned out to mean something else.
+                                label: "Copy to...";
                                 item-height: menu-item-height;
                                 activated => { open-context = -1; copy-requested(); }
                             }
@@ -1269,6 +1292,7 @@ export component MainWindow inherits Window {
     // `Text` below is drawn instead.
     in property <[[ColouredRun]]> file-lines;
     in property <bool> can-edit;
+    in property <bool> can-open;
     in-out property <string> edit-text;
     // The coloured surface's half of the editor. `editing-in-colour` is
     // false for a file it cannot serve - see `editor::code_editor_suits`
@@ -1711,7 +1735,9 @@ export component MainWindow inherits Window {
                     row-double-clicked(i) => { content-row-double-clicked(i); }
                     open-requested => { content-open-requested(); }
                     rename-requested => { content-rename-requested(); }
+                    can-open: can-open;
                     copy-requested => { content-copy-requested(); }
+                    clipboard-copy-requested => { clipboard-copy-requested(); }
                     delete-requested => { content-delete-requested(); }
                     extract-requested => { content-extract-requested(); }
                     extract-enabled: content-is-archive;
@@ -1987,7 +2013,10 @@ export component MainWindow inherits Window {
                 }
                 ContextMenuItem {
                     label: "Open";
-                    item-enabled: has-selection;
+                    // Open steps into a folder. On a file it did nothing
+                    // at all, while looking exactly like a button that
+                    // would.
+                    item-enabled: can-open;
                     item-height: menu-item-h;
                     activated => { open-menu = -1; content-open-requested(); }
                 }

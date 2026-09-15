@@ -45,6 +45,10 @@ fn ready_window() -> MainWindow {
     // refused with no history. This window has no application behind it,
     // so it says so itself.
     ui.set_can_go_up(true);
+    // Open is refused on anything but a folder, the way Up is refused at
+    // the top of a tree. This window has no application behind it, so it
+    // says so itself.
+    ui.set_can_open(true);
     ui.show().expect("the window should show");
     ui
 }
