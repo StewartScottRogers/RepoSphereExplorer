@@ -313,6 +313,104 @@ fn set_executable(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// A release version split into its numbers and whatever follows them.
+///
+/// `None` when the numbers cannot be read at all, which is the answer that
+/// makes [`is_newer`] refuse rather than guess.
+fn split_version(text: &str) -> Option<(Vec<u64>, Option<String>)> {
+    let text = text.trim();
+    let text = text.strip_prefix(['v', 'V']).unwrap_or(text);
+    let (core, pre) = match text.find(['-', '+']) {
+        Some(at) => (&text[..at], Some(text[at + 1..].to_owned())),
+        None => (text, None),
+    };
+    if core.is_empty() {
+        return None;
+    }
+    let mut numbers = Vec::new();
+    for part in core.split('.') {
+        numbers.push(part.parse::<u64>().ok()?);
+    }
+    Some((numbers, pre))
+}
+
+/// Whether `candidate` names a release later than `current`.
+///
+/// The dot-separated numbers are compared left to right and a missing
+/// component counts as zero, so `1.10.0` is later than `1.9.0` and `0.6` is
+/// the same release as `0.6.0`. A leading `v` is ignored on either side. A
+/// version carrying a pre-release suffix is earlier than the same numbers
+/// without one, the way Cargo reads it.
+///
+/// When either side cannot be read as numbers, the answer is `false`.
+/// Refusing to act on a version nobody can order is the safe direction for
+/// something that replaces the running executable.
+///
+/// There was no comparison here at all before: the gate was
+/// `manifest.version == current_version`, so a manifest naming an *older*
+/// release was not equal and was therefore fetched, verified and installed
+/// over a newer build - and any cosmetic difference, `v0.6.0` against
+/// `0.6.0` or a trailing newline, never compared equal and so re-installed
+/// the same release on every launch, forever.
+#[must_use]
+pub fn is_newer(candidate: &str, current: &str) -> bool {
+    let (Some((theirs, their_pre)), Some((ours, our_pre))) =
+        (split_version(candidate), split_version(current))
+    else {
+        return false;
+    };
+    for index in 0..theirs.len().max(ours.len()) {
+        let theirs = theirs.get(index).copied().unwrap_or(0);
+        let ours = ours.get(index).copied().unwrap_or(0);
+        if theirs != ours {
+            return theirs > ours;
+        }
+    }
+    match (their_pre, our_pre) {
+        (None, Some(_)) => true,
+        (Some(_) | None, None) => false,
+        (Some(theirs), Some(ours)) => theirs > ours,
+    }
+}
+
+/// What [`check_and_update`] should do about a manifest it has fetched.
+#[derive(Debug)]
+pub enum Decision<'a> {
+    /// Nothing to install: this build is the same release or a later one.
+    UpToDate,
+    /// Install this asset.
+    Install(&'a TargetAsset),
+}
+
+/// Decides what to do about `manifest`, without touching the network or
+/// the filesystem.
+///
+/// Separated out so the decision can be tested at all. Everything here used
+/// to sit inside [`check_and_update`], on the far side of an HTTP call, so
+/// the version gate and every asset-selection path were unreachable from a
+/// test.
+///
+/// # Errors
+/// Returns [`UpdateError::NoMatchingAsset`] when the release is newer but
+/// carries nothing for this binary and target.
+pub fn decide<'a>(
+    manifest: &'a Manifest,
+    binary: &str,
+    target: &str,
+    current_version: &str,
+) -> Result<Decision<'a>, UpdateError> {
+    if !is_newer(&manifest.version, current_version) {
+        return Ok(Decision::UpToDate);
+    }
+    manifest
+        .find(binary, target)
+        .map(Decision::Install)
+        .ok_or_else(|| UpdateError::NoMatchingAsset {
+            binary: binary.to_owned(),
+            target: target.to_owned(),
+        })
+}
+
 /// Checks `manifest_url` for a release newer than `current_version` for
 /// `(binary, target)`, and if one exists, downloads, verifies, and applies
 /// it to `exe_path`.
@@ -328,17 +426,18 @@ pub fn check_and_update(
     exe_path: &Path,
 ) -> Result<Outcome, UpdateError> {
     let manifest = fetch_manifest(manifest_url)?;
-    if manifest.version == current_version {
-        return Ok(Outcome::UpToDate {
-            version: manifest.version,
-        });
-    }
-    let asset = manifest
-        .find(binary, target)
-        .ok_or_else(|| UpdateError::NoMatchingAsset {
-            binary: binary.to_owned(),
-            target: target.to_owned(),
-        })?;
+    let asset = match decide(&manifest, binary, target, current_version)? {
+        Decision::UpToDate => {
+            // The version this build is running, not the one the manifest
+            // named: with an ordering rather than an equality those differ
+            // whenever the manifest has gone backwards, and what "up to
+            // date" means is the release you are on.
+            return Ok(Outcome::UpToDate {
+                version: current_version.to_owned(),
+            });
+        }
+        Decision::Install(asset) => asset,
+    };
     let bytes = download_and_verify(asset)?;
     apply_atomic(&bytes, exe_path)?;
     Ok(Outcome::Updated {
@@ -350,10 +449,38 @@ pub fn check_and_update(
 #[cfg(test)]
 mod tests {
     use super::{
-        Manifest, PUBLIC_KEY, apply_atomic, hex_decode, hex_encode, sha256_hex, verify_digest,
+        Decision, Manifest, Outcome, PUBLIC_KEY, TargetAsset, UpdateError, apply_atomic,
+        check_and_update, current_target, decide, fetch_manifest, hex_decode, hex_encode, is_newer,
+        sha256_hex, verify_digest,
     };
     use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
     use sha2::{Digest, Sha256};
+    use std::io;
+    use std::path::PathBuf;
+
+    /// A URL whose scheme `ureq` rejects while parsing, so calling it opens
+    /// no socket and resolves no name. Lets the offline error paths be
+    /// exercised without touching the network.
+    const UNREACHABLE_URL: &str = "ftp://example.invalid/latest.json";
+
+    /// A scratch directory of this test's own, so tests running on separate
+    /// threads of one process cannot collide.
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("rse-updater-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn asset(binary: &str, target: &str) -> TargetAsset {
+        TargetAsset {
+            binary: binary.to_owned(),
+            target: target.to_owned(),
+            url: format!("https://example.invalid/{binary}-{target}"),
+            sha256: "aa".to_owned(),
+            signature: "bb".to_owned(),
+        }
+    }
 
     #[test]
     fn embedded_public_key_is_a_valid_ed25519_point() {
@@ -422,5 +549,653 @@ mod tests {
 
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---- hex encoding and decoding ----
+
+    #[test]
+    fn hex_round_trips_every_byte_value() {
+        let all_bytes: Vec<u8> = (0..=u8::MAX).collect();
+        let encoded = hex_encode(&all_bytes);
+        assert_eq!(encoded.len(), 512);
+        assert!(encoded.starts_with("000102"), "encoded as {encoded}");
+        assert!(encoded.ends_with("fdfeff"), "encoded as {encoded}");
+        assert_eq!(hex_decode(&encoded).unwrap(), all_bytes);
+    }
+
+    #[test]
+    fn hex_decode_rejects_an_odd_number_of_characters() {
+        // A truncated signature must not silently decode to a shorter one.
+        assert!(hex_decode("abc").is_none());
+        assert!(hex_decode("a").is_none());
+    }
+
+    #[test]
+    fn hex_decode_rejects_non_hexadecimal_characters() {
+        assert!(hex_decode("zz").is_none());
+        assert!(hex_decode("00zz").is_none());
+        assert!(hex_decode(" f").is_none());
+        assert!(hex_decode("-f").is_none());
+    }
+
+    #[test]
+    fn hex_decode_declines_multibyte_characters_without_panicking() {
+        // Two euro signs are six bytes, an even length, but slicing them in
+        // pairs lands mid-character. Indexing rather than `str::get` would
+        // panic here instead of declining.
+        assert!(hex_decode("\u{20ac}\u{20ac}").is_none());
+        assert!(hex_decode("aa\u{20ac}\u{20ac}").is_none());
+    }
+
+    #[test]
+    fn hex_decode_accepts_uppercase_hexadecimal() {
+        // `download_and_verify` lowercases the published hash before
+        // comparing, so a manifest may legitimately carry uppercase hex.
+        assert_eq!(hex_decode("AABBCC").unwrap(), [0xaa, 0xbb, 0xcc]);
+    }
+
+    #[test]
+    fn hex_decode_wrongly_accepts_a_plus_sign_as_a_hexadecimal_digit() {
+        // `u8::from_str_radix` accepts a leading `+`, so `hex_decode` is not
+        // strictly hexadecimal: "+f" decodes as 0x0f. Recorded rather than
+        // fixed - it cannot forge a signature, because the decoded bytes
+        // still have to verify, but the parser is laxer than its name says.
+        assert_eq!(hex_decode("+f").unwrap(), [0x0f]);
+        assert_eq!(hex_decode("+1+2").unwrap(), [0x01, 0x02]);
+    }
+
+    // ---- signature verification ----
+
+    #[test]
+    fn verify_digest_rejects_an_empty_signature() {
+        let digest = Sha256::digest(b"some binary bytes");
+        assert!(!verify_digest(&digest, ""));
+    }
+
+    #[test]
+    fn verify_digest_rejects_an_all_zero_signature() {
+        // A zeroed field in a hand-written manifest must not pass as
+        // "signed".
+        let digest = Sha256::digest(b"some binary bytes");
+        assert!(!verify_digest(&digest, &"0".repeat(128)));
+    }
+
+    #[test]
+    fn verify_digest_rejects_a_signature_that_is_not_sixty_four_bytes() {
+        let signing_key = SigningKey::generate(&mut rand::rng());
+        let digest = Sha256::digest(b"some binary bytes");
+        let full = hex_encode(&signing_key.sign(&digest).to_bytes());
+
+        assert!(!verify_digest(&digest, &full[..126]), "too short");
+        assert!(!verify_digest(&digest, &format!("{full}0000")), "too long");
+    }
+
+    #[test]
+    fn verify_digest_rejects_signature_text_that_is_not_hexadecimal() {
+        let digest = Sha256::digest(b"some binary bytes");
+        assert!(!verify_digest(&digest, "not hex at all"), "prose");
+        assert!(!verify_digest(&digest, &"z".repeat(128)), "non-hex digits");
+        assert!(!verify_digest(&digest, &"a".repeat(127)), "odd length");
+    }
+
+    #[test]
+    fn verify_digest_rejects_a_wrong_key_signature_whatever_the_digest() {
+        // The existing wrong-key test uses one digest; a verifier that
+        // happened to ignore the message would still be caught here.
+        let signing_key = SigningKey::generate(&mut rand::rng());
+        for payload in [b"".as_slice(), b"a".as_slice(), b"a longer body".as_slice()] {
+            let digest = Sha256::digest(payload);
+            let signature = hex_encode(&signing_key.sign(&digest).to_bytes());
+            assert!(
+                !verify_digest(&digest, &signature),
+                "a signature by a key other than PUBLIC_KEY must never verify"
+            );
+        }
+    }
+
+    // ---- manifest parsing ----
+    //
+    // Note on the version gate, recorded here because no test can assert an
+    // absence: `check_and_update` decides with `manifest.version ==
+    // current_version` and nothing else. There is no ordering comparison
+    // anywhere in the crate, so a manifest that names an older version, or
+    // the same version written differently ("v0.6.0" against "0.6.0"), is
+    // treated as an update and applied on every launch. Making that
+    // decidable in a test needs a seam; see the report accompanying these
+    // tests.
+
+    #[test]
+    fn manifest_parsing_rejects_a_missing_version() {
+        let result = serde_json::from_str::<Manifest>(r#"{"targets": []}"#);
+        assert!(result.is_err(), "a manifest without a version is unusable");
+    }
+
+    #[test]
+    fn manifest_parsing_rejects_a_missing_targets_list() {
+        let result = serde_json::from_str::<Manifest>(r#"{"version": "0.6.0"}"#);
+        assert!(result.is_err(), "a manifest without assets is unusable");
+    }
+
+    #[test]
+    fn manifest_parsing_rejects_a_version_that_is_not_a_string() {
+        let result = serde_json::from_str::<Manifest>(r#"{"version": 6, "targets": []}"#);
+        assert!(result.is_err(), "a numeric version must not be coerced");
+    }
+
+    #[test]
+    fn manifest_parsing_rejects_an_asset_missing_its_signature() {
+        // An unsigned asset must fail at parse time rather than reaching
+        // `download_and_verify` with an empty signature.
+        let result = serde_json::from_str::<Manifest>(
+            r#"{"version": "0.6.0", "targets": [
+                {"binary": "gui", "target": "x86_64-pc-windows-msvc",
+                 "url": "https://example.invalid/gui.exe", "sha256": "aa"}
+            ]}"#,
+        );
+        assert!(result.is_err(), "an asset without a signature is unusable");
+    }
+
+    #[test]
+    fn manifest_parsing_rejects_an_asset_missing_its_hash() {
+        let result = serde_json::from_str::<Manifest>(
+            r#"{"version": "0.6.0", "targets": [
+                {"binary": "gui", "target": "x86_64-pc-windows-msvc",
+                 "url": "https://example.invalid/gui.exe", "signature": "bb"}
+            ]}"#,
+        );
+        assert!(result.is_err(), "an asset without a hash is unusable");
+    }
+
+    #[test]
+    fn manifest_parsing_accepts_fields_it_does_not_know_about() {
+        // A later release may add fields; an older build must still update.
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "version": "0.7.0",
+                "notes": "https://example.invalid/changelog",
+                "targets": [
+                    {"binary": "gui", "target": "x86_64-pc-windows-msvc",
+                     "url": "https://example.invalid/gui.exe", "sha256": "aa",
+                     "signature": "bb", "size": 1234}
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.version, "0.7.0");
+        assert!(manifest.find("gui", "x86_64-pc-windows-msvc").is_some());
+    }
+
+    #[test]
+    fn manifest_round_trips_through_json() {
+        let manifest = Manifest {
+            version: "0.6.0".to_owned(),
+            targets: vec![asset("gui", "x86_64-pc-windows-msvc")],
+        };
+        let json = serde_json::to_string(&manifest).unwrap();
+        let parsed: Manifest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.version, manifest.version);
+        assert_eq!(parsed.targets.len(), 1);
+        let round_tripped = parsed.find("gui", "x86_64-pc-windows-msvc").unwrap();
+        assert_eq!(round_tripped.url, manifest.targets[0].url);
+        assert_eq!(round_tripped.sha256, manifest.targets[0].sha256);
+        assert_eq!(round_tripped.signature, manifest.targets[0].signature);
+    }
+
+    // ---- asset selection ----
+
+    #[test]
+    fn a_manifest_with_no_assets_matches_nothing() {
+        let manifest = Manifest {
+            version: "0.6.0".to_owned(),
+            targets: Vec::new(),
+        };
+        assert!(manifest.find("gui", current_target()).is_none());
+    }
+
+    #[test]
+    fn manifest_find_declines_when_only_another_architecture_is_published() {
+        // The failure this guards against is picking an asset "close
+        // enough" and installing a binary for the wrong machine.
+        let manifest = Manifest {
+            version: "0.6.0".to_owned(),
+            targets: vec![
+                asset("gui", "aarch64-apple-darwin"),
+                asset("gui", "x86_64-unknown-linux-gnu"),
+            ],
+        };
+        assert!(manifest.find("gui", "x86_64-pc-windows-msvc").is_none());
+    }
+
+    #[test]
+    fn manifest_find_declines_when_the_target_matches_but_the_binary_does_not() {
+        let manifest = Manifest {
+            version: "0.6.0".to_owned(),
+            targets: vec![asset("gui", "x86_64-pc-windows-msvc")],
+        };
+        assert!(manifest.find("service", "x86_64-pc-windows-msvc").is_none());
+    }
+
+    #[test]
+    fn manifest_find_picks_the_one_asset_matching_both_binary_and_target() {
+        let manifest = Manifest {
+            version: "0.6.0".to_owned(),
+            targets: vec![
+                asset("gui", "aarch64-apple-darwin"),
+                asset("service", "x86_64-pc-windows-msvc"),
+                asset("gui", "x86_64-pc-windows-msvc"),
+                asset("gui", "x86_64-unknown-linux-gnu"),
+            ],
+        };
+        let found = manifest.find("gui", "x86_64-pc-windows-msvc").unwrap();
+        assert_eq!(found.binary, "gui");
+        assert_eq!(found.target, "x86_64-pc-windows-msvc");
+    }
+
+    #[test]
+    fn manifest_find_matches_the_target_triple_exactly() {
+        // Triples are compared as written, so a differently-cased entry is
+        // declined rather than accepted as equivalent.
+        let manifest = Manifest {
+            version: "0.6.0".to_owned(),
+            targets: vec![asset("gui", "X86_64-PC-Windows-MSVC")],
+        };
+        assert!(manifest.find("gui", "x86_64-pc-windows-msvc").is_none());
+    }
+
+    // ---- this build's target ----
+
+    #[test]
+    fn current_target_agrees_with_the_host_operating_system_and_architecture() {
+        let expected = match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("windows", "x86_64") => "x86_64-pc-windows-msvc",
+            ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+            ("macos", "aarch64") => "aarch64-apple-darwin",
+            _ => "unknown",
+        };
+        assert_eq!(current_target(), expected);
+    }
+
+    // ---- outcomes and errors ----
+
+    #[test]
+    fn outcome_distinguishes_an_upgrade_from_a_downgrade_and_from_standing_still() {
+        let up_to_date = Outcome::UpToDate {
+            version: "0.6.0".to_owned(),
+        };
+        let upgrade = Outcome::Updated {
+            from: "0.5.0".to_owned(),
+            to: "0.6.0".to_owned(),
+        };
+        let downgrade = Outcome::Updated {
+            from: "0.6.0".to_owned(),
+            to: "0.5.0".to_owned(),
+        };
+
+        assert_ne!(upgrade, downgrade, "the direction of an update matters");
+        assert_ne!(upgrade, up_to_date);
+        assert_ne!(
+            up_to_date,
+            Outcome::UpToDate {
+                version: "0.5.0".to_owned()
+            }
+        );
+        assert_eq!(
+            upgrade,
+            Outcome::Updated {
+                from: "0.5.0".to_owned(),
+                to: "0.6.0".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn no_matching_asset_names_the_binary_and_the_target_it_looked_for() {
+        let message = UpdateError::NoMatchingAsset {
+            binary: "gui".to_owned(),
+            target: "aarch64-apple-darwin".to_owned(),
+        }
+        .to_string();
+        assert!(message.contains("gui"), "message was {message}");
+        assert!(
+            message.contains("aarch64-apple-darwin"),
+            "message was {message}"
+        );
+    }
+
+    #[test]
+    fn every_update_error_renders_its_own_message() {
+        let messages: Vec<String> = vec![
+            UpdateError::Manifest("bad json".to_owned()).to_string(),
+            UpdateError::NoMatchingAsset {
+                binary: "gui".to_owned(),
+                target: "aarch64-apple-darwin".to_owned(),
+            }
+            .to_string(),
+            UpdateError::HashMismatch.to_string(),
+            UpdateError::SignatureInvalid.to_string(),
+            UpdateError::Io(io::Error::new(io::ErrorKind::PermissionDenied, "denied")).to_string(),
+        ];
+
+        for message in &messages {
+            assert!(!message.is_empty(), "every variant needs a message");
+        }
+        let mut distinct = messages.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            messages.len(),
+            "each failure must be distinguishable in a log: {messages:?}"
+        );
+        assert!(messages[0].contains("bad json"), "the cause is carried");
+        assert!(messages[4].contains("denied"), "the cause is carried");
+    }
+
+    #[test]
+    fn an_io_error_converts_into_the_io_variant_keeping_its_cause() {
+        let converted = UpdateError::from(io::Error::new(io::ErrorKind::NotFound, "no such file"));
+        assert!(matches!(converted, UpdateError::Io(_)));
+        assert!(converted.to_string().contains("no such file"));
+    }
+
+    // ---- applying the replacement ----
+
+    #[test]
+    fn apply_atomic_creates_the_target_when_no_binary_is_installed_yet() {
+        let dir = scratch_dir("absent-target");
+        let target = dir.join("binary");
+
+        apply_atomic(b"new", &target).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_atomic_replaces_a_longer_binary_without_leaving_a_tail_behind() {
+        // A rename gives this for free; an in-place write that forgot to
+        // truncate would leave the old binary's tail appended, which is the
+        // sort of half-written executable that will not start.
+        let dir = scratch_dir("truncation");
+        let target = dir.join("binary");
+        std::fs::write(&target, vec![b'o'; 4096]).unwrap();
+
+        apply_atomic(b"new", &target).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(std::fs::metadata(&target).unwrap().len(), 3);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_atomic_leaves_no_staging_file_beside_the_binary_on_success() {
+        let dir = scratch_dir("no-leftovers");
+        let target = dir.join("binary");
+        std::fs::write(&target, b"old").unwrap();
+
+        apply_atomic(b"new", &target).unwrap();
+
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries.len(), 1, "left behind: {entries:?}");
+        assert_eq!(entries[0], "binary");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_atomic_fails_when_the_destination_directory_does_not_exist() {
+        let dir = scratch_dir("missing-parent");
+        let absent = dir.join("no-such-directory");
+        let target = absent.join("binary");
+
+        let err = apply_atomic(b"new", &target).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound, "error was {err}");
+        assert!(!absent.exists(), "it must not create the directory itself");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_atomic_keeps_the_existing_install_and_clears_up_when_the_rename_fails() {
+        // A directory where the binary should be is the portable way to
+        // make the rename fail after the replacement has been staged. What
+        // matters is that the failure leaves the user with what they had,
+        // and with no orphaned staging file.
+        let dir = scratch_dir("rename-fails");
+        let occupied = dir.join("binary");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("inside"), b"precious").unwrap();
+
+        let err = apply_atomic(b"new", &occupied).unwrap_err();
+
+        assert!(occupied.is_dir(), "the original must survive: {err}");
+        assert_eq!(std::fs::read(occupied.join("inside")).unwrap(), b"precious");
+        assert!(
+            !dir.join(".binary.update").exists(),
+            "the staged file must be removed when the rename fails"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_atomic_installs_empty_bytes_without_complaint() {
+        // Recorded, not asserted as desirable: nothing between the download
+        // and the rename rejects a zero-byte payload, so a release that
+        // published an empty (but correctly signed) asset would leave the
+        // user with a file that cannot be executed. The guard would belong
+        // in `download_and_verify`.
+        let dir = scratch_dir("empty-payload");
+        let target = dir.join("binary");
+        std::fs::write(&target, b"a working build").unwrap();
+
+        apply_atomic(b"", &target).unwrap();
+
+        assert_eq!(std::fs::metadata(&target).unwrap().len(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_atomic_marks_the_installed_binary_executable() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = scratch_dir("executable-bit");
+        let target = dir.join("binary");
+
+        apply_atomic(b"new", &target).unwrap();
+
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o111,
+            0o111,
+            "an installed binary nobody may execute is no binary at all: {mode:o}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---- the offline paths of the check itself ----
+
+    #[test]
+    fn fetch_manifest_reports_an_unusable_url_as_a_manifest_error() {
+        let err = fetch_manifest(UNREACHABLE_URL).unwrap_err();
+        assert!(matches!(err, UpdateError::Manifest(_)), "was {err:?}");
+        assert!(
+            err.to_string().starts_with("could not read the update"),
+            "message was {err}"
+        );
+    }
+
+    #[test]
+    fn check_and_update_leaves_the_binary_alone_when_the_manifest_cannot_be_read() {
+        // The commonest real condition - no connectivity - must end with
+        // the user's install exactly as it was, and nothing staged next to
+        // it.
+        let dir = scratch_dir("manifest-unreadable");
+        let exe = dir.join("binary");
+        std::fs::write(&exe, b"the running build").unwrap();
+
+        let err = check_and_update(
+            "gui",
+            "x86_64-pc-windows-msvc",
+            "0.6.0",
+            UNREACHABLE_URL,
+            &exe,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, UpdateError::Manifest(_)), "was {err:?}");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"the running build");
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "nothing may be staged beside the binary"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---- version ordering, which did not exist before ------------------
+
+    /// The case that made this worth fixing: a manifest naming an older
+    /// release was not *equal*, so it was fetched, verified and installed
+    /// over a newer build.
+    #[test]
+    fn a_release_older_than_this_build_is_not_newer() {
+        assert!(!is_newer("0.5.0", "0.6.0"));
+        assert!(!is_newer("0.6.0", "0.6.0"));
+        assert!(is_newer("0.7.0", "0.6.0"));
+    }
+
+    /// The other half: any cosmetic difference was unequal, so the same
+    /// release re-installed itself on every launch, forever.
+    #[test]
+    fn a_version_spelt_differently_is_still_the_same_release() {
+        assert!(!is_newer("v0.6.0", "0.6.0"));
+        assert!(!is_newer("0.6.0", "v0.6.0"));
+        assert!(!is_newer("0.6.0\n", "0.6.0"));
+        assert!(!is_newer(" 0.6.0 ", "0.6.0"));
+        assert!(!is_newer("0.6", "0.6.0"));
+        assert!(!is_newer("0.6.0", "0.6"));
+    }
+
+    /// Numbers, not text. `1.10.0` sorts before `1.9.0` as a string.
+    #[test]
+    fn versions_are_ordered_as_numbers_rather_than_as_text() {
+        assert!(is_newer("1.10.0", "1.9.0"));
+        assert!(!is_newer("1.9.0", "1.10.0"));
+        assert!(is_newer("0.10.0", "0.9.9"));
+        assert!(is_newer("2.0.0", "1.99.99"));
+    }
+
+    /// A component missing from either side counts as zero, so a longer
+    /// spelling of the same release is not an upgrade.
+    #[test]
+    fn a_missing_component_counts_as_zero() {
+        assert!(!is_newer("1", "1.0.0"));
+        assert!(!is_newer("1.0.0", "1"));
+        assert!(is_newer("1.0.1", "1"));
+        assert!(!is_newer("1", "1.0.1"));
+    }
+
+    /// A pre-release is earlier than the release it leads to, and a
+    /// release is later than its own pre-release - so a build running
+    /// `0.7.0-rc1` upgrades to `0.7.0` and not back again.
+    #[test]
+    fn a_pre_release_is_earlier_than_the_release_it_leads_to() {
+        assert!(is_newer("0.7.0", "0.7.0-rc1"));
+        assert!(!is_newer("0.7.0-rc1", "0.7.0"));
+        assert!(is_newer("0.7.0-rc2", "0.7.0-rc1"));
+        assert!(is_newer("0.7.0-rc1", "0.6.9"));
+    }
+
+    /// A version nobody can order is not acted on. For something that
+    /// replaces the running executable, refusing is the safe direction.
+    #[test]
+    fn a_version_that_cannot_be_read_is_never_treated_as_newer() {
+        assert!(!is_newer("latest", "0.6.0"));
+        assert!(!is_newer("0.6.0", "latest"));
+        assert!(!is_newer("", "0.6.0"));
+        assert!(!is_newer("0.6.0", ""));
+        assert!(!is_newer("0.x.0", "0.6.0"));
+        assert!(!is_newer("v", "0.6.0"));
+    }
+
+    // ---- the decision, now reachable without a network ------------------
+
+    fn manifest_of(version: &str) -> Manifest {
+        Manifest {
+            version: version.to_owned(),
+            targets: vec![TargetAsset {
+                binary: "gui".to_owned(),
+                target: current_target().to_owned(),
+                url: "https://example.invalid/gui".to_owned(),
+                sha256: "00".repeat(32),
+                signature: "00".repeat(64),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_manifest_that_has_gone_backwards_installs_nothing() {
+        let manifest = manifest_of("0.5.0");
+
+        let decision = decide(&manifest, "gui", current_target(), "0.6.0");
+
+        assert!(
+            matches!(decision, Ok(Decision::UpToDate)),
+            "an older release must not be installed over a newer build; got {decision:?}"
+        );
+    }
+
+    #[test]
+    fn a_manifest_naming_this_very_release_installs_nothing() {
+        let manifest = manifest_of("0.6.0");
+
+        assert!(matches!(
+            decide(&manifest, "gui", current_target(), "v0.6.0"),
+            Ok(Decision::UpToDate)
+        ));
+    }
+
+    #[test]
+    fn a_newer_manifest_offers_the_asset_for_this_binary_and_target() {
+        let manifest = manifest_of("0.7.0");
+
+        let decision = decide(&manifest, "gui", current_target(), "0.6.0");
+
+        match decision {
+            Ok(Decision::Install(asset)) => {
+                assert_eq!(asset.binary, "gui");
+                assert_eq!(asset.target, current_target());
+            }
+            other => panic!("a newer release should be installed; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_newer_manifest_with_nothing_for_this_build_says_so() {
+        let manifest = manifest_of("0.7.0");
+
+        let decision = decide(&manifest, "tui", current_target(), "0.6.0");
+
+        assert!(
+            matches!(decision, Err(UpdateError::NoMatchingAsset { .. })),
+            "a release that carries nothing for this binary has to say so \
+             rather than install something else; got {decision:?}"
+        );
+    }
+
+    /// A release with nothing for this build is only an error when it is
+    /// newer - an older one is settled before the assets are looked at.
+    #[test]
+    fn an_older_manifest_with_nothing_for_this_build_is_not_an_error() {
+        let manifest = manifest_of("0.5.0");
+
+        assert!(matches!(
+            decide(&manifest, "tui", current_target(), "0.6.0"),
+            Ok(Decision::UpToDate)
+        ));
     }
 }
