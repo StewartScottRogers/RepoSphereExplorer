@@ -1234,10 +1234,9 @@ impl App {
         // rename box is a reader clearing the pre-filled name, not asking
         // to delete anything - and arming a confirmation there left the
         // file one keystroke from the Recycle Bin, because the first
-        // letter of the new name is answering a question the reader never
         // saw asked. `move_selection`, `select_all` and `undo` all guard
         // the same way.
-        if !matches!(self.mode, Mode::Normal) {
+        if !self.pane_command_allowed() {
             return;
         }
         let indices = self.selected_indices();
@@ -1286,6 +1285,9 @@ impl App {
 
     /// Starts editing a new name to rename the selected contents row to.
     pub fn request_rename(&mut self) {
+        if !self.pane_command_allowed() {
+            return;
+        }
         if let Some((path, name)) = self.selected_entry_path() {
             self.mode = Mode::RenameInput { path, input: name };
         }
@@ -1295,6 +1297,9 @@ impl App {
     /// to, de-duplicated against the current listing: the source's own name
     /// always collides, and accepting it copies the file onto itself.
     pub fn request_copy(&mut self) {
+        if !self.pane_command_allowed() {
+            return;
+        }
         if let Some((path, name)) = self.selected_entry_path() {
             let input = dedup_name(&self.content_names(), &name);
             self.mode = Mode::CopyInput { path, input };
@@ -1304,6 +1309,9 @@ impl App {
     /// Starts editing a destination directory name to extract the selected
     /// contents row (an archive) into.
     pub fn request_extract(&mut self) {
+        if !self.pane_command_allowed() {
+            return;
+        }
         if let Some((path, name)) = self.selected_entry_path() {
             let suggested = std::path::Path::new(&name)
                 .file_stem()
@@ -1330,6 +1338,9 @@ impl App {
     }
 
     fn request_create(&mut self, is_dir: bool) {
+        if !self.pane_command_allowed() {
+            return;
+        }
         let base = if is_dir { "New folder" } else { "New file" };
         let name = dedup_name(&self.content_names(), base);
         let path = self.selected_dir_path().join(&name);
@@ -1727,7 +1738,7 @@ impl App {
 
     /// Ctrl+A: selects every row in the folder.
     pub fn select_all(&mut self) {
-        if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
+        if !self.pane_command_allowed() || self.contents.is_empty() {
             return;
         }
         self.selection = (0..self.contents.len()).collect();
@@ -1878,6 +1889,9 @@ impl App {
     }
 
     fn set_clipboard(&mut self, mode: ClipboardMode) {
+        if !self.pane_command_allowed() {
+            return;
+        }
         // The whole selection, read the way `request_delete` reads it, so
         // the two agree about what "selected" means.
         let indices = self.selected_indices();
@@ -1911,6 +1925,9 @@ impl App {
     /// being browsed. The destination name is de-duplicated, since both
     /// operations refuse to replace an existing entry.
     pub fn paste_from_clipboard(&mut self) {
+        if !self.pane_command_allowed() {
+            return;
+        }
         let Some((sources, mode)) = self.clipboard.clone() else {
             return;
         };
@@ -2469,6 +2486,40 @@ impl App {
     #[must_use]
     pub fn address_path(&self) -> String {
         self.selected_dir_path().to_string_lossy().into_owned()
+    }
+
+    /// Whether Open has anywhere to go: a folder to step into.
+    ///
+    /// Open was enabled on any selection and did nothing at all for a
+    /// file - black, clickable and inert. It stays a navigation command
+    /// rather than growing a second meaning, because the pointer reaches
+    /// it by double-click and two clicks in the same place are easy to
+    /// land by accident; a file is read in the File pane and edited from
+    /// its Edit tab.
+    #[must_use]
+    pub fn can_open(&self) -> bool {
+        self.contents
+            .get(self.content_selected)
+            .is_some_and(|entry| entry.is_dir)
+    }
+
+    /// Whether a command that acts on the Contents pane may run.
+    ///
+    /// Two things forbid it, and both were enforced only in the markup's
+    /// key scope - so the keyboard respected them and the menu bar, which
+    /// is clicked rather than typed, walked straight past.
+    ///
+    /// A prompt on screen is unfinished work, and replacing it throws away
+    /// what the reader was part-way through typing. A file open in the
+    /// editor is the sharper case: the editor holds the keyboard, so a
+    /// question armed behind it cannot be answered at all, and the
+    /// keystroke that would answer it goes into the file instead.
+    ///
+    /// GUIDANCE.md §2 keeps business rules out of the front ends. This is
+    /// that rule one level further in: the guard belongs where every route
+    /// has to pass, not on one of the ways in.
+    fn pane_command_allowed(&self) -> bool {
+        matches!(self.mode, Mode::Normal) && self.editing_file.is_none()
     }
 
     /// Whether Up has anywhere to go, so the button can be drawn refused

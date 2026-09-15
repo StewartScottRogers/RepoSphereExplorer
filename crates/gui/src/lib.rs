@@ -696,6 +696,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_editing_path(app.editing_path());
     ui.set_editing_file(app.editing_file());
     ui.set_can_edit(app.can_edit());
+    ui.set_can_open(app.can_open());
     sync_editor(ui, app);
     ui.set_location_icon(icon_image(app::icon_for("", true), true));
 }
