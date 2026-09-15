@@ -919,7 +919,7 @@ fn enter_on_a_result_opens_its_folder_with_it_selected() {
         ui.get_showing_found(),
         "the pane says it is showing results"
     );
-    assert_eq!(listing(&ui), vec!["notes.md".to_owned()]);
+    assert_eq!(listing(&ui), vec!["beta/docs/notes.md".to_owned()]);
 
     press_key(&ui, Key::Return);
     pump(&ui, &app);
@@ -958,7 +958,7 @@ fn escape_from_the_results_puts_the_folder_back() {
         },
     );
     sync_ui(&ui, &app.borrow());
-    assert_eq!(listing(&ui), vec!["x.txt".to_owned()]);
+    assert_eq!(listing(&ui), vec!["elsewhere/x.txt".to_owned()]);
 
     press_key(&ui, Key::Escape);
     pump(&ui, &app);

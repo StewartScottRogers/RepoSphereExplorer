@@ -650,7 +650,7 @@ component ContentsPane inherits Rectangle {
                     width: modified-column;
                     horizontal-stretch: 0;
                     align-right: true;
-                    label: showing-found ? "Folder" : "Modified";
+                    label: showing-found ? "" : "Modified";
                     active: sort-column == 3;
                     ascending: sort-ascending;
                     activated => { sort-requested(3); }

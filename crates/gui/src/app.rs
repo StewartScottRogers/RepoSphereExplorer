@@ -789,35 +789,48 @@ struct Edit {
 /// How many names one search asks for. The service caps it too.
 const FIND_LIMIT: usize = 500;
 
-/// A search result as a Contents row: its name, the repository it is in
-/// where the Type column would be, and its folder where Modified would be.
+/// A search result as a Contents row: its path within its repository in the
+/// wide Name column, and the repository's name where the Type column would
+/// be.
+///
+/// The path goes in the column that stretches because it is what tells one
+/// result from the next. With the bare file name there and the folder in a
+/// narrow column, two hundred `Cargo.toml` rows all read
+/// `Cargo.toml  PrototypeRust...  PrototypeRustMono...` - found, and
+/// impossible to choose between.
 fn found_row(found_match: &protocol::NameMatch) -> ContentRow {
-    let (folder, name) = found_match
-        .path
-        .rsplit_once('/')
-        .unwrap_or(("", found_match.path.as_str()));
-    let repository = found_match.repository.as_deref().map_or_else(
-        || "-".to_owned(),
-        |repository| {
-            repository
+    let path = found_match.path.as_str();
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let (repository, within) = match found_match.repository.as_deref() {
+        Some(repository) => {
+            let within = if repository.is_empty() {
+                path
+            } else {
+                path.strip_prefix(repository)
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .filter(|rest| !rest.is_empty())
+                    .unwrap_or(path)
+            };
+            let label = repository
                 .rsplit('/')
                 .next()
                 .filter(|last| !last.is_empty())
-                .unwrap_or(".")
-                .to_owned()
-        },
-    );
+                .unwrap_or(".");
+            (label.to_owned(), within)
+        }
+        None => ("-".to_owned(), path),
+    };
     ContentRow {
         icon: icon_for(name, found_match.is_dir),
         is_dir: found_match.is_dir,
         name: if found_match.is_dir {
-            format!("{name}/")
+            format!("{within}/")
         } else {
-            name.to_owned()
+            within.to_owned()
         },
         size: String::new(),
         kind: repository,
-        modified: folder.to_owned(),
+        modified: String::new(),
         is_repository: false,
     }
 }
@@ -6389,20 +6402,21 @@ third",
     }
 
     #[test]
-    fn results_are_drawn_as_name_repository_and_folder() {
+    fn results_are_drawn_as_their_path_within_their_repository() {
         let app = app_showing_results();
 
         let rows = app.content_rows();
         assert!(app.showing_found());
         assert_eq!(
             rows.iter()
-                .map(|row| (row.name.as_str(), row.kind.as_str(), row.modified.as_str()))
+                .map(|row| (row.name.as_str(), row.kind.as_str()))
                 .collect::<Vec<_>>(),
             vec![
-                ("notes.md", "alpha", "alpha/docs"),
-                ("notes.txt", "beta", "beta"),
-                ("notes/", "-", "loose"),
-            ]
+                ("docs/notes.md", "alpha"),
+                ("notes.txt", "beta"),
+                ("loose/notes/", "-"),
+            ],
+            "the path within each repository is what tells one result from the next"
         );
         assert!(app.status_text().contains("3 named like \"notes\""));
     }
