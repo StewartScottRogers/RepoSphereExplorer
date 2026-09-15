@@ -433,6 +433,23 @@ enum Mode {
     ReposRootInput {
         input: String,
     },
+    /// Typing a name to find across every repository (#536), in the
+    /// address bar the way a path is typed.
+    FindInput {
+        input: String,
+    },
+}
+
+/// A search's answer, shown in the Contents pane in place of the listing.
+struct Found {
+    /// What was searched for, for the status bar.
+    query: String,
+    /// The Repos Directory that was searched; every match is relative to it.
+    root: PathBuf,
+    matches: Vec<protocol::NameMatch>,
+    /// The listing's selection before the results replaced it, so Escape
+    /// puts the reader back where they were.
+    previous_selected: usize,
 }
 
 /// What to do once a pending operation completes successfully, beyond the
@@ -769,6 +786,42 @@ struct Edit {
     plugin: Option<&'static str>,
 }
 
+/// How many names one search asks for. The service caps it too.
+const FIND_LIMIT: usize = 500;
+
+/// A search result as a Contents row: its name, the repository it is in
+/// where the Type column would be, and its folder where Modified would be.
+fn found_row(found_match: &protocol::NameMatch) -> ContentRow {
+    let (folder, name) = found_match
+        .path
+        .rsplit_once('/')
+        .unwrap_or(("", found_match.path.as_str()));
+    let repository = found_match.repository.as_deref().map_or_else(
+        || "-".to_owned(),
+        |repository| {
+            repository
+                .rsplit('/')
+                .next()
+                .filter(|last| !last.is_empty())
+                .unwrap_or(".")
+                .to_owned()
+        },
+    );
+    ContentRow {
+        icon: icon_for(name, found_match.is_dir),
+        is_dir: found_match.is_dir,
+        name: if found_match.is_dir {
+            format!("{name}/")
+        } else {
+            name.to_owned()
+        },
+        size: String::new(),
+        kind: repository,
+        modified: folder.to_owned(),
+        is_repository: false,
+    }
+}
+
 /// The presentation half registered under `name`.
 fn plugin_presentation_named(name: &str) -> Option<&'static dyn PluginPresentation> {
     PRESENTATION_PLUGINS
@@ -1036,6 +1089,16 @@ pub struct App {
     /// pane is showing now. Compared so that re-reading the file already
     /// on screen keeps the view the reader chose.
     pending_file_path: Option<PathBuf>,
+    /// A search in flight, and the query it was for.
+    pending_find: Option<(String, Receiver<io::Result<Response>>)>,
+    /// A search's results, while they are what the Contents pane shows.
+    ///
+    /// The listing underneath stays loaded, so Escape is instant. While
+    /// these are showing, every command that acts on a row by joining its
+    /// name onto the browsed folder is refused - a result lives in some
+    /// other folder, and that join would name a file the reader never
+    /// picked. That is the defect the terminal front end had until #524.
+    found: Option<Found>,
     shown_file_path: Option<PathBuf>,
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
@@ -1098,6 +1161,8 @@ impl App {
             pending_contents: None,
             pending_file: None,
             pending_file_path: None,
+            pending_find: None,
+            found: None,
             shown_file_path: None,
             mode: Mode::Normal,
             pending_operation: None,
@@ -1115,6 +1180,8 @@ impl App {
     }
 
     fn load_contents_for_selected(&mut self) {
+        // Any navigation, a refresh included, puts the listing back.
+        self.found = None;
         let rows = self.root.flatten();
         let Some((_, indices)) = rows.get(self.folder_selected).cloned() else {
             return;
@@ -1165,6 +1232,17 @@ impl App {
     }
 
     fn load_file_view(&mut self) {
+        if let Some(found) = &self.found {
+            let Some(found_match) = found.matches.get(self.content_selected) else {
+                return;
+            };
+            let path = found.root.join(&found_match.path);
+            self.pending_file_path = Some(path.clone());
+            self.pending_file = Some(spawn_request(Request::ViewFile {
+                path: path.to_string_lossy().into_owned(),
+            }));
+            return;
+        }
         let Some(entry) = self.contents.get(self.content_selected) else {
             self.show_file_view(None);
             self.pending_file = None;
@@ -1204,6 +1282,12 @@ impl App {
         {
             self.pending_operation = None;
             self.apply_operation_result(result);
+        }
+        if let Some((_, rx)) = &self.pending_find
+            && let Ok(result) = rx.try_recv()
+            && let Some((query, _)) = self.pending_find.take()
+        {
+            self.apply_find_result(&query, result);
         }
     }
 
@@ -1405,6 +1489,7 @@ impl App {
             | Mode::CopyInput { input, .. }
             | Mode::ExtractInput { input, .. }
             | Mode::PathInput { input }
+            | Mode::FindInput { input }
             | Mode::ReposRootInput { input } => Some(input),
             Mode::Normal | Mode::ConfirmDelete { .. } => None,
         }
@@ -1474,6 +1559,18 @@ impl App {
             // it goes straight to browsing rather than through the operation
             // queue. A path that does not exist fails the way any other
             // listing does, with the service's own message.
+            Mode::FindInput { input } if !input.trim().is_empty() => {
+                let query = input.trim().to_owned();
+                self.pending_find = Some((
+                    query.clone(),
+                    spawn_request(Request::FindNames {
+                        query: query.clone(),
+                        limit: FIND_LIMIT,
+                    }),
+                ));
+                self.status = Some(format!("finding \"{query}\" in every repository..."));
+                return;
+            }
             Mode::PathInput { input } if !input.trim().is_empty() => {
                 let target = PathBuf::from(input.trim());
                 self.remember_current();
@@ -1544,6 +1641,7 @@ impl App {
             | Mode::CopyInput { .. }
             | Mode::ExtractInput { .. }
             | Mode::PathInput { .. }
+            | Mode::FindInput { .. }
             | Mode::ReposRootInput { .. } => {
                 self.confirm_text_input();
             }
@@ -1585,6 +1683,7 @@ impl App {
             | Mode::CopyInput { .. }
             | Mode::ExtractInput { .. }
             | Mode::PathInput { .. }
+            | Mode::FindInput { .. }
             | Mode::ReposRootInput { .. } => {
                 self.type_char(text);
             }
@@ -1617,7 +1716,7 @@ impl App {
         }
         let (len, current) = match self.focus {
             Pane::Folders => (self.root.flatten().len(), self.folder_selected),
-            Pane::Contents | Pane::File => (self.contents.len(), self.content_selected),
+            Pane::Contents | Pane::File => (self.listed_len(), self.content_selected),
         };
         let Some(last) = len.checked_sub(1) else {
             return;
@@ -1654,6 +1753,14 @@ impl App {
     pub fn cancel_pending(&mut self) {
         if self.editing_file.is_some() {
             self.cancel_file_edit();
+            return;
+        }
+        if matches!(self.mode, Mode::Normal)
+            && let Some(found) = self.found.take()
+        {
+            self.pending_find = None;
+            self.select_content(found.previous_selected);
+            self.status = None;
             return;
         }
         let cancelled = self.pending_contents.take().is_some()
@@ -1696,7 +1803,7 @@ impl App {
 
     /// Selects contents row `index`, loading its preview if it is a file.
     pub fn select_content(&mut self, index: usize) {
-        if index < self.contents.len() {
+        if index < self.listed_len() {
             self.content_selected = index;
             self.anchor = index;
             self.selection.clear();
@@ -1710,6 +1817,9 @@ impl App {
     /// was already in. The lead row moves onto whatever was clicked, or onto
     /// another selected row when the lead itself is deselected.
     pub fn toggle_content(&mut self, index: usize) {
+        if self.found.is_some() {
+            return;
+        }
         if index >= self.contents.len() {
             return;
         }
@@ -1732,6 +1842,9 @@ impl App {
 
     /// Shift+click: selects every row between the anchor and `index`.
     pub fn extend_selection_to(&mut self, index: usize) {
+        if self.found.is_some() {
+            return;
+        }
         if index >= self.contents.len() {
             return;
         }
@@ -1795,6 +1908,9 @@ impl App {
     /// The lead row is the far end, where the pointer was released, so a
     /// following Shift+click extends from there.
     pub fn select_range(&mut self, from: usize, to: usize) {
+        if self.found.is_some() {
+            return;
+        }
         if self.contents.is_empty() {
             return;
         }
@@ -1873,6 +1989,10 @@ impl App {
     /// Drills into contents row `index` if it is a directory, expanding and
     /// selecting it in the folders tree.
     pub fn open_content(&mut self, index: usize) {
+        if self.found.is_some() {
+            self.open_found(index);
+            return;
+        }
         let Some(entry) = self.contents.get(index).cloned() else {
             return;
         };
@@ -2375,6 +2495,7 @@ impl App {
     pub fn path_input(&self) -> String {
         match &self.mode {
             Mode::PathInput { input } => input.clone(),
+            Mode::FindInput { input } => format!("Find: {input}"),
             _ => String::new(),
         }
     }
@@ -2382,7 +2503,7 @@ impl App {
     /// Whether the address bar is currently a text field.
     #[must_use]
     pub const fn editing_path(&self) -> bool {
-        matches!(self.mode, Mode::PathInput { .. })
+        matches!(self.mode, Mode::PathInput { .. } | Mode::FindInput { .. })
     }
 
     /// The browsed folder's full path, for the status bar and for copying.
@@ -2430,10 +2551,10 @@ impl App {
 
     /// Moves the contents selection to the first or last row.
     pub fn select_edge(&mut self, last: bool) {
-        if !matches!(self.mode, Mode::Normal) || self.contents.is_empty() {
+        if !matches!(self.mode, Mode::Normal) || self.listed_len() == 0 {
             return;
         }
-        let index = if last { self.contents.len() - 1 } else { 0 };
+        let index = if last { self.listed_len() - 1 } else { 0 };
         self.select_content(index);
     }
 
@@ -2442,7 +2563,7 @@ impl App {
     /// starts after the current row so repeated presses cycle through the
     /// matches.
     pub fn type_ahead(&mut self, prefix: &str) {
-        if !matches!(self.mode, Mode::Normal) || prefix.is_empty() {
+        if !matches!(self.mode, Mode::Normal) || prefix.is_empty() || self.found.is_some() {
             return;
         }
         // The letter goes to the pane that is drawn as the focused one.
@@ -2548,6 +2669,7 @@ impl App {
         self.pending_contents.is_some()
             || self.pending_file.is_some()
             || self.pending_operation.is_some()
+            || self.pending_find.is_some()
     }
 
     /// The browsed folder as one string, for the markup to notice that it
@@ -2633,7 +2755,7 @@ impl App {
     /// that rule one level further in: the guard belongs where every route
     /// has to pass, not on one of the ways in.
     fn pane_command_allowed(&self) -> bool {
-        matches!(self.mode, Mode::Normal) && self.editing_file.is_none()
+        matches!(self.mode, Mode::Normal) && self.editing_file.is_none() && self.found.is_none()
     }
 
     /// Whether Up has anywhere to go, so the button can be drawn refused
@@ -2660,7 +2782,7 @@ impl App {
     fn may_navigate(&mut self) -> bool {
         match self.mode {
             Mode::Normal => true,
-            Mode::PathInput { .. } => {
+            Mode::PathInput { .. } | Mode::FindInput { .. } => {
                 self.mode = Mode::Normal;
                 true
             }
@@ -2841,6 +2963,9 @@ impl App {
     /// column. Out-of-range columns are ignored. The selected entry keeps
     /// its selection across the reorder.
     pub fn sort_by_column(&mut self, column: i32) {
+        if self.found.is_some() {
+            return;
+        }
         let Some(key) = SortKey::from_index(column) else {
             return;
         };
@@ -2905,6 +3030,9 @@ impl App {
     /// The contents pane's rows, one per entry, with a cell per column.
     #[must_use]
     pub fn content_rows(&self) -> Vec<ContentRow> {
+        if let Some(found) = &self.found {
+            return found.matches.iter().map(found_row).collect();
+        }
         self.contents
             .iter()
             .map(|entry| ContentRow {
@@ -2925,6 +3053,101 @@ impl App {
                 is_repository: entry.repository.is_some(),
             })
             .collect()
+    }
+
+    /// Ctrl+Shift+F: opens the address bar as a prompt for a name to find
+    /// across every repository.
+    pub fn begin_find(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing_file.is_some() {
+            return;
+        }
+        let input = self
+            .found
+            .as_ref()
+            .map(|found| found.query.clone())
+            .unwrap_or_default();
+        self.mode = Mode::FindInput { input };
+    }
+
+    /// Whether the Contents pane is showing a search's results rather
+    /// than the browsed folder, so its column headings can say so.
+    #[must_use]
+    pub const fn showing_found(&self) -> bool {
+        self.found.is_some()
+    }
+
+    /// Plants a search's answer, for a test that has one without a service.
+    pub fn apply_find_result_for_test(&mut self, query: &str, response: Response) {
+        self.apply_find_result(query, Ok(response));
+    }
+
+    fn apply_find_result(&mut self, query: &str, result: io::Result<Response>) {
+        match result {
+            Ok(Response::Names {
+                root,
+                matches,
+                cut_short,
+            }) => {
+                let previous_selected = self
+                    .found
+                    .as_ref()
+                    .map_or(self.content_selected, |found| found.previous_selected);
+                self.status = Some(if matches.is_empty() {
+                    format!("nothing named like \"{query}\" in any repository")
+                } else if cut_short {
+                    format!(
+                        "the first {} names like \"{query}\" - there are more; Esc for the folder",
+                        matches.len()
+                    )
+                } else {
+                    format!(
+                        "{} named like \"{query}\"; Enter opens one, Esc for the folder",
+                        matches.len()
+                    )
+                });
+                self.found = Some(Found {
+                    query: query.to_owned(),
+                    root: PathBuf::from(root),
+                    matches,
+                    previous_selected,
+                });
+                self.content_selected = 0;
+                self.anchor = 0;
+                self.selection.clear();
+                self.selection.insert(0);
+                self.focus = Pane::Contents;
+                self.load_file_view();
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("unexpected response to a search".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// Goes to the folder holding result `index`, with it selected.
+    fn open_found(&mut self, index: usize) {
+        let Some(found) = &self.found else {
+            return;
+        };
+        let Some(found_match) = found.matches.get(index) else {
+            return;
+        };
+        let path = found.root.join(&found_match.path);
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let (folder, name) = (folder.to_path_buf(), name.to_string_lossy().into_owned());
+        self.found = None;
+        self.remember_current();
+        self.push_history(folder.clone());
+        self.reselect = Some(name);
+        self.browse(folder);
+    }
+
+    fn listed_len(&self) -> usize {
+        self.found
+            .as_ref()
+            .map_or(self.contents.len(), |found| found.matches.len())
     }
 
     /// Index of the selected row in [`Self::content_labels`].
@@ -3130,6 +3353,9 @@ impl App {
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
             Mode::PathInput { input } => format!("Go to: {input}_  (Enter/Esc)"),
+            Mode::FindInput { input } => {
+                format!("Find in every repository: {input}_  (Enter/Esc)")
+            }
             Mode::ReposRootInput { input } => {
                 format!(
                     "Repos Directory: {input}_  (Enter to open there from now on, Esc to cancel)"
@@ -3163,7 +3389,7 @@ impl App {
             }
             // The address bar shows its own text field; the contents pane
             // has nothing to say about a path being typed.
-            Mode::PathInput { .. } | Mode::Normal => String::new(),
+            Mode::PathInput { .. } | Mode::FindInput { .. } | Mode::Normal => String::new(),
         }
     }
 
@@ -3188,7 +3414,10 @@ impl App {
             | Mode::ExtractInput { path, .. } => path,
             // Nothing else is drawn on a row: the address bar's two
             // prompts live in the address bar, and Normal has no prompt.
-            Mode::Normal | Mode::PathInput { .. } | Mode::ReposRootInput { .. } => return -1,
+            Mode::Normal
+            | Mode::PathInput { .. }
+            | Mode::FindInput { .. }
+            | Mode::ReposRootInput { .. } => return -1,
         };
         let dir = self.selected_dir_path();
         self.contents
@@ -6101,6 +6330,191 @@ third",
                 .contains("could not open a browser: no browser here"),
             "{}",
             app.status_text()
+        );
+    }
+
+    // ---- finding a name across every repository (#536) ------------------
+
+    fn found(path: &str, is_dir: bool, repository: Option<&str>) -> protocol::NameMatch {
+        protocol::NameMatch {
+            path: path.to_owned(),
+            is_dir,
+            repository: repository.map(str::to_owned),
+        }
+    }
+
+    /// An application showing three results for "notes".
+    fn app_showing_results() -> App {
+        let mut app = app_with_one_content_entry();
+        app.apply_find_result_for_test(
+            "notes",
+            Response::Names {
+                root: "/repos".to_owned(),
+                matches: vec![
+                    found("alpha/docs/notes.md", false, Some("alpha")),
+                    found("beta/notes.txt", false, Some("beta")),
+                    found("loose/notes", true, None),
+                ],
+                cut_short: false,
+            },
+        );
+        app
+    }
+
+    #[test]
+    fn ctrl_shift_f_opens_the_address_bar_as_a_find_prompt() {
+        let mut app = app_with_one_content_entry();
+
+        app.begin_find();
+        app.type_char("n");
+        app.type_char("o");
+
+        assert!(app.editing_path(), "the address bar is the prompt");
+        assert_eq!(app.path_input(), "Find: no");
+        assert!(app.status_text().contains("Find in every repository: no"));
+    }
+
+    #[test]
+    fn enter_in_the_find_prompt_asks_the_service_and_closes_the_prompt() {
+        let mut app = app_with_one_content_entry();
+        app.begin_find();
+        for c in "notes".chars() {
+            app.type_char(&c.to_string());
+        }
+
+        app.handle_return();
+
+        assert!(app.is_busy(), "a search is on its way");
+        assert!(!app.editing_path(), "and the prompt has gone");
+    }
+
+    #[test]
+    fn results_are_drawn_as_name_repository_and_folder() {
+        let app = app_showing_results();
+
+        let rows = app.content_rows();
+        assert!(app.showing_found());
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.name.as_str(), row.kind.as_str(), row.modified.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("notes.md", "alpha", "alpha/docs"),
+                ("notes.txt", "beta", "beta"),
+                ("notes/", "-", "loose"),
+            ]
+        );
+        assert!(app.status_text().contains("3 named like \"notes\""));
+    }
+
+    /// A result lives in some other folder, so every command that joins a
+    /// row's name onto the browsed folder is refused while results show.
+    #[test]
+    fn nothing_acts_on_a_result_as_if_it_were_in_the_browsed_folder() {
+        let mut app = app_showing_results();
+
+        app.request_delete();
+        app.request_rename();
+        app.request_copy();
+        app.copy_to_clipboard();
+        app.select_all();
+        app.sort_by_column(1);
+        app.type_ahead("b");
+
+        assert!(
+            !app.status_text().contains("Delete"),
+            "{}",
+            app.status_text()
+        );
+        assert_eq!(app.prompt_row(), -1, "no prompt was opened over a result");
+        assert_eq!(
+            app.selected_count(),
+            1,
+            "no multiple selection over results"
+        );
+        assert_eq!(app.content_selected(), 0, "type-ahead did not move");
+    }
+
+    #[test]
+    fn the_arrows_and_home_and_end_walk_the_results() {
+        let mut app = app_showing_results();
+
+        app.move_selection(1);
+        assert_eq!(app.content_selected(), 1);
+        app.select_edge(true);
+        assert_eq!(app.content_selected(), 2);
+        app.move_selection(5);
+        assert_eq!(app.content_selected(), 2, "stops at the last result");
+    }
+
+    #[test]
+    fn escape_puts_the_listing_back_where_the_reader_left_it() {
+        let mut app = app_showing_results();
+
+        app.cancel_pending();
+
+        assert!(!app.showing_found());
+        assert_eq!(app.content_rows().len(), 1);
+        assert_eq!(app.content_rows()[0].name, "doomed.txt");
+    }
+
+    #[test]
+    fn opening_a_result_goes_to_its_folder_with_it_selected() {
+        let mut app = app_showing_results();
+        app.move_selection(1);
+
+        app.activate_selection();
+
+        assert!(!app.showing_found(), "the listing is back");
+        assert_eq!(
+            PathBuf::from(app.current_path()),
+            PathBuf::from("/repos").join("beta")
+        );
+    }
+
+    #[test]
+    fn a_search_that_was_cut_short_says_so() {
+        let mut app = app_with_one_content_entry();
+        app.apply_find_result_for_test(
+            "a",
+            Response::Names {
+                root: "/repos".to_owned(),
+                matches: vec![found("a", false, None)],
+                cut_short: true,
+            },
+        );
+
+        assert!(
+            app.status_text().contains("there are more"),
+            "{}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn a_search_that_finds_nothing_says_so_and_a_failure_is_reported() {
+        let mut app = app_with_one_content_entry();
+        app.apply_find_result_for_test(
+            "zzz",
+            Response::Names {
+                root: "/repos".to_owned(),
+                matches: Vec::new(),
+                cut_short: false,
+            },
+        );
+        assert!(app.status_text().contains("nothing named like \"zzz\""));
+
+        let mut app = app_with_one_content_entry();
+        app.apply_find_result_for_test(
+            "x",
+            Response::Error {
+                message: "no Repos Directory is configured to search".to_owned(),
+            },
+        );
+        assert!(!app.showing_found());
+        assert!(
+            app.status_text()
+                .contains("no Repos Directory is configured")
         );
     }
 }

@@ -247,6 +247,10 @@ pub enum Response {
     Done,
     /// The answer to [`Request::FindNames`].
     Names {
+        /// The Repos Directory that was searched, which every match's path
+        /// is relative to, so a front end opens the folder that was actually
+        /// searched rather than guessing at one it has open.
+        root: String,
         /// The matches, in the order the walk met them.
         matches: Vec<NameMatch>,
         /// Whether there were more matches than the request's limit, so
@@ -487,6 +491,7 @@ mod tests {
     #[test]
     fn round_trips_the_names_found_through_the_wire_format() {
         let response = Response::Names {
+            root: "/repos".to_owned(),
             matches: vec![
                 NameMatch {
                     path: "explorer/crates/service/Cargo.toml".to_owned(),
@@ -515,6 +520,7 @@ mod tests {
         // in a long-named checkout, to measure the worst of a real page.
         let path = format!("{}/Cargo.toml", "a-fairly-long-folder-name".repeat(8));
         let response = Response::Names {
+            root: "/repos".to_owned(),
             matches: vec![
                 NameMatch {
                     path,

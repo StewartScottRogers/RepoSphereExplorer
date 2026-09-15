@@ -319,6 +319,9 @@ pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
     Ok(entries)
 }
 
+/// The most matches one search sends, whatever the request asks for.
+pub const MAX_FIND_NAMES: usize = 500;
+
 /// Every file and folder under `root` whose name contains `query`, ignoring
 /// case, stopping at `limit`; and whether there were more than that.
 ///
@@ -1095,8 +1098,16 @@ pub fn handle_request(request: &Request) -> Response {
         },
         Request::FindNames { query, limit } => match repos::active_root() {
             Some(root) => {
-                let (matches, cut_short) = find_names(&root, query, *limit);
-                Response::Names { matches, cut_short }
+                // The front end asks for what it wants to show, but the
+                // service decides what it will walk and send: a limit is a
+                // number anybody on the socket can make enormous.
+                let limit = (*limit).min(MAX_FIND_NAMES);
+                let (matches, cut_short) = find_names(&root, query, limit);
+                Response::Names {
+                    root: root.to_string_lossy().into_owned(),
+                    matches,
+                    cut_short,
+                }
             }
             None => Response::Error {
                 message: "no Repos Directory is configured to search".to_owned(),

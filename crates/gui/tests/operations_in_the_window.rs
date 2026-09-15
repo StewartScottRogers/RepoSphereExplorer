@@ -864,3 +864,104 @@ fn one_undo_puts_back_a_whole_multi_file_paste() {
         );
     }
 }
+
+// ---- finding a name across every repository (#536) ------------------------
+
+/// Ctrl+Shift+F opens the address bar as a find prompt, through the real
+/// window's keys.
+#[test]
+fn ctrl_shift_f_opens_the_find_prompt_in_the_address_bar() {
+    let _serial = serially();
+    let dir = scratch("find-prompt");
+    file(&dir, "a.txt", "a");
+    let (ui, app) = window_at(&dir);
+
+    press_with(&ui, "f", &[Key::Control, Key::Shift]);
+    type_text(&ui, "notes");
+
+    assert!(ui.get_editing_path(), "the address bar is the prompt");
+    assert_eq!(ui.get_path_input().to_string(), "Find: notes");
+    press_key(&ui, Key::Escape);
+    pump(&ui, &app);
+    assert!(!ui.get_editing_path());
+}
+
+/// The results the service would send, drawn in the pane and opened with a
+/// real Enter: the listing becomes the result's folder with it selected.
+///
+/// The results are planted rather than searched for, because the service
+/// searches the machine's configured Repos Directory - which a test must not
+/// depend on or change. Everything after they arrive is the real window, the
+/// real keys and a real service listing the folder.
+#[test]
+fn enter_on_a_result_opens_its_folder_with_it_selected() {
+    let _serial = serially();
+    let dir = scratch("find-open");
+    std::fs::create_dir_all(dir.join("beta").join("docs")).expect("folders");
+    file(&dir.join("beta").join("docs"), "notes.md", "n");
+    file(&dir.join("beta").join("docs"), "other.md", "o");
+    let (ui, app) = window_at(&dir);
+
+    app.borrow_mut().apply_find_result_for_test(
+        "notes",
+        protocol::Response::Names {
+            root: dir.to_string_lossy().into_owned(),
+            matches: vec![protocol::NameMatch {
+                path: "beta/docs/notes.md".to_owned(),
+                is_dir: false,
+                repository: None,
+            }],
+            cut_short: false,
+        },
+    );
+    sync_ui(&ui, &app.borrow());
+    assert!(
+        ui.get_showing_found(),
+        "the pane says it is showing results"
+    );
+    assert_eq!(listing(&ui), vec!["notes.md".to_owned()]);
+
+    press_key(&ui, Key::Return);
+    pump(&ui, &app);
+
+    assert!(!ui.get_showing_found(), "the listing is back");
+    assert_eq!(
+        listing(&ui),
+        vec!["notes.md".to_owned(), "other.md".to_owned()],
+        "the listing is the result's folder"
+    );
+    assert_eq!(
+        selected(&ui),
+        vec!["notes.md".to_owned()],
+        "with the result selected"
+    );
+}
+
+/// Escape from the results puts the folder back, through the real keys.
+#[test]
+fn escape_from_the_results_puts_the_folder_back() {
+    let _serial = serially();
+    let dir = scratch("find-escape");
+    file(&dir, "keep.txt", "k");
+    let (ui, app) = window_at(&dir);
+
+    app.borrow_mut().apply_find_result_for_test(
+        "x",
+        protocol::Response::Names {
+            root: dir.to_string_lossy().into_owned(),
+            matches: vec![protocol::NameMatch {
+                path: "elsewhere/x.txt".to_owned(),
+                is_dir: false,
+                repository: None,
+            }],
+            cut_short: false,
+        },
+    );
+    sync_ui(&ui, &app.borrow());
+    assert_eq!(listing(&ui), vec!["x.txt".to_owned()]);
+
+    press_key(&ui, Key::Escape);
+    pump(&ui, &app);
+
+    assert_eq!(listing(&ui), vec!["keep.txt".to_owned()]);
+}
