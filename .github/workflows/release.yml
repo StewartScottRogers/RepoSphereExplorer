@@ -41,7 +41,7 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then
             ext=".exe"
           fi
-          for bin in repo_sphere_explorer service RepoSphereExplorerTui RepoSphereExplorerGui; do
+          for bin in repo_sphere_explorer service RepoSphereExplorerTui RepoSphereExplorerGui verify; do
             cp "target/${{ matrix.target }}/release/${bin}${ext}" \
                "dist/${bin}-${{ matrix.target }}${ext}"
           done
@@ -50,8 +50,41 @@ jobs:
           name: ${{ matrix.target }}
           path: dist/*
 
-  publish:
+  # The signed manifest, made here rather than only on the Pages site, so
+  # the release can be installed and verified before it is published, and
+  # so every release carries the manifest that installs that tag.
+  sign:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p updater --bin sign_release
+      - name: Sign the release's manifest
+        env:
+          UPDATER_SIGNING_KEY: ${{ secrets.UPDATER_SIGNING_KEY }}
+        run: |
+          mkdir -p signed
+          ./target/release/sign_release "${GITHUB_REF_NAME#v}" "${{ github.repository }}"             "${GITHUB_REF_NAME}" dist signed/manifest.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: manifest
+          path: signed/manifest.json
+
+  # Install, run, update and uninstall the release on every platform it is
+  # built for, from this run's own artifacts, before anybody can download it.
+  distribution:
+    needs: sign
+    uses: ./.github/workflows/distribution.yml
+    with:
+      from-artifacts: true
+
+  publish:
+    needs: distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
