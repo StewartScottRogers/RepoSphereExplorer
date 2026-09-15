@@ -462,6 +462,20 @@ fn dedup_name(taken: &[String], base: &str) -> String {
     }
 }
 
+/// Whether `c` belongs in a typed prompt.
+///
+/// Slint reports a held key - Shift, Control, Alt - as a key press whose
+/// text is a control character, and its named keys as code points from
+/// U+F700, and any the window's key handler does not recognise reaches the
+/// prompt. Taking them typed an invisible `\u{10}` in front of every
+/// capital, since Shift is held first, and a `\u{11}` in front of every
+/// Ctrl+V - so a rename to `Notes.txt` asked the filesystem for a name it
+/// refuses. Pasted text is held to the same rule, so a tab on the clipboard
+/// does not get in by the other door.
+fn typeable(c: char) -> bool {
+    !c.is_control() && !('\u{f700}'..='\u{f8ff}').contains(&c)
+}
+
 /// A name split into what to number and what to keep on the end.
 ///
 /// The count used to go after the whole filename, so a copy of `notes.txt`
@@ -1391,6 +1405,35 @@ impl App {
         }
     }
 
+    /// Ctrl+V, from the key, the toolbar or the Edit menu.
+    ///
+    /// While a prompt is taking typed text - the address bar, rename, copy
+    /// to, extract to, the Repos Directory - it is the system clipboard's
+    /// text that goes in. Otherwise it is the file paste it has always
+    /// been.
+    ///
+    /// Every route to Paste used to go straight to the file clipboard, which
+    /// refuses while a prompt is open, so copying a path from a terminal and
+    /// pasting it into the address bar did nothing at all. Before the
+    /// prompts were guarded it was worse: it pasted files into the folder
+    /// while the reader was typing a path.
+    pub fn paste(&mut self, clipboard: &mut dyn editor::Clipboard) {
+        if self.input_mut().is_none() {
+            self.paste_from_clipboard();
+            return;
+        }
+        let Some(text) = clipboard.read() else {
+            return;
+        };
+        // One line. A path copied from a terminal usually carries its
+        // newline, and a prompt that confirms on Enter must not take one
+        // as part of a name.
+        let line = text.lines().next().unwrap_or_default();
+        if let Some(input) = self.input_mut() {
+            input.extend(line.chars().filter(|c| typeable(*c)));
+        }
+    }
+
     /// Confirms a pending rename/copy/extract input, sending its request.
     pub fn confirm_text_input(&mut self) {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
@@ -1464,6 +1507,9 @@ impl App {
         let Some(c) = text.chars().next() else {
             return;
         };
+        if !typeable(c) {
+            return;
+        }
         if let Some(input) = self.input_mut() {
             input.push(c);
         }
@@ -5826,5 +5872,107 @@ third",
         fn write(&mut self, text: &str) {
             self.0 = Some(text.to_owned());
         }
+    }
+
+    // ---- Ctrl+V into a typed prompt (#530) -----------------------------
+
+    /// The case this exists for: a path copied from somewhere else goes into
+    /// the address bar, and Enter then has it to go to.
+    #[test]
+    fn a_path_on_the_clipboard_pastes_into_the_address_bar() {
+        let mut app = app_with_one_content_entry();
+        app.begin_path_edit();
+        // Clear what Ctrl+L prefilled, the way a reader selects and types
+        // over it.
+        while !app.path_input().is_empty() {
+            app.backspace();
+        }
+        let mut clipboard = Board(Some("/somewhere/else".to_owned()));
+
+        app.paste(&mut clipboard);
+
+        assert_eq!(app.path_input(), "/somewhere/else");
+    }
+
+    /// Pasted text is added where typing would add it, after what is there.
+    #[test]
+    fn pasted_text_is_appended_to_what_the_prompt_already_holds() {
+        let mut app = app_with_one_content_entry();
+        app.request_rename();
+        let before = app.status_text();
+        let mut clipboard = Board(Some("-copy".to_owned()));
+
+        app.paste(&mut clipboard);
+
+        assert_ne!(app.status_text(), before);
+        assert!(
+            app.status_text().contains("doomed.txt-copy"),
+            "the rename box should now read doomed.txt-copy: {}",
+            app.status_text()
+        );
+    }
+
+    /// A trailing newline - which a path copied from a terminal nearly
+    /// always has - must not reach a prompt that confirms on Enter.
+    #[test]
+    fn only_the_first_line_of_the_clipboard_is_pasted() {
+        for text in ["notes\n", "notes\r\n", "notes\nsecond line"] {
+            let mut app = app_with_one_content_entry();
+            app.request_rename();
+            let mut clipboard = Board(Some(text.to_owned()));
+
+            app.paste(&mut clipboard);
+
+            assert!(
+                app.status_text().contains("doomed.txtnotes_"),
+                "{text:?} should paste as one line: {}",
+                app.status_text()
+            );
+        }
+    }
+
+    /// An empty clipboard changes nothing, rather than failing.
+    #[test]
+    fn an_empty_clipboard_leaves_the_prompt_as_it_was() {
+        let mut app = app_with_one_content_entry();
+        app.request_rename();
+        let before = app.status_text();
+
+        app.paste(&mut Board(None));
+
+        assert_eq!(app.status_text(), before);
+    }
+
+    /// With no prompt open, Paste is the file paste it always was - and it
+    /// never reads the system clipboard's text to do it.
+    #[test]
+    fn with_no_prompt_open_paste_is_still_the_file_paste() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.copy_to_clipboard();
+        let mut clipboard = Board(Some("text that must not become a file".to_owned()));
+
+        app.paste(&mut clipboard);
+
+        assert!(
+            app.pending_operation.is_some(),
+            "the copied file should be on its way into the folder"
+        );
+    }
+
+    /// Pasted text is held to the same rule as typed text: a tab or other
+    /// control character on the clipboard does not reach a name.
+    #[test]
+    fn a_control_character_on_the_clipboard_is_not_pasted_into_a_prompt() {
+        let mut app = app_with_one_content_entry();
+        app.request_rename();
+
+        app.paste(&mut Board(Some("a\tb\u{7}c".to_owned())));
+
+        assert!(
+            app.status_text().contains("doomed.txtabc_"),
+            "only the characters should arrive: {:?}",
+            app.status_text()
+        );
     }
 }
