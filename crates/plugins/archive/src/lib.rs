@@ -2,8 +2,9 @@
 
 use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The lowercase extensions this type claims, without their dot.
 /// Both halves report these: the presentation half so a listing can
@@ -83,22 +84,88 @@ impl PluginCore for ArchiveCore {
 
 /// Extracts every entry in the archive at `archive_path` into
 /// `destination`, creating it if needed. The operation this plugin offers,
-/// per GUIDANCE.md §3.
+/// per GUIDANCE.md §3. Returns every path the extraction created there, so
+/// a caller that already had a `destination` can undo precisely - removing
+/// what extraction added, not what it found - instead of removing
+/// `destination` whole.
 ///
 /// # Errors
-/// Returns an error if the archive cannot be read or an entry cannot be
-/// written under `destination`.
-pub fn extract(archive_path: &Path, destination: &Path) -> io::Result<()> {
+/// Returns an error if the archive cannot be read, an entry's path would
+/// overwrite a file already at `destination`, or an entry cannot be
+/// written.
+pub fn extract(archive_path: &Path, destination: &Path) -> io::Result<Vec<PathBuf>> {
     // Open and validate the archive before creating the destination, so
     // extracting something that is not an archive leaves no empty directory
     // behind.
     let file = std::fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+    // Refuse a collision before writing anything. `ZipArchive::extract`
+    // overwrites files that are already there, and an overwrite undo could
+    // never put back is not a defensible way to merge into a destination a
+    // reader already has something in.
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        if entry.is_file()
+            && let Some(name) = entry.enclosed_name()
+            && destination.join(name).is_file()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} already exists in {}",
+                    entry.name(),
+                    destination.display()
+                ),
+            ));
+        }
+    }
+
+    let destination_existed = destination.exists();
+    let before: HashSet<PathBuf> = if destination_existed {
+        paths_under(destination)?
+    } else {
+        HashSet::new()
+    };
+
     std::fs::create_dir_all(destination)?;
     archive
         .extract(destination)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+    if !destination_existed {
+        return Ok(vec![destination.to_path_buf()]);
+    }
+
+    let mut created: Vec<PathBuf> = paths_under(destination)?
+        .into_iter()
+        .filter(|path| !before.contains(path))
+        .collect();
+    // Shallowest first: undo reverses this list, so the deepest paths -
+    // the ones nested inside another path this same extraction created -
+    // are removed before the directory that holds them.
+    created.sort_by_key(|path| path.components().count());
+    Ok(created)
+}
+
+/// Every file and directory somewhere under `root`, `root` itself excluded.
+fn paths_under(root: &Path) -> io::Result<HashSet<PathBuf>> {
+    let mut paths = HashSet::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                directories.push(path.clone());
+            }
+            paths.insert(path);
+        }
+    }
+    Ok(paths)
 }
 
 /// `"entry"` or `"entries"`, so a count of one does not read as "1 entries".
@@ -237,7 +304,7 @@ mod tests {
         write_test_zip(&archive_path);
         let destination = unique_temp_file("extract-destination");
 
-        super::extract(&archive_path, &destination).unwrap();
+        let created = super::extract(&archive_path, &destination).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(destination.join("hello.txt")).unwrap(),
@@ -246,6 +313,64 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(destination.join("nested").join("world.txt")).unwrap(),
             "world"
+        );
+        assert_eq!(
+            created,
+            vec![destination.clone()],
+            "a destination that did not exist is one created path, not one per entry"
+        );
+
+        std::fs::remove_file(&archive_path).unwrap();
+        std::fs::remove_dir_all(&destination).unwrap();
+    }
+
+    #[test]
+    fn extracting_into_an_existing_destination_reports_only_what_it_added() {
+        let archive_path = unique_temp_file("extract-merge-source.zip");
+        write_test_zip(&archive_path);
+        let destination = unique_temp_file("extract-merge-destination");
+        std::fs::create_dir_all(&destination).unwrap();
+        let already_there = destination.join("already-there.txt");
+        std::fs::write(&already_there, "the reader's own notes").unwrap();
+
+        let created = super::extract(&archive_path, &destination).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&already_there).unwrap(),
+            "the reader's own notes",
+            "extracting must not touch what was already in the destination"
+        );
+        let created: std::collections::HashSet<_> = created.into_iter().collect();
+        assert!(created.contains(&destination.join("hello.txt")));
+        assert!(created.contains(&destination.join("nested")));
+        assert!(created.contains(&destination.join("nested").join("world.txt")));
+        assert!(!created.contains(&destination));
+        assert!(!created.contains(&already_there));
+
+        std::fs::remove_file(&archive_path).unwrap();
+        std::fs::remove_dir_all(&destination).unwrap();
+    }
+
+    #[test]
+    fn extraction_refuses_an_entry_that_collides_with_an_existing_file() {
+        let archive_path = unique_temp_file("extract-collision-source.zip");
+        write_test_zip(&archive_path);
+        let destination = unique_temp_file("extract-collision-destination");
+        std::fs::create_dir_all(&destination).unwrap();
+        let colliding = destination.join("hello.txt");
+        std::fs::write(&colliding, "not what the archive has").unwrap();
+
+        let err = super::extract(&archive_path, &destination).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            std::fs::read_to_string(&colliding).unwrap(),
+            "not what the archive has",
+            "a refused extraction must not overwrite the file it collided with"
+        );
+        assert!(
+            !destination.join("nested").exists(),
+            "a refused extraction must not have written any other entry either"
         );
 
         std::fs::remove_file(&archive_path).unwrap();

@@ -655,7 +655,7 @@ enum Undoable {
     /// Move `to` back to `from`, undoing a rename or a move.
     Rename { from: PathBuf, to: PathBuf },
     /// Remove what an operation created: a copy's destination, a new file
-    /// or folder, an extracted directory.
+    /// or folder, one path an extraction created.
     Remove { path: PathBuf },
     /// Put a file's previous text back, undoing an edit.
     Restore { path: PathBuf, content: String },
@@ -879,13 +879,22 @@ pub fn delete(paths: &[String]) -> io::Result<()> {
 /// # Errors
 /// Returns an error if the archive cannot be extracted.
 pub fn extract(archive: &Path, destination: &Path) -> io::Result<()> {
-    let result = plugin_archive::extract(archive, destination);
-    remember_if_done(
-        &result,
-        Undoable::Remove {
-            path: destination.to_path_buf(),
-        },
-    );
+    let created = plugin_archive::extract(archive, destination);
+    let result = created
+        .as_ref()
+        .map(|_| ())
+        .map_err(|err| io::Error::new(err.kind(), err.to_string()));
+    if let Ok(created) = created {
+        // One step per path extraction created - not one step for
+        // `destination` - so undoing an extract into a folder a reader
+        // already had removes only what extraction added to it.
+        remember_undo(
+            created
+                .into_iter()
+                .map(|path| Undoable::Remove { path })
+                .collect(),
+        );
+    }
     journal(
         "extract",
         &[
@@ -1893,6 +1902,91 @@ public class OrderBook {
         assert_eq!(
             fs::read_to_string(destination.join("inside.txt")).unwrap(),
             "payload"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn write_test_zip(archive_path: &Path) {
+        let file = fs::File::create(archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file("hello.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut writer, b"hello, archive").unwrap();
+        writer
+            .start_file("nested/world.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut writer, b"world").unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn undoing_an_extract_must_not_remove_what_was_already_in_the_destination() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let archive_path = dir.join("test.zip");
+        write_test_zip(&archive_path);
+        let destination = dir.join("out");
+        fs::create_dir_all(&destination).unwrap();
+        let own_notes = destination.join("notes.txt");
+        fs::write(&own_notes, "the reader's own notes").unwrap();
+
+        extract(&archive_path, &destination).unwrap();
+        undo().unwrap();
+
+        assert!(destination.exists(), "the destination itself survives");
+        assert_eq!(
+            fs::read_to_string(&own_notes).unwrap(),
+            "the reader's own notes",
+            "what was already in the destination survives"
+        );
+        assert!(!destination.join("hello.txt").exists());
+        assert!(!destination.join("nested").exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undoing_an_extract_into_a_destination_that_did_not_exist_removes_it_entirely() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let archive_path = dir.join("test.zip");
+        write_test_zip(&archive_path);
+        let destination = dir.join("out");
+
+        extract(&archive_path, &destination).unwrap();
+        undo().unwrap();
+
+        assert!(!destination.exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_extract_refuses_an_entry_that_collides_and_leaves_nothing_to_undo() {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let archive_path = dir.join("test.zip");
+        write_test_zip(&archive_path);
+        let destination = dir.join("out");
+        fs::create_dir_all(&destination).unwrap();
+        let colliding = destination.join("hello.txt");
+        fs::write(&colliding, "not what the archive has").unwrap();
+        // A create would otherwise be the step left on record.
+        create_directory(&dir.join("earlier")).unwrap();
+
+        let err = extract(&archive_path, &destination).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&colliding).unwrap(),
+            "not what the archive has"
+        );
+        undo().unwrap();
+        assert!(
+            !dir.join("earlier").exists(),
+            "the refused extract must not have replaced the previous undo step"
         );
 
         fs::remove_dir_all(&dir).unwrap();
