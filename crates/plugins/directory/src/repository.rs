@@ -34,6 +34,11 @@ pub struct Repository {
     /// costs a pass over every tracked file - or when the checkout's index
     /// could not be read.
     pub status: Option<crate::status::WorkingTree>,
+    /// How the branch stands against its upstream, as the last fetch left
+    /// it. `None` when nothing asked - like `status`, it is for the selected
+    /// repository only - or when there is no branch to compare.
+    #[serde(default)]
+    pub tracking: Option<crate::tracking::Tracking>,
 }
 
 /// What `path` is as a working copy, or `None` if it is not one.
@@ -59,6 +64,7 @@ pub fn describe(path: &Path) -> Option<Repository> {
         // of this; `describe_with_status` answers it for the one the reader
         // selected.
         status: None,
+        tracking: None,
     })
 }
 
@@ -73,6 +79,7 @@ pub fn describe_with_status(path: &Path) -> Option<Repository> {
     let git_dir = git_dir_of(path)?;
     let mut found = describe(path)?;
     found.status = crate::status::working_tree(&git_dir, path);
+    found.tracking = crate::tracking::tracking(path);
     Some(found)
 }
 
