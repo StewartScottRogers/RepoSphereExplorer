@@ -3751,7 +3751,18 @@ public class OrderBook {
 
     #[test]
     fn a_path_of_separators_alone_never_becomes_an_operation_on_the_filesystem_root() {
-        for path in ["/", "\\", "//", "\\\\", "///"] {
+        // Only the separators this platform actually has. A backslash is a
+        // legal character in a Unix filename, so `\` there is not the root
+        // at all - it is a relative name, and asking to create it would
+        // succeed and leave a directory called `\` in the working
+        // directory rather than refusing anything.
+        let separators: &[&str] = if cfg!(windows) {
+            &["/", "\\", "//", "\\\\", "///"]
+        } else {
+            &["/", "//", "///"]
+        };
+        for path in separators {
+            let path = *path;
             for request in [
                 Request::CreateDirectory {
                     path: path.to_owned(),
