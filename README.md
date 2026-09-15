@@ -170,6 +170,58 @@ branches are deleted after merge, and the `work-order`, `defect` and
 Until step 1 is done the Claude stations are inert and the repository behaves as
 an ordinary checked Rust project.
 
+## Built with
+
+All Rust: toolchain 1.98, edition 2024, pinned in
+[`rust-toolchain.toml`](rust-toolchain.toml). Versions below are the ones in
+[`Cargo.lock`](Cargo.lock).
+
+### The application
+
+| Layer | Framework or crate | What it does here |
+| --- | --- | --- |
+| Graphical front end | [Slint](https://slint.dev/) 1.17 | The three-pane window, written in `.slint` markup and compiled in by `slint-build`. `i-slint-backend-testing` drives real windows without a display in the integration tests |
+| Terminal front end | [Ratatui](https://ratatui.rs/) 0.30 on crossterm 0.29 | The terminal user interface |
+| Front end to service | [interprocess](https://crates.io/crates/interprocess) 2.4 | Local sockets - named pipes on Windows - between each front end and the one service process |
+| Messages | [serde](https://serde.rs/) 1 with serde_json 1 | Every request and response, as length-prefixed JavaScript Object Notation (JSON) |
+| Filesystem | [trash](https://crates.io/crates/trash) 5, [dirs](https://crates.io/crates/dirs) 6, [ignore](https://crates.io/crates/ignore) 0.4 | Deletes go to the recycle bin; per-user locations for the journal and configuration; finding a name across every repository while honouring `.gitignore` |
+| Desktop | [copypasta](https://crates.io/crates/copypasta) 0.10, [open](https://crates.io/crates/open) 5, unicode-segmentation 1 | The system clipboard, handing a repository's web page to the browser, and caret movement by character rather than by byte |
+| Self-update | [ureq](https://crates.io/crates/ureq) 3, [ed25519-dalek](https://crates.io/crates/ed25519-dalek) 3, sha2 0.10 | Fetching the release manifest, and verifying every download's signature and digest before it replaces anything |
+| Command line placeholder | [clap](https://crates.io/crates/clap) 4 | Argument parsing for the parked `explore` binary |
+
+### The file types
+
+Each of the 180 plugins is its own crate, and most use only serde. The rest
+read their format with an established parser: zip, flate2, tar, rars,
+sevenz-rust2 and lzma-rs for archives; image and psd for pictures; lopdf for
+Portable Document Format (PDF); calamine for spreadsheets; rusqlite for
+SQLite databases; arrow, parquet, orc-rust, apache-avro and hdf5-metno for
+data files; lofty, mp4 and matroska for media; ttf-parser and wuff for fonts;
+object and wasmparser for executables and WebAssembly; x509-parser, der, pem,
+pkcs8 and spki for certificates and keys; rpm and ar for packages.
+
+### Building from source
+
+Beyond the pinned Rust toolchain:
+
+- **A C compiler** - rusqlite compiles its own copy of SQLite.
+- **CMake** - hdf5-metno builds the HDF5 library from source.
+- **On Linux**, the development packages Slint needs for X11 and input, as
+  listed in [`release.yml`](.github/workflows/release.yml).
+
+### The factory
+
+[GitHub Actions](.github/workflows/) runs every station: the three checks and
+a release build in [`ci.yml`](.github/workflows/ci.yml), with
+`Swatinem/rust-cache` and `cargo-llvm-cov` for coverage;
+[`rustsec/audit-check`](https://github.com/rustsec/audit-check) for dependency
+advisories; [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action)
+for the factory shift, the independent review, repair, and answering `@claude`
+mentions; and
+`softprops/action-gh-release` to publish releases. The site and its history
+film are built with [Gource](https://gource.io/) and ffmpeg and served by
+GitHub Pages.
+
 ## Local commands
 
 ```bash
