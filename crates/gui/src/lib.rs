@@ -415,6 +415,19 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_clipboard_copy_requested, copy_to_clipboard);
     on_event!(on_clipboard_cut_requested, cut_to_clipboard);
     {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_open_web_requested(move || {
+            let mut app = app.borrow_mut();
+            // Detached, so the browser outlives nothing it should not and a
+            // slow start does not hold the window.
+            app.open_on_the_web(|address| open::that_detached(address));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    {
         // Paste needs the system clipboard for the prompts, so it cannot be
         // one of the plain events above.
         let app = app.clone();
@@ -710,6 +723,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_editing_file(app.editing_file());
     ui.set_can_edit(app.can_edit());
     ui.set_can_open(app.can_open());
+    ui.set_web_provider(app.web_provider().unwrap_or_default().into());
     sync_editor(ui, app);
     ui.set_location_icon(icon_image(app::icon_for("", true), true));
 }
