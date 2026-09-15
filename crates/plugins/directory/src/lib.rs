@@ -8,11 +8,71 @@
 
 pub mod repository;
 pub mod status;
+pub mod tracking;
 
 use plugin_api::{Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
+use std::time::SystemTime;
+
+/// How a branch stands against its upstream, for the Branch line:
+/// `2 ahead, 5 behind origin/main (as of last fetch, 3 days ago)`.
+///
+/// Every count carries how old the fetch it was measured against is,
+/// because nothing here fetches: "up to date" three weeks after the last
+/// fetch is true about three weeks ago. `now` is a parameter so a test can
+/// fix the clock.
+#[must_use]
+pub fn tracking_summary(tracking: &tracking::Tracking, now: SystemTime) -> String {
+    use tracking::{Count, Upstream};
+
+    let count = |count: &Count| match count {
+        Count::Exact(n) => n.to_string(),
+        Count::AtLeast(n) => format!("{n}+"),
+    };
+    let fetched = match tracking.last_fetch {
+        Some(at) => format!(
+            "as of last fetch, {}",
+            age(now.duration_since(at).unwrap_or_default())
+        ),
+        None => "never fetched".to_owned(),
+    };
+    match &tracking.upstream {
+        Upstream::None => "no upstream".to_owned(),
+        Upstream::NotFetched { name } => format!("{name} not fetched yet"),
+        Upstream::Unreadable { name } => format!("cannot compare with {name}"),
+        Upstream::Compared {
+            name,
+            ahead,
+            behind,
+        } => {
+            let comparison = match (ahead, behind) {
+                (Count::Exact(0), Count::Exact(0)) => format!("up to date with {name}"),
+                (ahead, Count::Exact(0)) => format!("{} ahead of {name}", count(ahead)),
+                (Count::Exact(0), behind) => format!("{} behind {name}", count(behind)),
+                (ahead, behind) => {
+                    format!("{} ahead, {} behind {name}", count(ahead), count(behind))
+                }
+            };
+            format!("{comparison} ({fetched})")
+        }
+    }
+}
+
+/// A duration as a reader says it: `just now`, `5 minutes ago`,
+/// `1 hour ago`, `3 days ago`.
+fn age(elapsed: std::time::Duration) -> String {
+    let seconds = elapsed.as_secs();
+    let (amount, unit) = match seconds {
+        0..60 => return "just now".to_owned(),
+        60..3_600 => (seconds / 60, "minute"),
+        3_600..86_400 => (seconds / 3_600, "hour"),
+        _ => (seconds / 86_400, "day"),
+    };
+    let plural = if amount == 1 { "" } else { "s" };
+    format!("{amount} {unit}{plural} ago")
+}
 
 /// View data produced by [`DirectoryCore::view`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +171,15 @@ impl PluginPresentation for DirectoryPresentation {
                 lines.push(format!("Provider: {provider}"));
             }
             if let Some(branch) = &repository.branch {
-                lines.push(format!("Branch: {branch}"));
+                lines.push(match &repository.tracking {
+                    Some(tracking) => {
+                        format!(
+                            "Branch: {branch} - {}",
+                            tracking_summary(tracking, SystemTime::now())
+                        )
+                    }
+                    None => format!("Branch: {branch}"),
+                });
             } else {
                 lines.push("Branch: none checked out (detached head)".to_owned());
             }
@@ -208,6 +276,7 @@ mod tests {
                 provider: Some("github.com".to_owned()),
                 branch: Some("main".to_owned()),
                 remote: Some("https://github.com/owner/name.git".to_owned()),
+                tracking: None,
                 status: None,
             }),
         })
@@ -269,6 +338,7 @@ mod tests {
                 provider: Some("github.com".to_owned()),
                 branch: Some("main".to_owned()),
                 remote: None,
+                tracking: None,
                 status: Some(super::status::WorkingTree {
                     changed: 2,
                     examined: 130,
@@ -295,6 +365,7 @@ mod tests {
                 provider: None,
                 branch: None,
                 remote: None,
+                tracking: None,
                 status: Some(super::status::WorkingTree {
                     changed: 0,
                     examined: 40,
@@ -311,6 +382,99 @@ mod tests {
         assert!(
             lines.contains(&"Working tree: no uncommitted changes to tracked files".to_owned()),
             "{lines:?}"
+        );
+    }
+
+    // ---- how the branch stands against its upstream (#537) -------------
+
+    fn tracked(upstream: super::tracking::Upstream, fetched_ago: Option<u64>) -> String {
+        let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        super::tracking_summary(
+            &super::tracking::Tracking {
+                branch: "main".to_owned(),
+                upstream,
+                last_fetch: fetched_ago.map(|ago| now - std::time::Duration::from_secs(ago)),
+            },
+            now,
+        )
+    }
+
+    fn compared(
+        ahead: super::tracking::Count,
+        behind: super::tracking::Count,
+    ) -> super::tracking::Upstream {
+        super::tracking::Upstream::Compared {
+            name: "origin/main".to_owned(),
+            ahead,
+            behind,
+        }
+    }
+
+    #[test]
+    fn each_tracking_state_reads_as_the_work_order_says() {
+        use super::tracking::{Count::AtLeast, Count::Exact, Upstream};
+        const DAY: u64 = 86_400;
+
+        assert_eq!(
+            tracked(compared(Exact(0), Exact(0)), Some(2 * 3_600)),
+            "up to date with origin/main (as of last fetch, 2 hours ago)"
+        );
+        assert_eq!(
+            tracked(compared(Exact(2), Exact(5)), Some(3 * DAY)),
+            "2 ahead, 5 behind origin/main (as of last fetch, 3 days ago)"
+        );
+        assert_eq!(
+            tracked(compared(Exact(1), Exact(0)), Some(60)),
+            "1 ahead of origin/main (as of last fetch, 1 minute ago)"
+        );
+        assert_eq!(
+            tracked(compared(Exact(0), Exact(7)), Some(5)),
+            "7 behind origin/main (as of last fetch, just now)"
+        );
+        assert_eq!(
+            tracked(compared(AtLeast(10_000), AtLeast(3)), None),
+            "10000+ ahead, 3+ behind origin/main (never fetched)"
+        );
+        assert_eq!(tracked(Upstream::None, None), "no upstream");
+        assert_eq!(
+            tracked(
+                Upstream::NotFetched {
+                    name: "origin/main".to_owned()
+                },
+                None
+            ),
+            "origin/main not fetched yet"
+        );
+        assert_eq!(
+            tracked(
+                Upstream::Unreadable {
+                    name: "origin/main".to_owned()
+                },
+                Some(DAY)
+            ),
+            "cannot compare with origin/main"
+        );
+    }
+
+    #[test]
+    fn a_fetch_stamped_in_the_future_reads_as_just_now() {
+        // A clock moved back since the fetch must not panic or say
+        // something negative.
+        let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let line = super::tracking_summary(
+            &super::tracking::Tracking {
+                branch: "main".to_owned(),
+                upstream: compared(
+                    super::tracking::Count::Exact(0),
+                    super::tracking::Count::Exact(0),
+                ),
+                last_fetch: Some(now + std::time::Duration::from_secs(600)),
+            },
+            now,
+        );
+        assert_eq!(
+            line,
+            "up to date with origin/main (as of last fetch, just now)"
         );
     }
 }

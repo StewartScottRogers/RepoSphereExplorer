@@ -927,3 +927,54 @@ fn each_checkout_row_marks_uncommitted_changes_as_they_really_are() {
     );
     assert!(!status.contains("not known"), "{status}");
 }
+
+// ---------------------------------------------------------------------
+// How the selected checkout's branch stands against its upstream (#537).
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_checkout_behind_its_remote_says_how_far_in_the_file_pane() {
+    let _serial = serially();
+    let root = scratch("behind");
+    let alpha = checkout(
+        &root,
+        "alpha",
+        "main",
+        Some("https://github.com/owner/alpha.git"),
+        1,
+    );
+    // What a fetch would have left: `origin/main` two commits past the
+    // local branch, and `main` set to track it. Built by `git` in the
+    // scratch directory; nothing contacts a remote.
+    git(&alpha, &["branch", "--quiet", "ahead-of-us"]);
+    git(&alpha, &["switch", "--quiet", "ahead-of-us"]);
+    for index in 0..2 {
+        file(
+            &alpha,
+            "tracked-0.txt",
+            &format!("upstream change {index}\n"),
+        );
+        commit_everything(&alpha);
+    }
+    git(
+        &alpha,
+        &["update-ref", "refs/remotes/origin/main", "ahead-of-us"],
+    );
+    git(&alpha, &["switch", "--quiet", "main"]);
+    git(
+        &alpha,
+        &["branch", "--quiet", "--delete", "--force", "ahead-of-us"],
+    );
+    git(&alpha, &["config", "branch.main.remote", "origin"]);
+    git(&alpha, &["config", "branch.main.merge", "refs/heads/main"]);
+    let (ui, app) = window_at(&root);
+
+    select_and_wait(&ui, &app, "alpha", "2 entries");
+    let pane = ui.get_file_text().to_string();
+
+    assert!(
+        pane.contains("Branch: main - 2 behind origin/main (never fetched)"),
+        "the pane should say how far behind its upstream the branch is; it \
+         reads:\n{pane}"
+    );
+}

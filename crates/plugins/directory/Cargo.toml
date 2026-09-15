@@ -11,6 +11,17 @@ repository.workspace = true
 # Settling whether a tracked file whose timestamp moved actually changed:
 # the index stores each blob's SHA-1, so comparing means computing one.
 sha1 = "0.11"
+# How far a branch is ahead of or behind its remote-tracking branch (#537)
+# needs the commit graph, which means reading packed objects with their
+# deltas resolved: gitoxide does that. Its component crates rather than the
+# `gix` umbrella, because the umbrella always links `gix-protocol` and with
+# it `gix-transport`, and #537 requires that no transport crate be linked.
+# Nothing here can contact a remote or write to a working copy (D10, rule 8).
+gix-config = { version = "0.60", default-features = false }
+gix-hash = { version = "0.26", default-features = false, features = ["sha1"] }
+gix-odb = { version = "0.84", default-features = false, features = ["sha1"] }
+gix-ref = { version = "0.67", default-features = false, features = ["sha1"] }
+gix-revwalk = { version = "0.35", default-features = false, features = ["sha1"] }
 plugin-api = { path = "../../plugin-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
