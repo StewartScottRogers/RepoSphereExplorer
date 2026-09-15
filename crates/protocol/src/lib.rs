@@ -239,13 +239,36 @@ pub struct ReposRoot {
 /// # Errors
 /// Returns an error if the resolved name is not valid on this platform.
 pub fn socket_name() -> io::Result<Name<'static>> {
+    let chosen: &'static str = CHOSEN_SOCKET_NAME.get_or_init(|| SOCKET_NAME.to_owned());
     if GenericNamespaced::is_supported() {
-        SOCKET_NAME.to_ns_name::<GenericNamespaced>()
+        chosen.to_ns_name::<GenericNamespaced>()
     } else {
         std::env::temp_dir()
-            .join(SOCKET_NAME)
+            .join(chosen)
             .to_fs_name::<GenericFilePath>()
     }
+}
+
+/// The socket this process uses, settled the first time anything asks.
+static CHOSEN_SOCKET_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Makes this process use a socket of its own instead of the shared one.
+///
+/// For tests that start a service in-process. The socket name used to be
+/// fixed, and a test harness that could not bind it - because another test
+/// binary, or the reader's own running Repos Explorer, already held it -
+/// quietly connected to whatever was there instead. So test suites carried
+/// out real file operations and undos through a service they had not
+/// started: sharing one undo journal between binaries running at once,
+/// which is where intermittent undo failures came from, and replacing the
+/// journal of the reader's live service whenever one was up.
+///
+/// Returns `false` if the name was already settled, by an earlier call or
+/// by [`socket_name`] having been used, so a harness that asks too late
+/// finds out rather than silently sharing.
+#[must_use]
+pub fn use_private_socket(name: String) -> bool {
+    CHOSEN_SOCKET_NAME.set(name).is_ok()
 }
 
 /// Reads one length-prefixed, JSON-encoded message from `reader`.
@@ -1141,5 +1164,18 @@ mod tests {
         let read: Response = read_message(wire.as_slice()).expect("and it reads back");
 
         assert_eq!(read, response);
+    }
+
+    /// Choosing a private socket after the name has been settled fails out
+    /// loud. The name is settled by whichever comes first in a process, and
+    /// a harness that asked too late would otherwise go on sharing the
+    /// socket it was trying to leave - which is the fault this exists to
+    /// end. Deterministic whatever order the tests run in: once
+    /// `socket_name` has been called here, the choice is made.
+    #[test]
+    fn a_private_socket_chosen_after_the_name_is_settled_is_refused() {
+        socket_name().expect("the platform has a socket name");
+
+        assert!(!super::use_private_socket("too-late.sock".to_owned()));
     }
 }
