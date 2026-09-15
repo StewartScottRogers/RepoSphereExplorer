@@ -909,13 +909,19 @@ pub fn delete(paths: &[String]) -> io::Result<()> {
 /// # Errors
 /// Returns an error if the archive cannot be extracted.
 pub fn extract(archive: &Path, destination: &Path) -> io::Result<()> {
-    let result = plugin_archive::extract(archive, destination);
-    remember_if_done(
-        &result,
-        Undoable::Remove {
-            path: destination.to_path_buf(),
-        },
-    );
+    let result = plugin_archive::extract(archive, destination).map(|created| {
+        // One step per path the extraction made, and nothing it found
+        // there - see #521. On success the journal is replaced even when
+        // that list is empty, because an extraction that only overwrote
+        // existing files still changed them, and leaving the previous
+        // operation's step would have Ctrl+Z reach past it.
+        remember_undo(
+            created
+                .into_iter()
+                .map(|path| Undoable::Remove { path })
+                .collect(),
+        );
+    });
     journal(
         "extract",
         &[
@@ -2826,14 +2832,6 @@ public class OrderBook {
     /// reader already had and then pressing Ctrl+Z sends that folder - all
     /// of it - to the recycle bin. Recoverable from there, and still not
     /// what undo promised.
-    /// Ignored, not deleted: this is the proof of #521. Fixing it needs
-    /// `plugin_archive::extract` to report the paths it wrote, so undo can
-    /// remove those and nothing else - it exposes only `extract`, which
-    /// returns `()`. Refusing an existing destination instead would be the
-    /// smaller change but the wrong one: extracting into a folder you
-    /// already have is ordinary, and merging is what every archive tool
-    /// does.
-    #[ignore = "see #521: undo of an extract removes the whole destination"]
     #[test]
     fn undoing_an_extract_must_not_remove_what_was_already_in_the_destination() {
         let dir = scratch();
@@ -3934,5 +3932,58 @@ public class OrderBook {
         assert!(names_in(&sub).is_empty());
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Extracting into a folder that did not exist, then undoing, removes
+    /// it entirely - the behaviour that already held, still covered now
+    /// that the journal records paths rather than the destination.
+    #[test]
+    fn undoing_an_extract_into_a_new_folder_removes_the_folder() {
+        let dir = scratch();
+        let archive_path = dir.join("test.zip");
+        write_zip(&archive_path, "inside.txt", b"payload");
+        let destination = dir.join("out");
+
+        extract(&archive_path, &destination).unwrap();
+        assert!(destination.join("inside.txt").exists());
+
+        undo().unwrap();
+
+        let gone = !destination.exists();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            gone,
+            "the folder was made by the extraction, so undo takes it"
+        );
+    }
+
+    /// An extraction that only overwrote existing files changed them, so
+    /// Ctrl+Z must not reach past it to the operation before - but it has
+    /// nothing it can put back either, and says so.
+    #[test]
+    fn an_extract_that_only_overwrote_files_leaves_nothing_to_undo_rather_than_the_step_before() {
+        let dir = scratch();
+        let earlier = dir.join("earlier");
+        create_directory(&earlier).unwrap();
+
+        let archive_path = dir.join("test.zip");
+        write_zip(&archive_path, "inside.txt", b"new");
+        let destination = dir.join("out");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("inside.txt"), "old").unwrap();
+
+        extract(&archive_path, &destination).unwrap();
+        let answer = undo();
+
+        let earlier_survives = earlier.exists();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            answer.is_err(),
+            "there is nothing this extraction can put back"
+        );
+        assert!(
+            earlier_survives,
+            "and the folder created before it must not be undone in its place"
+        );
     }
 }
