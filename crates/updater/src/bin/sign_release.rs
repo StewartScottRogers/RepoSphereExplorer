@@ -120,3 +120,81 @@ fn hex_decode(text: &str) -> Option<Vec<u8>> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{KNOWN_BINARIES, hex_decode, hex_encode, parse_filename};
+
+    #[test]
+    fn parse_filename_splits_a_known_binary_from_its_target_triple() {
+        let (binary, target) = parse_filename("service-x86_64-unknown-linux-gnu").unwrap();
+        assert_eq!(binary, "service");
+        assert_eq!(
+            target, "x86_64-unknown-linux-gnu",
+            "the triple's own hyphens must not be split on"
+        );
+    }
+
+    #[test]
+    fn parse_filename_strips_the_windows_executable_suffix_from_the_triple() {
+        // The suffix has to go, or the manifest records a target no build
+        // will ever ask for and the update silently never arrives.
+        let (binary, target) =
+            parse_filename("RepoSphereExplorerGui-x86_64-pc-windows-msvc.exe").unwrap();
+        assert_eq!(binary, "RepoSphereExplorerGui");
+        assert_eq!(target, "x86_64-pc-windows-msvc");
+    }
+
+    #[test]
+    fn parse_filename_recognises_every_binary_the_release_publishes() {
+        for binary in KNOWN_BINARIES {
+            let filename = format!("{binary}-aarch64-apple-darwin");
+            let (parsed, target) = parse_filename(&filename)
+                .unwrap_or_else(|| panic!("{binary} must be recognised in {filename}"));
+            assert_eq!(&parsed, binary);
+            assert_eq!(target, "aarch64-apple-darwin");
+        }
+    }
+
+    #[test]
+    fn parse_filename_declines_a_name_that_is_not_a_published_binary() {
+        assert!(parse_filename("some-other-tool-x86_64-pc-windows-msvc").is_none());
+        assert!(parse_filename("latest.json").is_none());
+        assert!(parse_filename("").is_none());
+    }
+
+    #[test]
+    fn parse_filename_declines_a_binary_name_without_a_following_triple() {
+        // Without the separating hyphen there is no target, and guessing
+        // one would publish an asset against the wrong machine.
+        assert!(parse_filename("service").is_none());
+        assert!(parse_filename("service.exe").is_none());
+        assert!(parse_filename("servicex86_64-pc-windows-msvc").is_none());
+    }
+
+    #[test]
+    fn parse_filename_keeps_a_suffix_that_is_not_dot_exe_inside_the_triple() {
+        // Recorded, not asserted as desirable: only `.exe` is stripped, so
+        // a stray sidecar file in the dist directory is signed and
+        // published under a target triple that does not exist. It is inert
+        // - no build asks for that triple - but it bloats the manifest.
+        let (binary, target) = parse_filename("service-x86_64-unknown-linux-gnu.sha256").unwrap();
+        assert_eq!(binary, "service");
+        assert_eq!(target, "x86_64-unknown-linux-gnu.sha256");
+    }
+
+    #[test]
+    fn hex_decode_rejects_a_signing_key_that_is_not_hexadecimal_pairs() {
+        // The signing key comes from an environment variable; a mistyped
+        // one must fail loudly rather than decode to some other key.
+        assert!(hex_decode(&"a".repeat(63)).is_none(), "odd length");
+        assert!(hex_decode(&"z".repeat(64)).is_none(), "not hexadecimal");
+        assert_eq!(hex_decode(&"ab".repeat(32)).unwrap().len(), 32);
+    }
+
+    #[test]
+    fn hex_encode_round_trips_through_hex_decode() {
+        let bytes: Vec<u8> = (0..=u8::MAX).collect();
+        assert_eq!(hex_decode(&hex_encode(&bytes)).unwrap(), bytes);
+    }
+}
