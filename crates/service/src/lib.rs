@@ -706,9 +706,21 @@ pub fn undo() -> io::Result<()> {
     }
     // Newest first: a batch that created a folder and then filled it has
     // to be emptied before the folder goes, and the same argument holds
-    // for any two steps that touched the same place.
-    for step in steps.into_iter().rev() {
-        undo_step(step)?;
+    // for any two steps that touched the same place. `pop` takes the
+    // newest, so what is left in `steps` is always what has not been
+    // tried.
+    let mut steps = steps;
+    while let Some(step) = steps.pop() {
+        if let Err(err) = undo_step(step) {
+            // The steps this undo never reached are still owed. Taking
+            // the journal and then leaving on the first failure dropped
+            // them: a three-file move where one old name had been
+            // re-created by hand put one file back, refused the second,
+            // and silently forgot the third - half undone, with no way
+            // to finish it.
+            remember_undo(steps);
+            return Err(err);
+        }
     }
     Ok(())
 }
@@ -799,7 +811,15 @@ fn batch(
         }
         Ok(())
     })();
-    remember_undo(steps);
+    // Only when something actually landed. An operation refused before
+    // it touched anything must not cost the reader the undo of the
+    // operation before it - rename a file, then attempt a paste that is
+    // refused because the name is taken, and the paste did nothing at all
+    // while Ctrl+Z could no longer put the rename back. `remember_if_done`
+    // states the same rule for the single-step operations.
+    if !steps.is_empty() {
+        remember_undo(steps);
+    }
     journal(operation, &targets, &result);
     result
 }
@@ -808,8 +828,18 @@ fn batch(
 /// renaming it into place, so an interrupted write leaves the original
 /// intact rather than a half-written file.
 fn write_atomically(path: &Path, content: &str) -> io::Result<()> {
+    // The suffix carries this process and a count, so the temporary is a
+    // name nobody else holds. A fixed `.rse-write` was written with
+    // `fs::write`, which replaces whatever it finds: a file the reader had
+    // made and named themselves was erased outright - not to the recycle
+    // bin - and undoing the edit did not bring it back. Refusing the save
+    // instead would have been worse, stopping them saving their own file
+    // because of an unrelated sibling. It also means two saves of the same
+    // file can no longer collide on one temporary.
+    static NEXT_TEMPORARY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ticket = NEXT_TEMPORARY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut temporary = path.as_os_str().to_owned();
-    temporary.push(".rse-write");
+    temporary.push(format!(".rse-write-{}-{ticket}", std::process::id()));
     let temporary = PathBuf::from(temporary);
     fs::write(&temporary, content)?;
     match fs::rename(&temporary, path) {
@@ -1024,9 +1054,10 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CORE_PLUGINS, FolderCore, Path, bind, copy, create_directory, create_file, delete, extract,
-        folder_plugins_among, guarded, handle_request, journal_to, list_directory, most_specific,
-        open, rename, serve_one, sniff_among, undo, view_file, write_file,
+        CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, bind, copy, create_directory,
+        create_file, delete, extract, folder_plugins_among, guarded, handle_request, journal_to,
+        list_directory, most_specific, open, rename, repos, serve_one, sniff_among, undo,
+        view_file, with_source_text, write_atomically, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -2356,5 +2387,1526 @@ public class OrderBook {
         let chosen = sniff_among(plugins, Path::new("a.gen"), b"anything");
 
         assert_eq!(chosen.map(PluginCore::name), Some("special"));
+    }
+
+    // ---------------------------------------------------------------
+    // The error paths, which is where a reader's files get lost.
+    //
+    // Every test below works inside a directory of its own under the
+    // system temporary directory and removes it afterwards; nothing here
+    // writes outside one, and the only paths given to `delete` - which
+    // uses the real recycle bin - are scratch paths.
+    //
+    // The undo journal is a single thread-local slot. The test harness
+    // gives each test its own thread, so each starts with an empty
+    // journal and none of them can tread on another's steps: that is what
+    // lets these run in parallel without serialising, and why a test may
+    // call `undo` first thing and expect "nothing to undo".
+    // ---------------------------------------------------------------
+
+    /// A fresh, uniquely named scratch directory.
+    fn scratch() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The names directly inside `dir`, sorted, for asserting on what a
+    /// failed operation did or did not leave behind.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Writes a one-entry zip at `path`, for the extract tests.
+    fn write_zip(path: &Path, entry: &str, payload: &[u8]) {
+        let file = fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(entry, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut writer, payload).unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn undo_with_an_empty_journal_points_at_the_recycle_bin_rather_than_failing_silently() {
+        // Nothing has happened on this thread, so this is the cold start a
+        // reader meets when they press Ctrl+Z first thing.
+        let err = undo().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            err.to_string().contains("Recycle Bin"),
+            "the one thing a reader can still recover has to be named: {err}"
+        );
+    }
+
+    #[test]
+    fn undoing_twice_does_not_reach_back_past_the_last_operation() {
+        // D6: one operation deep. The second Ctrl+Z must not quietly take
+        // apart work the reader did before the one they meant to undo.
+        let dir = scratch();
+        let first = dir.join("first");
+        let second = dir.join("second");
+        create_directory(&first).unwrap();
+        create_directory(&second).unwrap();
+
+        undo().unwrap();
+        let err = undo().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(!second.exists(), "the last operation is the one undone");
+        assert!(
+            first.is_dir(),
+            "and the operation before it is not reached back to"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// FINDING: a batch refused before it touches anything still clears
+    /// the journal, so the operation before it stops being undoable.
+    ///
+    /// `batch` calls `remember_undo(steps)` unconditionally, and `steps`
+    /// is empty when the very first pair is refused. Its sibling
+    /// `remember_if_done` says the opposite in so many words - "a failed
+    /// operation changed nothing and leaves the previous step alone" - and
+    /// `a_failed_operation_leaves_the_previous_undo_step_alone` pins that
+    /// for `create_directory`. A reader who renames a file and then has a
+    /// paste refused loses the rename's undo to an operation that did
+    /// nothing at all.
+    #[test]
+    fn a_batch_refused_at_its_first_step_leaves_the_previous_undo_step_alone() {
+        let dir = scratch();
+        let created = dir.join("kept");
+        create_directory(&created).unwrap();
+        let source = dir.join("source.txt");
+        fs::write(&source, "content").unwrap();
+        let occupied = dir.join("occupied.txt");
+        fs::write(&occupied, "in the way").unwrap();
+
+        let err = copy(&one(&source, &occupied)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&occupied).unwrap(),
+            "in the way",
+            "the refused copy changed nothing whatsoever"
+        );
+
+        let undone = undo();
+        let created_still_there = created.exists();
+        fs::remove_dir_all(&dir).unwrap();
+
+        undone.expect(
+            "an operation that changed nothing must not cost the reader the \
+             undo of the operation before it",
+        );
+        assert!(
+            !created_still_there,
+            "the create is what should have undone"
+        );
+    }
+
+    #[test]
+    fn a_batch_refused_at_its_middle_step_undoes_the_one_that_landed() {
+        let dir = scratch();
+        for name in ["one", "two", "three"] {
+            fs::write(dir.join(format!("{name}.txt")), name).unwrap();
+        }
+        let occupied = dir.join("two.copy");
+        fs::write(&occupied, "in the way").unwrap();
+        let pairs: Vec<(String, String)> = ["one", "two", "three"]
+            .iter()
+            .map(|name| {
+                (
+                    dir.join(format!("{name}.txt")).display().to_string(),
+                    dir.join(format!("{name}.copy")).display().to_string(),
+                )
+            })
+            .collect();
+
+        let err = copy(&pairs).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert!(dir.join("one.copy").exists(), "the first pair landed");
+        assert!(
+            !dir.join("three.copy").exists(),
+            "and the batch stopped rather than carrying on past the refusal"
+        );
+
+        undo().unwrap();
+
+        assert!(
+            !dir.join("one.copy").exists(),
+            "the half that landed clears"
+        );
+        assert_eq!(
+            fs::read_to_string(&occupied).unwrap(),
+            "in the way",
+            "and the file that was in the way is not the batch's to touch"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_batch_refused_at_its_last_step_undoes_both_that_landed() {
+        let dir = scratch();
+        for name in ["one", "two", "three"] {
+            fs::write(dir.join(format!("{name}.txt")), name).unwrap();
+        }
+        fs::write(dir.join("three.copy"), "in the way").unwrap();
+        let pairs: Vec<(String, String)> = ["one", "two", "three"]
+            .iter()
+            .map(|name| {
+                (
+                    dir.join(format!("{name}.txt")).display().to_string(),
+                    dir.join(format!("{name}.copy")).display().to_string(),
+                )
+            })
+            .collect();
+
+        copy(&pairs).unwrap_err();
+        assert!(dir.join("one.copy").exists());
+        assert!(dir.join("two.copy").exists());
+
+        undo().unwrap();
+
+        assert!(!dir.join("one.copy").exists());
+        assert!(!dir.join("two.copy").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("three.copy")).unwrap(),
+            "in the way"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_batch_undoes_its_steps_newest_first_so_a_chain_comes_apart() {
+        // Two renames in a chain: `a` becomes `b`, then that `b` becomes
+        // `c`. Reversed oldest-first, the first step would look for a `b`
+        // that is now `c` and fail; reversed newest-first it unwinds.
+        let dir = scratch();
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        let c = dir.join("c.txt");
+        fs::write(&a, "content").unwrap();
+
+        rename(&[
+            (a.display().to_string(), b.display().to_string()),
+            (b.display().to_string(), c.display().to_string()),
+        ])
+        .unwrap();
+        assert_eq!(names_in(&dir), vec!["c.txt".to_owned()]);
+
+        undo().unwrap();
+
+        assert_eq!(
+            names_in(&dir),
+            vec!["a.txt".to_owned()],
+            "one undo unwinds the whole chain, oldest step last"
+        );
+        assert_eq!(fs::read_to_string(&a).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// FINDING: an undo that fails part way throws away the steps it never
+    /// took.
+    ///
+    /// `undo` takes the whole journal out of the slot with `mem::take` and
+    /// then returns on the first failing step. Everything after that point
+    /// is dropped, and a second Ctrl+Z reports "nothing to undo" - so a
+    /// three-file move that a reader partly re-made by hand becomes half
+    /// undone and permanently so.
+    #[test]
+    fn an_undo_that_fails_part_way_keeps_the_steps_it_has_not_taken() {
+        let dir = scratch();
+        let names = ["one", "two", "three"];
+        let pairs: Vec<(String, String)> = names
+            .iter()
+            .map(|name| {
+                let from = dir.join(format!("{name}.txt"));
+                fs::write(&from, *name).unwrap();
+                (
+                    from.display().to_string(),
+                    dir.join(format!("{name}.moved")).display().to_string(),
+                )
+            })
+            .collect();
+        rename(&pairs).unwrap();
+
+        // The reader puts a file back at the middle step's old name, so
+        // that step's undo is refused rather than allowed to replace it.
+        fs::write(dir.join("two.txt"), "put back by hand").unwrap();
+
+        let first = undo().unwrap_err();
+        assert_eq!(first.kind(), io::ErrorKind::AlreadyExists);
+        assert!(
+            dir.join("three.txt").exists(),
+            "the newest step was taken before the refusal"
+        );
+        assert!(
+            dir.join("one.moved").exists(),
+            "and the oldest step was never reached"
+        );
+
+        let second = undo();
+        let one_is_back = dir.join("one.txt").exists();
+        fs::remove_dir_all(&dir).unwrap();
+
+        second.expect("the step the failed undo never took is still owed to the reader");
+        assert!(one_is_back, "and taking it puts the last file back");
+    }
+
+    #[test]
+    fn undoing_a_rename_whose_file_has_since_gone_reports_it_rather_than_pretending() {
+        let dir = scratch();
+        let from = dir.join("before.txt");
+        let to = dir.join("after.txt");
+        fs::write(&from, "content").unwrap();
+        rename(&one(&from, &to)).unwrap();
+        // Removed underneath the service, the way any other program can.
+        fs::remove_file(&to).unwrap();
+
+        let err = undo().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            !from.exists(),
+            "and nothing is conjured at the old name to cover it up"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undoing_a_rename_refuses_to_replace_something_put_back_at_the_old_name() {
+        let dir = scratch();
+        let from = dir.join("before.txt");
+        let to = dir.join("after.txt");
+        fs::write(&from, "original").unwrap();
+        rename(&one(&from, &to)).unwrap();
+        fs::write(&from, "a different file the reader made").unwrap();
+
+        let err = undo().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&from).unwrap(),
+            "a different file the reader made",
+            "an undo is not a licence to destroy what has arrived since"
+        );
+        assert_eq!(fs::read_to_string(&to).unwrap(), "original");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undoing_an_edit_writes_the_old_text_back_even_where_the_file_has_gone() {
+        // Pins what `Undoable::Restore` does when the file it describes is
+        // no longer there: it recreates it. The old text is the reader's
+        // work, and the alternative is losing it to a deletion made
+        // somewhere else entirely.
+        let dir = scratch();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "before").unwrap();
+        write_file(&path, "after").unwrap();
+        fs::remove_file(&path).unwrap();
+
+        undo().unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before");
+        assert_eq!(
+            names_in(&dir),
+            vec!["notes.txt".to_owned()],
+            "and no temporary is left beside it"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_delete_that_fails_still_clears_the_journal_rather_than_undoing_something_else() {
+        // Deliberate, and the comment on `delete` says why: the service
+        // cannot pull anything back out of the recycle bin, so a stale
+        // step here would put back the wrong thing.
+        let dir = scratch();
+        let created = dir.join("kept");
+        create_directory(&created).unwrap();
+
+        let err = delete(&[dir.join("never-existed.txt").display().to_string()]).unwrap_err();
+        assert!(!err.to_string().is_empty());
+
+        let err = undo().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            created.is_dir(),
+            "and the create is left standing, not undone"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_delete_that_stops_part_way_leaves_nothing_to_undo() {
+        let dir = scratch();
+        let doomed = dir.join("doomed.txt");
+        fs::write(&doomed, "content").unwrap();
+
+        let err = delete(&[
+            doomed.display().to_string(),
+            dir.join("never-existed.txt").display().to_string(),
+        ])
+        .unwrap_err();
+
+        assert!(!err.to_string().is_empty());
+        assert!(!doomed.exists(), "the first path did go to the recycle bin");
+        assert_eq!(
+            undo().unwrap_err().kind(),
+            io::ErrorKind::NotFound,
+            "and the recycle bin is the only way back for it"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_extract_of_something_that_is_not_an_archive_leaves_the_previous_undo_step_alone() {
+        let dir = scratch();
+        let created = dir.join("kept");
+        create_directory(&created).unwrap();
+        let not_an_archive = dir.join("prose.txt");
+        fs::write(&not_an_archive, "this is not a zip file").unwrap();
+        let destination = dir.join("out");
+
+        extract(&not_an_archive, &destination).unwrap_err();
+
+        assert!(
+            !destination.exists(),
+            "a failed extract leaves no empty directory behind"
+        );
+
+        undo().unwrap();
+
+        assert!(!created.exists(), "the create before it is still undoable");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// FINDING: undoing an extract removes the whole destination folder,
+    /// including whatever was already in it.
+    ///
+    /// `extract` records `Undoable::Remove { path: destination }`, whose
+    /// documented meaning is "remove what an operation created". But
+    /// `plugin_archive::extract` calls `create_dir_all` and does not
+    /// refuse an existing destination, so extracting into a folder a
+    /// reader already had and then pressing Ctrl+Z sends that folder - all
+    /// of it - to the recycle bin. Recoverable from there, and still not
+    /// what undo promised.
+    /// Ignored, not deleted: this is the proof of #521. Fixing it needs
+    /// `plugin_archive::extract` to report the paths it wrote, so undo can
+    /// remove those and nothing else - it exposes only `extract`, which
+    /// returns `()`. Refusing an existing destination instead would be the
+    /// smaller change but the wrong one: extracting into a folder you
+    /// already have is ordinary, and merging is what every archive tool
+    /// does.
+    #[ignore = "see #521: undo of an extract removes the whole destination"]
+    #[test]
+    fn undoing_an_extract_must_not_remove_what_was_already_in_the_destination() {
+        let dir = scratch();
+        let archive_path = dir.join("test.zip");
+        write_zip(&archive_path, "inside.txt", b"payload");
+        let destination = dir.join("out");
+        fs::create_dir_all(&destination).unwrap();
+        let keepsake = destination.join("keepsake.txt");
+        fs::write(&keepsake, "the reader's own file").unwrap();
+
+        extract(&archive_path, &destination).unwrap();
+        assert!(destination.join("inside.txt").exists());
+
+        undo().unwrap();
+
+        let survived = fs::read_to_string(&keepsake);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            survived.ok().as_deref(),
+            Some("the reader's own file"),
+            "undo removes what the operation created, not what it found there"
+        );
+    }
+
+    #[test]
+    fn a_refused_write_leaves_the_previous_undo_step_alone() {
+        let dir = scratch();
+        let created = dir.join("kept");
+        create_directory(&created).unwrap();
+
+        write_file(&dir.join("never-existed.txt"), "text").unwrap_err();
+
+        undo().unwrap();
+
+        assert!(!created.exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_a_file_to_another_case_of_its_own_name_is_the_rename_it_reads_as() {
+        // The pre-filled rename prompt makes "readme.txt" -> "README.txt"
+        // an ordinary thing to type. On a case-insensitive filesystem the
+        // destination "already exists" - it is the same file - so this is
+        // exactly the case `refuse_if_occupied_by_another` is for.
+        let dir = scratch();
+        let lower = dir.join("readme.txt");
+        let upper = dir.join("README.txt");
+        fs::write(&lower, "content").unwrap();
+
+        rename(&one(&lower, &upper)).unwrap();
+
+        assert_eq!(
+            names_in(&dir),
+            vec!["README.txt".to_owned()],
+            "the capitalisation the reader typed is the name on disk"
+        );
+        assert_eq!(fs::read_to_string(&upper).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_onto_a_sibling_that_differs_only_in_case_does_not_destroy_it() {
+        let dir = scratch();
+        let keep = dir.join("keep.txt");
+        let moving = dir.join("moving.txt");
+        fs::write(&keep, "precious").unwrap();
+        fs::write(&moving, "content").unwrap();
+
+        let outcome = rename(&one(&moving, &dir.join("KEEP.txt")));
+
+        if cfg!(windows) {
+            assert_eq!(
+                outcome.unwrap_err().kind(),
+                io::ErrorKind::AlreadyExists,
+                "where the filesystem conflates the two names they are one name"
+            );
+            assert_eq!(fs::read_to_string(&keep).unwrap(), "precious");
+            assert_eq!(fs::read_to_string(&moving).unwrap(), "content");
+        } else {
+            outcome.unwrap();
+            assert_eq!(
+                fs::read_to_string(&keep).unwrap(),
+                "precious",
+                "and where it does not, they are two names and neither is touched"
+            );
+            assert_eq!(fs::read_to_string(dir.join("KEEP.txt")).unwrap(), "content");
+        }
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_onto_an_existing_directory_is_refused_rather_than_attempted() {
+        let dir = scratch();
+        let from = dir.join("note.txt");
+        let occupied = dir.join("occupied");
+        fs::write(&from, "content").unwrap();
+        fs::create_dir_all(&occupied).unwrap();
+        fs::write(occupied.join("inside.txt"), "a whole folder of work").unwrap();
+
+        let err = rename(&one(&from, &occupied)).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(occupied.join("inside.txt")).unwrap(),
+            "a whole folder of work"
+        );
+        assert_eq!(fs::read_to_string(&from).unwrap(), "content");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copying_onto_an_existing_directory_is_refused_rather_than_attempted() {
+        let dir = scratch();
+        let from = dir.join("note.txt");
+        let occupied = dir.join("occupied");
+        fs::write(&from, "content").unwrap();
+        fs::create_dir_all(&occupied).unwrap();
+
+        let err = copy(&one(&from, &occupied)).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert!(occupied.is_dir());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copying_a_file_onto_itself_is_refused_rather_than_emptying_it() {
+        // `fs::copy` with the same source and destination truncates the
+        // file to nothing on some platforms, so the refusal is the whole
+        // protection here.
+        let dir = scratch();
+        let path = dir.join("only-copy.txt");
+        fs::write(&path, "irreplaceable").unwrap();
+
+        let err = copy(&one(&path, &path)).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "irreplaceable");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_into_a_folder_that_does_not_exist_leaves_the_source_where_it_was() {
+        let dir = scratch();
+        let from = dir.join("note.txt");
+        fs::write(&from, "content").unwrap();
+
+        let err = rename(&one(&from, &dir.join("no-such-folder").join("note.txt"))).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            names_in(&dir),
+            vec!["note.txt".to_owned()],
+            "and no folder is conjured on the way"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_a_source_that_is_not_there_reports_not_found_and_creates_nothing() {
+        let dir = scratch();
+
+        let err = rename(&one(&dir.join("gone.txt"), &dir.join("wherever.txt"))).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(names_in(&dir).is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_refusal_names_the_path_that_is_in_the_way() {
+        // The front ends show this message verbatim; a reader cannot act
+        // on "already exists" without being told what does.
+        let dir = scratch();
+        let from = dir.join("note.txt");
+        let occupied = dir.join("occupied.txt");
+        fs::write(&from, "content").unwrap();
+        fs::write(&occupied, "precious").unwrap();
+
+        let message = rename(&one(&from, &occupied)).unwrap_err().to_string();
+
+        assert!(
+            message.contains("occupied.txt"),
+            "the message has to name the obstacle: {message}"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_a_folder_onto_an_occupied_name_leaves_both_folders_alone() {
+        let dir = scratch();
+        let from = dir.join("source");
+        let occupied = dir.join("occupied");
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join("mine.txt"), "mine").unwrap();
+        fs::create_dir_all(&occupied).unwrap();
+        fs::write(occupied.join("theirs.txt"), "theirs").unwrap();
+
+        let err = rename(&one(&from, &occupied)).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(from.join("mine.txt")).unwrap(), "mine");
+        assert_eq!(
+            fs::read_to_string(occupied.join("theirs.txt")).unwrap(),
+            "theirs"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Makes `link` a symbolic link to `target`, or reports that this
+    /// platform will not let an unprivileged process make one - Windows
+    /// without Developer Mode.
+    fn try_symlink_file(target: &Path, link: &Path) -> bool {
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(target, link);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(target, link);
+        made.is_ok()
+    }
+
+    #[test]
+    fn a_link_pointing_nowhere_still_occupies_the_name_it_sits_at() {
+        // `refuse_if_exists` asks `symlink_metadata` rather than
+        // `metadata` for exactly this: a link whose target has gone is
+        // still a thing at that path, and renaming onto it would destroy
+        // it without a word.
+        let dir = scratch();
+        let dangling = dir.join("dangling");
+        if !try_symlink_file(&dir.join("never-existed.txt"), &dangling) {
+            // No privilege to make one here; the rule is unproven rather
+            // than disproven.
+            fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        let from = dir.join("note.txt");
+        fs::write(&from, "content").unwrap();
+
+        let err = rename(&one(&from, &dangling)).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert!(
+            dangling.symlink_metadata().is_ok(),
+            "the link is still there"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_dangling_link_is_listed_rather_than_failing_the_whole_directory() {
+        // One unreadable entry must not cost a reader the sight of the
+        // folder it sits in.
+        let dir = scratch();
+        if !try_symlink_file(&dir.join("never-existed.txt"), &dir.join("dangling")) {
+            fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        fs::write(dir.join("readable.txt"), "content").unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        assert_eq!(
+            entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["dangling", "readable.txt"]
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_zero_byte_write_empties_the_file_and_the_old_text_still_comes_back() {
+        let dir = scratch();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "work worth keeping").unwrap();
+
+        write_file(&path, "").unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+        assert_eq!(
+            names_in(&dir),
+            vec!["notes.txt".to_owned()],
+            "an empty write is still one rename, not a leftover temporary"
+        );
+
+        undo().unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "work worth keeping",
+            "emptying a file is the most destructive edit there is, so it undoes"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_write_over_a_read_only_file_leaves_it_wholly_old_or_wholly_new_and_no_temporary() {
+        // Which of the two depends on the platform - replacing a file is a
+        // directory operation on Unix and a file operation on Windows -
+        // but the guarantee `write_atomically` exists for holds either
+        // way: never half a file, and never a `.rse-write` orphan.
+        let dir = scratch();
+        let path = dir.join("locked.txt");
+        fs::write(&path, "before").unwrap();
+        let writable = fs::metadata(&path).unwrap().permissions();
+        let mut read_only = writable.clone();
+        read_only.set_readonly(true);
+        fs::set_permissions(&path, read_only).unwrap();
+
+        let outcome = write_file(&path, "after");
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text == "before" || text == "after",
+            "never a half-written file: {text:?}"
+        );
+        assert_eq!(
+            outcome.is_ok(),
+            text == "after",
+            "and what it reported is what happened"
+        );
+        assert_eq!(
+            names_in(&dir),
+            vec!["locked.txt".to_owned()],
+            "no temporary orphaned beside it"
+        );
+
+        // Put back exactly the permissions the file had, so the scratch
+        // directory can be cleared up.
+        fs::set_permissions(&path, writable).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn write_atomically_onto_a_directory_fails_and_takes_its_temporary_with_it() {
+        let dir = scratch();
+        let occupied = dir.join("a-folder");
+        fs::create_dir_all(&occupied).unwrap();
+        fs::write(occupied.join("inside.txt"), "content").unwrap();
+
+        write_atomically(&occupied, "text").unwrap_err();
+
+        assert_eq!(
+            names_in(&dir),
+            vec!["a-folder".to_owned()],
+            "the temporary it wrote first is cleared up when the rename fails"
+        );
+        assert_eq!(
+            fs::read_to_string(occupied.join("inside.txt")).unwrap(),
+            "content"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// FINDING: a save destroys any file that happens to sit at
+    /// `<name>.rse-write`.
+    ///
+    /// `write_atomically` writes its temporary with `fs::write`, which
+    /// replaces whatever is there, and then renames it away. Every other
+    /// destination in this crate is guarded by `refuse_if_exists` for
+    /// precisely this reason - "an operation that would silently replace
+    /// it stops before touching the filesystem" - and this one is not. The
+    /// file is gone outright rather than to the recycle bin, and undo of
+    /// the edit does not bring it back.
+    #[test]
+    fn a_save_must_not_destroy_a_sibling_named_after_its_temporary_file() {
+        let dir = scratch();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "before").unwrap();
+        let sibling = dir.join("notes.txt.rse-write");
+        fs::write(&sibling, "a file the reader made and named themselves").unwrap();
+
+        write_file(&path, "after").unwrap();
+
+        let survived = fs::read_to_string(&sibling);
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            survived.ok().as_deref(),
+            Some("a file the reader made and named themselves"),
+            "a save may replace the file it was given and nothing else"
+        );
+    }
+
+    #[test]
+    fn writing_a_file_that_is_not_valid_text_is_refused_before_its_bytes_are_touched() {
+        // The old text is read first so the edit can be undone. A file
+        // that is not text has no old text to read, and going ahead would
+        // write an edit that could never be taken back.
+        let dir = scratch();
+        let path = dir.join("picture.bin");
+        let bytes: &[u8] = &[0xFF, 0xFE, 0x00, 0x01, 0x80];
+        fs::write(&path, bytes).unwrap();
+
+        write_file(&path, "text").unwrap_err();
+
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(names_in(&dir), vec!["picture.bin".to_owned()]);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn writing_to_a_path_whose_parent_does_not_exist_is_refused() {
+        let dir = scratch();
+
+        let err = write_file(&dir.join("no-such-folder").join("notes.txt"), "text").unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(names_in(&dir).is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_write_far_larger_than_a_buffer_lands_whole_and_undoes_whole() {
+        let dir = scratch();
+        let path = dir.join("big.txt");
+        let before = "old line\n".repeat(20_000);
+        let after = "new line\n".repeat(30_000);
+        fs::write(&path, &before).unwrap();
+
+        write_file(&path, &after).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), after);
+        assert_eq!(names_in(&dir), vec!["big.txt".to_owned()]);
+
+        undo().unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_empty_directory_lists_as_no_entries_rather_than_an_error() {
+        let dir = scratch();
+
+        assert!(list_directory(&dir).unwrap().is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn listing_a_path_that_is_a_file_is_an_error_not_an_empty_listing() {
+        // An empty listing would tell a reader their folder was empty.
+        let dir = scratch();
+        let file = dir.join("note.txt");
+        fs::write(&file, "content").unwrap();
+
+        assert!(list_directory(&file).is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_listing_reads_a_working_copy_out_of_its_own_files_and_never_runs_git() {
+        // D10: detect, do not drive. The marker, the branch and the remote
+        // are all file reads, which is why this fixture - a `.git`
+        // directory nobody ever ran `git init` in - is enough.
+        let dir = scratch();
+        let checkout = dir.join("widgets");
+        let git = checkout.join(".git");
+        fs::create_dir_all(&git).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(
+            git.join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/acme/widgets.git\n",
+        )
+        .unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        let entry = entries.iter().find(|e| e.name == "widgets").unwrap();
+        let found = entry
+            .repository
+            .as_ref()
+            .expect("a checkout, by its marker");
+        assert_eq!(found.branch.as_deref(), Some("main"));
+        assert_eq!(found.provider.as_deref(), Some("github.com"));
+        assert_eq!(
+            found.remote.as_deref(),
+            Some("https://github.com/acme/widgets.git")
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_ordinary_folder_is_listed_without_being_called_a_working_copy() {
+        let dir = scratch();
+        fs::create_dir_all(dir.join("just-a-folder")).unwrap();
+        fs::write(dir.join("just-a-file.txt"), "content").unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        for entry in &entries {
+            assert!(
+                entry.repository.is_none(),
+                "{} is no kind of checkout",
+                entry.name
+            );
+        }
+        assert_eq!(entries.len(), 2, "and both are still listed either way");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file name that is not valid Unicode, made the way this platform
+    /// allows one.
+    #[cfg(windows)]
+    fn invalid_unicode_name() -> std::ffi::OsString {
+        use std::os::windows::ffi::OsStringExt as _;
+        // An unpaired surrogate: legal in a Windows file name, and not
+        // representable in UTF-8.
+        std::ffi::OsString::from_wide(&[u16::from(b'r'), 0xD800, u16::from(b's')])
+    }
+
+    /// A file name that is not valid Unicode, made the way this platform
+    /// allows one.
+    #[cfg(unix)]
+    fn invalid_unicode_name() -> std::ffi::OsString {
+        use std::os::unix::ffi::OsStrExt as _;
+        std::ffi::OsStr::from_bytes(b"r\xffs").to_owned()
+    }
+
+    #[test]
+    fn a_name_that_is_not_valid_unicode_is_listed_but_cannot_be_acted_on() {
+        // The wire carries names as `String`, so this one is lossy by the
+        // time a front end sees it. The listing is honest about the file
+        // being there; the name it hands back no longer reaches it, which
+        // is the cost of the protocol and is pinned here so a change to it
+        // is a deliberate one.
+        let dir = scratch();
+        let name = invalid_unicode_name();
+        if fs::write(dir.join(&name), "content").is_err() {
+            fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+
+        let entries = list_directory(&dir).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].name.contains('\u{FFFD}'),
+            "the lossy name is what crosses the wire: {:?}",
+            entries[0].name
+        );
+        assert!(
+            !dir.join(&entries[0].name).exists(),
+            "and it names nothing, so a rename of it would fail rather than \
+             land on some other file"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_name_far_longer_than_any_filesystem_allows_is_an_error_not_a_panic() {
+        let dir = scratch();
+        let absurd = dir.join("n".repeat(400));
+
+        assert!(create_file(&absurd).is_err());
+        assert!(create_directory(&absurd).is_err());
+        assert!(list_directory(&absurd).is_err());
+        assert!(view_file(&absurd).is_err());
+        assert!(names_in(&dir).is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn viewing_a_file_that_is_not_there_is_an_error_rather_than_an_empty_view() {
+        let dir = scratch();
+
+        let err = view_file(&dir.join("gone.txt")).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_empty_file_is_viewed_without_any_plugin_reading_past_its_end() {
+        // Nothing to sniff is the smallest hostile input there is, and
+        // every one of the registered plugins is offered it.
+        let dir = scratch();
+        let path = dir.join("empty.txt");
+        fs::write(&path, b"").unwrap();
+
+        let response = view_file(&path).unwrap();
+
+        match response {
+            Response::FileView { data, .. } => {
+                assert_eq!(data["content"], "", "an empty file's text is empty");
+            }
+            Response::Error { message } => {
+                assert!(message.contains("empty.txt"), "{message}");
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_view_that_already_carries_its_own_text_keeps_it_untouched() {
+        let dir = scratch();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "what is on disk").unwrap();
+
+        let data = with_source_text(
+            &path,
+            serde_json::json!({ "content": "what the plugin kept" }),
+        );
+
+        assert_eq!(data["content"], "what the plugin kept");
+        assert!(
+            data.get("truncated").is_none(),
+            "and nothing else is put in beside it"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_view_that_is_not_an_object_is_handed_back_as_it_came() {
+        let dir = scratch();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "text").unwrap();
+
+        assert_eq!(
+            with_source_text(&path, serde_json::json!([1, 2, 3])),
+            serde_json::json!([1, 2, 3])
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_text_file_under_the_ceiling_gains_its_text_and_is_marked_whole() {
+        let dir = scratch();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "line one\nline two\n").unwrap();
+
+        let data = with_source_text(&path, serde_json::json!({ "lines": 2 }));
+
+        assert_eq!(data["content"], "line one\nline two\n");
+        assert_eq!(
+            data["truncated"], false,
+            "so the front end knows it may offer the editor"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_text_file_past_the_ceiling_carries_no_text_so_no_editor_is_offered() {
+        // An editor that could only save back part of a file is how a
+        // reader loses the rest of it.
+        let dir = scratch();
+        let path = dir.join("huge.txt");
+        let oversized = "x".repeat(usize::try_from(MAX_SOURCE_BYTES).unwrap() + 1);
+        fs::write(&path, &oversized).unwrap();
+
+        let data = with_source_text(&path, serde_json::json!({ "lines": 1 }));
+
+        assert!(data.get("content").is_none());
+        assert!(data.get("truncated").is_none());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_is_not_valid_text_carries_no_text() {
+        let dir = scratch();
+        let path = dir.join("picture.bin");
+        fs::write(&path, [0xFFu8, 0xFE, 0x00, 0x80]).unwrap();
+
+        let data = with_source_text(&path, serde_json::json!({ "pixels": 1 }));
+
+        assert!(
+            data.get("content").is_none(),
+            "half-decoded bytes are not this file's text"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_has_gone_between_the_view_and_the_text_carries_no_text() {
+        let dir = scratch();
+
+        let data = with_source_text(&dir.join("gone.txt"), serde_json::json!({ "lines": 0 }));
+
+        assert!(data.get("content").is_none(), "and no panic on the way");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn most_specific_of_no_matches_is_no_matches() {
+        assert!(most_specific(&[]).is_empty());
+    }
+
+    /// Two plugins that each claim to refine the other - a registry
+    /// mistake, not a shape the design intends.
+    struct EachWay;
+    /// The other half of the pair.
+    struct OtherWay;
+    stub!(EachWay, "each-way", &[], &["other-way"]);
+    stub!(OtherWay, "other-way", &[], &["each-way"]);
+
+    #[test]
+    fn two_plugins_that_each_refine_the_other_do_not_cancel_each_other_out() {
+        // A cycle in `specialises` must not leave a file with no plugin at
+        // all: the reader would see "no plugin recognises" for a file two
+        // plugins recognised.
+        let kept = most_specific(&[&EachWay, &OtherWay]);
+
+        assert_eq!(
+            kept.len(),
+            2,
+            "neither is dropped, so priority order settles it"
+        );
+
+        let chosen = sniff_among(&[&EachWay, &OtherWay], Path::new("a.txt"), b"anything");
+        assert_eq!(chosen.map(PluginCore::name), Some("each-way"));
+    }
+
+    #[test]
+    fn a_plugin_refining_one_that_did_not_match_is_not_treated_as_more_specific() {
+        // `Special` refines `general`, which is not among the matches
+        // here, so it has refined nothing and must not displace the
+        // extension's owner.
+        let chosen = sniff_among(&[&Sibling, &Special], Path::new("a.gen"), b"anything");
+
+        assert_eq!(
+            chosen.map(PluginCore::name),
+            Some("sibling"),
+            "priority order, because neither claims `gen` and neither refines the other"
+        );
+    }
+
+    #[test]
+    fn an_uppercase_extension_still_settles_a_tie() {
+        // Windows hands back `README.GEN` as readily as `readme.gen`, and
+        // the hint is documented as lowercase.
+        let chosen = sniff_among(&[&Sibling, &General], Path::new("A.GEN"), b"anything");
+
+        assert_eq!(chosen.map(PluginCore::name), Some("general"));
+    }
+
+    #[test]
+    fn a_file_with_no_extension_at_all_falls_back_to_priority_order() {
+        let chosen = sniff_among(&[&Sibling, &General], Path::new("Makefile"), b"anything");
+
+        assert_eq!(chosen.map(PluginCore::name), Some("sibling"));
+    }
+
+    #[test]
+    fn a_file_no_plugin_recognises_is_claimed_by_none_of_them() {
+        let dir = scratch();
+        let path = dir.join("sample.bin");
+        fs::write(&path, b"anything").unwrap();
+
+        assert!(
+            sniff_among(&[], &path, b"anything").is_none(),
+            "an empty registry claims nothing, rather than picking arbitrarily"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// How many times the counting folder plugin has been asked to sniff.
+    static FOLDER_SNIFFS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// A folder plugin that records having been asked.
+    struct Counting;
+
+    impl FolderCore for Counting {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+        fn sniff(&self, _entries: &[&str]) -> bool {
+            FOLDER_SNIFFS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            true
+        }
+        fn view(&self, _path: &Path) -> io::Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    #[test]
+    fn a_folder_plugin_is_asked_even_after_an_earlier_one_has_matched() {
+        // D12 again, from the other side: short-circuiting on the first
+        // match would cost the folder every description after it.
+        let plugins: &[&'static dyn FolderCore] = &[&AlwaysOne, &Counting];
+        FOLDER_SNIFFS.store(0, std::sync::atomic::Ordering::Relaxed);
+
+        let found = folder_plugins_among(plugins, &["Cargo.toml"]);
+
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            FOLDER_SNIFFS.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the plugin behind a match is still asked"
+        );
+    }
+
+    #[test]
+    fn a_folder_plugin_that_cannot_read_its_manifest_costs_only_its_own_lines() {
+        let dir = scratch();
+        fs::write(dir.join("Cargo.toml"), "this is not TOML at all {{{").unwrap();
+        fs::write(dir.join("notes.txt"), "content").unwrap();
+
+        let response = view_file(&dir).unwrap();
+
+        let Response::FileView { plugin, data, also } = response else {
+            panic!("a folder should view as a file view");
+        };
+        assert_eq!(plugin, "directory", "the folder is still a folder");
+        assert_eq!(data["entry_count"], 2, "and still says what is inside it");
+        assert!(
+            also.is_empty(),
+            "the project line is what is lost, and only that: {also:?}"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_is_a_project_is_described_as_both_at_once() {
+        let dir = scratch();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"widgets\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+
+        let Response::FileView { plugin, also, .. } = view_file(&dir).unwrap() else {
+            panic!("a folder should view as a file view");
+        };
+
+        assert_eq!(plugin, "directory");
+        assert!(
+            also.iter().any(|view| view.plugin == "project-cargo"),
+            "the project description is added, never substituted: {:?}",
+            also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_panic_carrying_no_string_still_names_the_plugin_and_the_file() {
+        let dir = scratch();
+        let path = dir.join("trips-a-parser.bin");
+        fs::write(&path, b"anything").unwrap();
+
+        let outcome: Result<(), io::Error> = guarded("odd", &path, || std::panic::panic_any(7_u32));
+
+        let message = outcome.unwrap_err().to_string();
+        assert!(message.contains("odd"), "{message}");
+        assert!(message.contains("trips-a-parser.bin"), "{message}");
+        assert!(
+            message.contains("no message"),
+            "a payload nothing can read still has to be reported: {message}"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_empty_path_is_an_error_for_every_request_that_takes_one() {
+        let hostile = [
+            Request::ListDirectory {
+                path: String::new(),
+            },
+            Request::ViewFile {
+                path: String::new(),
+            },
+            Request::Open {
+                path: String::new(),
+            },
+            Request::CreateDirectory {
+                path: String::new(),
+            },
+            Request::CreateFile {
+                path: String::new(),
+            },
+            Request::WriteFile {
+                path: String::new(),
+                content: "text".to_owned(),
+            },
+            Request::Rename {
+                items: vec![(String::new(), String::new())],
+            },
+            Request::Copy {
+                items: vec![(String::new(), String::new())],
+            },
+            Request::Delete {
+                paths: vec![String::new()],
+            },
+            Request::Extract {
+                archive: String::new(),
+                destination: String::new(),
+            },
+            Request::SetReposRoot {
+                path: String::new(),
+            },
+        ];
+
+        for request in hostile {
+            assert!(
+                matches!(handle_request(&request), Response::Error { .. }),
+                "an empty path is not a path: {request:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_of_separators_alone_never_becomes_an_operation_on_the_filesystem_root() {
+        for path in ["/", "\\", "//", "\\\\", "///"] {
+            for request in [
+                Request::CreateDirectory {
+                    path: path.to_owned(),
+                },
+                Request::CreateFile {
+                    path: path.to_owned(),
+                },
+                Request::WriteFile {
+                    path: path.to_owned(),
+                    content: "text".to_owned(),
+                },
+            ] {
+                assert!(
+                    matches!(handle_request(&request), Response::Error { .. }),
+                    "the root of a volume is nothing to create or overwrite: {request:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_relative_path_is_taken_as_written_rather_than_rejected() {
+        // The soft boundary of D8: the service resolves what it is given
+        // against its own working directory and does not police it.
+        let Response::Directory { entries } = handle_request(&Request::ListDirectory {
+            path: ".".to_owned(),
+        }) else {
+            panic!("a relative path names a real directory");
+        };
+
+        assert!(
+            entries.iter().any(|entry| entry.name == "Cargo.toml"),
+            "`.` is this crate while its tests run: {:?}",
+            entries.iter().map(|entry| &entry.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_parent_traversal_out_of_a_folder_and_back_names_the_same_folder() {
+        // D8 makes the Repos Directory boundary soft - one configuration
+        // point, not a rule spread through the navigation code - so `..`
+        // is resolved rather than refused. Pinned so that stops being an
+        // accident of `Path` and becomes a decision.
+        let dir = scratch();
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        let direct = dir.join("marker.txt");
+        fs::write(&direct, "the same file either way").unwrap();
+        let roundabout = dir.join("sub").join("..").join("marker.txt");
+
+        let Response::FileView { data, .. } = handle_request(&Request::ViewFile {
+            path: roundabout.to_string_lossy().into_owned(),
+        }) else {
+            panic!("the traversal should reach the file");
+        };
+
+        assert_eq!(data["content"], "the same file either way");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn opening_a_path_that_is_not_there_is_an_error() {
+        let dir = scratch();
+
+        assert!(matches!(
+            handle_request(&Request::Open {
+                path: dir.join("gone.txt").to_string_lossy().into_owned(),
+            }),
+            Response::Error { .. }
+        ));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_undo_request_with_nothing_to_undo_answers_with_an_error_not_a_done() {
+        // A `Done` here would tell a reader their last operation had been
+        // reversed when nothing had happened.
+        assert!(matches!(
+            handle_request(&Request::Undo),
+            Response::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn asking_for_the_repos_roots_always_offers_somewhere_to_open_at() {
+        // A first run has no stored roots, and the front ends still have
+        // to open somewhere (D7).
+        let Response::ReposRoots { default, .. } = handle_request(&Request::ReposRoots) else {
+            panic!("the roots request has exactly one kind of answer");
+        };
+
+        assert!(!default.is_empty());
+    }
+
+    #[test]
+    fn setting_a_repos_root_that_is_not_a_directory_is_refused_and_stores_nothing() {
+        let dir = scratch();
+        let file = dir.join("not-a-workspace.txt");
+        fs::write(&file, "a file, not a folder").unwrap();
+        let before = repos::roots();
+
+        let response = handle_request(&Request::SetReposRoot {
+            path: file.to_string_lossy().into_owned(),
+        });
+
+        assert!(matches!(response, Response::Error { .. }));
+        assert_eq!(
+            repos::roots(),
+            before,
+            "a refused request does not rewrite the machine's settings"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn extracting_something_that_is_not_an_archive_leaves_no_destination_behind() {
+        let dir = scratch();
+        let prose = dir.join("prose.txt");
+        fs::write(&prose, "this is not a zip file").unwrap();
+        let destination = dir.join("out");
+
+        let response = handle_request(&Request::Extract {
+            archive: prose.to_string_lossy().into_owned(),
+            destination: destination.to_string_lossy().into_owned(),
+        });
+
+        assert!(matches!(response, Response::Error { .. }));
+        assert!(
+            !destination.exists(),
+            "an empty folder left behind is a folder the reader has to clear up"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_a_file_into_a_subfolder_is_a_move_and_undoes_as_one() {
+        let dir = scratch();
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let from = dir.join("note.txt");
+        let to = sub.join("note.txt");
+        fs::write(&from, "content").unwrap();
+
+        rename(&one(&from, &to)).unwrap();
+        assert_eq!(fs::read_to_string(&to).unwrap(), "content");
+        assert!(!from.exists());
+
+        undo().unwrap();
+
+        assert_eq!(fs::read_to_string(&from).unwrap(), "content");
+        assert!(names_in(&sub).is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
