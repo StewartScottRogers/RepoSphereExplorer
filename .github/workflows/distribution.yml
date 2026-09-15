@@ -238,11 +238,12 @@ jobs:
         run: |
           $scratch = Join-Path $env:RUNNER_TEMP 'scratch'
           if (Get-Process service -ErrorAction SilentlyContinue) { Write-Output "::error title=GUI (Windows)::a service was already running"; exit 1 }
-          $gui = Start-Process -FilePath (Join-Path $env:PREFIX 'RepoSphereExplorerGui.exe') -ArgumentList "`"$scratch`"" -PassThru
+          $guiLog = Join-Path $env:RUNNER_TEMP 'gui.log'
+          $gui = Start-Process -FilePath (Join-Path $env:PREFIX 'RepoSphereExplorerGui.exe') -ArgumentList "`"$scratch`"" -PassThru -RedirectStandardError $guiLog
           $null = $gui.Handle
           Start-Sleep -Seconds 10
           $gui.Refresh()
-          if ($gui.HasExited) { Write-Output "::error title=GUI (Windows)::exited after starting, code $($gui.ExitCode)"; exit 1 }
+          if ($gui.HasExited) { Get-Content $guiLog -ErrorAction SilentlyContinue; Write-Output "::error title=GUI (Windows)::exited after starting, code $($gui.ExitCode)"; exit 1 }
           Write-Output "window: '$($gui.MainWindowTitle)' handle $($gui.MainWindowHandle)"
           if ($gui.MainWindowHandle -eq 0) { Write-Output "::error title=GUI (Windows)::no window"; exit 1 }
           $service = Get-Process service -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $env:PREFIX 'service.exe') }
