@@ -15,10 +15,10 @@ ar = "0.9"
 tar = "0.4"
 flate2 = "1"
 lzma-rs = "0.3"
-rpm = { version = "0.27", default-features = false }
+rpm = { version = "0.28", default-features = false }
 
 [dev-dependencies]
-rpm = { version = "0.27", default-features = false, features = [
+rpm = { version = "0.28", default-features = false, features = [
     "payload",
     "gzip-compression",
 ] }
