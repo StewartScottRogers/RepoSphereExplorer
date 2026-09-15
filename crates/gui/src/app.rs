@@ -1232,7 +1232,12 @@ impl App {
                 self.load_file_view();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
-            Ok(Response::FileView { .. } | Response::Done | Response::ReposRoots { .. }) => {
+            Ok(
+                Response::FileView { .. }
+                | Response::Done
+                | Response::ReposRoots { .. }
+                | Response::Names { .. },
+            ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
             Err(err) => self.status = Some(err.to_string()),
@@ -3064,7 +3069,12 @@ impl App {
                 lines.join("\n")
             }
             Some(Response::Error { message }) => message.clone(),
-            Some(Response::Directory { .. } | Response::Done | Response::ReposRoots { .. })
+            Some(
+                Response::Directory { .. }
+                | Response::Done
+                | Response::ReposRoots { .. }
+                | Response::Names { .. },
+            )
             | None => String::new(),
         }
     }

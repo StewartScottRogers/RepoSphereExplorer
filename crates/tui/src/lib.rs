@@ -294,6 +294,19 @@ pub(crate) fn render_with_block(
             );
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
+        // The terminal front end does not search yet; a reply that somehow
+        // arrives is shown as the paths it names.
+        Response::Names { matches, .. } => {
+            let text = matches
+                .iter()
+                .map(|found| found.path.as_str())
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                );
+            frame.render_widget(Paragraph::new(text).block(block), area);
+        }
     }
 }
 
