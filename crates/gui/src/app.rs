@@ -2570,6 +2570,48 @@ impl App {
             .is_some_and(|entry| entry.is_dir)
     }
 
+    /// Where the selected repository's web page is hosted - the provider
+    /// the listing already shows - or `None` when there is nothing to open:
+    /// a plain folder, a file, or a checkout with no remote a browser could
+    /// reach.
+    #[must_use]
+    pub fn web_provider(&self) -> Option<String> {
+        self.selected_web_page().map(|(provider, _)| provider)
+    }
+
+    /// Opens the selected repository's web page, at its branch, by handing
+    /// the address to `launch`.
+    ///
+    /// The launcher is passed in rather than called here, so this can be
+    /// tested without a browser opening; the window's wiring passes the
+    /// platform's.
+    pub fn open_on_the_web(&mut self, launch: impl FnOnce(&str) -> io::Result<()>) {
+        let Some((_, address)) = self.selected_web_page() else {
+            return;
+        };
+        self.status = Some(match launch(&address) {
+            Ok(()) => format!("opened {address}"),
+            Err(err) => format!("could not open a browser: {err}"),
+        });
+    }
+
+    fn selected_web_page(&self) -> Option<(String, String)> {
+        let repository = self
+            .contents
+            .get(self.content_selected)?
+            .repository
+            .as_ref()?;
+        let address = plugin_directory::repository::web_address(
+            repository.remote.as_deref()?,
+            repository.branch.as_deref(),
+        )?;
+        let provider = repository
+            .provider
+            .clone()
+            .unwrap_or_else(|| "the web".to_owned());
+        Some((provider, address))
+    }
+
     /// Whether a command that acts on the Contents pane may run.
     ///
     /// Two things forbid it, and both were enforced only in the markup's
@@ -5972,6 +6014,82 @@ third",
         assert!(
             app.status_text().contains("doomed.txtabc_"),
             "only the characters should arrive: {:?}",
+            app.status_text()
+        );
+    }
+
+    // ---- Open on the web (#534) ----------------------------------------
+
+    /// An application whose one row is a GitHub checkout on `branch`.
+    fn app_with_a_checkout(branch: Option<&str>, remote: Option<&str>) -> App {
+        let mut app = App::new(std::env::temp_dir().join("rse-notional-open-web"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "name".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(RepositoryInfo {
+                        provider: remote.map(|_| "github.com".to_owned()),
+                        branch: branch.map(str::to_owned),
+                        remote: remote.map(str::to_owned),
+                    }),
+                }],
+            }),
+        );
+        app.select_content(0);
+        app
+    }
+
+    #[test]
+    fn opening_a_repository_on_the_web_hands_the_launcher_its_page_at_the_branch() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        let mut launched = Vec::new();
+
+        app.open_on_the_web(|address| {
+            launched.push(address.to_owned());
+            Ok(())
+        });
+
+        assert_eq!(launched, vec!["https://github.com/owner/name/tree/main"]);
+        assert_eq!(
+            app.web_provider().as_deref(),
+            Some("github.com"),
+            "and the menus are told where it goes"
+        );
+        assert!(
+            app.status_text()
+                .contains("opened https://github.com/owner/name")
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_no_remote_has_nothing_to_open() {
+        let mut app = app_with_a_checkout(Some("main"), None);
+        let mut launched = false;
+
+        app.open_on_the_web(|_| {
+            launched = true;
+            Ok(())
+        });
+
+        assert!(!launched);
+        assert_eq!(app.web_provider(), None, "so the menus draw it refused");
+    }
+
+    /// A browser that will not start is said out loud, not swallowed.
+    #[test]
+    fn a_browser_that_will_not_start_is_reported() {
+        let mut app = app_with_a_checkout(Some("main"), Some("https://github.com/owner/name"));
+
+        app.open_on_the_web(|_| Err(std::io::Error::other("no browser here")));
+
+        assert!(
+            app.status_text()
+                .contains("could not open a browser: no browser here"),
+            "{}",
             app.status_text()
         );
     }

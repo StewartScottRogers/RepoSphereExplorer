@@ -768,6 +768,9 @@ fn the_row_menu_offers_what_a_row_can_do() {
         open_labels(&ui),
         vec![
             "Open".to_owned(),
+            // Where the repository's page is hosted; refused on a row that
+            // has none, which is why this one reads "on the web" (#534).
+            "Open on the web".to_owned(),
             "Rename".to_owned(),
             // Two Copies, because there were always two things called
             // that. "Copy" is the clipboard, which is what the Ctrl+C
@@ -1063,4 +1066,131 @@ fn file_delete_does_not_arm_a_question_the_editor_cannot_answer() {
          that would answer it went into the file instead: {:?}",
         app.borrow().edit_text()
     );
+}
+
+// ---- Open on the web (#534) ---------------------------------------------
+
+/// A folder the directory plugin reads as a GitHub checkout: `HEAD` and a
+/// `config` naming a remote, which is all it looks at. No `git` runs (rule
+/// 8), and nothing here is a real repository anybody works in.
+fn checkout(dir: &Path, name: &str) {
+    let git = dir.join(name).join(".git");
+    std::fs::create_dir_all(&git).expect("a checkout's git directory");
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+    std::fs::write(
+        git.join("config"),
+        "[remote \"origin\"]\n\turl = git@github.com:owner/name.git\n",
+    )
+    .expect("config");
+}
+
+/// The row menu names where a repository's page is before the reader
+/// clicks, and offers it enabled. Not clicked: that would open a browser on
+/// the machine running the tests, and `App::open_on_the_web`'s own tests
+/// prove what the click does with a launcher of their own.
+#[test]
+fn the_row_menu_offers_a_repository_on_the_host_it_came_from() {
+    let _serial = serially();
+    let dir = scratch("open-web-row-menu");
+    checkout(&dir, "name");
+    let (ui, app) = window_at(&dir);
+    click_row(&ui, row_of(&ui, "name"));
+    pump(&ui, &app);
+
+    right_click_row(&ui, row_of(&ui, "name"));
+
+    assert_eq!(
+        item(&ui, "Open on github.com").accessible_enabled(),
+        Some(true),
+        "a GitHub checkout should be offered on github.com"
+    );
+}
+
+/// Where there is nothing to open, both routes are drawn refused and a
+/// press on them does nothing.
+#[test]
+fn open_on_the_web_is_refused_where_there_is_no_web_page() {
+    let _serial = serially();
+    let dir = scratch("open-web-refused");
+    std::fs::create_dir_all(dir.join("plain")).expect("a plain folder");
+    let (ui, app) = window_at(&dir);
+    click_row(&ui, row_of(&ui, "plain"));
+    pump(&ui, &app);
+    let status = ui.get_status_text().to_string();
+
+    right_click_row(&ui, row_of(&ui, "plain"));
+    let row_item = item(&ui, "Open on the web");
+    assert_eq!(row_item.accessible_enabled(), Some(false));
+    row_item.mock_single_click(PointerEventButton::Left);
+    pump(&ui, &app);
+    assert_eq!(
+        ui.get_status_text().to_string(),
+        status,
+        "a refused Open on the web in the row menu opens nothing and says nothing"
+    );
+
+    // A refused item keeps its menu open.
+    close_context_menu(&ui, &app);
+    click_row(&ui, row_of(&ui, "plain"));
+    pump(&ui, &app);
+    let status = ui.get_status_text().to_string();
+
+    open_menu(&ui, "File");
+    let menu_item = item(&ui, "Open on the web");
+    assert_eq!(menu_item.accessible_enabled(), Some(false));
+    menu_item.mock_single_click(PointerEventButton::Left);
+    pump(&ui, &app);
+    assert_eq!(
+        ui.get_status_text().to_string(),
+        status,
+        "and the same from the File menu"
+    );
+}
+
+/// Closes an open context menu the way a reader does: a press on the pane.
+///
+/// Well below the menu, which opens where the right-click landed - a press
+/// on the row that was right-clicked lands on the menu itself and is
+/// swallowed there.
+fn close_context_menu(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    click_row(ui, 14.0);
+    pump(ui, app);
+}
+
+/// Every item in a menu sits inside the menu's box.
+///
+/// The boxes were sized by hand, as an item count times the item height,
+/// and the counts drifted: the row menu held six items in a box for five,
+/// so Extract hung below its border. They now take their height from their
+/// items, and this measures that it holds for the two menus that grew.
+#[test]
+fn every_menu_item_sits_inside_its_menus_box() {
+    let _serial = serially();
+    let dir = scratch("menu-boxes");
+    file(&dir, "notes.txt", "x\n");
+    let (ui, app) = window_at(&dir);
+    click_row(&ui, row_of(&ui, "notes.txt"));
+    pump(&ui, &app);
+
+    let assert_contained = |ui: &MainWindow, layout_id: &str| {
+        let layout = ElementHandle::find_by_element_id(ui, layout_id)
+            .next()
+            .unwrap_or_else(|| panic!("{layout_id} is drawn while its menu is open"));
+        let bottom = layout.absolute_position().y + layout.size().height;
+        for entry in open_items(ui) {
+            let entry_bottom = entry.absolute_position().y + entry.size().height;
+            assert!(
+                entry_bottom <= bottom + 0.5,
+                "{:?} ends at {entry_bottom} but its menu ends at {bottom}",
+                entry.accessible_label()
+            );
+        }
+    };
+
+    right_click_row(&ui, row_of(&ui, "notes.txt"));
+    assert_contained(&ui, "ContentsPane::row-menu-items");
+    close_context_menu(&ui, &app);
+
+    open_menu(&ui, "File");
+    assert_contained(&ui, "MainWindow::file-menu-items");
 }

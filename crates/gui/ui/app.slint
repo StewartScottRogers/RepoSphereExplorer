@@ -551,10 +551,14 @@ component ContentsPane inherits Rectangle {
     callback row-double-clicked(int);
     callback open-requested();
     callback rename-requested();
+    in property <bool> can-open;
+    // Where the selected repository's web page is hosted, or empty when it
+    // has none to open: a plain folder, a file, a checkout with no remote.
+    in property <string> web-provider;
+    callback open-web-requested();
     // Duplicating a file under a new name, which is what the "Copy to..."
     // item does. Distinct from the clipboard's Copy, which is what the
     // Ctrl+C beside that item means.
-    in property <bool> can-open;
     callback copy-requested();
     callback clipboard-copy-requested();
     callback delete-requested();
@@ -853,6 +857,12 @@ component ContentsPane inherits Rectangle {
                         }
                     }
 
+                    // Each menu box takes its height from the items in it. They
+                    // were sized by hand, as a count times the item height, and
+                    // the counts drifted: the row menu held six items in a box
+                    // for five, so Extract hung below its border, and the View
+                    // menu drew two empty rows under its last item.
+                    //
                     // The context menus are ordinary elements rather than
                     // `PopupWindow`s: a popup cannot be positioned from its
                     // enclosing component, has to be sized by hand or it is laid
@@ -863,11 +873,11 @@ component ContentsPane inherits Rectangle {
                         x: menu-x;
                         y: menu-y;
                         width: menu-width;
-                        height: 2 * menu-item-height;
+                        height: empty-menu-items.preferred-height;
                         background: Theme.panel;
                         border-width: 1px;
                         border-color: Theme.border;
-                        VerticalLayout {
+                        empty-menu-items := VerticalLayout {
                             ContextMenuItem {
                                 label: "New Folder";
                                 item-height: menu-item-height;
@@ -885,16 +895,24 @@ component ContentsPane inherits Rectangle {
                         x: menu-x;
                         y: menu-y;
                         width: menu-width;
-                        height: 5 * menu-item-height;
+                        height: row-menu-items.preferred-height;
                         background: Theme.panel;
                         border-width: 1px;
                         border-color: Theme.border;
-                        VerticalLayout {
+                        row-menu-items := VerticalLayout {
                             ContextMenuItem {
                                 label: "Open";
                                 item-enabled: can-open;
                                 item-height: menu-item-height;
                                 activated => { open-context = -1; open-requested(); }
+                            }
+                            ContextMenuItem {
+                                // Named for where it goes, so the reader knows
+                                // before they click.
+                                label: web-provider == "" ? "Open on the web" : "Open on " + web-provider;
+                                item-enabled: web-provider != "";
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; open-web-requested(); }
                             }
                             ContextMenuItem {
                                 label: "Rename";
@@ -1293,6 +1311,8 @@ export component MainWindow inherits Window {
     in property <[[ColouredRun]]> file-lines;
     in property <bool> can-edit;
     in property <bool> can-open;
+    in property <string> web-provider;
+    callback open-web-requested();
     in-out property <string> edit-text;
     // The coloured surface's half of the editor. `editing-in-colour` is
     // false for a file it cannot serve - see `editor::code_editor_suits`
@@ -1736,6 +1756,8 @@ export component MainWindow inherits Window {
                     open-requested => { content-open-requested(); }
                     rename-requested => { content-rename-requested(); }
                     can-open: can-open;
+                    web-provider: web-provider;
+                    open-web-requested => { open-web-requested(); }
                     copy-requested => { content-copy-requested(); }
                     clipboard-copy-requested => { clipboard-copy-requested(); }
                     delete-requested => { content-delete-requested(); }
@@ -1994,11 +2016,11 @@ export component MainWindow inherits Window {
             x: 4px;
             y: 24px;
             width: 210px;
-            height: 9 * menu-item-h;
+            height: file-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
-            VerticalLayout {
+            file-menu-items := VerticalLayout {
                 ContextMenuItem {
                     label: "New Folder";
                     shortcut: "Ctrl+Shift+N";
@@ -2019,6 +2041,12 @@ export component MainWindow inherits Window {
                     item-enabled: can-open;
                     item-height: menu-item-h;
                     activated => { open-menu = -1; content-open-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Open on the web";
+                    item-enabled: web-provider != "";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; open-web-requested(); }
                 }
                 ContextMenuItem {
                     label: "Edit";
@@ -2065,11 +2093,11 @@ export component MainWindow inherits Window {
             x: 44px;
             y: 24px;
             width: 200px;
-            height: 5 * menu-item-h;
+            height: edit-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
-            VerticalLayout {
+            edit-menu-items := VerticalLayout {
                 ContextMenuItem {
                     label: "Undo";
                     shortcut: "Ctrl+Z";
@@ -2110,11 +2138,11 @@ export component MainWindow inherits Window {
             x: 88px;
             y: 24px;
             width: 210px;
-            height: 8 * menu-item-h;
+            height: view-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
-            VerticalLayout {
+            view-menu-items := VerticalLayout {
                 ContextMenuItem {
                     label: "Refresh";
                     shortcut: "F5";
@@ -2154,11 +2182,11 @@ export component MainWindow inherits Window {
             x: 136px;
             y: 24px;
             width: 200px;
-            height: 1 * menu-item-h;
+            height: help-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;
             border-color: Theme.border;
-            VerticalLayout {
+            help-menu-items := VerticalLayout {
                 ContextMenuItem {
                     label: "About RepoSphereExplorer";
                     item-height: menu-item-h;

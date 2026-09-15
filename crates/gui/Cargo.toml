@@ -132,6 +132,9 @@ plugin-vbnet = { path = "../plugins/vbnet" }
 plugin-csv = { path = "../plugins/csv" }
 plugin-dart = { path = "../plugins/dart" }
 plugin-directory = { path = "../plugins/directory" }
+# Handing a repository's web address to the platform's browser (#534): a
+# hand-built `cmd /C start` breaks on the `&` an address can carry.
+open = "5"
 plugin-project-cargo = { path = "../plugins/project-cargo" }
 plugin-disk-image = { path = "../plugins/disk-image" }
 plugin-dockerfile = { path = "../plugins/dockerfile" }

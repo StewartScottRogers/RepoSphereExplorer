@@ -224,6 +224,125 @@ fn provider_of(remote: &str) -> Option<String> {
     None
 }
 
+/// The web page for a repository, at `branch` when there is one.
+///
+/// Built from the remote the checkout already records, in either shape it
+/// is written - `https://github.com/owner/name.git` or the secure shell
+/// short form `git@github.com:owner/name.git` - and never by asking the
+/// remote anything.
+///
+/// Three rules that are not negotiable, because the result is handed to a
+/// browser:
+///
+/// - **Only `https` addresses are produced.** A remote written with any
+///   other scheme - `file://`, a local path, something unrecognised - has
+///   no web page this can vouch for, and gets `None`.
+/// - **Credentials never travel.** `https://user:token@host/...` opens as
+///   `https://host/...`.
+/// - **The branch is percent-encoded**, since branch names carry `#`, `?`
+///   and spaces that would otherwise end or reshape the address.
+///
+/// Each host wants its branch in its own place: GitHub `/tree/<branch>`,
+/// GitLab `/-/tree/<branch>`, Bitbucket `/src/<branch>`, Azure DevOps
+/// `?version=GB<branch>`. Any other host gets the repository's page.
+#[must_use]
+pub fn web_address(remote: &str, branch: Option<&str>) -> Option<String> {
+    let (host, port, path) = web_parts(remote.trim())?;
+    let path = path.trim_matches('/');
+    let path = path
+        .strip_suffix(".git")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+
+    // Azure DevOps writes its secure shell remotes on a different host and
+    // with a different path from its web pages.
+    let (host, path) = if host == "ssh.dev.azure.com" {
+        let rest = path.strip_prefix("v3/")?;
+        let mut parts = rest.splitn(3, '/');
+        let (organisation, project, repository) = (parts.next()?, parts.next()?, parts.next()?);
+        (
+            "dev.azure.com".to_owned(),
+            format!("{organisation}/{project}/_git/{repository}"),
+        )
+    } else {
+        (host, path.to_owned())
+    };
+
+    if host.is_empty() || path.is_empty() {
+        return None;
+    }
+    let mut address = match port {
+        Some(port) => format!("https://{host}:{port}/{path}"),
+        None => format!("https://{host}/{path}"),
+    };
+    if let Some(branch) = branch.filter(|branch| !branch.is_empty()) {
+        let branch = percent_encode_branch(branch);
+        let place = match host.as_str() {
+            "github.com" => "/tree/",
+            "gitlab.com" => "/-/tree/",
+            "bitbucket.org" => "/src/",
+            "dev.azure.com" => "?version=GB",
+            _ => "",
+        };
+        if !place.is_empty() {
+            address.push_str(place);
+            address.push_str(&branch);
+        }
+    }
+    Some(address)
+}
+
+/// The host, a web port worth keeping, and the path, from a remote in
+/// either of its two shapes. `None` for anything else.
+fn web_parts(remote: &str) -> Option<(String, Option<u16>, &str)> {
+    if let Some((scheme, rest)) = remote.split_once("://") {
+        let scheme = scheme.to_ascii_lowercase();
+        if !matches!(scheme.as_str(), "https" | "http" | "ssh" | "git") {
+            return None;
+        }
+        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let host_and_port = authority.rsplit('@').next()?;
+        let (host, port) = match host_and_port.split_once(':') {
+            Some((host, port)) => (host, port.parse::<u16>().ok()),
+            None => (host_and_port, None),
+        };
+        // A secure shell or git-protocol port says nothing about where the
+        // web pages are served, so only a web remote keeps its port.
+        let port = port.filter(|_| matches!(scheme.as_str(), "https" | "http"));
+        return Some((host.to_ascii_lowercase(), port, path));
+    }
+
+    // `user@host:path`, the secure shell short form. A colon after a slash,
+    // or no `@` at all, is a local path and not this.
+    let (credentials, rest) = remote.split_once('@')?;
+    if credentials.contains('/') {
+        return None;
+    }
+    let (host, path) = rest.split_once(':')?;
+    if host.contains('/') {
+        return None;
+    }
+    Some((host.to_ascii_lowercase(), None, path))
+}
+
+/// `branch` with everything but unreserved characters and `/`
+/// percent-encoded, byte by byte, so a multi-byte character encodes as its
+/// bytes.
+fn percent_encode_branch(branch: &str) -> String {
+    let mut encoded = String::with_capacity(branch.len());
+    for byte in branch.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            const HEX: &[u8; 16] = b"0123456789ABCDEF";
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+    }
+    encoded
+}
+
 #[cfg(test)]
 mod tests {
     use super::{describe, describe_with_status, provider_of};
@@ -544,5 +663,138 @@ mod tests {
         assert_eq!(found.provider.as_deref(), Some("github.com"));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---- web_address (#534) --------------------------------------------
+
+    #[test]
+    fn a_github_remote_opens_at_its_branch_in_either_shape() {
+        for remote in [
+            "https://github.com/owner/name.git",
+            "https://github.com/owner/name",
+            "git@github.com:owner/name.git",
+            "ssh://git@github.com/owner/name.git",
+        ] {
+            assert_eq!(
+                super::web_address(remote, Some("main")).as_deref(),
+                Some("https://github.com/owner/name/tree/main"),
+                "{remote}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_host_is_given_its_branch_in_its_own_place() {
+        let cases = [
+            (
+                "git@gitlab.com:group/sub/name.git",
+                "https://gitlab.com/group/sub/name/-/tree/dev",
+            ),
+            (
+                "https://bitbucket.org/team/name.git",
+                "https://bitbucket.org/team/name/src/dev",
+            ),
+            (
+                "https://org@dev.azure.com/org/project/_git/name",
+                "https://dev.azure.com/org/project/_git/name?version=GBdev",
+            ),
+            (
+                "git@ssh.dev.azure.com:v3/org/project/name",
+                "https://dev.azure.com/org/project/_git/name?version=GBdev",
+            ),
+        ];
+        for (remote, expected) in cases {
+            assert_eq!(
+                super::web_address(remote, Some("dev")).as_deref(),
+                Some(expected),
+                "{remote}"
+            );
+        }
+    }
+
+    /// A self-hosted server's page layout is unknown, so it opens at the
+    /// repository rather than at a guessed branch path.
+    #[test]
+    fn an_unknown_host_opens_at_the_repository_page() {
+        assert_eq!(
+            super::web_address("git@git.example.com:team/name.git", Some("main")).as_deref(),
+            Some("https://git.example.com/team/name")
+        );
+    }
+
+    #[test]
+    fn credentials_in_a_remote_never_reach_the_address() {
+        let address = super::web_address(
+            "https://someone:s3cret-token@github.com/owner/name.git",
+            None,
+        )
+        .expect("an https remote has a page");
+
+        assert_eq!(address, "https://github.com/owner/name");
+        assert!(!address.contains("s3cret"));
+        assert!(!address.contains("someone"));
+    }
+
+    /// Only ever `https`, and nothing at all for a remote that is not on a
+    /// web host.
+    #[test]
+    fn a_remote_that_is_not_on_a_web_host_offers_nothing() {
+        for remote in [
+            "file:///srv/git/name.git",
+            "/srv/git/name.git",
+            "C:\\repos\\name",
+            "../sibling",
+            "javascript:alert(1)",
+            "",
+            "https://",
+            "git@github.com:",
+        ] {
+            assert_eq!(super::web_address(remote, Some("main")), None, "{remote:?}");
+        }
+    }
+
+    #[test]
+    fn a_plain_http_remote_still_opens_over_https() {
+        let address = super::web_address("http://git.example.com:8080/team/name", None);
+
+        assert_eq!(
+            address.as_deref(),
+            Some("https://git.example.com:8080/team/name")
+        );
+    }
+
+    /// A secure shell port says nothing about where the web pages are.
+    #[test]
+    fn a_secure_shell_port_is_not_carried_into_the_address() {
+        assert_eq!(
+            super::web_address("ssh://git@github.com:22/owner/name.git", None).as_deref(),
+            Some("https://github.com/owner/name")
+        );
+    }
+
+    #[test]
+    fn a_detached_head_opens_the_repository_page() {
+        assert_eq!(
+            super::web_address("git@github.com:owner/name.git", None).as_deref(),
+            Some("https://github.com/owner/name")
+        );
+    }
+
+    /// `/` is how branches are grouped and stays readable; everything that
+    /// would end or reshape the address is encoded.
+    #[test]
+    fn a_branch_is_encoded_so_it_cannot_reshape_the_address() {
+        assert_eq!(
+            super::web_address("git@github.com:owner/name.git", Some("feature/login")).as_deref(),
+            Some("https://github.com/owner/name/tree/feature/login")
+        );
+        assert_eq!(
+            super::web_address("git@github.com:owner/name.git", Some("fix#12 ?now&x")).as_deref(),
+            Some("https://github.com/owner/name/tree/fix%2312%20%3Fnow%26x")
+        );
+        assert_eq!(
+            super::web_address("git@github.com:owner/name.git", Some("caf\u{e9}")).as_deref(),
+            Some("https://github.com/owner/name/tree/caf%C3%A9")
+        );
     }
 }
