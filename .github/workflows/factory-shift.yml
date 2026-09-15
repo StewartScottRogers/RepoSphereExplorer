@@ -182,7 +182,7 @@ jobs:
       # to learn what was denied (#420).
       - name: Keep the transcript
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shift-transcript-${{ github.run_id }}
           path: /home/runner/work/_temp/claude-execution-output.json
