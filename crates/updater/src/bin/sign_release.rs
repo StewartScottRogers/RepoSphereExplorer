@@ -5,6 +5,11 @@
 //! environment variable. Scans `<dist-dir>` for files named
 //! `<binary>-<target-triple>[.exe]`, matching `release.yml`'s packaging
 //! convention, and signs each one.
+//!
+//! The graphical and terminal apps were published as `gui` and `tui` up to
+//! v0.6.0, and those installs still ask the manifest for those names. Each
+//! of their files is therefore listed under both its current name and its
+//! old one, and v0.6.0's own `gui-*` / `tui-*` files are recognised too.
 
 use ed25519_dalek::{Signer, SigningKey};
 use serde::Serialize;
@@ -19,6 +24,13 @@ const KNOWN_BINARIES: &[&str] = &[
     "RepoSphereExplorerTui",
     "RepoSphereExplorerGui",
     "verify",
+];
+
+/// `(current name, name v0.6.0 and earlier asked for)`. A file published
+/// under either name is listed in the manifest under both.
+const LEGACY_NAMES: &[(&str, &str)] = &[
+    ("RepoSphereExplorerGui", "gui"),
+    ("RepoSphereExplorerTui", "tui"),
 ];
 
 #[derive(Serialize)]
@@ -50,6 +62,23 @@ fn main() {
         .expect("UPDATER_SIGNING_KEY must decode to exactly 32 bytes");
     let signing_key = SigningKey::from_bytes(&secret_bytes);
 
+    let manifest = Manifest {
+        version: version.clone(),
+        targets: sign_targets(Path::new(dist_dir), repo, tag, &signing_key),
+    };
+    let json = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
+    fs::write(Path::new(output_path), json).expect("write manifest");
+    println!("wrote {output_path}");
+}
+
+/// Signs every recognised file in `dist_dir`, listing a graphical or
+/// terminal app's file under its legacy name as well as its current one.
+fn sign_targets(
+    dist_dir: &Path,
+    repo: &str,
+    tag: &str,
+    signing_key: &SigningKey,
+) -> Vec<TargetAsset> {
     let mut targets = Vec::new();
     for entry in fs::read_dir(dist_dir).expect("read dist dir") {
         let path = entry.expect("dir entry").path();
@@ -70,22 +99,28 @@ fn main() {
         let digest = Sha256::digest(&bytes);
         let signature = signing_key.sign(&digest);
 
-        targets.push(TargetAsset {
+        let asset = TargetAsset {
             binary,
             target,
             url: format!("https://github.com/{repo}/releases/download/{tag}/{filename}"),
             sha256: hex_encode(&digest),
             signature: hex_encode(&signature.to_bytes()),
-        });
+        };
+        if let Some(&(_, legacy)) = LEGACY_NAMES
+            .iter()
+            .find(|(current, _)| *current == asset.binary)
+        {
+            targets.push(TargetAsset {
+                binary: legacy.to_owned(),
+                target: asset.target.clone(),
+                url: asset.url.clone(),
+                sha256: asset.sha256.clone(),
+                signature: asset.signature.clone(),
+            });
+        }
+        targets.push(asset);
     }
-
-    let manifest = Manifest {
-        version: version.clone(),
-        targets,
-    };
-    let json = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
-    fs::write(Path::new(output_path), json).expect("write manifest");
-    println!("wrote {output_path}");
+    targets
 }
 
 fn parse_filename(filename: &str) -> Option<(String, String)> {
@@ -96,6 +131,15 @@ fn parse_filename(filename: &str) -> Option<(String, String)> {
         {
             let target = rest.strip_suffix(".exe").unwrap_or(rest);
             return Some(((*binary).to_owned(), target.to_owned()));
+        }
+    }
+    for (current, legacy) in LEGACY_NAMES {
+        if let Some(rest) = filename
+            .strip_prefix(legacy)
+            .and_then(|r| r.strip_prefix('-'))
+        {
+            let target = rest.strip_suffix(".exe").unwrap_or(rest);
+            return Some(((*current).to_owned(), target.to_owned()));
         }
     }
     None
@@ -124,7 +168,128 @@ fn hex_decode(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{KNOWN_BINARIES, hex_decode, hex_encode, parse_filename};
+    use super::{KNOWN_BINARIES, hex_decode, hex_encode, parse_filename, sign_targets};
+    use ed25519_dalek::SigningKey;
+    use std::fs;
+    use std::path::PathBuf;
+
+    const TRIPLE: &str = "x86_64-pc-windows-msvc";
+
+    /// A fresh dist directory holding one file per name in `files`.
+    fn dist_dir(name: &str, files: &[&str]) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("rse-sign-release-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for file in files {
+            fs::write(dir.join(file), format!("bytes of {file}")).unwrap();
+        }
+        dir
+    }
+
+    /// Signs `files` with a throwaway test key and parses the result the way
+    /// an installed app does.
+    fn signed_manifest(name: &str, files: &[&str]) -> updater::Manifest {
+        let dir = dist_dir(name, files);
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let manifest = super::Manifest {
+            version: "0.6.0".to_owned(),
+            targets: sign_targets(&dir, "owner/repo", "v0.6.0", &key),
+        };
+        let json = serde_json::to_string(&manifest).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        serde_json::from_str(&json).unwrap()
+    }
+
+    fn assert_listed_under_both_names(
+        manifest: &updater::Manifest,
+        current: &str,
+        legacy: &str,
+        filename: &str,
+    ) {
+        let new = manifest
+            .find(current, TRIPLE)
+            .unwrap_or_else(|| panic!("{filename} must be listed as {current}"));
+        let old = manifest
+            .find(legacy, TRIPLE)
+            .unwrap_or_else(|| panic!("{filename} must be listed as {legacy}"));
+        assert!(new.url.ends_with(&format!("/{filename}")), "{}", new.url);
+        assert_eq!(old.url, new.url);
+        assert_eq!(old.sha256, new.sha256);
+        assert_eq!(old.signature, new.signature);
+    }
+
+    #[test]
+    fn a_current_gui_file_is_listed_under_its_current_and_legacy_names() {
+        let filename = "RepoSphereExplorerGui-x86_64-pc-windows-msvc.exe";
+        let manifest = signed_manifest("current-gui", &[filename]);
+        assert_eq!(manifest.targets.len(), 2);
+        assert_listed_under_both_names(&manifest, "RepoSphereExplorerGui", "gui", filename);
+    }
+
+    #[test]
+    fn a_v0_6_0_gui_file_is_listed_under_its_current_and_legacy_names() {
+        let filename = "gui-x86_64-pc-windows-msvc.exe";
+        let manifest = signed_manifest("legacy-gui", &[filename]);
+        assert_eq!(manifest.targets.len(), 2);
+        assert_listed_under_both_names(&manifest, "RepoSphereExplorerGui", "gui", filename);
+    }
+
+    #[test]
+    fn terminal_app_files_are_listed_under_both_names_and_others_only_once() {
+        let current = "RepoSphereExplorerTui-x86_64-pc-windows-msvc.exe";
+        let manifest = signed_manifest(
+            "tui-and-service",
+            &[current, "service-x86_64-pc-windows-msvc.exe"],
+        );
+        assert_listed_under_both_names(&manifest, "RepoSphereExplorerTui", "tui", current);
+        assert_eq!(
+            manifest.targets.len(),
+            3,
+            "the service has no legacy name to list"
+        );
+
+        let legacy = "tui-x86_64-pc-windows-msvc.exe";
+        let manifest = signed_manifest("legacy-tui", &[legacy]);
+        assert_listed_under_both_names(&manifest, "RepoSphereExplorerTui", "tui", legacy);
+    }
+
+    #[test]
+    fn the_legacy_entry_signature_verifies_against_the_file_its_url_names() {
+        // The join a stranded install depends on: the `gui` entry's digest
+        // and signature are over the very file it will download.
+        let filename = "RepoSphereExplorerGui-x86_64-pc-windows-msvc.exe";
+        let dir = dist_dir("verify", &[filename]);
+        let key = SigningKey::from_bytes(&[9; 32]);
+        let targets = sign_targets(&dir, "owner/repo", "v1", &key);
+        let bytes = fs::read(dir.join(filename)).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        let legacy = targets.iter().find(|t| t.binary == "gui").unwrap();
+        assert_eq!(legacy.sha256, updater::sha256_hex(&bytes));
+        let digest = hex_decode(&legacy.sha256).unwrap();
+        let signature: [u8; 64] = hex_decode(&legacy.signature).unwrap().try_into().unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&signature);
+        assert!(
+            key.verifying_key()
+                .verify_strict(&digest, &signature)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn parse_filename_maps_a_v0_6_0_name_to_the_current_binary() {
+        assert_eq!(
+            parse_filename("gui-x86_64-pc-windows-msvc.exe"),
+            Some(("RepoSphereExplorerGui".to_owned(), TRIPLE.to_owned()))
+        );
+        assert_eq!(
+            parse_filename("tui-aarch64-apple-darwin"),
+            Some((
+                "RepoSphereExplorerTui".to_owned(),
+                "aarch64-apple-darwin".to_owned()
+            ))
+        );
+    }
 
     #[test]
     fn parse_filename_splits_a_known_binary_from_its_target_triple() {
