@@ -7,6 +7,10 @@
 
 * text=auto
 
+# A shell script with Windows line endings fails on its first line, which is
+# what a Windows checkout used from Git Bash or WSL would otherwise produce.
+scripts/*.sh text eol=lf
+
 # Documents and archives
 *.pdf   binary
 *.epub  binary

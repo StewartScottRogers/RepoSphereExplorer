@@ -55,6 +55,46 @@ the design is in [GUIDANCE.md](GUIDANCE.md).
 
 ## Run it
 
+Install with the script for your platform. It needs a release cut after the
+install scripts landed (v0.7.0 or later); v0.6.0 predates the file names they
+look for.
+
+**Windows** (PowerShell, no administrator rights):
+
+```powershell
+irm https://raw.githubusercontent.com/StewartScottRogers/RepoSphereExplorer/main/scripts/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1            # latest release
+& "$env:LOCALAPPDATA\Programs\RepoSphereExplorer\RepoSphereExplorerGui.exe"
+```
+
+**Linux and macOS:**
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/StewartScottRogers/RepoSphereExplorer/main/scripts/install.sh
+bash install.sh                  # latest release; --tag v0.7.0 for another
+RepoSphereExplorerGui            # Linux, via ~/.local/bin
+~/Applications/RepoSphereExplorer/RepoSphereExplorerGui   # macOS
+```
+
+The script downloads the graphical application, the terminal application
+(`RepoSphereExplorerTui`) and `service` for your platform, checks each one
+against the release's signed update manifest - the same check `--self-update`
+uses - before placing anything, and puts them side by side:
+`%LOCALAPPDATA%\Programs\RepoSphereExplorer` on Windows,
+`~/.local/share/RepoSphereExplorer` on Linux, `~/Applications/RepoSphereExplorer`
+on macOS. `-Prefix`/`--prefix` chooses somewhere else. A file that fails the
+check is refused and nothing is installed.
+
+To remove it: `install.ps1 -Uninstall` / `install.sh --uninstall`. That stops
+the application and its service and removes what was installed. Your journal
+and Repos Directory configuration stay unless you add `-Purge -Yes` /
+`--purge --yes`.
+
+Every release is installed, run, updated and uninstalled this way on Windows,
+Linux and macOS by [`distribution.yml`](.github/workflows/distribution.yml)
+before it is published.
+
+**By hand:**
 **[stewartscottrogers.github.io/RepoSphereExplorer](https://stewartscottrogers.github.io/RepoSphereExplorer/)**
 has download links detected for your operating system. Or take binaries from
 the [latest release](https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest):
