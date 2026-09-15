@@ -97,6 +97,18 @@ impl Manifest {
             .iter()
             .find(|asset| asset.binary == binary && asset.target == target)
     }
+
+    /// Finds the asset published under `file_name`: the last segment of its
+    /// download address, which is the name a release asset carries.
+    ///
+    /// For the installer's `verify`, which is handed files that have
+    /// already been downloaded and has only their names to go on.
+    #[must_use]
+    pub fn find_file(&self, file_name: &str) -> Option<&TargetAsset> {
+        self.targets
+            .iter()
+            .find(|asset| asset.url.rsplit('/').next() == Some(file_name))
+    }
 }
 
 /// What [`check_and_update`] did.
@@ -236,15 +248,29 @@ pub fn download_and_verify(asset: &TargetAsset) -> Result<Vec<u8>, UpdateError> 
         .as_reader()
         .read_to_end(&mut bytes)
         .map_err(UpdateError::Io)?;
+    verify_bytes(asset, &bytes)?;
+    Ok(bytes)
+}
 
-    let digest = Sha256::digest(&bytes);
+/// Checks `bytes` against `asset`: their SHA-256 digest must be the one the
+/// manifest publishes, and the manifest's signature over that digest must
+/// verify against the embedded [`PUBLIC_KEY`].
+///
+/// The one check both an update and a fresh install are held to.
+///
+/// # Errors
+/// Returns [`UpdateError::HashMismatch`] when the digest differs, and
+/// [`UpdateError::SignatureInvalid`] when it matches but the signature does
+/// not verify.
+pub fn verify_bytes(asset: &TargetAsset, bytes: &[u8]) -> Result<(), UpdateError> {
+    let digest = Sha256::digest(bytes);
     if hex_encode(&digest) != asset.sha256.to_lowercase() {
         return Err(UpdateError::HashMismatch);
     }
     if !verify_digest(&digest, &asset.signature) {
         return Err(UpdateError::SignatureInvalid);
     }
-    Ok(bytes)
+    Ok(())
 }
 
 /// Replaces the file at `target_path` with `bytes`, atomically: writes to a
@@ -451,7 +477,7 @@ mod tests {
     use super::{
         Decision, Manifest, Outcome, PUBLIC_KEY, TargetAsset, UpdateError, apply_atomic,
         check_and_update, current_target, decide, fetch_manifest, hex_decode, hex_encode, is_newer,
-        sha256_hex, verify_digest,
+        sha256_hex, verify_bytes, verify_digest,
     };
     use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
     use sha2::{Digest, Sha256};
@@ -801,6 +827,54 @@ mod tests {
             targets: vec![asset("gui", "X86_64-PC-Windows-MSVC")],
         };
         assert!(manifest.find("gui", "x86_64-pc-windows-msvc").is_none());
+    }
+
+    #[test]
+    fn find_file_matches_the_last_segment_of_the_download_address() {
+        let manifest = Manifest {
+            version: "0.7.0".to_owned(),
+            targets: vec![
+                asset("service", "x86_64-unknown-linux-gnu"),
+                asset("service", "x86_64-pc-windows-msvc"),
+            ],
+        };
+        let found = manifest
+            .find_file("service-x86_64-pc-windows-msvc")
+            .unwrap();
+        assert_eq!(found.target, "x86_64-pc-windows-msvc");
+        assert!(
+            manifest.find_file("service").is_none(),
+            "a prefix is not a name"
+        );
+        assert!(manifest.find_file("example.invalid").is_none());
+    }
+
+    // ---- verifying bytes, the check an install shares with an update ----
+
+    #[test]
+    fn verify_bytes_refuses_bytes_whose_digest_is_not_the_published_one() {
+        let mut published = asset("service", current_target());
+        published.sha256 = sha256_hex(b"the published build");
+
+        let err = verify_bytes(&published, b"the published build, tampered").unwrap_err();
+
+        assert!(matches!(err, UpdateError::HashMismatch), "was {err:?}");
+    }
+
+    #[test]
+    fn verify_bytes_refuses_a_matching_digest_signed_by_another_key() {
+        // Rewriting the manifest's digest to match tampered bytes must not
+        // be enough: the signature is what nobody but the release can make.
+        let signing_key = SigningKey::generate(&mut rand::rng());
+        let bytes = b"a build somebody else made";
+        let digest = Sha256::digest(bytes);
+        let mut forged = asset("service", current_target());
+        forged.sha256 = hex_encode(&digest);
+        forged.signature = hex_encode(&signing_key.sign(&digest).to_bytes());
+
+        let err = verify_bytes(&forged, bytes).unwrap_err();
+
+        assert!(matches!(err, UpdateError::SignatureInvalid), "was {err:?}");
     }
 
     // ---- this build's target ----

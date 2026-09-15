@@ -18,6 +18,7 @@ const KNOWN_BINARIES: &[&str] = &[
     "service",
     "RepoSphereExplorerTui",
     "RepoSphereExplorerGui",
+    "verify",
 ];
 
 #[derive(Serialize)]

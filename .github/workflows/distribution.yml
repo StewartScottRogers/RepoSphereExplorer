@@ -1,0 +1,427 @@
+name: Distribution
+
+# What a reader actually gets, tested the way a reader gets it: a release's
+# files installed with scripts/install.ps1 or scripts/install.sh, verified
+# against the signed manifest, run from where they were put, updated in
+# place, and uninstalled until nothing is left.
+#
+# Two ways in. release.yml calls it with from-artifacts, against the files
+# its build job has just made, before they are published - so a release
+# nobody can install fails the release. The schedule and a manual run test
+# the published latest release, the one a reader downloads today.
+
+on:
+  workflow_call:
+    inputs:
+      from-artifacts:
+        description: Test this run's build artifacts instead of the published release
+        type: boolean
+        default: true
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LATEST_MANIFEST_URL: https://stewartscottrogers.github.io/RepoSphereExplorer/latest.json
+
+jobs:
+  distribution:
+    name: distribution (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FROM_ARTIFACTS: ${{ inputs.from-artifacts && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Where things go on this platform
+        shell: bash
+        run: |
+          case "${RUNNER_OS}" in
+            Windows)
+              echo "PREFIX=${LOCALAPPDATA}\\Programs\\RepoSphereExplorer" >> "$GITHUB_ENV"
+              echo "DATA_DIR=${LOCALAPPDATA}\\RepoSphereExplorer" >> "$GITHUB_ENV"
+              ;;
+            Linux)
+              echo "PREFIX=${HOME}/.local/share/RepoSphereExplorer" >> "$GITHUB_ENV"
+              echo "DATA_DIR=${HOME}/.local/share/RepoSphereExplorer" >> "$GITHUB_ENV"
+              echo "BIN_DIR=${HOME}/.local/bin" >> "$GITHUB_ENV"
+              ;;
+            macOS)
+              echo "PREFIX=${HOME}/Applications/RepoSphereExplorer" >> "$GITHUB_ENV"
+              echo "DATA_DIR=${HOME}/Library/Application Support/RepoSphereExplorer" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Install the graphical application's runtime libraries and a virtual display (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb x11-utils libfontconfig1-dev libx11-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcursor-dev \
+            libinput-dev libgbm-dev
+
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the smoke client
+        run: cargo build -p protocol --bin smoke
+
+      # ---- the release files: this run's artifacts, or the published release
+
+      - name: Take this run's build artifacts
+        if: env.FROM_ARTIFACTS == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.target }}
+          path: release
+      - name: Take this run's signed manifest
+        if: env.FROM_ARTIFACTS == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: manifest
+          path: release
+      - name: Download the published latest release, for the tamper checks
+        if: env.FROM_ARTIFACTS != 'true'
+        shell: bash
+        run: |
+          mkdir -p release
+          curl -fsSL "$LATEST_MANIFEST_URL" -o release/manifest.json
+          version="$(tr -d '\r\n' < release/manifest.json | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          gh release download "v${version}" --repo "${{ github.repository }}" \
+            --pattern "*-${{ matrix.target }}*" --dir release
+          ls -la release
+
+      # ---- install
+
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($env:FROM_ARTIFACTS -eq 'true') {
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -FromDirectory release
+          } else {
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
+          }
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Install (Windows)::install.ps1 failed"; exit 1 }
+          Get-ChildItem -Force $env:PREFIX
+          foreach ($name in 'RepoSphereExplorerGui.exe', 'RepoSphereExplorerTui.exe', 'service.exe') {
+            if (-not (Test-Path (Join-Path $env:PREFIX $name))) {
+              Write-Output "::error title=Install (Windows)::$name is not in $env:PREFIX"; exit 1
+            }
+          }
+      - name: Install (${{ runner.os }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "$FROM_ARTIFACTS" = true ]; then
+            scripts/install.sh --from-directory release
+          else
+            scripts/install.sh
+          fi
+          ls -la "$PREFIX"
+          for name in RepoSphereExplorerGui RepoSphereExplorerTui service; do
+            [ -x "$PREFIX/$name" ] || { echo "::error title=Install (${RUNNER_OS})::$name is not in $PREFIX"; exit 1; }
+          done
+          if [ "$RUNNER_OS" = Linux ]; then
+            ls -la "$BIN_DIR"
+            for name in RepoSphereExplorerGui RepoSphereExplorerTui; do
+              [ "$(readlink "$BIN_DIR/$name")" = "$PREFIX/$name" ] \
+                || { echo "::error title=Install (Linux)::$BIN_DIR/$name does not link to $PREFIX/$name"; exit 1; }
+            done
+          fi
+
+      # ---- verification refuses what it should
+
+      - name: Refuse a tampered asset and a re-hashed one (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $asset = "service-${{ matrix.target }}.exe"
+          foreach ($case in 'bytes', 'rehashed') {
+            $dir = Join-Path $env:RUNNER_TEMP "tampered-$case"
+            $prefix = Join-Path $env:RUNNER_TEMP "tampered-prefix-$case"
+            Copy-Item -Recurse release $dir
+            $file = Join-Path $dir $asset
+            $old = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            [IO.File]::AppendAllText($file, 'tampered')
+            $expected = 'its digest does not match the manifest'
+            if ($case -eq 'rehashed') {
+              $new = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+              $manifest = Join-Path $dir 'manifest.json'
+              [IO.File]::WriteAllText($manifest, ([IO.File]::ReadAllText($manifest) -replace $old, $new))
+              $expected = 'signature verification failed'
+            }
+            $output = powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -FromDirectory $dir -Prefix $prefix 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            Write-Output $output
+            if ($code -eq 0 -or $output -notmatch $expected -or (Test-Path $prefix)) {
+              Write-Output "::error title=Refuse tampered asset (Windows)::the $case case was not refused as expected"; exit 1
+            }
+          }
+          exit 0
+      - name: Refuse a tampered asset and a re-hashed one (${{ runner.os }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          asset="service-${{ matrix.target }}"
+          bin_args=()
+          [ "$RUNNER_OS" != Linux ] || bin_args=(--bin-dir "$RUNNER_TEMP/tampered-bin")
+          digest() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+          for case in bytes rehashed; do
+            dir="$RUNNER_TEMP/tampered-$case"
+            prefix="$RUNNER_TEMP/tampered-prefix-$case"
+            cp -R release "$dir"
+            old="$(digest "$dir/$asset")"
+            printf tampered >> "$dir/$asset"
+            expected="its digest does not match the manifest"
+            if [ "$case" = rehashed ]; then
+              new="$(digest "$dir/$asset")"
+              perl -pi -e "s/$old/$new/g" "$dir/manifest.json"
+              expected="signature verification failed"
+            fi
+            if output="$(scripts/install.sh --from-directory "$dir" --prefix "$prefix" "${bin_args[@]}" 2>&1)"; then
+              echo "$output"
+              echo "::error title=Refuse tampered asset (${RUNNER_OS})::the $case case installed"; exit 1
+            fi
+            echo "$output"
+            case "$output" in *"$expected"*) ;; *) echo "::error title=Refuse tampered asset (${RUNNER_OS})::the $case case failed for the wrong reason"; exit 1 ;; esac
+            [ ! -e "$prefix" ] || { echo "::error title=Refuse tampered asset (${RUNNER_OS})::the $case case placed files"; exit 1; }
+          done
+
+      # ---- run
+
+      - name: Service answers ListDirectory (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $scratch = Join-Path $env:RUNNER_TEMP 'scratch'
+          New-Item -ItemType Directory -Force $scratch | Out-Null
+          Set-Content (Join-Path $scratch 'smoke-marker.txt') 'marker'
+          $service = Start-Process -FilePath (Join-Path $env:PREFIX 'service.exe') -PassThru -WindowStyle Hidden
+          & target\debug\smoke.exe $scratch smoke-marker.txt
+          $code = $LASTEXITCODE
+          Stop-Process -Id $service.Id -Force
+          $service.WaitForExit(10000) | Out-Null
+          if ($code -ne 0) { Write-Output "::error title=Service smoke (Windows)::the installed service did not answer ListDirectory"; exit 1 }
+      - name: Service answers ListDirectory (${{ runner.os }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          scratch="$RUNNER_TEMP/scratch"
+          mkdir -p "$scratch"
+          echo marker > "$scratch/smoke-marker.txt"
+          "$PREFIX/service" &
+          service=$!
+          code=0
+          target/debug/smoke "$scratch" smoke-marker.txt || code=$?
+          kill "$service"
+          wait "$service" || true
+          [ "$code" -eq 0 ] || { echo "::error title=Service smoke (${RUNNER_OS})::the installed service did not answer ListDirectory"; exit 1; }
+
+      - name: Graphical application starts, opens a window and starts its own service (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $scratch = Join-Path $env:RUNNER_TEMP 'scratch'
+          if (Get-Process service -ErrorAction SilentlyContinue) { Write-Output "::error title=GUI (Windows)::a service was already running"; exit 1 }
+          $gui = Start-Process -FilePath (Join-Path $env:PREFIX 'RepoSphereExplorerGui.exe') -ArgumentList "`"$scratch`"" -PassThru
+          $null = $gui.Handle
+          Start-Sleep -Seconds 10
+          $gui.Refresh()
+          if ($gui.HasExited) { Write-Output "::error title=GUI (Windows)::exited after starting, code $($gui.ExitCode)"; exit 1 }
+          Write-Output "window: '$($gui.MainWindowTitle)' handle $($gui.MainWindowHandle)"
+          if ($gui.MainWindowHandle -eq 0) { Write-Output "::error title=GUI (Windows)::no window"; exit 1 }
+          $service = Get-Process service -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $env:PREFIX 'service.exe') }
+          if (-not $service) { Write-Output "::error title=GUI (Windows)::did not start the service beside it"; exit 1 }
+          Write-Output "service running from $($service.Path)"
+          $null = $gui.CloseMainWindow()
+          if (-not $gui.WaitForExit(15000)) { Stop-Process -Id $gui.Id -Force; Write-Output "::error title=GUI (Windows)::did not exit when its window was closed"; exit 1 }
+          if ($gui.ExitCode -ne 0) { Write-Output "::error title=GUI (Windows)::exited with $($gui.ExitCode) when closed"; exit 1 }
+      - name: Graphical application starts, opens a window and starts its own service (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/gui-check.sh" <<'CHECK'
+          set -uo pipefail
+          "$PREFIX/RepoSphereExplorerGui" "$RUNNER_TEMP/scratch" > "$RUNNER_TEMP/gui.log" 2>&1 &
+          gui=$!
+          sleep 10
+          if ! kill -0 "$gui" 2>/dev/null; then cat "$RUNNER_TEMP/gui.log"; echo "::error title=GUI (Linux)::exited after starting"; exit 1; fi
+          xwininfo -root -tree | grep -F '"Repos Explorer"' || { echo "::error title=GUI (Linux)::no Repos Explorer window"; kill "$gui"; exit 1; }
+          ps -A -o args= > "$RUNNER_TEMP/processes.txt"
+          grep -Fx "$PREFIX/service" "$RUNNER_TEMP/processes.txt" || { echo "::error title=GUI (Linux)::did not start the service beside it"; kill "$gui"; exit 1; }
+          kill "$gui"
+          for _ in $(seq 1 20); do kill -0 "$gui" 2>/dev/null || exit 0; sleep 0.5; done
+          echo "::error title=GUI (Linux)::did not stop"; exit 1
+          CHECK
+          if pgrep -x service; then echo "::error title=GUI (Linux)::a service was already running"; exit 1; fi
+          xvfb-run -a -s "-screen 0 1280x800x24" bash "$RUNNER_TEMP/gui-check.sh"
+      - name: Graphical application starts and starts its own service (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if pgrep -x service; then echo "::error title=GUI (macOS)::a service was already running"; exit 1; fi
+          "$PREFIX/RepoSphereExplorerGui" "$RUNNER_TEMP/scratch" > "$RUNNER_TEMP/gui.log" 2>&1 &
+          gui=$!
+          sleep 10
+          if ! kill -0 "$gui" 2>/dev/null; then cat "$RUNNER_TEMP/gui.log"; echo "::error title=GUI (macOS)::exited after starting"; exit 1; fi
+          ps -A -o args= > "$RUNNER_TEMP/processes.txt"
+          grep -Fx "$PREFIX/service" "$RUNNER_TEMP/processes.txt" || { echo "::error title=GUI (macOS)::did not start the service beside it"; kill "$gui"; exit 1; }
+          kill "$gui"
+          for _ in $(seq 1 20); do kill -0 "$gui" 2>/dev/null || exit 0; sleep 0.5; done
+          echo "::error title=GUI (macOS)::did not stop"; exit 1
+
+      # The terminal application has no flag that draws and exits, and a
+      # runner has no terminal to draw in. --self-update is what it does
+      # support without one: it starts, reads the signed manifest, and
+      # exits, and against the release it was installed from it must say
+      # it is up to date rather than reinstall.
+      - name: Terminal application starts and exits (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $output = & (Join-Path $env:PREFIX 'RepoSphereExplorerTui.exe') --self-update 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $output
+          if ($code -ne 0 -or $output -notmatch 'tui is up to date') { Write-Output "::error title=TUI (Windows)::--self-update did not report up to date"; exit 1 }
+      - name: Terminal application starts and exits (${{ runner.os }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          output="$("$PREFIX/RepoSphereExplorerTui" --self-update 2>&1)" || { echo "$output"; echo "::error title=TUI (${RUNNER_OS})::--self-update failed"; exit 1; }
+          echo "$output"
+          case "$output" in *"tui is up to date"*) ;; *) echo "::error title=TUI (${RUNNER_OS})::--self-update did not report up to date"; exit 1 ;; esac
+
+      # ---- self-update: the previous release, updated to the latest
+
+      - name: Self-update from the previous release (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $latest = (Invoke-RestMethod $env:LATEST_MANIFEST_URL).version
+          $tags = @(gh release list --repo "${{ github.repository }}" --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName')
+          $index = [Array]::IndexOf($tags, "v$latest")
+          if ($index -lt 0 -or $index + 1 -ge $tags.Count) { Write-Output "::notice title=Self-update (Windows)::skipped: no release before v$latest"; exit 0 }
+          $previous = $tags[$index + 1]
+          $assets = @(gh release view $previous --repo "${{ github.repository }}" --json assets --jq '.assets[].name')
+          if ($assets -notcontains 'manifest.json') { Write-Output "::notice title=Self-update (Windows)::skipped: $previous carries no signed manifest.json, so it cannot be installed with verification. Needs two releases cut since distribution.yml."; exit 0 }
+          $prefix = Join-Path $env:RUNNER_TEMP 'previous'
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Tag $previous -Prefix $prefix
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Self-update (Windows)::could not install $previous"; exit 1 }
+          $from = $previous.TrimStart('v')
+          foreach ($pair in @(@('service', 'service'), @('RepoSphereExplorerTui', 'tui'), @('RepoSphereExplorerGui', 'gui'))) {
+            $exe = Join-Path $prefix "$($pair[0]).exe"
+            $first = & $exe --self-update 2>&1 | Out-String
+            Write-Output $first
+            if ($first -notmatch [regex]::Escape("$($pair[1]) updated: v$from -> v$latest")) { Write-Output "::error title=Self-update (Windows)::$($pair[0]) did not update v$from -> v$latest"; exit 1 }
+            $second = & $exe --self-update 2>&1 | Out-String
+            Write-Output $second
+            if ($second -notmatch [regex]::Escape("$($pair[1]) is up to date (v$latest)")) { Write-Output "::error title=Self-update (Windows)::$($pair[0]) did not report up to date on a second run"; exit 1 }
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall -Prefix $prefix
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Self-update from the previous release (${{ runner.os }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          latest="$(curl -fsSL "$LATEST_MANIFEST_URL" | tr -d '\r\n' | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          previous="$(gh release list --repo "${{ github.repository }}" --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName' \
+            | awk -v tag="v$latest" 'found { print; exit } $0 == tag { found = 1 }')"
+          if [ -z "$previous" ]; then echo "::notice title=Self-update (${RUNNER_OS})::skipped: no release before v$latest"; exit 0; fi
+          if ! gh release view "$previous" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qx manifest.json; then
+            echo "::notice title=Self-update (${RUNNER_OS})::skipped: $previous carries no signed manifest.json, so it cannot be installed with verification. Needs two releases cut since distribution.yml."
+            exit 0
+          fi
+          prefix="$RUNNER_TEMP/previous"
+          bin_args=()
+          [ "$RUNNER_OS" != Linux ] || bin_args=(--bin-dir "$RUNNER_TEMP/previous-bin")
+          scripts/install.sh --tag "$previous" --prefix "$prefix" "${bin_args[@]}" \
+            || { echo "::error title=Self-update (${RUNNER_OS})::could not install $previous"; exit 1; }
+          from="${previous#v}"
+          for pair in service:service RepoSphereExplorerTui:tui RepoSphereExplorerGui:gui; do
+            binary="${pair%%:*}"; label="${pair##*:}"
+            first="$("$prefix/$binary" --self-update 2>&1)" || true
+            echo "$first"
+            case "$first" in *"$label updated: v$from -> v$latest"*) ;; *) echo "::error title=Self-update (${RUNNER_OS})::$binary did not update v$from -> v$latest"; exit 1 ;; esac
+            second="$("$prefix/$binary" --self-update 2>&1)" || true
+            echo "$second"
+            case "$second" in *"$label is up to date (v$latest)"*) ;; *) echo "::error title=Self-update (${RUNNER_OS})::$binary did not report up to date on a second run"; exit 1 ;; esac
+          done
+          scripts/install.sh --uninstall --prefix "$prefix"
+
+      # ---- uninstall
+
+      - name: Purge refuses without confirmation on a machine that is not disposable (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:CI = $null
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall -Purge
+          if ($LASTEXITCODE -eq 0 -or -not (Test-Path (Join-Path $env:PREFIX 'installed-files.txt'))) {
+            Write-Output "::error title=Purge refusal (Windows)::-Purge ran without -Yes and without CI=true"; exit 1
+          }
+          exit 0
+      - name: Purge refuses without confirmation on a machine that is not disposable (${{ runner.os }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if env -u CI scripts/install.sh --uninstall --purge; then
+            echo "::error title=Purge refusal (${RUNNER_OS})::--purge ran without --yes and without CI=true"; exit 1
+          fi
+          [ -f "$PREFIX/installed-files.txt" ] || { echo "::error title=Purge refusal (${RUNNER_OS})::the refused purge removed files"; exit 1; }
+
+      - name: Uninstall with purge leaves nothing behind (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall -Purge
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Uninstall (Windows)::install.ps1 -Uninstall -Purge failed"; exit 1 }
+          Write-Output "--- $env:LOCALAPPDATA"; Get-ChildItem -Force $env:LOCALAPPDATA | Format-Table -AutoSize | Out-String -Width 200
+          Write-Output "--- $env:LOCALAPPDATA\Programs"; Get-ChildItem -Force (Join-Path $env:LOCALAPPDATA 'Programs') -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String -Width 200
+          $failed = $false
+          if (Test-Path $env:PREFIX) { Write-Output "::error title=Uninstall (Windows)::$env:PREFIX remains"; $failed = $true }
+          if (Test-Path $env:DATA_DIR) { Write-Output "::error title=Uninstall (Windows)::$env:DATA_DIR remains"; $failed = $true }
+          $left = @(Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($env:PREFIX, [StringComparison]::OrdinalIgnoreCase) })
+          $left | Format-Table Id, Path -AutoSize | Out-String -Width 200
+          if ($left.Count -gt 0) { Write-Output "::error title=Uninstall (Windows)::processes from the install remain"; $failed = $true }
+          if ($failed) { exit 1 }
+      - name: Uninstall with purge leaves nothing behind (${{ runner.os }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          scripts/install.sh --uninstall --purge \
+            || { echo "::error title=Uninstall (${RUNNER_OS})::install.sh --uninstall --purge failed"; exit 1; }
+          failed=""
+          echo "--- $(dirname "$PREFIX")"; ls -la "$(dirname "$PREFIX")"
+          echo "--- $(dirname "$DATA_DIR")"; ls -la "$(dirname "$DATA_DIR")"
+          [ ! -e "$PREFIX" ] || { echo "::error title=Uninstall (${RUNNER_OS})::$PREFIX remains"; failed=1; }
+          [ ! -e "$DATA_DIR" ] || { echo "::error title=Uninstall (${RUNNER_OS})::$DATA_DIR remains"; failed=1; }
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "--- $BIN_DIR"; ls -la "$BIN_DIR" || true
+            for name in RepoSphereExplorerGui RepoSphereExplorerTui; do
+              if [ -e "$BIN_DIR/$name" ] || [ -L "$BIN_DIR/$name" ]; then
+                echo "::error title=Uninstall (Linux)::$BIN_DIR/$name remains"; failed=1
+              fi
+            done
+          fi
+          ps -A -o pid= -o args= > "$RUNNER_TEMP/processes-after.txt"
+          if grep -F "$PREFIX/" "$RUNNER_TEMP/processes-after.txt"; then
+            echo "::error title=Uninstall (${RUNNER_OS})::processes from the install remain"; failed=1
+          fi
+          [ -z "$failed" ]
