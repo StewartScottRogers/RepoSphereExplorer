@@ -18,6 +18,8 @@ const KNOWN_BINARIES: &[&str] = &[
     "service",
     "RepoSphereExplorerTui",
     "RepoSphereExplorerGui",
+    "tui",
+    "gui",
 ];
 
 #[derive(Serialize)]
@@ -49,6 +51,27 @@ fn main() {
         .expect("UPDATER_SIGNING_KEY must decode to exactly 32 bytes");
     let signing_key = SigningKey::from_bytes(&secret_bytes);
 
+    let targets = collect_targets(Path::new(dist_dir), repo, tag, &signing_key);
+
+    let manifest = Manifest {
+        version: version.clone(),
+        targets,
+    };
+    let json = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
+    fs::write(Path::new(output_path), json).expect("write manifest");
+    println!("wrote {output_path}");
+}
+
+/// Scans `dist_dir` and signs every recognised file, aliasing the graphical
+/// and terminal applications under both their current and their v0.6.0
+/// manifest names ([`alias_names`]) so an installed old build can still find
+/// an update to ask for by its old name.
+fn collect_targets(
+    dist_dir: &Path,
+    repo: &str,
+    tag: &str,
+    signing_key: &SigningKey,
+) -> Vec<TargetAsset> {
     let mut targets = Vec::new();
     for entry in fs::read_dir(dist_dir).expect("read dist dir") {
         let path = entry.expect("dir entry").path();
@@ -68,23 +91,39 @@ fn main() {
         let bytes = fs::read(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
         let digest = Sha256::digest(&bytes);
         let signature = signing_key.sign(&digest);
+        let url = format!("https://github.com/{repo}/releases/download/{tag}/{filename}");
+        let sha256 = hex_encode(&digest);
+        let signature = hex_encode(&signature.to_bytes());
 
-        targets.push(TargetAsset {
-            binary,
-            target,
-            url: format!("https://github.com/{repo}/releases/download/{tag}/{filename}"),
-            sha256: hex_encode(&digest),
-            signature: hex_encode(&signature.to_bytes()),
-        });
+        for name in alias_names(&binary) {
+            targets.push(TargetAsset {
+                binary: name,
+                target: target.clone(),
+                url: url.clone(),
+                sha256: sha256.clone(),
+                signature: signature.clone(),
+            });
+        }
     }
+    targets
+}
 
-    let manifest = Manifest {
-        version: version.clone(),
-        targets,
-    };
-    let json = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
-    fs::write(Path::new(output_path), json).expect("write manifest");
-    println!("wrote {output_path}");
+/// The manifest names a signed file should be published under. The
+/// graphical and terminal applications are published under both their
+/// current name and the `gui` / `tui` names a v0.6.0 install still asks
+/// `--self-update` for, so re-signing either one's dist file publishes an
+/// update the old install can find (issue #549). Every other binary is
+/// published under its own name only.
+fn alias_names(binary: &str) -> Vec<String> {
+    match binary {
+        "RepoSphereExplorerGui" | "gui" => {
+            vec!["RepoSphereExplorerGui".to_owned(), "gui".to_owned()]
+        }
+        "RepoSphereExplorerTui" | "tui" => {
+            vec!["RepoSphereExplorerTui".to_owned(), "tui".to_owned()]
+        }
+        other => vec![other.to_owned()],
+    }
 }
 
 fn parse_filename(filename: &str) -> Option<(String, String)> {
@@ -123,7 +162,31 @@ fn hex_decode(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{KNOWN_BINARIES, hex_decode, hex_encode, parse_filename};
+    use super::{
+        KNOWN_BINARIES, alias_names, collect_targets, hex_decode, hex_encode, parse_filename,
+    };
+    use ed25519_dalek::SigningKey;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn test_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7; 32])
+    }
+
+    /// A scratch directory under the OS temp dir, unique per call so tests
+    /// running in parallel do not see each other's fixture files.
+    fn temp_dist_dir(files: &[(&str, &[u8])]) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("sign_release_test_{}_{id}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp dist dir");
+        for (name, bytes) in files {
+            fs::write(dir.join(name), bytes).expect("write fixture file");
+        }
+        dir
+    }
 
     #[test]
     fn parse_filename_splits_a_known_binary_from_its_target_triple() {
@@ -196,5 +259,107 @@ mod tests {
     fn hex_encode_round_trips_through_hex_decode() {
         let bytes: Vec<u8> = (0..=u8::MAX).collect();
         assert_eq!(hex_decode(&hex_encode(&bytes)).unwrap(), bytes);
+    }
+
+    #[test]
+    fn alias_names_publishes_gui_and_tui_under_both_their_names() {
+        // A v0.6.0 install still asks `--self-update` for "gui" / "tui"
+        // (issue #549): every other binary keeps its one published name.
+        assert_eq!(
+            alias_names("RepoSphereExplorerGui"),
+            vec!["RepoSphereExplorerGui", "gui"]
+        );
+        assert_eq!(
+            alias_names("RepoSphereExplorerTui"),
+            vec!["RepoSphereExplorerTui", "tui"]
+        );
+        assert_eq!(alias_names("gui"), vec!["RepoSphereExplorerGui", "gui"]);
+        assert_eq!(alias_names("tui"), vec!["RepoSphereExplorerTui", "tui"]);
+        assert_eq!(alias_names("service"), vec!["service"]);
+    }
+
+    #[test]
+    fn collect_targets_signs_a_current_style_gui_file_under_both_names() {
+        let dist_dir = temp_dist_dir(&[(
+            "RepoSphereExplorerGui-x86_64-pc-windows-msvc.exe",
+            b"gui bytes",
+        )]);
+
+        let targets = collect_targets(
+            &dist_dir,
+            "StewartScottRogers/RepoSphereExplorer",
+            "v0.7.0",
+            &test_signing_key(),
+        );
+        fs::remove_dir_all(&dist_dir).expect("clean up temp dist dir");
+
+        let new_name = targets
+            .iter()
+            .find(|asset| asset.binary == "RepoSphereExplorerGui")
+            .expect("published under the current name");
+        let old_name = targets
+            .iter()
+            .find(|asset| asset.binary == "gui")
+            .expect("published under the v0.6.0 name");
+
+        assert_eq!(targets.len(), 2, "only these two entries for one file");
+        assert_eq!(new_name.target, "x86_64-pc-windows-msvc");
+        assert_eq!(old_name.target, new_name.target);
+        assert_eq!(old_name.url, new_name.url);
+        assert_eq!(old_name.sha256, new_name.sha256);
+        assert_eq!(old_name.signature, new_name.signature);
+    }
+
+    #[test]
+    fn collect_targets_signs_a_v0_6_0_style_gui_file_under_both_names() {
+        let dist_dir = temp_dist_dir(&[("gui-x86_64-pc-windows-msvc.exe", b"gui bytes")]);
+
+        let targets = collect_targets(
+            &dist_dir,
+            "StewartScottRogers/RepoSphereExplorer",
+            "v0.6.0",
+            &test_signing_key(),
+        );
+        fs::remove_dir_all(&dist_dir).expect("clean up temp dist dir");
+
+        let new_name = targets
+            .iter()
+            .find(|asset| asset.binary == "RepoSphereExplorerGui")
+            .expect("re-signing publishes the current name too");
+        let old_name = targets
+            .iter()
+            .find(|asset| asset.binary == "gui")
+            .expect("the v0.6.0 file's own name is kept");
+
+        assert_eq!(targets.len(), 2, "only these two entries for one file");
+        assert_eq!(old_name.url, new_name.url);
+        assert_eq!(old_name.sha256, new_name.sha256);
+        assert_eq!(old_name.signature, new_name.signature);
+    }
+
+    #[test]
+    fn manifest_find_locates_the_old_gui_name_in_a_manifest_built_this_way() {
+        let dist_dir = temp_dist_dir(&[("gui-x86_64-pc-windows-msvc.exe", b"gui bytes")]);
+
+        let targets = collect_targets(
+            &dist_dir,
+            "StewartScottRogers/RepoSphereExplorer",
+            "v0.6.0",
+            &test_signing_key(),
+        );
+        fs::remove_dir_all(&dist_dir).expect("clean up temp dist dir");
+
+        let manifest = super::Manifest {
+            version: "0.6.0".to_owned(),
+            targets,
+        };
+        let json = serde_json::to_string(&manifest).expect("serialize manifest");
+        let manifest: updater::Manifest =
+            serde_json::from_str(&json).expect("deserialize as the updater's own manifest type");
+
+        let asset = manifest
+            .find("gui", "x86_64-pc-windows-msvc")
+            .expect("a v0.6.0 install's self_update(\"gui\") must still find an asset");
+        assert!(asset.url.ends_with("gui-x86_64-pc-windows-msvc.exe"));
     }
 }
