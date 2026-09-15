@@ -83,29 +83,47 @@ fn spawn_service() -> io::Result<()> {
     } else {
         "service"
     };
-    let mut command = std::process::Command::new(dir.join(service_name));
-    command
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    detach(&mut command);
-    command.spawn()?;
-    Ok(())
+    let service = dir.join(service_name);
+    let spawned = |breakaway: bool| {
+        let mut command = std::process::Command::new(&service);
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        detach(&mut command, breakaway);
+        command.spawn().map(|_| ())
+    };
+    // A job object that does not allow breaking away - a continuous
+    // integration runner's, and some terminals' and launchers' - refuses the
+    // whole process rather than the one flag. A service that ends with the
+    // job is better than none, so ask again without it.
+    spawned(true).or_else(|err| {
+        if cfg!(windows) {
+            spawned(false)
+        } else {
+            Err(err)
+        }
+    })
 }
 
 /// Detaches `command`'s future child from this process's console and job
 /// object, so it outlives this process rather than being torn down with it
 /// (a plain `spawn` inherits both on Windows).
 #[cfg(windows)]
-fn detach(command: &mut std::process::Command) {
+fn detach(command: &mut std::process::Command, breakaway: bool) {
     use std::os::windows::process::CommandExt;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+    let breakaway = if breakaway {
+        CREATE_BREAKAWAY_FROM_JOB
+    } else {
+        0
+    };
+    command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | breakaway);
 }
 
 #[cfg(not(windows))]
-fn detach(_command: &mut std::process::Command) {}
+fn detach(_command: &mut std::process::Command, _breakaway: bool) {}
 
 /// Checks for and applies an update to this binary, per §4.2 of
 /// GUIDANCE.md.

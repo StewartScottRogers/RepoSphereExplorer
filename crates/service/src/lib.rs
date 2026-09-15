@@ -1149,6 +1149,39 @@ pub fn bind(name: Name<'_>) -> io::Result<Listener> {
     ListenerOptions::new().name(name).create_sync()
 }
 
+/// As [`bind`], but takes over a socket file that a service killed without
+/// the chance to clean up has left behind.
+///
+/// Where local sockets are files - macOS - a service ended by a signal
+/// leaves its socket file in place. Every later service then failed to bind
+/// with "address in use" and exited, so a front end could neither reach one
+/// nor start one, and the application would not open again until somebody
+/// deleted a file in the temporary directory by hand.
+///
+/// The file is replaced only when nothing answers on it. A service that is
+/// actually running keeps its socket, and this returns the "in use" error
+/// as [`bind`] does. Named pipes and namespaced sockets leave nothing
+/// behind, so elsewhere this is [`bind`].
+///
+/// # Errors
+/// As [`bind`], including when a live service already holds the socket.
+pub fn bind_reclaiming_stale(name: Name<'_>) -> io::Result<Listener> {
+    use interprocess::local_socket::traits::Stream as _;
+
+    match bind(name.borrow()) {
+        Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
+            if Stream::connect(name.borrow()).is_ok() {
+                return Err(err);
+            }
+            ListenerOptions::new()
+                .name(name)
+                .try_overwrite(true)
+                .create_sync()
+        }
+        result => result,
+    }
+}
+
 /// Accepts one connection on `listener`, answers exactly one request on it,
 /// then returns.
 ///
@@ -4311,5 +4344,36 @@ public class OrderBook {
             }
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A socket file left by a service that was killed is taken over; one a
+    /// running service holds is not.
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_socket_file_is_reclaimed_but_a_live_one_is_not() {
+        use interprocess::local_socket::{GenericFilePath, ToFsName};
+
+        let path = std::env::temp_dir().join(format!("rse-stale-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // A socket file with nobody listening: what a killed service leaves.
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        assert!(path.exists(), "the fixture is a leftover socket file");
+        let name = || path.clone().to_fs_name::<GenericFilePath>().unwrap();
+        assert_eq!(
+            super::bind(name()).err().map(|err| err.kind()),
+            Some(std::io::ErrorKind::AddrInUse),
+            "a plain bind is refused, which is the defect"
+        );
+
+        let live = super::bind_reclaiming_stale(name()).expect("the stale file is taken over");
+
+        let second = super::bind_reclaiming_stale(name());
+        assert_eq!(
+            second.err().map(|err| err.kind()),
+            Some(std::io::ErrorKind::AddrInUse),
+            "a socket a live service holds is left alone"
+        );
+        drop(live);
+        let _ = std::fs::remove_file(&path);
     }
 }

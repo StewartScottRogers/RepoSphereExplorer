@@ -17,7 +17,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> std::io::Result<()> {
-    let listener = service::bind(protocol::socket_name()?)?;
+    let listener = service::bind_reclaiming_stale(protocol::socket_name()?)?;
     eprintln!("listening on {}", protocol::SOCKET_NAME);
     service::run(&listener)
 }
