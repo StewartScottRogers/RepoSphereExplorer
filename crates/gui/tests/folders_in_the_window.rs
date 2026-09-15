@@ -16,6 +16,8 @@
 //! background thread (or uses the one already running) and pumps `tick`
 //! until the answer arrives - which is what the application's timer does.
 
+mod common;
+
 use gui::app::App;
 use gui::{MainWindow, sync_ui};
 use i_slint_backend_testing::ElementHandle;
@@ -25,30 +27,6 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-
-/// A service for the window to talk to. If one is already listening -
-/// the developer's own, or another test binary's - that one is used.
-fn ensure_service() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        // A service of this test binary's own, on a socket nobody else
-        // holds - never the reader's running service, and never another
-        // test binary's, whose undo journal it would share. See
-        // `protocol::use_private_socket`.
-        assert!(
-            protocol::use_private_socket(format!(
-                "reposphereexplorer-test-{}.sock",
-                std::process::id()
-            )),
-            "the socket was chosen before this harness could make it private"
-        );
-        let name = protocol::socket_name().expect("the platform has a socket name");
-        let listener = service::bind(name).expect("a private socket is free to bind");
-        std::thread::spawn(move || {
-            let _ = service::run(&listener);
-        });
-    });
-}
 
 /// A directory of this test's own: two child folders and two files.
 fn scratch(name: &str) -> PathBuf {
@@ -94,7 +72,7 @@ fn pump(ui: &MainWindow, app: &Rc<RefCell<App>>, what: &str, done: impl Fn(&App)
 /// A shown window, wired to an application listing `directory`, with the
 /// root's own listing already in.
 fn window_on(directory: &Path) -> (MainWindow, Rc<RefCell<App>>) {
-    ensure_service();
+    common::ensure_service();
     let app = Rc::new(RefCell::new(App::new(directory.to_path_buf())));
     let ui = MainWindow::new().expect("the window should build");
     gui::wire_callbacks(&ui, &app);
