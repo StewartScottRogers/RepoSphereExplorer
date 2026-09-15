@@ -20,6 +20,19 @@ pub const SOCKET_NAME: &str = "reposphereexplorer.sock";
 /// plugin, and the largest thing on the wire is a directory listing.
 pub const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 
+/// The deepest nesting a message may carry.
+///
+/// `serde_json` refuses to *read* past 128 levels and had no matching rule
+/// for writing, so this crate could write a message its own peer refused:
+/// measured, 125 levels round-tripped and 126 was written and then rejected
+/// as invalid data. Reachable through the JSON plugin, which puts a whole
+/// parsed document into the view it sends.
+///
+/// Held on the writing side, where a refusal can still be turned into an
+/// answer that names the reason, instead of surfacing as a generic failure
+/// across a process boundary.
+pub const MAX_MESSAGE_DEPTH: usize = 127;
+
 /// A request sent from a front end to the service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
@@ -256,6 +269,40 @@ pub fn read_message<T: serde::de::DeserializeOwned, R: Read>(mut reader: R) -> i
     serde_json::from_slice(&buf).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
+/// How deeply the encoded JSON in `bytes` nests.
+///
+/// Counted over the bytes rather than over the value, so it measures the
+/// same thing the reader will measure - the envelope included - and costs
+/// one pass with no allocation.
+fn json_depth(bytes: &[u8]) -> usize {
+    let mut depth = 0usize;
+    let mut deepest = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in bytes {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
+}
+
 /// Writes one length-prefixed, JSON-encoded message to `writer`.
 ///
 /// # Errors
@@ -263,6 +310,16 @@ pub fn read_message<T: serde::de::DeserializeOwned, R: Read>(mut reader: R) -> i
 pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Result<()> {
     let buf =
         serde_json::to_vec(value).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    let depth = json_depth(&buf);
+    if depth > MAX_MESSAGE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "message nested {depth} deep exceeds the {MAX_MESSAGE_DEPTH} level limit \
+                 the reader will accept"
+            ),
+        ));
+    }
     let len =
         u32::try_from(buf.len()).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     if len > MAX_MESSAGE_BYTES {
@@ -849,16 +906,26 @@ mod tests {
         assert_eq!(decoded, response);
     }
 
+    /// Hostile input must not take the stack with it.
+    ///
+    /// The frame is built by hand rather than with `frame_of`, because
+    /// `write_message` now refuses to produce one this deep. That guard
+    /// protects this crate from itself; it says nothing about what someone
+    /// else can put on the socket, and the reader still has to answer for
+    /// that on its own.
     #[test]
     fn a_file_view_nested_past_the_decoder_limit_is_refused_rather_than_overflowing() {
-        // Hostile input must not take the stack with it. Nesting beyond what
-        // the decoder will follow has to come back as an error.
         let response = Response::FileView {
             plugin: "json".to_owned(),
             data: nested_value(512),
             also: Vec::new(),
         };
-        let frame = frame_of(&response);
+        let payload = serde_json::to_vec(&response).expect("a value always encodes");
+        let mut frame = u32::try_from(payload.len())
+            .expect("a small message")
+            .to_be_bytes()
+            .to_vec();
+        frame.extend_from_slice(&payload);
 
         let err = read_message::<Response, _>(frame.as_slice()).unwrap_err();
 
@@ -945,43 +1012,134 @@ mod tests {
         assert_eq!(from_another_version, Request::Undo);
     }
 
-    // Ignored, not deleted: this is the proof of #517, not a chore.
-    // `write_message` has no depth limit and `read_message` inherits
-    // serde_json's 128 levels, so this crate can write a message its own
-    // peer refuses. Reachable through the JSON plugin, which puts a whole
-    // parsed document in the view. The guard belongs on the write side,
-    // where it can still become an error that names the cause - which is
-    // a change to the service's response path, not to a test.
-    #[ignore = "see #517: write_message will emit what read_message refuses"]
+    /// What this build writes, its peer can read - at every depth.
+    ///
+    /// The two used to disagree: `write_message` accepted any nesting while
+    /// `read_message` stopped at the decoder's recursion limit, so a view
+    /// 126 levels deep was written to the socket and then refused by the
+    /// front end as invalid data. The JSON plugin puts a whole parsed
+    /// document into its view data and its own parse allows more nesting
+    /// than the envelope leaves room for, so a file in that band was
+    /// unreadable for no reason the reader could see.
+    ///
+    /// The rule now is the one this test's name always claimed: a message
+    /// is either refused before it is written, or it reads back. Never
+    /// written-and-unreadable.
     #[test]
     fn a_file_view_this_build_writes_can_be_read_back_by_its_peer() {
-        // FAILS, and is meant to: the pair is asymmetric. `write_message`
-        // accepts any depth, while `read_message` stops at the decoder's
-        // recursion limit - 125 levels of view data, measured, once the
-        // `FileView` envelope has taken its own two. The json plugin puts the
-        // whole parsed document in that view data
-        // (crates/plugins/json/src/lib.rs:31), and its own parse allows more
-        // nesting than the envelope leaves room for, so a file in that band
-        // is read by the service, written to the socket, and then refused by
-        // the front end as invalid data - a generic failure on the far side
-        // of the process boundary, for a file whose only fault is depth.
-        // A guard belongs on the write side, where the message can still be
-        // turned into a `Response::Error` naming the cause.
-        let response = Response::FileView {
-            plugin: "json".to_owned(),
-            data: nested_value(126),
-            also: Vec::new(),
-        };
+        for depth in [0usize, 1, 60, 120, 124, 125, 126, 130, 200] {
+            let response = Response::FileView {
+                plugin: "json".to_owned(),
+                data: nested_value(depth),
+                also: Vec::new(),
+            };
 
-        let frame = frame_of(&response);
-        let decoded: Response =
-            read_message(frame.as_slice()).expect("what this crate wrote, this crate can read");
-
-        assert_eq!(decoded, response);
+            let mut wire = Vec::new();
+            if let Err(err) = write_message(&mut wire, &response) {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+                assert!(
+                    wire.is_empty(),
+                    "a refused message must leave nothing on the wire, or the                      peer reads a prefix with no message after it"
+                );
+            } else {
+                let read: Response = read_message(wire.as_slice()).unwrap_or_else(|err| {
+                    panic!("{depth} levels were written and cannot be read: {err}")
+                });
+                assert_eq!(read, response);
+            }
+        }
     }
 
     #[test]
     fn the_socket_name_is_valid_on_this_platform() {
         socket_name().expect("SOCKET_NAME resolves on the platform this test runs on");
+    }
+
+    /// The other side of the same rule: what the writer refuses, it
+    /// refuses out loud, naming depth rather than failing as a generic
+    /// encoding error.
+    #[test]
+    fn a_message_too_deep_for_the_reader_is_refused_by_the_writer() {
+        let mut value = serde_json::Value::Null;
+        for _ in 0..200 {
+            value = serde_json::Value::Array(vec![value]);
+        }
+        let response = Response::FileView {
+            plugin: "json".to_owned(),
+            data: value,
+            also: Vec::new(),
+        };
+
+        let mut out = Vec::new();
+        let err = write_message(&mut out, &response).expect_err("too deep to travel");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("nested"),
+            "the refusal has to say what is wrong with it: {err}"
+        );
+        assert!(
+            out.is_empty(),
+            "and nothing may go on the wire, or the peer reads a prefix with no message"
+        );
+    }
+
+    /// The boundary itself, so a later change to either side cannot drift
+    /// them apart without a test saying so.
+    #[test]
+    fn the_writers_limit_is_the_readers_limit() {
+        for depth in [100usize, 120, 125] {
+            let mut value = serde_json::Value::Null;
+            for _ in 0..depth {
+                value = serde_json::Value::Array(vec![value]);
+            }
+            let response = Response::FileView {
+                plugin: "json".to_owned(),
+                data: value,
+                also: Vec::new(),
+            };
+
+            let mut wire = Vec::new();
+            write_message(&mut wire, &response)
+                .unwrap_or_else(|err| panic!("{depth} levels should travel: {err}"));
+            let read: Response = read_message(wire.as_slice())
+                .unwrap_or_else(|err| panic!("{depth} levels should be readable: {err}"));
+
+            assert_eq!(read, response, "what went out is what comes back");
+        }
+    }
+
+    /// A brace inside a string is text, not nesting - otherwise a file
+    /// full of braces would be refused for a depth it does not have.
+    #[test]
+    fn braces_inside_a_string_do_not_count_as_nesting() {
+        let response = Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::json!({ "content": "{[{[".repeat(200) }),
+            also: Vec::new(),
+        };
+
+        let mut wire = Vec::new();
+        write_message(&mut wire, &response).expect("braces in text are not nesting");
+        let read: Response = read_message(wire.as_slice()).expect("and it reads back");
+
+        assert_eq!(read, response);
+    }
+
+    /// An escaped quote does not end the string it is in, so the braces
+    /// after it are still text.
+    #[test]
+    fn an_escaped_quote_does_not_end_the_string_it_is_in() {
+        let response = Response::FileView {
+            plugin: "text".to_owned(),
+            data: serde_json::json!({ "content": format!("\\\"{}", "{".repeat(200)) }),
+            also: Vec::new(),
+        };
+
+        let mut wire = Vec::new();
+        write_message(&mut wire, &response).expect("still text, however it is quoted");
+        let read: Response = read_message(wire.as_slice()).expect("and it reads back");
+
+        assert_eq!(read, response);
     }
 }
