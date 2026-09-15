@@ -63,6 +63,7 @@ pub fn decode(encoded: &str) -> Option<Graphic> {
 mod tests {
     use super::{THUMBNAIL_EDGE, decode, encode, encode_bytes};
     use crate::Graphic;
+    use base64::Engine as _;
 
     /// A solid image `width` by `height`.
     fn solid(width: u32, height: u32) -> image::DynamicImage {
@@ -129,5 +130,39 @@ mod tests {
     fn a_value_this_module_did_not_write_decodes_to_nothing() {
         assert_eq!(decode("not base64 at all !!"), None);
         assert_eq!(decode(""), None);
+    }
+
+    #[test]
+    fn well_formed_base64_that_is_not_a_picture_decodes_to_nothing() {
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(b"GIF89a, and not a PNG either");
+        assert_eq!(
+            decode(&encoded),
+            None,
+            "the base64 decodes, and the bytes inside it are still not the \
+             PNG this module wrote"
+        );
+    }
+
+    #[test]
+    fn what_this_module_decodes_always_counts_its_own_pixels_correctly() {
+        // Nothing in `Graphic` enforces this, and the graphical front end
+        // drops a picture whose buffer disagrees with its dimensions, so
+        // the five plugins that share this path depend on it holding.
+        for (width, height) in [(1, 1), (8, 4), (THUMBNAIL_EDGE * 2, THUMBNAIL_EDGE)] {
+            let encoded = encode(&solid(width, height)).expect("encodes");
+            match decode(&encoded).expect("decodes") {
+                Graphic::Rgba {
+                    width,
+                    height,
+                    pixels,
+                } => assert_eq!(
+                    pixels.len(),
+                    (width as usize) * (height as usize) * 4,
+                    "{width} by {height} pixels, row-major RGBA8"
+                ),
+                Graphic::Svg(source) => panic!("expected pixels, got svg {source:.40}"),
+            }
+        }
     }
 }
