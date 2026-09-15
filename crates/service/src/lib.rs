@@ -1035,7 +1035,22 @@ pub fn serve_one(listener: &Listener) -> io::Result<()> {
     let mut conn: Stream = listener.accept()?;
     let request: Request = protocol::read_message(&mut conn)?;
     let response = handle_request(&request);
-    protocol::write_message(&mut conn, &response)
+    if let Err(err) = protocol::write_message(&mut conn, &response) {
+        // A response the front end could not read is worse than no
+        // response: dropping the connection leaves the reader with a
+        // generic failure, or nothing at all. The one thing still worth
+        // sending is why. A plugin that hands back something too deeply
+        // nested to travel is the case this exists for.
+        if err.kind() != io::ErrorKind::InvalidData {
+            return Err(err);
+        }
+        let excuse = Response::Error {
+            message: format!("this file cannot be shown: {err}"),
+        };
+        journal("response_refused", &[format!("{err}")], &Err(err));
+        return protocol::write_message(&mut conn, &excuse);
+    }
+    Ok(())
 }
 
 /// Runs the service loop: accepts connections and answers one request on
