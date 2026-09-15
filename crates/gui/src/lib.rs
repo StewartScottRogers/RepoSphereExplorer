@@ -414,7 +414,20 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_forward_requested, go_forward);
     on_event!(on_clipboard_copy_requested, copy_to_clipboard);
     on_event!(on_clipboard_cut_requested, cut_to_clipboard);
-    on_event!(on_clipboard_paste_requested, paste_from_clipboard);
+    {
+        // Paste needs the system clipboard for the prompts, so it cannot be
+        // one of the plain events above.
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        let mut clipboard = clipboard();
+        ui.on_clipboard_paste_requested(move || {
+            let mut app = app.borrow_mut();
+            app.paste(&mut clipboard);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
     on_event!(on_refresh_requested, refresh);
     on_event!(on_path_edit_requested, begin_path_edit);
     on_event!(on_edit_requested, begin_file_edit);

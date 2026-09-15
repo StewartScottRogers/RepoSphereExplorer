@@ -619,3 +619,41 @@ fn the_up_button_is_refused_where_it_cannot_go() {
          refuse the click, the way Back and Forward do"
     );
 }
+
+/// A modifier pressed on its own is not a character.
+///
+/// Slint reports Shift, Control and the other held keys as key presses
+/// whose text is a control character, and anything the window's key
+/// handler does not recognise falls through to the typed-text path. So
+/// reaching for Ctrl+V to paste into the address bar typed a `\u{11}` in
+/// front of the path, and Enter then went nowhere.
+#[test]
+fn a_modifier_pressed_on_its_own_types_nothing_into_the_path_field() {
+    let chrome = chrome_at("/one/two/three");
+    press(&chrome.ui, "l", Some(Key::Control));
+    clear_path_field(&chrome.ui);
+    type_text(&chrome.ui, "ab");
+
+    for modifier in [Key::Shift, Key::Control, Key::Alt, Key::Meta] {
+        press(&chrome.ui, &char::from(modifier).to_string(), None);
+    }
+
+    assert_eq!(
+        chrome.ui.get_path_input().to_string(),
+        "ab",
+        "a held key is not text"
+    );
+}
+
+/// Typing a capital holds Shift first, and only the letter belongs in the
+/// field.
+#[test]
+fn a_capital_typed_into_the_path_field_is_only_the_letter() {
+    let chrome = chrome_at("/one/two/three");
+    press(&chrome.ui, "l", Some(Key::Control));
+    clear_path_field(&chrome.ui);
+
+    press(&chrome.ui, "Z", Some(Key::Shift));
+
+    assert_eq!(chrome.ui.get_path_input().to_string(), "Z");
+}
