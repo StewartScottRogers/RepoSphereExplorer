@@ -25,6 +25,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if env::args().any(|arg| arg == "--self-update") {
         return self_update();
     }
+    if env::args().any(|arg| arg == gui::renderer::PROBE_FLAG) {
+        if let Err(err) = gui::renderer::probe() {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     let explicit = env::args().nth(1).map(PathBuf::from);
 
@@ -49,6 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.borrow_mut()
             .begin_repos_root_edit(&opening.root.to_string_lossy());
     }
+    // Before the window exists: once it does, the renderer is fixed.
+    eprintln!("{}", gui::renderer::select()?.message());
     let ui = MainWindow::new()?;
     if let Some(widths) = gui::settings::load_pane_widths() {
         ui.set_folders_width(widths.folders);

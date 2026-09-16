@@ -10,6 +10,7 @@ mod generated {
 pub use generated::{CodeEditorHarness, ColouredRun, ContentRow, FolderRow, MainWindow, Theme};
 
 pub mod app;
+pub mod renderer;
 pub mod settings;
 
 pub mod document;
