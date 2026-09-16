@@ -47,6 +47,13 @@ use it for anything you mean to run.
 .PARAMETER Prefix
 Where to install. Default: %LOCALAPPDATA%\Programs\RepoSphereExplorer.
 
+The layout - that folder, the file names, the receipt, the Start menu
+shortcut and the Settings > Apps entry - is shared with ReposExplorerSetup,
+the setup program a reader can download instead of this script. One
+definition, in crates/setup/src/layout.rs, renders the generated block below;
+`cargo test -p setup` fails if the two have drifted, so both ways in install
+the same thing.
+
 .PARAMETER StartMenuDirectory
 Install only. Where the Start menu shortcut goes. Default: this user's Start
 menu Programs folder.
@@ -70,9 +77,9 @@ param(
     [string]$Tag = 'latest',
     [string]$FromDirectory,
     [switch]$UnsignedTestManifest,
-    [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'Programs\RepoSphereExplorer'),
-    [string]$StartMenuDirectory = (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
-    [string]$UninstallRegistryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ReposExplorer',
+    [string]$Prefix,
+    [string]$StartMenuDirectory,
+    [string]$UninstallRegistryKey,
     [switch]$Uninstall,
     [switch]$Purge,
     [switch]$Yes
@@ -81,20 +88,28 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Repository = 'StewartScottRogers/RepoSphereExplorer'
-$LatestManifestUrl = 'https://stewartscottrogers.github.io/RepoSphereExplorer/latest.json'
+# --- generated from crates/setup/src/layout.rs ---
+# One definition of what an install is, shared with the setup program:
+# `crates/setup/src/layout.rs` renders this block, and `cargo test -p setup`
+# fails if the copy below has drifted from it. Edit that file, not this block.
 $Installed = @('RepoSphereExplorerGui', 'RepoSphereExplorerTui', 'service')
 $Receipt = 'installed-files.txt'
-$DataDirectory = Join-Path $env:LOCALAPPDATA 'RepoSphereExplorer'
 $Application = 'Repos Explorer'
 $Publisher = 'Stewart Scott Rogers'
 $Summary = 'Repos Explorer - a front door to the working copies your source control checks code out into'
-$UninstallScript = 'install.ps1'
-
 # A receipt line is a path to remove, unless it starts with this, in which
 # case the rest of it is a registry key to remove. install.sh writes paths
 # only; nothing outside Windows reads or writes a line of this shape.
 $RegistryLine = 'registry:'
+if (-not $Prefix) { $Prefix = Join-Path $env:LOCALAPPDATA 'Programs\RepoSphereExplorer' }
+if (-not $StartMenuDirectory) { $StartMenuDirectory = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs' }
+if (-not $UninstallRegistryKey) { $UninstallRegistryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ReposExplorer' }
+# --- end generated ---
+
+$Repository = 'StewartScottRogers/RepoSphereExplorer'
+$LatestManifestUrl = 'https://stewartscottrogers.github.io/RepoSphereExplorer/latest.json'
+$DataDirectory = Join-Path $env:LOCALAPPDATA 'RepoSphereExplorer'
+$UninstallScript = 'install.ps1'
 
 $TagGiven = $PSBoundParameters.ContainsKey('Tag')
 

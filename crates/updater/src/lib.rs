@@ -239,7 +239,21 @@ pub fn fetch_manifest(url: &str) -> Result<Manifest, UpdateError> {
 /// Returns an error if the download fails, the hash does not match, or the
 /// signature does not verify.
 pub fn download_and_verify(asset: &TargetAsset) -> Result<Vec<u8>, UpdateError> {
-    let mut response = ureq::get(&asset.url)
+    let bytes = download(&asset.url)?;
+    verify_bytes(asset, &bytes)?;
+    Ok(bytes)
+}
+
+/// Downloads `url`, without checking anything about what comes back.
+///
+/// Its caller verifies: an update through [`download_and_verify`], a fresh
+/// install through the setup program, which reports a file the manifest
+/// disowns in its own words.
+///
+/// # Errors
+/// Returns an error if the request fails or the body cannot be read.
+pub fn download(url: &str) -> Result<Vec<u8>, UpdateError> {
+    let mut response = ureq::get(url)
         .call()
         .map_err(|err| UpdateError::Manifest(err.to_string()))?;
     let mut bytes = Vec::new();
@@ -248,7 +262,6 @@ pub fn download_and_verify(asset: &TargetAsset) -> Result<Vec<u8>, UpdateError> 
         .as_reader()
         .read_to_end(&mut bytes)
         .map_err(UpdateError::Io)?;
-    verify_bytes(asset, &bytes)?;
     Ok(bytes)
 }
 

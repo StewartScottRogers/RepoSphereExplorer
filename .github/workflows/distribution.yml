@@ -105,6 +105,16 @@ jobs:
           gh release download "v${version}" --repo "${{ github.repository }}" \
             --pattern "*-${{ matrix.target }}*" --dir release
           ls -la release
+      # The setup program (#560) is published under a name with no target
+      # triple in it, so the pattern above does not reach it.
+      - name: Download the published setup program (Windows)
+        if: runner.os == 'Windows' && env.FROM_ARTIFACTS != 'true'
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < release/manifest.json | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          gh release download "v${version}" --repo "${{ github.repository }}" \
+            --pattern "ReposExplorerSetup.exe" --dir release
+          ls -la release
 
       # ---- install
 
@@ -179,6 +189,123 @@ jobs:
           }
           if ($failed) { exit 1 }
 
+      # The other way in (#560): the same release, installed by the setup
+      # program a reader double-clicks instead of running a script. Its own
+      # prefix, Start menu folder and registry key, so it neither disturbs
+      # the install above nor is disturbed by it - the two are the same
+      # install, which is the point, and only one of them can own the real
+      # Start menu entry at a time.
+      - name: The setup program installs, runs and removes a release (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $setup = Join-Path $env:RUNNER_TEMP 'ReposExplorerSetup.exe'
+          Copy-Item -LiteralPath (Join-Path 'release' 'ReposExplorerSetup.exe') -Destination $setup
+          $prefix = Join-Path $env:RUNNER_TEMP 'by-the-setup-program'
+          $menu = Join-Path $env:RUNNER_TEMP 'setup-start-menu'
+          $key = 'HKCU:\Software\RepoSphereExplorerDistributionCheck\Setup\ReposExplorer'
+          $shortcut = Join-Path $menu 'Repos Explorer.lnk'
+          $gui = Join-Path $prefix 'RepoSphereExplorerGui.exe'
+          # From this run's artifacts before they are published; from the
+          # published release otherwise, which is the download a reader makes.
+          $source = @()
+          if ($env:FROM_ARTIFACTS -eq 'true') { $source = @('--from-directory', 'release') }
+
+          & $setup --quiet --prefix $prefix --start-menu-directory $menu --uninstall-registry-key $key @source
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Setup program (Windows)::the install failed"; exit 1 }
+          Get-ChildItem -Force $prefix
+          foreach ($name in 'RepoSphereExplorerGui.exe', 'RepoSphereExplorerTui.exe', 'service.exe', 'ReposExplorerSetup.exe', 'installed-files.txt') {
+            if (-not (Test-Path (Join-Path $prefix $name))) {
+              Write-Output "::error title=Setup program (Windows)::$name is not in $prefix"; exit 1
+            }
+          }
+
+          if (-not (Test-Path -LiteralPath $shortcut)) {
+            Write-Output "::error title=Setup program (Windows)::no Start menu shortcut at $shortcut"; exit 1
+          }
+          $shell = New-Object -ComObject WScript.Shell
+          $link = $shell.CreateShortcut($shortcut)
+          Write-Output "shortcut target '$($link.TargetPath)' in '$($link.WorkingDirectory)'"
+          Write-Output "  icon '$($link.IconLocation)' description '$($link.Description)'"
+          $failed = $false
+          if ($link.TargetPath -ne $gui) {
+            Write-Output "::error title=Setup program (Windows)::the shortcut points at '$($link.TargetPath)', not $gui"; $failed = $true
+          }
+          foreach ($part in @(@('WorkingDirectory', $link.WorkingDirectory), @('Description', $link.Description), @('IconLocation', $link.IconLocation))) {
+            if (-not $part[1]) { Write-Output "::error title=Setup program (Windows)::the shortcut has no $($part[0])"; $failed = $true }
+          }
+
+          if (-not (Test-Path -LiteralPath $key)) {
+            Write-Output "::error title=Setup program (Windows)::no registry key at $key"; exit 1
+          }
+          $entry = Get-ItemProperty -LiteralPath $key
+          $entry | Format-List DisplayName, DisplayVersion, Publisher, DisplayIcon, InstallLocation,
+            EstimatedSize, NoModify, NoRepair, UninstallString | Out-String -Width 200
+          foreach ($name in 'DisplayName', 'DisplayVersion', 'Publisher', 'DisplayIcon', 'InstallLocation',
+            'EstimatedSize', 'NoModify', 'NoRepair', 'UninstallString') {
+            if (-not $entry.$name) { Write-Output "::error title=Setup program (Windows)::$name is missing or empty"; $failed = $true }
+          }
+          if ($entry.InstallLocation -ne $prefix) {
+            Write-Output "::error title=Setup program (Windows)::InstallLocation is '$($entry.InstallLocation)', not $prefix"; $failed = $true
+          }
+          if ($entry.DisplayIcon -ne $gui) {
+            Write-Output "::error title=Setup program (Windows)::DisplayIcon is '$($entry.DisplayIcon)', not $gui"; $failed = $true
+          }
+          if ($entry.UninstallString -notmatch '"([^"]+ReposExplorerSetup\.exe)"') {
+            Write-Output "::error title=Setup program (Windows)::UninstallString does not run the setup program: $($entry.UninstallString)"; $failed = $true
+          }
+          elseif (-not (Test-Path -LiteralPath $matches[1])) {
+            Write-Output "::error title=Setup program (Windows)::UninstallString runs $($matches[1]), which is not there"; $failed = $true
+          }
+          if ($failed) { exit 1 }
+
+          # What was installed runs, from where it was put.
+          $scratch = Join-Path $env:RUNNER_TEMP 'scratch'
+          New-Item -ItemType Directory -Force $scratch | Out-Null
+          $application = Start-Process -FilePath $gui -ArgumentList "`"$scratch`"" -PassThru
+          $null = $application.Handle
+          Start-Sleep -Seconds 10
+          $application.Refresh()
+          if ($application.HasExited) {
+            Write-Output "::error title=Setup program (Windows)::the installed application exited, code $($application.ExitCode)"; exit 1
+          }
+          Write-Output "window: '$($application.MainWindowTitle)' handle $($application.MainWindowHandle)"
+          if ($application.MainWindowHandle -eq 0) { Write-Output "::error title=Setup program (Windows)::the installed application opened no window"; exit 1 }
+
+          # Removed the way Settings > Apps removes it: by running the string
+          # the install wrote, with the application still open. That string
+          # runs the copy in the install folder, which starts another copy
+          # outside it - Windows will not let a running program delete its
+          # own file - so the removal outlives the command that began it.
+          $uninstall = $entry.UninstallString
+          Write-Output "UninstallString: $uninstall"
+          $command = Join-Path $env:RUNNER_TEMP 'setup-uninstall.cmd'
+          Set-Content -LiteralPath $command -Value $uninstall -Encoding ASCII
+          & $env:ComSpec /c $command
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Setup program (Windows)::the UninstallString failed"; exit 1 }
+          foreach ($attempt in 1..60) {
+            if (-not (Test-Path $prefix)) { break }
+            Start-Sleep -Seconds 1
+          }
+          # That copy reports what it removed in a window, and nothing on a
+          # runner is going to close it.
+          Get-Process ReposExplorerSetup -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (Test-Path $prefix) {
+            Get-ChildItem -Force $prefix | Format-Table -AutoSize | Out-String -Width 200
+            Write-Output "::error title=Setup program (Windows)::$prefix remains"; $failed = $true
+          }
+          if (Test-Path -LiteralPath $shortcut) { Write-Output "::error title=Setup program (Windows)::$shortcut remains"; $failed = $true }
+          if (Test-Path -LiteralPath $key) { Write-Output "::error title=Setup program (Windows)::$key remains"; $failed = $true }
+          $left = @(Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
+          $left | Format-Table Id, Path -AutoSize | Out-String -Width 200
+          if ($left.Count -gt 0) { Write-Output "::error title=Setup program (Windows)::processes from the install remain"; $failed = $true }
+          # Nothing left to remove, so a second one says so and stops.
+          & $setup --quiet --uninstall --prefix $prefix
+          if ($LASTEXITCODE -eq 0) { Write-Output "::error title=Setup program (Windows)::a second uninstall was not refused"; $failed = $true }
+          if ($failed) { exit 1 }
+          exit 0
+
       - name: Install (${{ runner.os }})
         if: runner.os != 'Windows'
         shell: bash
@@ -227,6 +354,42 @@ jobs:
             Write-Output $output
             if ($code -eq 0 -or $output -notmatch $expected -or (Test-Path $prefix)) {
               Write-Output "::error title=Refuse tampered asset (Windows)::the $case case was not refused as expected"; exit 1
+            }
+          }
+          exit 0
+      # The same two cases against the setup program (#560): the file a
+      # reader downloads has to refuse them as firmly as the script does,
+      # and place nothing when it does.
+      - name: The setup program refuses a tampered asset and a re-hashed one (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $setup = Join-Path $env:RUNNER_TEMP 'ReposExplorerSetup.exe'
+          Copy-Item -LiteralPath (Join-Path 'release' 'ReposExplorerSetup.exe') -Destination $setup -Force
+          $asset = "service-${{ matrix.target }}.exe"
+          foreach ($case in 'bytes', 'rehashed') {
+            $dir = Join-Path $env:RUNNER_TEMP "setup-tampered-$case"
+            $prefix = Join-Path $env:RUNNER_TEMP "setup-tampered-prefix-$case"
+            $menu = Join-Path $env:RUNNER_TEMP "setup-tampered-menu-$case"
+            $key = "HKCU:\Software\RepoSphereExplorerDistributionCheck\Setup\Tampered-$case"
+            Copy-Item -Recurse release $dir
+            $file = Join-Path $dir $asset
+            $old = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            [IO.File]::AppendAllText($file, 'tampered')
+            $expected = 'its digest does not match the manifest'
+            if ($case -eq 'rehashed') {
+              $new = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+              $manifest = Join-Path $dir 'manifest.json'
+              [IO.File]::WriteAllText($manifest, ([IO.File]::ReadAllText($manifest) -replace $old, $new))
+              $expected = 'signature verification failed'
+            }
+            $output = & $setup --quiet --from-directory $dir --prefix $prefix `
+              --start-menu-directory $menu --uninstall-registry-key $key 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            Write-Output $output
+            if ($code -eq 0 -or $output -notmatch $expected -or (Test-Path $prefix) -or (Test-Path -LiteralPath $key)) {
+              Write-Output "::error title=Setup program refuses tampering (Windows)::the $case case was not refused as expected"; exit 1
             }
           }
           exit 0

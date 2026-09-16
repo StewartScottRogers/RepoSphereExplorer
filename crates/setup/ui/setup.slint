@@ -1,0 +1,104 @@
+// The setup program's window. It is double-clicked, so what happened has to
+// be somewhere a person is looking: a heading, every step as it is taken,
+// and - when it worked - the application itself, one button away.
+
+import { Button, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component SetupWindow inherits Window {
+    // The window icon, declared here rather than set from Rust for the
+    // reason `crates/gui/ui/app.slint` gives: Slint applies an icon only
+    // when its cache key differs from the one it holds, and an image built
+    // at run time carries none. Named, rather than bound straight to `icon`,
+    // so a test can ask the window what it was given.
+    out property <image> window-icon: @image-url("../../../assets/RepoSphereExplorer.svg");
+    icon: root.window-icon;
+    title: "Repos Explorer Setup";
+    preferred-width: 560px;
+    preferred-height: 400px;
+    background: #1e1e1e;
+
+    // What this run is for, and how far it has got.
+    in property <string> heading;
+    in property <string> summary;
+    in property <string> progress;
+    in property <string> go-label;
+    in property <bool> ask: true;
+    in property <bool> busy: false;
+    in property <bool> finished: false;
+    in property <bool> failed: false;
+    in property <bool> can-launch: false;
+    // The installed graphical application, for the button that starts it.
+    in-out property <string> application;
+
+    callback go();
+    callback launch();
+    callback close-window();
+
+    VerticalBox {
+        spacing: 12px;
+
+        Text {
+            text: root.heading;
+            font-size: 20px;
+            font-weight: 700;
+            color: #e8e8e8;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: root.summary;
+            font-size: 13px;
+            color: #b8b8b8;
+            wrap: word-wrap;
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                Text {
+                    text: root.progress;
+                    font-size: 12px;
+                    font-family: "Consolas";
+                    color: root.failed ? #ff8a7a : #9fd0a0;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        HorizontalBox {
+            alignment: end;
+            padding: 0px;
+            spacing: 8px;
+
+            Button {
+                text: root.go-label;
+                primary: true;
+                // An uninstall is already under way when the window opens,
+                // so there is nothing here to press.
+                visible: root.ask && !root.finished;
+                enabled: !root.busy;
+                clicked => {
+                    root.go();
+                }
+            }
+
+            Button {
+                text: "Start Repos Explorer";
+                primary: true;
+                visible: root.can-launch;
+                clicked => {
+                    root.launch();
+                }
+            }
+
+            Button {
+                text: root.finished ? "Close" : "Cancel";
+                enabled: !root.busy;
+                clicked => {
+                    root.close-window();
+                }
+            }
+        }
+    }
+}
