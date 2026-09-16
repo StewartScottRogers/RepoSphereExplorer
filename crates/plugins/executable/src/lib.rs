@@ -211,6 +211,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "only a Linux C compiler produces an ELF shared object"
+    )]
     fn views_a_real_elf_shared_object() {
         // A real, freshly compiled ELF shared object rather than a hand
         // built one: the `object` crate's ELF reader exercises section
