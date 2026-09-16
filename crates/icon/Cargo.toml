@@ -12,17 +12,20 @@ name = "icon"
 path = "src/main.rs"
 
 [dependencies]
+# Carries the rendered pictures inside `scripts/install.sh`, which a reader
+# downloads on its own. Already in the tree through `plugin-api`, which
+# carries thumbnails over the wire the same way.
+base64 = "0.23"
+# Writes the portable network graphics a free desktop's icon theme holds,
+# and reads one back in the tests. Already in the tree through the plugins
+# that decode pictures.
+image = { version = "0.25", default-features = false, features = ["png"] }
 # Reads the resource directory out of a built Windows binary. Already in the
 # tree through `plugin-executable`, which reads the same containers.
 object = "0.40"
 # Rasterises the drawing. Already in the tree through Slint, which renders
 # the file-type icons with it.
 resvg = "0.47"
-
-# Test-only: the entries this crate writes are bitmaps it decodes itself, but
-# an icon entry may be a picture and the test that reads one has to say so.
-[dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
 
 [lints]
 workspace = true

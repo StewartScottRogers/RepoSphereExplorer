@@ -313,6 +313,37 @@ fn clipboard() -> SystemClipboard {
     SystemClipboard::default()
 }
 
+/// The application id this process gives its window on a free desktop: the
+/// `WM_CLASS` an X11 desktop environment reads off the window, and the
+/// `app_id` a Wayland one does.
+///
+/// It is the name of the desktop entry the Linux install writes
+/// (`reposphereexplorer.desktop`) and of the icon that entry names, because
+/// that is how a desktop environment gets from an open window back to the
+/// entry - and so to the icon it shows in the taskbar and in Alt+Tab, and to
+/// one button for the application rather than one for every window.
+/// `icon::THEMED_NAME` is the same string; `tests/desktop_entry.rs` holds
+/// the three together.
+pub const XDG_APP_ID: &str = "reposphereexplorer";
+
+/// Gives the window [`XDG_APP_ID`] to carry.
+///
+/// In the library rather than in `main` for the reason [`wire_callbacks`]
+/// is: a window that names itself and an entry that matches the name are
+/// two halves, and only a test that runs this wiring can say they meet.
+///
+/// Slint keeps the id on the platform rather than on the window and reads
+/// it when the window is realised, so this belongs after
+/// `MainWindow::new`, which is what sets a platform up, and before the
+/// window is shown. Away from X11 and Wayland it does nothing at all.
+///
+/// # Errors
+///
+/// When no windowing platform has been set up to carry it.
+pub fn name_the_window() -> Result<(), slint::PlatformError> {
+    slint::set_xdg_app_id(XDG_APP_ID)
+}
+
 /// Wires every callback the window has to the application behind it.
 ///
 /// In the library rather than in `main` so that a test can wire a real

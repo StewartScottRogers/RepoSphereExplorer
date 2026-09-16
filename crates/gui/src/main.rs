@@ -59,6 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Before the window exists: once it does, the renderer is fixed.
     eprintln!("{}", gui::renderer::select()?.message());
     let ui = MainWindow::new()?;
+    // Before the window is shown: a free desktop reads the id off the
+    // window as it is realised, and matches it to the desktop entry the
+    // Linux install wrote.
+    gui::name_the_window()?;
     if let Some(widths) = gui::settings::load_pane_widths() {
         ui.set_folders_width(widths.folders);
         ui.set_contents_width(widths.contents);
@@ -99,6 +103,10 @@ fn self_update() -> Result<(), Box<dyn std::error::Error>> {
         }
         Ok(updater::Outcome::Updated { from, to }) => {
             println!("gui updated: v{from} -> v{to}");
+            Ok(())
+        }
+        Ok(updater::Outcome::InsideAppImage { appimage }) => {
+            println!("{}", updater::appimage_advice("gui", &appimage));
             Ok(())
         }
         Err(err) => Err(err.into()),

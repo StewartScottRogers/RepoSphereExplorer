@@ -44,6 +44,15 @@ fn self_update() -> ExitCode {
             println!("repo_sphere_explorer updated: v{from} -> v{to}");
             ExitCode::SUCCESS
         }
+        // The parked placeholder is not in the AppImage, so this never
+        // happens here; the arm is what keeps it compiling.
+        Ok(updater::Outcome::InsideAppImage { appimage }) => {
+            println!(
+                "{}",
+                updater::appimage_advice("repo_sphere_explorer", &appimage)
+            );
+            ExitCode::SUCCESS
+        }
         Err(err) => {
             eprintln!("update failed: {err}");
             ExitCode::FAILURE

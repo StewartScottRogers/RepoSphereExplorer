@@ -34,6 +34,10 @@ fn self_update() -> ExitCode {
             println!("service updated: v{from} -> v{to}");
             ExitCode::SUCCESS
         }
+        Ok(updater::Outcome::InsideAppImage { appimage }) => {
+            println!("{}", updater::appimage_advice("service", &appimage));
+            ExitCode::SUCCESS
+        }
         Err(err) => {
             eprintln!("update failed: {err}");
             ExitCode::FAILURE
