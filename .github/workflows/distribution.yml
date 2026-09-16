@@ -238,10 +238,6 @@ jobs:
         run: |
           $scratch = Join-Path $env:RUNNER_TEMP 'scratch'
           if (Get-Process service -ErrorAction SilentlyContinue) { Write-Output "::error title=GUI (Windows)::a service was already running"; exit 1 }
-          # The Windows runner has no GPU and no OpenGL driver, so the default
-          # OpenGL renderer cannot start there. Slint's software renderer is
-          # compiled in; this proves the installed build opens a window with it.
-          $env:SLINT_BACKEND = 'winit-software'
           $guiLog = Join-Path $env:RUNNER_TEMP 'gui.log'
           $gui = Start-Process -FilePath (Join-Path $env:PREFIX 'RepoSphereExplorerGui.exe') -ArgumentList "`"$scratch`"" -PassThru -RedirectStandardError $guiLog
           $null = $gui.Handle
