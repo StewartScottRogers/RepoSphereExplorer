@@ -82,6 +82,25 @@ function Stop-ProcessesIn([string]$Folder) {
     }
 }
 
+# Deletes a file, waiting for Windows to let go of it.
+#
+# An executable that has just been stopped is still locked for a moment after
+# the process is gone, so an uninstall run while the application was open
+# failed with "access to the path is denied" and left the install behind. The
+# same happens when an antivirus scanner is reading a file as it is removed.
+function Remove-FileWhenUnlocked([string]$Path) {
+    for ($attempt = 1; $attempt -le 40; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            return
+        }
+        catch [System.UnauthorizedAccessException], [System.IO.IOException] {
+            if ($attempt -eq 40) { throw }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
 function Invoke-Uninstall {
     $receiptPath = Join-Path $Prefix $Receipt
     if (-not (Test-Path -LiteralPath $receiptPath)) {
@@ -95,11 +114,11 @@ function Invoke-Uninstall {
     Stop-ProcessesIn $Prefix
     foreach ($path in Get-Content -LiteralPath $receiptPath) {
         if ($path -and (Test-Path -LiteralPath $path)) {
-            Remove-Item -LiteralPath $path -Force
+            Remove-FileWhenUnlocked $path
             Write-Output "removed $path"
         }
     }
-    Remove-Item -LiteralPath $receiptPath -Force
+    Remove-FileWhenUnlocked $receiptPath
     $left = @(Get-ChildItem -LiteralPath $Prefix -Force)
     if ($left.Count -eq 0) {
         Remove-Item -LiteralPath $Prefix -Force

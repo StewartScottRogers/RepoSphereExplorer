@@ -391,6 +391,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
+          # Uninstall while the application is open, which is how somebody
+          # actually removes it. Windows keeps an executable locked for a
+          # moment after its process ends, and an uninstall that deleted
+          # straight away failed with "access to the path is denied".
+          $gui = Start-Process -FilePath (Join-Path $env:PREFIX 'RepoSphereExplorerGui.exe') -ArgumentList "`"$env:RUNNER_TEMP\scratch`"" -PassThru
+          Start-Sleep -Seconds 5
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall -Purge
           if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Uninstall (Windows)::install.ps1 -Uninstall -Purge failed"; exit 1 }
           Write-Output "--- $env:LOCALAPPDATA"; Get-ChildItem -Force $env:LOCALAPPDATA | Format-Table -AutoSize | Out-String -Width 200
