@@ -273,6 +273,15 @@ if (-not $UninstallRegistryKey) {{ $UninstallRegistryKey = '{REGISTRY_KEY}' }}
 mod tests {
     use super::*;
 
+    /// A path under the fixture prefix, spelled the way this platform
+    /// spells it. These are Windows paths in use, but the tests also run on
+    /// the continuous integration runner, where `join` writes `/` - and what
+    /// each assertion is about is the shape of what is built, not the
+    /// separator the host happens to use.
+    fn under(prefix: &str, name: &str) -> String {
+        PathBuf::from(prefix).join(name).display().to_string()
+    }
+
     fn plan() -> Plan {
         Plan {
             prefix: PathBuf::from(r"C:\prefix"),
@@ -308,8 +317,8 @@ mod tests {
         let receipt = plan.receipt_text();
         let lines: Vec<&str> = receipt.lines().collect();
         assert_eq!(lines.len(), 6);
-        assert_eq!(lines[0], r"C:\prefix\RepoSphereExplorerGui.exe");
-        assert_eq!(lines[4], r"C:\menu\Repos Explorer.lnk");
+        assert_eq!(lines[0], under(r"C:\prefix", "RepoSphereExplorerGui.exe"));
+        assert_eq!(lines[4], under(r"C:\menu", "Repos Explorer.lnk"));
         assert_eq!(lines[5], format!("registry:{REGISTRY_KEY}"));
     }
 
@@ -326,7 +335,10 @@ mod tests {
     fn the_uninstall_button_runs_the_copy_left_in_the_install_folder() {
         assert_eq!(
             plan().uninstall_command(),
-            r#""C:\prefix\ReposExplorerSetup.exe" --uninstall --prefix "C:\prefix""#
+            format!(
+                r#""{}" --uninstall --prefix "C:\prefix""#,
+                under(r"C:\prefix", "ReposExplorerSetup.exe")
+            )
         );
     }
 
@@ -339,7 +351,7 @@ mod tests {
             values[3],
             (
                 "DisplayIcon",
-                r"C:\prefix\RepoSphereExplorerGui.exe".to_owned()
+                under(r"C:\prefix", "RepoSphereExplorerGui.exe")
             )
         );
     }
