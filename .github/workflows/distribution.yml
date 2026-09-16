@@ -952,6 +952,9 @@ jobs:
           $left | Format-Table Id, Path -AutoSize | Out-String -Width 200
           if ($left.Count -gt 0) { Write-Output "::error title=Uninstall (Windows)::processes from the install remain"; $failed = $true }
           if ($failed) { exit 1 }
+          # The refused second uninstall left $LASTEXITCODE at 1, and the
+          # runner ends a PowerShell step with that code unless told otherwise.
+          exit 0
       - name: Uninstall with purge leaves nothing behind (${{ runner.os }})
         if: runner.os != 'Windows'
         shell: bash
