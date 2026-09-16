@@ -131,9 +131,14 @@ jobs:
           claude_args: |
             --max-turns ${{ inputs.max_turns || '150' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
-            --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"
+            --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*),Agent,Task"
           prompt: |
             You are the night shift of an unattended software factory.
+
+            Do the work yourself, in this session. The runner ends the job
+            the moment you stop, so anything handed to a helper agent or left
+            running in the background is killed unfinished. Run 35163388371
+            did that and pushed nothing.
 
             Target issue: "${{ inputs.issue }}" (empty means: choose one yourself).
 
