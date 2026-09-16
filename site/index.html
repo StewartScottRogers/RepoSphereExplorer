@@ -135,8 +135,16 @@
       </div>
     </div>
     <p>
+      On Linux, one step:
+      <a href="https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest/download/ReposExplorer-x86_64.AppImage">ReposExplorer-x86_64.AppImage</a>
+      &mdash; download it, make it executable, run it. It carries the graphical application,
+      the terminal application and the service in one file, installs nothing, and is removed
+      by deleting it.
+    </p>
+    <p>
       Or install with a script that checks every file against the release's signed manifest
-      before placing anything, and uninstalls cleanly:
+      before placing anything, adds the desktop entry and icon (Linux) or the Start menu and
+      Settings &gt; Apps entries (Windows), and uninstalls cleanly:
       <a href="https://raw.githubusercontent.com/StewartScottRogers/RepoSphereExplorer/main/scripts/install.ps1">install.ps1</a>
       (Windows) or
       <a href="https://raw.githubusercontent.com/StewartScottRogers/RepoSphereExplorer/main/scripts/install.sh">install.sh</a>

@@ -90,7 +90,22 @@ Explorer cannot be opened because the developer cannot be verified". After
 that once, it opens like any other application, and it is in Launchpad and
 Spotlight with its own icon.
 
-**Linux and macOS** (the command line):
+**Linux** - one file, no install step:
+
+```bash
+curl -fsSLO https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest/download/ReposExplorer-x86_64.AppImage
+chmod +x ReposExplorer-x86_64.AppImage
+./ReposExplorer-x86_64.AppImage
+```
+
+The AppImage carries the graphical application, the terminal application,
+`service`, the desktop entry and the icon in one file that runs wherever you
+put it. It changes nothing on the machine, so there is nothing to uninstall:
+delete the file. Being one read-only file, it cannot update itself in place -
+`--self-update` says so and names the file to download instead.
+
+**Linux and macOS, with the install script** - the alternative, and the only
+way on macOS:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/StewartScottRogers/RepoSphereExplorer/main/scripts/install.sh
@@ -125,12 +140,21 @@ defined once, in `crates/setup/src/layout.rs`, and the script carries a
 generated copy of it, so the setup program and the script cannot come to
 disagree.
 
+On Linux it tells the desktop the same things, in that desktop's own terms:
+a desktop entry at `~/.local/share/applications/reposphereexplorer.desktop`,
+so **Repos Explorer** appears in the applications menu and a folder can be
+opened with it, and the icon at every size the hicolor icon theme asks for
+under `~/.local/share/icons/hicolor`, so the menu entry, the window and the
+taskbar show the application's own picture. `update-desktop-database` and
+`gtk-update-icon-cache` are run when the machine has them.
+
 To remove it: the Uninstall button, or `ReposExplorerSetup.exe --uninstall` /
 `install.ps1 -Uninstall` / `install.sh --uninstall`. That stops the
 application and its service and removes what was installed - on Windows the
-Start menu entry and the Settings > Apps entry too. Your journal and Repos
-Directory configuration stay unless you add `-Purge -Yes` / `--purge --yes`,
-which the script does and the setup program does not.
+Start menu entry and the Settings > Apps entry too, on Linux the desktop
+entry and the icons. Your journal and Repos Directory configuration stay
+unless you add `-Purge -Yes` / `--purge --yes`, which the script does and
+the setup program does not.
 
 Every release is installed, run, updated and uninstalled this way on Windows,
 Linux and macOS by [`distribution.yml`](.github/workflows/distribution.yml)

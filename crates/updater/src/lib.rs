@@ -29,6 +29,44 @@ pub const PUBLIC_KEY: [u8; 32] = [
 pub const MANIFEST_URL: &str =
     "https://stewartscottrogers.github.io/RepoSphereExplorer/latest.json";
 
+/// Where a newer release is downloaded from by hand, for the one build that
+/// cannot fetch its own: the `AppImage`.
+pub const RELEASES_URL: &str =
+    "https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest";
+
+/// The file name the `AppImage` is published under.
+pub const APPIMAGE_NAME: &str = "ReposExplorer-x86_64.AppImage";
+
+/// The `AppImage` this process is running inside, if it is running inside one.
+///
+/// The `AppImage` runtime mounts the file and exports `APPIMAGE` as the path
+/// to the file itself, for exactly this: a program that wants to know it is
+/// one file rather than an installed tree.
+#[must_use]
+pub fn running_appimage() -> Option<String> {
+    std::env::var("APPIMAGE")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+}
+
+/// What to tell somebody who asked the `AppImage` at `appimage` to update
+/// itself, where `label` names the binary the way its `--self-update`
+/// output does.
+///
+/// It cannot be done in place and no wording will make it possible: an
+/// `AppImage` is one read-only file with the running process inside it, and
+/// the update it wants is a different file. Saying so plainly is the
+/// alternative to a permission error nobody can act on.
+#[must_use]
+pub fn appimage_advice(label: &str, appimage: &str) -> String {
+    format!(
+        "{label} is running from the AppImage at {appimage}, which cannot update \
+         itself in place: an AppImage is one read-only file, and a new version is \
+         a new file. Download {APPIMAGE_NAME} from {RELEASES_URL}, make it \
+         executable, and use it instead of this one."
+    )
+}
+
 /// This build's target triple, matching one of `release.yml`'s matrix
 /// entries. `"unknown"` on a target the release workflow doesn't publish.
 #[must_use]
@@ -53,6 +91,12 @@ pub const fn current_target() -> &'static str {
 /// # Errors
 /// See [`check_and_update`].
 pub fn self_update(binary_name: &str) -> Result<Outcome, UpdateError> {
+    // Before anything is fetched: inside an AppImage there is nothing this
+    // could write to, and downloading a release only to fail on the rename
+    // would say the wrong thing about why.
+    if let Some(appimage) = running_appimage() {
+        return Ok(Outcome::InsideAppImage { appimage });
+    }
     let exe_path = std::env::current_exe()?;
     check_and_update(
         binary_name,
@@ -125,6 +169,12 @@ pub enum Outcome {
         from: String,
         /// The version now installed.
         to: String,
+    },
+    /// The running binary is inside an `AppImage`, which is replaced rather
+    /// than updated. Nothing was fetched and nothing was written.
+    InsideAppImage {
+        /// The `AppImage` file this process is running from.
+        appimage: String,
     },
 }
 
@@ -933,6 +983,27 @@ mod tests {
                 from: "0.5.0".to_owned(),
                 to: "0.6.0".to_owned()
             }
+        );
+    }
+
+    /// The one update that cannot happen has to read as an instruction, not
+    /// as a failure: what is running, why it cannot be replaced from here,
+    /// and the file to fetch instead.
+    #[test]
+    fn the_appimage_advice_says_what_to_do_instead() {
+        let advice =
+            super::appimage_advice("gui", "/home/reader/Apps/ReposExplorer-x86_64.AppImage");
+        for part in [
+            "gui",
+            "/home/reader/Apps/ReposExplorer-x86_64.AppImage",
+            super::APPIMAGE_NAME,
+            super::RELEASES_URL,
+        ] {
+            assert!(advice.contains(part), "{part} is missing from: {advice}");
+        }
+        assert!(
+            !advice.contains("failed") && !advice.contains("error"),
+            "an AppImage that cannot update in place has not failed: {advice}"
         );
     }
 

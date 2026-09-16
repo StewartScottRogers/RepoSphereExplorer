@@ -12,6 +12,7 @@
 //! Nothing links this crate into a shipped binary: the front ends take it as
 //! a development dependency, for their tests.
 
+use base64::Engine as _;
 use object::LittleEndian;
 use object::read::pe::{PeFile64, ResourceDirectory, ResourceNameOrId};
 use resvg::{tiny_skia, usvg};
@@ -20,6 +21,9 @@ use resvg::{tiny_skia, usvg};
 /// chooses among them: sixteen for a title bar and a listing, thirty-two for
 /// the taskbar, forty-eight for Explorer's medium icons, and the larger three
 /// for its larger views and for a high display scale.
+///
+/// A free desktop's hicolor icon theme wants the same six: it looks for
+/// `<size>x<size>/apps/<name>.png` and takes the nearest size it finds.
 pub const SIZES: [u32; 6] = [16, 32, 48, 64, 128, 256];
 
 /// The drawing, as committed.
@@ -319,6 +323,140 @@ pub fn icns_entries(bytes: &[u8]) -> Result<Vec<IcnsEntry<'_>>, String> {
     Ok(found)
 }
 
+/// The themed icon's name on a free desktop: the base name of the desktop
+/// entry, of the picture in each size directory of the hicolor icon theme,
+/// and the value of the entry's `Icon` key.
+///
+/// `gui`'s `XDG_APP_ID` is the same string, and
+/// `crates/gui/tests/desktop_entry.rs` holds the two together: the name a
+/// window gives itself is what a desktop environment matches against the
+/// entry, and so how it finds this picture for that window.
+pub const THEMED_NAME: &str = "reposphereexplorer";
+
+/// The line that opens the generated section of `scripts/install.sh`.
+pub const ICONS_BEGIN: &str = "# BEGIN GENERATED ICONS";
+
+/// The line that closes it.
+pub const ICONS_END: &str = "# END GENERATED ICONS";
+
+/// How many base64 characters go on one line of the install script.
+const BASE64_LINE: usize = 76;
+
+/// The section of `scripts/install.sh` that carries the icon: the name, the
+/// sizes, the drawing for the theme's scalable directory, and the rendered
+/// picture at each of [`SIZES`], base64 encoded.
+///
+/// The bytes travel inside the script because that is how the script
+/// travels: a reader downloads that one file and runs it, without the
+/// repository, without a checkout of the release, and with no rasteriser on
+/// the machine to draw an SVG with. Windows has no equivalent section - the
+/// icon is a resource inside the binaries there.
+///
+/// # Errors
+///
+/// When `drawing` will not render at one of [`SIZES`].
+pub fn install_script_icons(drawing: &str) -> Result<String, String> {
+    use std::fmt::Write as _;
+
+    let sizes = SIZES
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "{ICONS_BEGIN}
+# Written by `cargo run -p icon` from assets/RepoSphereExplorer.svg. Change
+# the drawing and run that command; changing this by hand makes the script
+# and the drawing two different pictures.
+ICON_NAME=\"{THEMED_NAME}\"
+ICON_SIZES=\"{sizes}\"
+
+# The drawing, for the theme's scalable directory.
+icon_svg() {{
+    cat <<'SVG'
+{drawing}
+SVG
+}}
+
+# The drawing rendered at one size, as the bytes of a portable network
+# graphic (PNG) on standard output.
+icon_png() {{
+    case \"$1\" in
+",
+        drawing = drawing.trim_end()
+    );
+    for &size in &SIZES {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png(drawing, size)?);
+        let lines = encoded
+            .as_bytes()
+            .chunks(BASE64_LINE)
+            .map(|line| String::from_utf8_lossy(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = write!(
+            out,
+            "    {size})
+        base64 -d <<'PNG_{size}'
+{lines}
+PNG_{size}
+        ;;
+"
+        );
+    }
+    let _ = write!(
+        out,
+        "    *) fail \"the icon is not drawn at $1 pixels\" ;;
+    esac
+}}
+{ICONS_END}"
+    );
+    // The script's lines end in a newline and nothing else, wherever this
+    // ran: a shell script with carriage returns fails on its first line, and
+    // this crate's own source arrives with them on a Windows checkout.
+    Ok(out.replace("\r\n", "\n"))
+}
+
+/// The generated icon section of `script`, from [`ICONS_BEGIN`] to
+/// [`ICONS_END`], both lines included.
+///
+/// # Errors
+///
+/// When the script carries no such section.
+pub fn icons_in(script: &str) -> Result<&str, String> {
+    let range = icons_range(script)?;
+    Ok(&script[range])
+}
+
+/// `script` with its generated icon section replaced by `icons`.
+///
+/// # Errors
+///
+/// When the script carries no such section.
+pub fn script_with_icons(script: &str, icons: &str) -> Result<String, String> {
+    let range = icons_range(script)?;
+    let mut out = String::with_capacity(script.len());
+    out.push_str(&script[..range.start]);
+    out.push_str(icons);
+    out.push_str(&script[range.end..]);
+    Ok(out)
+}
+
+/// Where the generated icon section sits in `script`.
+fn icons_range(script: &str) -> Result<std::ops::Range<usize>, String> {
+    let start = script
+        .find(ICONS_BEGIN)
+        .ok_or_else(|| format!("the script carries no `{ICONS_BEGIN}` line"))?;
+    let end = script
+        .find(ICONS_END)
+        .ok_or_else(|| format!("the script carries no `{ICONS_END}` line"))?;
+    if end < start {
+        return Err(format!("`{ICONS_END}` comes before `{ICONS_BEGIN}`"));
+    }
+    Ok(start..end + ICONS_END.len())
+}
+
 /// How an icon entry's image is encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
@@ -500,8 +638,39 @@ fn table(
 mod tests {
     use super::{
         BITMAP_HEADER, COMMITTED, COMMITTED_ICNS, DRAWING, Encoding, Entry, ICNS_ENTRIES, SIZES,
-        entries, icns_entries, render,
+        THEMED_NAME, entries, icns_entries, icons_in, install_script_icons, png, render,
+        script_with_icons,
     };
+
+    use base64::Engine as _;
+
+    /// The install script as committed: on a free desktop it is the only
+    /// thing that carries the icon, because it is the only thing a reader
+    /// downloads.
+    const SCRIPT: &str = include_str!("../../../scripts/install.sh");
+
+    /// The body of the shell heredoc that `delimiter` opens and closes.
+    fn heredoc<'a>(script: &'a str, delimiter: &str) -> &'a str {
+        let opening = format!("<<'{delimiter}'\n");
+        let start = script
+            .find(&opening)
+            .unwrap_or_else(|| panic!("the script opens no {delimiter} heredoc"))
+            + opening.len();
+        let rest = &script[start..];
+        let closing = format!("\n{delimiter}\n");
+        let end = rest
+            .find(&closing)
+            .unwrap_or_else(|| panic!("the {delimiter} heredoc is never closed"));
+        &rest[..end]
+    }
+
+    /// The bytes one size's base64 heredoc carries.
+    fn embedded_png(size: u32) -> Vec<u8> {
+        let encoded = heredoc(SCRIPT, &format!("PNG_{size}")).replace('\n', "");
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap_or_else(|err| panic!("the {size} pixel block is not base64: {err}"))
+    }
 
     /// One entry's pixels, straight RGBA with the top row first, whichever
     /// way it is encoded.
@@ -684,5 +853,114 @@ mod tests {
             opaque > 32 * 32 / 2,
             "the icon should fill its square, not float in it: {opaque} opaque pixels of 1024"
         );
+    }
+
+    /// The generated section is what a Linux desktop gets: nothing else in
+    /// a downloaded script can draw an SVG, and nothing else carries the
+    /// name the desktop entry and the window agree on.
+    #[test]
+    fn the_install_script_carries_the_name_and_every_size() {
+        let block = icons_in(SCRIPT).expect("the script carries a generated icon section");
+        assert!(
+            block.contains(&format!("ICON_NAME=\"{THEMED_NAME}\"")),
+            "the section names the icon something else"
+        );
+        let sizes = SIZES
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            block.contains(&format!("ICON_SIZES=\"{sizes}\"")),
+            "the section installs sizes other than {sizes}"
+        );
+        for size in SIZES {
+            assert!(
+                block.contains(&format!("<<'PNG_{size}'")),
+                "no {size} pixel picture in the install script; run `cargo run -p icon`"
+            );
+        }
+    }
+
+    /// The same check the committed icon gets, for the same reason: a
+    /// script that carries some older rendering would install a picture the
+    /// repository no longer draws, and nothing else would notice.
+    #[test]
+    fn the_icon_in_the_install_script_is_the_committed_drawing() {
+        for size in SIZES {
+            let bytes = embedded_png(size);
+            let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+                .unwrap_or_else(|err| panic!("the {size} pixel block is not a picture: {err}"))
+                .to_rgba8();
+            assert_eq!(
+                decoded.dimensions(),
+                (size, size),
+                "the {size} pixel block holds another size"
+            );
+            let fresh = render(DRAWING, size).expect("the drawing renders");
+            let pixels = decoded.into_raw();
+            assert_eq!(pixels.len(), fresh.len(), "{size}: the same pixel count");
+            let difference: u64 = pixels
+                .iter()
+                .zip(&fresh)
+                .map(|(left, right)| u64::from(left.abs_diff(*right)))
+                .sum();
+            let channels = u64::try_from(pixels.len()).expect("an icon fits in this machine");
+            assert!(
+                difference <= channels,
+                "{size}: the install script's picture is not the drawing \
+                 (mean difference {difference} over {channels} channels); \
+                 run `cargo run -p icon`"
+            );
+        }
+    }
+
+    /// The scalable directory takes the drawing itself, so it has to be
+    /// this drawing and still be an SVG after a trip through a heredoc.
+    #[test]
+    fn the_drawing_in_the_install_script_is_the_committed_drawing() {
+        let embedded = heredoc(SCRIPT, "SVG");
+        assert_eq!(
+            embedded.trim_end(),
+            DRAWING.replace("\r\n", "\n").trim_end(),
+            "the script carries a different drawing; run `cargo run -p icon`"
+        );
+    }
+
+    /// Rewriting the section must leave the script around it alone: the
+    /// generator writes over a file that is otherwise hand-written.
+    #[test]
+    fn rewriting_the_section_changes_nothing_around_it() {
+        let rewritten = script_with_icons(SCRIPT, "# BEGIN GENERATED ICONS\n# END GENERATED ICONS")
+            .expect("the script carries a generated icon section");
+        let section = icons_in(SCRIPT).expect("the script carries a generated icon section");
+        assert_eq!(
+            rewritten.len(),
+            SCRIPT.len() - section.len() + "# BEGIN GENERATED ICONS\n# END GENERATED ICONS".len()
+        );
+        let (before, _) = SCRIPT.split_at(SCRIPT.find(section).expect("the section is in it"));
+        assert!(rewritten.starts_with(before), "the text above it moved");
+        assert!(
+            rewritten.ends_with(&SCRIPT[SCRIPT.find(section).expect("found") + section.len()..]),
+            "the text below it moved"
+        );
+    }
+
+    /// The picture the theme's size directories hold is a picture, at the
+    /// size asked for.
+    #[test]
+    fn a_rendered_picture_is_a_portable_network_graphic_of_that_size() {
+        let bytes = png(DRAWING, 48).expect("the drawing renders");
+        assert!(bytes.starts_with(b"\x89PNG"), "not a picture");
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+            .expect("a picture");
+        assert_eq!((decoded.width(), decoded.height()), (48, 48));
+    }
+
+    /// A drawing the generator cannot render must say so rather than write
+    /// an empty section over the one that works.
+    #[test]
+    fn a_drawing_that_will_not_render_is_refused() {
+        assert!(install_script_icons("not a drawing").is_err());
     }
 }

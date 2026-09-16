@@ -99,6 +99,23 @@ jobs:
           name: ${{ matrix.target }}
           path: dist/*
 
+      # The one-file Linux option: no install step, no script, no unpacking.
+      # Its own artifact rather than another file in the target's, so the
+      # install checks that read that directory are not handed a file they
+      # know nothing about. `publish` merges every artifact, so it is
+      # released alongside the binaries.
+      - name: Package the one-file AppImage (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          scripts/appimage.sh --from-directory dist \
+            --output appimage/ReposExplorer-x86_64.AppImage
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Linux'
+        with:
+          name: appimage
+          path: appimage/*
+
   # The signed manifest, made here rather than only on the Pages site, so
   # the release can be installed and verified before it is published, and
   # so every release carries the manifest that installs that tag.

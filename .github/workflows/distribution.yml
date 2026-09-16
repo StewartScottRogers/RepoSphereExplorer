@@ -77,6 +77,18 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libxcursor-dev \
             libinput-dev libgbm-dev
 
+      # What the Linux desktop checks below need, and nothing else does:
+      # the validator the freedesktop specification ships, and the
+      # filesystem-in-userspace (FUSE) library an AppImage mounts itself
+      # with. The library is named for the release; the older name is the
+      # fallback.
+      - name: Tools the Linux desktop checks need (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends desktop-file-utils
+          sudo apt-get install -y --no-install-recommends libfuse2t64 \
+            || sudo apt-get install -y --no-install-recommends libfuse2
+
       - uses: Swatinem/rust-cache@v2
       - name: Build the smoke client
         run: cargo build -p protocol --bin smoke
@@ -347,6 +359,40 @@ jobs:
               || fail "$PREFIX/$name does not link into the bundle"
           done
 
+      # A Linux install a desktop does not know about is half an install:
+      # nothing in the applications menu, and a blank square where the
+      # window's icon should be.
+      - name: The desktop knows the application is installed (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          entry="$HOME/.local/share/applications/reposphereexplorer.desktop"
+          icons="$HOME/.local/share/icons/hicolor"
+          if [ ! -f "$entry" ]; then
+            echo "::error title=Desktop entry (Linux)::no desktop entry at $entry"; exit 1
+          fi
+          cat "$entry"
+          failed=""
+          desktop-file-validate "$entry" \
+            || { echo "::error title=Desktop entry (Linux)::desktop-file-validate refused it"; failed=1; }
+          grep -qxF "Exec=\"$PREFIX/RepoSphereExplorerGui\" %f" "$entry" \
+            || { echo "::error title=Desktop entry (Linux)::Exec does not run $PREFIX/RepoSphereExplorerGui with %f"; failed=1; }
+          grep -qxF "Icon=reposphereexplorer" "$entry" \
+            || { echo "::error title=Desktop entry (Linux)::Icon does not name the installed icon"; failed=1; }
+          find "$icons" -type f 2>/dev/null | sort || true
+          for size in 16 32 48 64 128 256; do
+            picture="$icons/${size}x${size}/apps/reposphereexplorer.png"
+            if [ ! -f "$picture" ]; then
+              echo "::error title=Themed icon (Linux)::no icon at $picture"; failed=1; continue
+            fi
+            file "$picture" | grep -qE "PNG image data, $size x $size" \
+              || { echo "::error title=Themed icon (Linux)::$picture is not a ${size}x${size} picture: $(file -b "$picture")"; failed=1; }
+          done
+          drawing="$icons/scalable/apps/reposphereexplorer.svg"
+          grep -q "<svg" "$drawing" 2>/dev/null \
+            || { echo "::error title=Themed icon (Linux)::no drawing at $drawing"; failed=1; }
+          [ -z "$failed" ]
+
       # ---- verification refuses what it should
 
       - name: Refuse a tampered asset and a re-hashed one (Windows)
@@ -511,6 +557,41 @@ jobs:
           CHECK
           if pgrep -x service; then echo "::error title=GUI (Linux)::a service was already running"; exit 1; fi
           xvfb-run -a -s "-screen 0 1280x800x24" bash "$RUNNER_TEMP/gui-check.sh"
+      # The join no test in the tree can reach: the name the window actually
+      # carries, read off a real X server, against the StartupWMClass in the
+      # entry the install wrote. Get either wrong and the desktop shows a
+      # blank icon and a second taskbar button beside the menu entry.
+      - name: The window carries the desktop entry's StartupWMClass (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/wm-class.sh" <<'CHECK'
+          set -uo pipefail
+          entry="$HOME/.local/share/applications/reposphereexplorer.desktop"
+          wanted="$(sed -n 's/^StartupWMClass=//p' "$entry")"
+          [ -n "$wanted" ] || { echo "::error title=StartupWMClass (Linux)::the entry names no StartupWMClass"; exit 1; }
+          "$PREFIX/RepoSphereExplorerGui" "$RUNNER_TEMP/scratch" > "$RUNNER_TEMP/wm-class-gui.log" 2>&1 &
+          gui=$!
+          sleep 10
+          if ! kill -0 "$gui" 2>/dev/null; then
+            cat "$RUNNER_TEMP/wm-class-gui.log"
+            echo "::error title=StartupWMClass (Linux)::the window exited before it could be read"; exit 1
+          fi
+          window="$(xwininfo -root -tree | awk '/"Repos Explorer"/ { print $1; exit }')"
+          if [ -z "$window" ]; then
+            echo "::error title=StartupWMClass (Linux)::no Repos Explorer window"; kill "$gui"; exit 1
+          fi
+          class="$(xprop -id "$window" WM_CLASS)"
+          echo "the window says: $class"
+          echo "the entry says: StartupWMClass=$wanted"
+          kill "$gui"
+          case "$class" in
+            *"\"$wanted\""*) ;;
+            *) echo "::error title=StartupWMClass (Linux)::the entry would never match this window"; exit 1 ;;
+          esac
+          CHECK
+          xvfb-run -a -s "-screen 0 1280x800x24" bash "$RUNNER_TEMP/wm-class.sh"
+
       - name: Graphical application starts and starts its own service (macOS)
         if: runner.os == 'macOS'
         shell: bash
@@ -656,6 +737,84 @@ jobs:
           echo "$output"
           case "$output" in *"tui is up to date"*) ;; *) echo "::error title=TUI (${RUNNER_OS})::--self-update did not report up to date"; exit 1 ;; esac
 
+      # ---- the AppImage: the one file, run the way a reader runs it
+
+      - name: Take this run's AppImage
+        if: runner.os == 'Linux' && env.FROM_ARTIFACTS == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: appimage
+          path: appimage
+      - name: Download the published AppImage
+        if: runner.os == 'Linux' && env.FROM_ARTIFACTS != 'true'
+        shell: bash
+        run: |
+          mkdir -p appimage
+          version="$(tr -d '\r\n' < release/manifest.json | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          gh release download "v${version}" --repo "${{ github.repository }}" \
+            --pattern "ReposExplorer-x86_64.AppImage" --dir appimage \
+            || echo "::notice title=AppImage (Linux)::skipped: v${version} publishes no AppImage. Needs a release cut since this workflow."
+
+      # No install step at all: made executable, and run. The runtime mounts
+      # the file, so the three binaries inside it sit beside each other
+      # exactly as an install puts them and the graphical application starts
+      # the service next to itself.
+      - name: The AppImage runs with no install at all (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          image="$PWD/appimage/ReposExplorer-x86_64.AppImage"
+          if [ ! -f "$image" ]; then
+            echo "::notice title=AppImage (Linux)::skipped: no AppImage to run"; exit 0
+          fi
+          chmod +x "$image"
+          ls -la "$image"
+          export IMAGE="$image"
+          cat > "$RUNNER_TEMP/appimage-check.sh" <<'CHECK'
+          set -uo pipefail
+          "$IMAGE" "$RUNNER_TEMP/scratch" > "$RUNNER_TEMP/appimage.log" 2>&1 &
+          app=$!
+          sleep 12
+          if ! kill -0 "$app" 2>/dev/null; then
+            cat "$RUNNER_TEMP/appimage.log"
+            echo "::error title=AppImage (Linux)::exited after starting"; exit 1
+          fi
+          xwininfo -root -tree | grep -F '"Repos Explorer"' \
+            || { echo "::error title=AppImage (Linux)::no Repos Explorer window"; kill "$app"; exit 1; }
+          ps -A -o args= > "$RUNNER_TEMP/appimage-processes.txt"
+          # Its own service, from inside the mounted image, not one left
+          # running by an earlier step or by an install.
+          grep -E '^/tmp/\.mount_[^/]*/usr/bin/service$' "$RUNNER_TEMP/appimage-processes.txt" \
+            || { echo "::error title=AppImage (Linux)::did not start the service it carries"; kill "$app"; exit 1; }
+          kill "$app"
+          for _ in $(seq 1 20); do kill -0 "$app" 2>/dev/null || exit 0; sleep 0.5; done
+          echo "::error title=AppImage (Linux)::did not stop"; exit 1
+          CHECK
+          if pgrep -f '/usr/bin/service$'; then
+            echo "::error title=AppImage (Linux)::a service from a mounted image was already running"; exit 1
+          fi
+          xvfb-run -a -s "-screen 0 1280x800x24" bash "$RUNNER_TEMP/appimage-check.sh"
+
+      # Self-update inside an AppImage is not possible in place, so it has to
+      # say so plainly rather than fail on a read-only file.
+      - name: The AppImage says how an AppImage updates (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          image="$PWD/appimage/ReposExplorer-x86_64.AppImage"
+          if [ ! -f "$image" ]; then
+            echo "::notice title=AppImage self-update (Linux)::skipped: no AppImage to run"; exit 0
+          fi
+          output="$("$image" --self-update 2>&1)" \
+            || { echo "$output"; echo "::error title=AppImage self-update (Linux)::--self-update failed"; exit 1; }
+          echo "$output"
+          for said in "cannot update itself in place" "ReposExplorer-x86_64.AppImage" "releases"; do
+            case "$output" in
+              *"$said"*) ;;
+              *) echo "::error title=AppImage self-update (Linux)::it never said \"$said\""; exit 1 ;;
+            esac
+          done
+
       # ---- self-update: the previous release, updated to the latest
 
       - name: Self-update from the previous release (Windows)
@@ -705,7 +864,10 @@ jobs:
           fi
           prefix="$RUNNER_TEMP/previous"
           bin_args=()
-          [ "$RUNNER_OS" != Linux ] || bin_args=(--bin-dir "$RUNNER_TEMP/previous-bin")
+          # A second copy beside the real one: its desktop entry and themed
+          # icon go somewhere harmless, so installing and removing it does
+          # not take the real install's menu entry away.
+          [ "$RUNNER_OS" != Linux ] || bin_args=(--bin-dir "$RUNNER_TEMP/previous-bin" --xdg-data-dir "$RUNNER_TEMP/previous-share")
           scripts/install.sh --tag "$previous" --prefix "$prefix" "${bin_args[@]}" \
             || { echo "::error title=Self-update (${RUNNER_OS})::could not install $previous"; exit 1; }
           from="${previous#v}"
@@ -797,5 +959,25 @@ jobs:
           ps -A -o pid= -o args= > "$RUNNER_TEMP/processes-after.txt"
           if grep -F "$PREFIX/" "$RUNNER_TEMP/processes-after.txt"; then
             echo "::error title=Uninstall (${RUNNER_OS})::processes from the install remain"; failed=1
+          fi
+          [ -z "$failed" ]
+
+      # Uninstall removes exactly what install made, which includes the
+      # things the desktop was told about. An application left in the
+      # applications menu after it is gone is a menu entry that does nothing.
+      - name: The desktop entry and the themed icon are gone (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          failed=""
+          entry="$HOME/.local/share/applications/reposphereexplorer.desktop"
+          icons="$HOME/.local/share/icons/hicolor"
+          echo "--- $(dirname "$entry")"; ls -la "$(dirname "$entry")" || true
+          echo "--- $icons"; find "$icons" || true
+          [ ! -e "$entry" ] || { echo "::error title=Uninstall (Linux)::$entry remains"; failed=1; }
+          left="$(find "$icons" -name 'reposphereexplorer.*' 2>/dev/null || true)"
+          if [ -n "$left" ]; then
+            echo "$left"
+            echo "::error title=Uninstall (Linux)::themed icons remain"; failed=1
           fi
           [ -z "$failed" ]
