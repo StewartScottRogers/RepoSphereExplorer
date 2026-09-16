@@ -24,6 +24,10 @@ fn the_build_script_embeds_the_committed_icon() {
 
 #[test]
 fn the_window_is_given_the_icon_drawing() {
+    // The headless backend, as every other window test uses: a continuous
+    // integration runner has no display, and asking for a real one there
+    // fails before the markup is ever read.
+    i_slint_backend_testing::init_no_event_loop();
     let ui = gui::MainWindow::new().expect("the window should build");
     let size = ui.get_window_icon().size();
     assert_eq!(
