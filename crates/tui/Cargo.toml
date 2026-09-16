@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+build = "build.rs"
 
 [[bin]]
 name = "RepoSphereExplorerTui"
@@ -198,6 +199,16 @@ protocol = { path = "../protocol" }
 ratatui = "0.30"
 serde_json = "1"
 updater = { path = "../updater" }
+
+# Compiles `assets/RepoSphereExplorer.ico` into the binary's resource
+# directory. Conditional on the host, because a build script runs on the host
+# and only a Windows one has the resource compiler this drives.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+# Test-only: reads the icon resource back out of the built binary.
+[dev-dependencies]
+icon = { path = "../icon" }
 
 [lints]
 workspace = true

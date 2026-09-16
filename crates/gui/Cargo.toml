@@ -216,6 +216,12 @@ updater = { path = "../updater" }
 [build-dependencies]
 slint-build = "1.17"
 
+# Compiles `assets/RepoSphereExplorer.ico` into the binary's resource
+# directory. Conditional on the host, because a build script runs on the host
+# and only a Windows one has the resource compiler this drives.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 # Slint's own UI-testing backend: simulates a windowing system so a test can
 # dispatch pointer events through Slint's hit-testing without a display. It
 # deliberately does not follow semver, so it is pinned with `=` to the exact
@@ -225,6 +231,8 @@ i-slint-backend-testing = "=1.17.1"
 # Test-only: the sweep over `samples/` needs the core halves to produce the
 # view data the presentation halves then render.
 service = { path = "../service" }
+# Test-only: reads the icon resource back out of the built binary.
+icon = { path = "../icon" }
 
 # Not `[lints] workspace = true`: Slint's generated component code (from
 # build.rs, included into this crate) contains its own #[allow(unsafe_code)]

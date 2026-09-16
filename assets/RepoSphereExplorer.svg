@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Repos Explorer</title>
+  <desc>A folder of working copies: the shape the application draws for a
+  directory, holding a listing whose first row is a checkout, badged with the
+  accent-coloured marker the Contents pane puts beside one.</desc>
+  <defs>
+    <linearGradient id="accent" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="0" y2="248">
+      <stop offset="0" stop-color="#2589e0"/>
+      <stop offset="1" stop-color="#004a86"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#accent)"/>
+  <path d="M38 100a12 12 0 0 1 12-12h40l16 16h68a12 12 0 0 1 12 12v86a12 12 0 0 1-12 12H50a12 12 0 0 1-12-12z" fill="#b6d6f2"/>
+  <path d="M38 118h148v84a12 12 0 0 1-12 12H50a12 12 0 0 1-12-12z" fill="#ffffff"/>
+  <rect x="58" y="142" width="96" height="13" rx="6.5" fill="#0f7ad2"/>
+  <rect x="58" y="173" width="66" height="13" rx="6.5" fill="#b9c9d8"/>
+  <circle cx="194" cy="70" r="54" fill="url(#accent)"/>
+  <circle cx="194" cy="70" r="35" fill="#ffffff"/>
+</svg>

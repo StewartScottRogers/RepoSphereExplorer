@@ -5,6 +5,7 @@ members = [
     "crates/protocol",
     "crates/plugin-api",
     "crates/syntax",
+    "crates/icon",
     "crates/service",
     "crates/tui",
     "crates/gui",
