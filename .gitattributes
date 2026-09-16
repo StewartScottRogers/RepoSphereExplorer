@@ -45,6 +45,7 @@ scripts/*.sh text eol=lf
 *.bmp   binary
 *.webp  binary
 *.ico   binary
+*.icns  binary
 *.tiff  binary
 *.psd   binary
 *.wav   binary
@@ -75,6 +76,7 @@ scripts/*.sh text eol=lf
 *.hdf5    binary
 *.wasm    binary
 *.iso     binary
+*.dmg     binary
 *.img     binary
 *.vhd     binary
 *.vmdk    binary

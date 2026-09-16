@@ -1,13 +1,13 @@
-//! The application icon: renders the drawing into the committed `.ico`, and
-//! reads icon resources back out of a Windows binary.
+//! The application icon: renders the drawing into the committed `.ico` and
+//! `.icns`, and reads icon resources back out of a Windows binary.
 //!
 //! Two jobs in one crate because they are two ends of the same thread. The
 //! drawing is `assets/RepoSphereExplorer.svg`; `cargo run -p icon` rewrites
-//! `assets/RepoSphereExplorer.ico` from it, so the committed asset is
-//! reproducible rather than something a person once exported. The reader is
-//! here rather than in each front end's test because both front ends ask the
-//! same question of their own built binary, and one copy of the answer is
-//! enough.
+//! `assets/RepoSphereExplorer.ico` and `assets/RepoSphereExplorer.icns` from
+//! it, so the committed assets are reproducible rather than something a
+//! person once exported. The reader is here rather than in each front end's
+//! test because both front ends ask the same question of their own built
+//! binary, and one copy of the answer is enough.
 //!
 //! Nothing links this crate into a shipped binary: the front ends take it as
 //! a development dependency, for their tests.
@@ -29,6 +29,31 @@ pub const DRAWING: &str = include_str!("../../../assets/RepoSphereExplorer.svg")
 /// [`ico`] last wrote and what the two Windows binaries embed.
 pub const COMMITTED: &[u8] = include_bytes!("../../../assets/RepoSphereExplorer.ico");
 
+/// The four-character type and pixel size of each image an icon set
+/// (`.icns`) carries, smallest first.
+///
+/// macOS picks by type, not by size, and the same number of pixels appears
+/// twice under two types: `ic11` is the doubled sixteen a Retina display
+/// draws where `icp4` would go, and `ic13`/`ic14` stand in the same relation
+/// to `ic07`/`ic08`. Leaving a type out means a display scale falls back to a
+/// blurred neighbour, so the whole set is written.
+pub const ICNS_ENTRIES: [(&[u8; 4], u32); 10] = [
+    (b"icp4", 16),
+    (b"icp5", 32),
+    (b"ic11", 32),
+    (b"ic12", 64),
+    (b"ic07", 128),
+    (b"ic13", 256),
+    (b"ic08", 256),
+    (b"ic14", 512),
+    (b"ic09", 512),
+    (b"ic10", 1024),
+];
+
+/// The icon set, as committed - what [`icns`] last wrote and what the macOS
+/// application bundle carries as `Contents/Resources/AppIcon.icns`.
+pub const COMMITTED_ICNS: &[u8] = include_bytes!("../../../assets/RepoSphereExplorer.icns");
+
 /// The length of the `BITMAPINFOHEADER` that opens a bitmap entry.
 const BITMAP_HEADER: usize = 40;
 
@@ -46,6 +71,18 @@ const RT_GROUP_ICON: u16 = 14;
 /// When `drawing` is not a scalable vector graphic (SVG) this crate can parse,
 /// or `size` is one no pixel buffer can be made for.
 pub fn render(drawing: &str, size: u32) -> Result<Vec<u8>, String> {
+    Ok(painted(drawing, size)?
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let colour = pixel.demultiply();
+            [colour.red(), colour.green(), colour.blue(), colour.alpha()]
+        })
+        .collect())
+}
+
+/// Paints `drawing` onto a square pixel buffer `size` pixels on a side.
+fn painted(drawing: &str, size: u32) -> Result<tiny_skia::Pixmap, String> {
     let tree = usvg::Tree::from_str(drawing, &usvg::Options::default())
         .map_err(|err| format!("the drawing does not parse: {err}"))?;
     let mut pixmap = tiny_skia::Pixmap::new(size, size)
@@ -59,14 +96,19 @@ pub fn render(drawing: &str, size: u32) -> Result<Vec<u8>, String> {
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
-    Ok(pixmap
-        .pixels()
-        .iter()
-        .flat_map(|pixel| {
-            let colour = pixel.demultiply();
-            [colour.red(), colour.green(), colour.blue(), colour.alpha()]
-        })
-        .collect())
+    Ok(pixmap)
+}
+
+/// Renders `drawing` into a square portable network graphic (PNG) `size`
+/// pixels on a side.
+///
+/// # Errors
+///
+/// When `drawing` will not render, or the image will not encode.
+pub fn png(drawing: &str, size: u32) -> Result<Vec<u8>, String> {
+    painted(drawing, size)?
+        .encode_png()
+        .map_err(|err| format!("the {size} pixel image will not encode: {err}"))
 }
 
 /// Renders `drawing` into the bytes of an icon (`.ico`) file holding one
@@ -170,6 +212,111 @@ fn bitmap_entry(pixels: &[u8], side: usize) -> Result<Vec<u8>, String> {
     }
     bytes.resize(bytes.len() + side * mask_row, 0);
     Ok(bytes)
+}
+
+/// Renders `drawing` into the bytes of an icon set (`.icns`) file holding one
+/// image per entry of [`ICNS_ENTRIES`].
+///
+/// Every entry is a portable network graphic (PNG), which is what macOS has
+/// read inside an icon set since 10.7 and what `iconutil` itself writes. The
+/// older run-length encoded types the format began with are not written: they
+/// carry no alpha channel of their own, and nothing that reads an icon set on
+/// a system this application supports needs them.
+///
+/// The file is a four byte magic, the length of the whole file, and then one
+/// record apiece: a four character type, the length of the record including
+/// those eight bytes, and the image. Written here rather than by a library
+/// for the same reason [`ico`] is - the format is shorter than the argument
+/// for taking a dependency on it.
+///
+/// # Errors
+///
+/// When `drawing` will not render, or an image is too large for an entry.
+pub fn icns(drawing: &str) -> Result<Vec<u8>, String> {
+    let mut records = Vec::new();
+    for (kind, size) in ICNS_ENTRIES {
+        let payload = png(drawing, size)?;
+        let length = u32::try_from(payload.len() + ICNS_RECORD_HEADER)
+            .map_err(|_| format!("the {size} pixel image is too long for an icon set entry"))?;
+        records.extend_from_slice(kind);
+        records.extend_from_slice(&length.to_be_bytes());
+        records.extend_from_slice(&payload);
+    }
+    let total = u32::try_from(records.len() + ICNS_RECORD_HEADER)
+        .map_err(|_| "the icon set is longer than its header can address".to_owned())?;
+    let mut bytes = Vec::with_capacity(records.len() + ICNS_RECORD_HEADER);
+    bytes.extend_from_slice(ICNS_MAGIC);
+    bytes.extend_from_slice(&total.to_be_bytes());
+    bytes.extend_from_slice(&records);
+    Ok(bytes)
+}
+
+/// The magic that opens an icon set file, and the type of its outermost
+/// record.
+const ICNS_MAGIC: &[u8; 4] = b"icns";
+
+/// The four character type and the length that open every icon set record,
+/// the outermost one included.
+const ICNS_RECORD_HEADER: usize = 8;
+
+/// One image in an icon set, as its record describes it.
+pub struct IcnsEntry<'a> {
+    /// Its four character type, which is what macOS chooses an image by.
+    pub kind: [u8; 4],
+    /// The encoded image.
+    pub payload: &'a [u8],
+}
+
+/// The images `bytes` holds, read from its icon set records.
+///
+/// # Errors
+///
+/// When `bytes` is not an icon set file, or one of its records runs past the
+/// end of it.
+pub fn icns_entries(bytes: &[u8]) -> Result<Vec<IcnsEntry<'_>>, String> {
+    let header = bytes
+        .get(..ICNS_RECORD_HEADER)
+        .ok_or_else(|| "shorter than an icon set header".to_owned())?;
+    if &header[..4] != ICNS_MAGIC {
+        return Err("not an icon set file: the header does not say so".to_owned());
+    }
+    let total = usize::try_from(u32::from_be_bytes([
+        header[4], header[5], header[6], header[7],
+    ]))
+    .map_err(|_| "the icon set is longer than this machine can address".to_owned())?;
+    if total != bytes.len() {
+        return Err(format!(
+            "the icon set header claims {total} bytes but the file is {}",
+            bytes.len()
+        ));
+    }
+
+    let mut found = Vec::new();
+    let mut at = ICNS_RECORD_HEADER;
+    while at < bytes.len() {
+        let record = bytes
+            .get(at..at + ICNS_RECORD_HEADER)
+            .ok_or_else(|| format!("the record at {at} runs past the end of the file"))?;
+        let length = usize::try_from(u32::from_be_bytes([
+            record[4], record[5], record[6], record[7],
+        ]))
+        .map_err(|_| format!("the record at {at} is longer than this machine can address"))?;
+        if length < ICNS_RECORD_HEADER {
+            return Err(format!("the record at {at} is shorter than its own header"));
+        }
+        let end = at
+            .checked_add(length)
+            .ok_or_else(|| format!("the record at {at} runs past the end of the file"))?;
+        let payload = bytes
+            .get(at + ICNS_RECORD_HEADER..end)
+            .ok_or_else(|| format!("the record at {at} runs past the end of the file"))?;
+        found.push(IcnsEntry {
+            kind: [record[0], record[1], record[2], record[3]],
+            payload,
+        });
+        at = end;
+    }
+    Ok(found)
 }
 
 /// How an icon entry's image is encoded.
@@ -351,7 +498,10 @@ fn table(
 
 #[cfg(test)]
 mod tests {
-    use super::{BITMAP_HEADER, COMMITTED, DRAWING, Encoding, Entry, SIZES, entries, render};
+    use super::{
+        BITMAP_HEADER, COMMITTED, COMMITTED_ICNS, DRAWING, Encoding, Entry, ICNS_ENTRIES, SIZES,
+        entries, icns_entries, render,
+    };
 
     /// One entry's pixels, straight RGBA with the top row first, whichever
     /// way it is encoded.
@@ -451,6 +601,69 @@ mod tests {
             assert!(
                 difference <= channels,
                 "{size}: the committed image is not the drawing \
+                 (mean difference {difference} over {channels} channels); \
+                 run `cargo run -p icon`"
+            );
+        }
+    }
+
+    /// The committed icon set, decoded record by record: the four character
+    /// type, the side it claims, and its pixels as straight RGBA.
+    fn committed_icon_set() -> Vec<([u8; 4], u32, Vec<u8>)> {
+        icns_entries(COMMITTED_ICNS)
+            .expect("the committed icon set is an icon set file")
+            .into_iter()
+            .map(|entry| {
+                let picture =
+                    image::load_from_memory_with_format(entry.payload, image::ImageFormat::Png)
+                        .expect("every entry is a portable network graphic")
+                        .to_rgba8();
+                assert_eq!(
+                    picture.width(),
+                    picture.height(),
+                    "{}: every entry is square",
+                    String::from_utf8_lossy(&entry.kind)
+                );
+                (entry.kind, picture.width(), picture.into_raw())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_committed_icon_set_carries_every_type() {
+        let found: Vec<([u8; 4], u32)> = committed_icon_set()
+            .into_iter()
+            .map(|(kind, size, _)| (kind, size))
+            .collect();
+        let wanted: Vec<([u8; 4], u32)> = ICNS_ENTRIES
+            .iter()
+            .map(|&(kind, size)| (*kind, size))
+            .collect();
+        assert_eq!(
+            found, wanted,
+            "one record per type, smallest first, each holding the size its type names; \
+             run `cargo run -p icon`"
+        );
+    }
+
+    /// The same check as [`the_committed_icon_is_the_committed_drawing`], for
+    /// the other asset: the icon set has to be the committed drawing, or the
+    /// macOS bundle carries a picture nobody can regenerate.
+    #[test]
+    fn the_committed_icon_set_is_the_committed_drawing() {
+        for (kind, size, pixels) in committed_icon_set() {
+            let name = String::from_utf8_lossy(&kind).into_owned();
+            let fresh = render(DRAWING, size).expect("the drawing renders");
+            assert_eq!(pixels.len(), fresh.len(), "{name}: the same pixel count");
+            let difference: u64 = pixels
+                .iter()
+                .zip(&fresh)
+                .map(|(left, right)| u64::from(left.abs_diff(*right)))
+                .sum();
+            let channels = u64::try_from(pixels.len()).expect("an icon fits in this machine");
+            assert!(
+                difference <= channels,
+                "{name}: the committed image is not the drawing \
                  (mean difference {difference} over {channels} channels); \
                  run `cargo run -p icon`"
             );
