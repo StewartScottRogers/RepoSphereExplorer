@@ -1,0 +1,61 @@
+[package]
+name = "setup"
+description = "The Windows setup program: downloads a release, verifies it against the signed manifest, and installs it the way scripts/install.ps1 does."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "ReposExplorerSetup"
+path = "src/main.rs"
+
+[dependencies]
+# The manifest, the download and the verification: the same code the in-app
+# updater is held to, so a fresh install and an update check the same thing.
+updater = { path = "../updater" }
+# The manifest, when it is read from a folder of already-built release files
+# rather than fetched. `updater` parses the fetched one itself.
+serde_json = "1"
+# The window. It is double-clicked, so the outcome has to be somewhere a
+# person is looking; --quiet skips all of this.
+slint = "1.17"
+
+# Windows is the only place this program installs anything, so the three
+# crates that write Windows state are asked for only there. The crate still
+# builds and tests everywhere else, which is where the workspace's checks run.
+[target.'cfg(windows)'.dependencies]
+# Writes the Start menu shortcut. Pure Rust: the Shell Link file format,
+# rather than the Component Object Model (COM) call install.ps1 makes through
+# WScript.Shell, which this workspace cannot make without unsafe code.
+mslnk = "0.1"
+# The Settings > Apps entry, under this user's own hive. Microsoft's own
+# safe wrapper; its windows-result and windows-strings are already in the
+# tree through Slint.
+windows-registry = "0.100"
+# Which processes are running from the install folder, so uninstall can stop
+# them before it deletes what they are running from (#558).
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+
+[build-dependencies]
+slint-build = "1.17"
+
+# Compiles `assets/RepoSphereExplorer.ico` into the binary's resource
+# directory: the setup program is the first file a reader meets, so it is the
+# first one that should not look like a generic program.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+# Not `[lints] workspace = true`, for the reason `crates/gui/Cargo.toml`
+# gives: Slint's generated component code carries its own
+# #[allow(unsafe_code)] for its vtable plumbing, and a crate-level `forbid`
+# rejects that. `deny` still blocks any unsafe code written here.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

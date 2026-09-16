@@ -55,11 +55,20 @@ the design is in [GUIDANCE.md](GUIDANCE.md).
 
 ## Run it
 
-Install with the script for your platform. It needs a release cut after the
-install scripts landed (v0.7.0 or later); v0.6.0 predates the file names they
-look for.
+Install with the setup program on Windows, or the script for your platform.
+Either needs a release cut after the install scripts landed (v0.7.0 or
+later); v0.6.0 predates the file names they look for.
 
-**Windows** (PowerShell, no administrator rights):
+**Windows** (no administrator rights, no command line): download
+**[ReposExplorerSetup.exe](https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest/download/ReposExplorerSetup.exe)**
+and double-click it. It says what it is doing in a window, checks every file
+against the release's signed manifest before placing anything, and offers to
+start Repos Explorer when it is done. `ReposExplorerSetup.exe --uninstall`
+removes it again, and is what the Uninstall button in Settings runs. It is
+published with every release cut after it landed; before that, use the
+script.
+
+Or the script, which installs the same thing in the same place:
 
 ```powershell
 irm https://raw.githubusercontent.com/StewartScottRogers/RepoSphereExplorer/main/scripts/install.ps1 -OutFile install.ps1
@@ -76,7 +85,7 @@ RepoSphereExplorerGui            # Linux, via ~/.local/bin
 ~/Applications/RepoSphereExplorer/RepoSphereExplorerGui   # macOS
 ```
 
-The script downloads the graphical application, the terminal application
+Each of them downloads the graphical application, the terminal application
 (`RepoSphereExplorerTui`) and `service` for your platform, checks each one
 against the release's signed update manifest - the same check `--self-update`
 uses - before placing anything, and puts them side by side:
@@ -89,14 +98,19 @@ On Windows it then tells the system the application is there, without asking
 for administrator rights: **Repos Explorer** appears in the Start menu,
 pointing at `RepoSphereExplorerGui.exe` in the install folder, and in
 **Settings > Apps**, where the Uninstall button removes it. That button runs
-a copy of `install.ps1` the install leaves beside the binaries, so deleting
-the copy you downloaded costs you nothing.
+whichever of the two installed it, from a copy left beside the binaries, so
+deleting the file you downloaded costs you nothing. What an install is - the
+folder, the file names, the receipt, the shortcut and the Settings entry - is
+defined once, in `crates/setup/src/layout.rs`, and the script carries a
+generated copy of it, so the setup program and the script cannot come to
+disagree.
 
-To remove it: the Uninstall button, or `install.ps1 -Uninstall` /
-`install.sh --uninstall`. That stops the application and its service and
-removes what was installed - on Windows the Start menu entry and the
-Settings > Apps entry too. Your journal and Repos Directory configuration
-stay unless you add `-Purge -Yes` / `--purge --yes`.
+To remove it: the Uninstall button, or `ReposExplorerSetup.exe --uninstall` /
+`install.ps1 -Uninstall` / `install.sh --uninstall`. That stops the
+application and its service and removes what was installed - on Windows the
+Start menu entry and the Settings > Apps entry too. Your journal and Repos
+Directory configuration stay unless you add `-Purge -Yes` / `--purge --yes`,
+which the script does and the setup program does not.
 
 Every release is installed, run, updated and uninstalled this way on Windows,
 Linux and macOS by [`distribution.yml`](.github/workflows/distribution.yml)

@@ -45,6 +45,13 @@ jobs:
             cp "target/${{ matrix.target }}/release/${bin}${ext}" \
                "dist/${bin}-${{ matrix.target }}${ext}"
           done
+          # The one-click Windows install (#560). Published under the name a
+          # reader double-clicks, with no target triple after it: there is
+          # one Windows build, and the file name is what they meet first.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/ReposExplorerSetup.exe" \
+               "dist/ReposExplorerSetup.exe"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
