@@ -454,7 +454,12 @@ jobs:
               --start-menu-directory $menu --uninstall-registry-key $key 2>&1 | Out-String
             $code = $LASTEXITCODE
             Write-Output $output
-            if ($code -eq 0 -or $output -notmatch $expected -or (Test-Path $prefix) -or (Test-Path -LiteralPath $key)) {
+            # Windows PowerShell wraps a native program's error output at the
+            # console width, so a refusal can arrive split across lines -
+            # "does not match" on one and "the manifest" on the next. Match
+            # the words, not the line breaks.
+            $said = $output -replace '\s+', ' '
+            if ($code -eq 0 -or $said -notmatch $expected -or (Test-Path $prefix) -or (Test-Path -LiteralPath $key)) {
               Write-Output "::error title=Setup program refuses tampering (Windows)::the $case case was not refused as expected"; exit 1
             }
           }
@@ -772,6 +777,16 @@ jobs:
           export IMAGE="$image"
           cat > "$RUNNER_TEMP/appimage-check.sh" <<'CHECK'
           set -uo pipefail
+          # The installed application's checks leave its service running,
+          # which is what a service is for. The AppImage would find it and
+          # use it rather than start the one it carries - correctly - and
+          # this check is about the one it carries. So nothing may be
+          # listening first.
+          pkill -x service || true
+          for _ in $(seq 1 20); do pgrep -x service > /dev/null || break; sleep 0.5; done
+          if pgrep -x service > /dev/null; then
+            echo "::error title=AppImage (Linux)::a service from an earlier step would not stop"; exit 1
+          fi
           "$IMAGE" "$RUNNER_TEMP/scratch" > "$RUNNER_TEMP/appimage.log" 2>&1 &
           app=$!
           sleep 12
@@ -785,7 +800,7 @@ jobs:
           # Its own service, from inside the mounted image, not one left
           # running by an earlier step or by an install.
           grep -E '^/tmp/\.mount_[^/]*/usr/bin/service$' "$RUNNER_TEMP/appimage-processes.txt" \
-            || { echo "::error title=AppImage (Linux)::did not start the service it carries"; kill "$app"; exit 1; }
+            || { cat "$RUNNER_TEMP/appimage-processes.txt"; echo "::error title=AppImage (Linux)::did not start the service it carries"; kill "$app"; exit 1; }
           kill "$app"
           for _ in $(seq 1 20); do kill -0 "$app" 2>/dev/null || exit 0; sleep 0.5; done
           echo "::error title=AppImage (Linux)::did not stop"; exit 1
