@@ -1,0 +1,28 @@
+[package]
+name = "icon"
+description = "The application icon: renders the drawing into the committed .ico, and reads icon resources back out of a Windows binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "icon"
+path = "src/main.rs"
+
+[dependencies]
+# Reads the resource directory out of a built Windows binary. Already in the
+# tree through `plugin-executable`, which reads the same containers.
+object = "0.40"
+# Rasterises the drawing. Already in the tree through Slint, which renders
+# the file-type icons with it.
+resvg = "0.47"
+
+# Test-only: the entries this crate writes are bitmaps it decodes itself, but
+# an icon entry may be a picture and the test that reads one has to say so.
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[lints]
+workspace = true

@@ -85,10 +85,18 @@ uses - before placing anything, and puts them side by side:
 on macOS. `-Prefix`/`--prefix` chooses somewhere else. A file that fails the
 check is refused and nothing is installed.
 
-To remove it: `install.ps1 -Uninstall` / `install.sh --uninstall`. That stops
-the application and its service and removes what was installed. Your journal
-and Repos Directory configuration stay unless you add `-Purge -Yes` /
-`--purge --yes`.
+On Windows it then tells the system the application is there, without asking
+for administrator rights: **Repos Explorer** appears in the Start menu,
+pointing at `RepoSphereExplorerGui.exe` in the install folder, and in
+**Settings > Apps**, where the Uninstall button removes it. That button runs
+a copy of `install.ps1` the install leaves beside the binaries, so deleting
+the copy you downloaded costs you nothing.
+
+To remove it: the Uninstall button, or `install.ps1 -Uninstall` /
+`install.sh --uninstall`. That stops the application and its service and
+removes what was installed - on Windows the Start menu entry and the
+Settings > Apps entry too. Your journal and Repos Directory configuration
+stay unless you add `-Purge -Yes` / `--purge --yes`.
 
 Every release is installed, run, updated and uninstalled this way on Windows,
 Linux and macOS by [`distribution.yml`](.github/workflows/distribution.yml)

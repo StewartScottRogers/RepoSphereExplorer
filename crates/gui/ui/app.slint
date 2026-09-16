@@ -1223,6 +1223,22 @@ export component CodeEditorHarness inherits Window {
 
 export component MainWindow inherits Window {
     title: "Repos Explorer";
+    // The window icon: the title bar, the taskbar and Alt+Tab. The same
+    // drawing the Windows binaries carry as a resource, so a window and a
+    // shortcut to it show one picture.
+    //
+    // Declared here rather than handed to the window from Rust. An image a
+    // running program builds carries no cache key, and Slint's window adapter
+    // applies an icon only when its key differs from the one it is already
+    // holding - so an icon set at run time is compared against the empty one,
+    // found equal, and silently dropped. A `@image-url` is embedded at build
+    // time and does have a key.
+    //
+    // Named, rather than bound straight to `icon`, so a test can ask the
+    // window what it was given: the `icon` of a `Window` is not readable
+    // from the generated Rust.
+    out property <image> window-icon: @image-url("../../../assets/RepoSphereExplorer.svg");
+    icon: root.window-icon;
     preferred-width: 1000px;
     preferred-height: 600px;
     background: Palette.background;

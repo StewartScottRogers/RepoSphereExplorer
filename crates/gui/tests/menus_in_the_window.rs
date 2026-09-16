@@ -101,12 +101,19 @@ fn pump(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut quiet = 0u32;
     while Instant::now() < deadline {
-        {
+        let busy = {
             let mut app = app.borrow_mut();
             app.tick();
             sync_ui(ui, &app);
-        }
-        if still_working(&ui.get_status_text()) {
+            // A file preview is asked for without putting a line in the
+            // status bar, so the status alone says "settled" while one is
+            // still in flight - and a test that then asked whether the file
+            // can be edited read the answer for the row before it. On a
+            // loaded continuous integration runner that is the difference
+            // between passing and failing.
+            app.is_busy()
+        };
+        if busy || still_working(&ui.get_status_text()) {
             quiet = 0;
         } else {
             quiet += 1;
