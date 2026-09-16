@@ -204,9 +204,13 @@ fn tabs(ui: &MainWindow) -> Vec<String> {
         .collect()
 }
 
-/// The strip's click area, or `None` where no strip is drawn.
+/// The tab strip, or `None` where none is drawn.
+///
+/// The strip itself, not a tab's click area: each tab has one of those now,
+/// and the first of them is one tab wide, which is not what a click is
+/// measured against.
 fn strip(ui: &MainWindow) -> Option<ElementHandle> {
-    ElementHandle::find_by_element_id(ui, "MainWindow::tab-touch").next()
+    ElementHandle::find_by_element_id(ui, "MainWindow::tab-strip").next()
 }
 
 /// The File pane itself, which the strip shares its width with.
@@ -761,4 +765,49 @@ fn refreshing_leaves_the_reader_on_the_tab_they_were_reading() {
         "and re-reading the same file should leave the reader on the same \
          view of it"
     );
+}
+
+/// Each tab is its own pointer target, tiled across the strip.
+///
+/// The strip used to be one click area with the tab worked out from the
+/// pointer's distance along it. A tab that knows when the pointer is over
+/// *it* is what lets the strip answer a reader who is only considering a
+/// tab - the hover this pane had none of - and what this asserts is the
+/// shape that makes that possible: one target per tab, side by side,
+/// covering the pane between them.
+#[test]
+fn each_tab_is_its_own_pointer_target() {
+    let _serial = serially();
+    let dir = scratch("tab-targets");
+    file(&dir, "notes.txt", "one\ntwo\n");
+    let (ui, app) = window_at(&dir);
+    select(&ui, &app, "notes.txt");
+
+    let labels = tabs(&ui);
+    assert!(labels.len() > 1, "a text file offers more than one view");
+    let targets: Vec<ElementHandle> =
+        ElementHandle::find_by_element_id(&ui, "MainWindow::tab-touch").collect();
+    assert_eq!(
+        targets.len(),
+        labels.len(),
+        "one target per tab, not one for the whole strip"
+    );
+
+    let strip = strip(&ui).expect("a strip should be drawn");
+    let count = u16::try_from(labels.len()).expect("a handful of tabs");
+    let width = strip.size().width / f32::from(count);
+    for (index, target) in targets.iter().enumerate() {
+        let index = u16::try_from(index).expect("a handful of tabs");
+        let expected = f32::from(index).mul_add(width, strip.absolute_position().x);
+        assert!(
+            (target.absolute_position().x - expected).abs() < 1.0,
+            "tab {index} should start at {expected}, not {}",
+            target.absolute_position().x
+        );
+        assert!(
+            (target.size().width - width).abs() < 1.0,
+            "tab {index} should be {width} wide, not {}",
+            target.size().width
+        );
+    }
 }

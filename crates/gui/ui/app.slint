@@ -1955,33 +1955,85 @@ export component MainWindow inherits Window {
                         // choose, which now includes a single-view file
                         // that can be edited - that Edit tab is the only
                         // sign the pane gives that an editor exists.
-                        if file-tabs.length > 1: Rectangle {
+                        // A tab strip, drawn as one: the strip is a panel
+                        // with a line under it, and the chosen tab breaks
+                        // that line to sit in front of the content below.
+                        // Flat text on the pane's own colour said nothing -
+                        // neither where one tab ended nor that any of them
+                        // could be clicked.
+                        if file-tabs.length > 1: tab-strip := Rectangle {
                             height: tab-h;
                             background: Theme.panel;
+                            // The line under the whole strip. Each tab draws
+                            // over its own stretch of it: an unselected tab
+                            // leaves it, the selected one paints it out.
                             Rectangle {
-                                x: file-tab-index * tab-w;
-                                y: 0;
-                                width: tab-w;
-                                height: tab-h;
-                                background: Theme.accent;
+                                y: parent.height - 1px;
+                                height: 1px;
+                                width: 100%;
+                                background: Theme.border;
                             }
-                            for name[i] in file-tabs: Text {
-                                text: name;
+                            for name[i] in file-tabs: Rectangle {
                                 x: i * tab-w;
                                 y: 0;
                                 width: tab-w;
                                 height: tab-h;
-                                color: i == file-tab-index
-                                    ? Theme.on-accent
-                                    : Palette.foreground;
-                                vertical-alignment: center;
-                                horizontal-alignment: center;
-                            }
-                            tab-touch := TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                clicked => {
-                                    file-tab-selected(clamp(floor(tab-touch.mouse-x / tab-w), 0, file-tabs.length - 1));
+                                background: i == file-tab-index
+                                    ? Palette.background
+                                    : (tab-touch.has-hover ? Theme.hover : Theme.panel);
+                                // The accent along the top edge, which is
+                                // what says "this one" now that the tab
+                                // itself is the colour of the content.
+                                Rectangle {
+                                    y: 0;
+                                    height: 2px;
+                                    width: 100%;
+                                    background: Theme.accent;
+                                    visible: i == file-tab-index;
+                                }
+                                // Its own stretch of the line below, painted
+                                // out when this is the tab in front.
+                                Rectangle {
+                                    y: parent.height - 1px;
+                                    height: 1px;
+                                    width: 100%;
+                                    background: i == file-tab-index
+                                        ? Palette.background
+                                        : Theme.border;
+                                }
+                                // A divider between neighbours, short of the
+                                // full height so it reads as a seam rather
+                                // than a wall. Not drawn beside the selected
+                                // tab, whose own edges already separate it.
+                                Rectangle {
+                                    x: parent.width - 1px;
+                                    y: 5px;
+                                    width: 1px;
+                                    height: parent.height - 10px;
+                                    background: Theme.divider;
+                                    visible: i < file-tabs.length - 1
+                                        && i != file-tab-index
+                                        && i + 1 != file-tab-index;
+                                }
+                                Text {
+                                    text: name;
+                                    width: 100%;
+                                    height: 100%;
+                                    color: i == file-tab-index
+                                        ? Palette.foreground
+                                        : Theme.dim-text;
+                                    font-weight: i == file-tab-index ? 600 : 400;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                }
+                                tab-touch := TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        file-tab-selected(i);
+                                    }
                                 }
                             }
                         }
