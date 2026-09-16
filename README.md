@@ -76,7 +76,21 @@ powershell -ExecutionPolicy Bypass -File install.ps1            # latest release
 & "$env:LOCALAPPDATA\Programs\RepoSphereExplorer\RepoSphereExplorerGui.exe"
 ```
 
-**Linux and macOS:**
+**macOS** (the one drag every Mac user knows):
+
+Download **`ReposExplorer.dmg`** from the
+[latest release](https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest),
+open it, and drag **Repos Explorer** onto the **Applications** shortcut beside it.
+
+The application is not signed with an Apple Developer ID (see
+[GUIDANCE.md D3](GUIDANCE.md#7-decisions)), so **the first launch has to be
+right-click on it, Open, then Open again** in the dialog that appears.
+Double-clicking it the first time is refused by Gatekeeper with "Repos
+Explorer cannot be opened because the developer cannot be verified". After
+that once, it opens like any other application, and it is in Launchpad and
+Spotlight with its own icon.
+
+**Linux and macOS** (the command line):
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/StewartScottRogers/RepoSphereExplorer/main/scripts/install.sh
@@ -93,6 +107,12 @@ uses - before placing anything, and puts them side by side:
 `~/.local/share/RepoSphereExplorer` on Linux, `~/Applications/RepoSphereExplorer`
 on macOS. `-Prefix`/`--prefix` chooses somewhere else. A file that fails the
 check is refused and nothing is installed.
+
+On macOS the three go inside `Repos Explorer.app` in that folder - the same
+application bundle the disk image carries, so a Mac has one layout however it
+was installed - and are linked beside it so the command line can still name
+them. `Contents/Info.plist` and `Contents/Resources/AppIcon.icns` are what
+give it its name, its version and its icon in Finder, the Dock and Launchpad.
 
 On Windows it then tells the system the application is there, without asking
 for administrator rights: **Repos Explorer** appears in the Start menu,
@@ -142,11 +162,12 @@ and the service keeps running afterwards so later launches reconnect instantly.
 Every operation is journaled to `%LOCALAPPDATA%/RepoSphereExplorer/journal.jsonl`
 (or the platform equivalent) with its exact target set and outcome. Binaries are
 unsigned (see [GUIDANCE.md D3](GUIDANCE.md#7-decisions)), so Windows SmartScreen
-and macOS Gatekeeper warn on first run.
+and macOS Gatekeeper warn on first run - on macOS, right-click, Open, Open.
 
 Every binary takes a `--self-update` flag that checks the signed manifest
 published alongside the Pages site and, if newer, downloads, verifies, and
-replaces itself in place.
+replaces itself in place - including inside the macOS application bundle,
+where it replaces the executable in `Contents/MacOS` where it stands.
 
 ## Deferred renames
 
@@ -184,7 +205,7 @@ Direct link to the current video:
 | Closing | [`close-linked-issues.yml`](.github/workflows/close-linked-issues.yml) | a pull request closes: closes the issues its `Closes #N` named. Needs `AUTO_MERGE_TOKEN` to fire at all — an event caused by `GITHUB_TOKEN` starts no workflow run |
 | Independent review | [`independent-review.yml`](.github/workflows/independent-review.yml) | a work-order pull request opens or updates: a second, separately-invoked agent re-runs the checks and reviews the diff against CLAUDE.md — informational, not yet required |
 | Repair | [`repair.yml`](.github/workflows/repair.yml) | checks failed on `main`: diagnoses the run and opens a fix pull request |
-| Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux, Windows and macOS binaries attached to a GitHub release |
+| Shipping | [`release.yml`](.github/workflows/release.yml) | tag `v*`: Linux, Windows and macOS binaries attached to a GitHub release, plus `ReposExplorer.dmg` - the macOS application bundle, ready to drag onto Applications |
 | Storefront | [`pages.yml`](.github/workflows/pages.yml) | after `release.yml` finishes, or nightly at 06:00 UTC: signs the release, publishes `latest.json`, renders the history film, regenerates statistics, and deploys the Pages site |
 
 A work order ([template](.github/ISSUE_TEMPLATE/work-order.yml)) must state an

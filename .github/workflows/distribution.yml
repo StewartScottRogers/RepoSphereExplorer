@@ -327,6 +327,26 @@ jobs:
             done
           fi
 
+      # A Mac has one layout however it was installed: the command-line
+      # install puts the three inside the same `Repos Explorer.app` the disk
+      # image carries, and links them beside it so the command line can still
+      # name them.
+      - name: The command-line install lays out the application bundle (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          fail() { echo "::error title=Bundle from install.sh (macOS)::$*"; exit 1; }
+          app="$PREFIX/Repos Explorer.app"
+          [ -d "$app" ] || fail "install.sh left no Repos Explorer.app in $PREFIX"
+          find "$app" -print
+          plutil -lint "$app/Contents/Info.plist" || fail "the Info.plist it wrote is not a valid property list"
+          plutil -p "$app/Contents/Info.plist"
+          for name in RepoSphereExplorerGui RepoSphereExplorerTui service; do
+            [ -x "$app/Contents/MacOS/$name" ] || fail "$name is not in Contents/MacOS"
+            [ "$(readlink "$PREFIX/$name")" = "Repos Explorer.app/Contents/MacOS/$name" ] \
+              || fail "$PREFIX/$name does not link into the bundle"
+          done
+
       # ---- verification refuses what it should
 
       - name: Refuse a tampered asset and a re-hashed one (Windows)
@@ -501,10 +521,118 @@ jobs:
           sleep 10
           if ! kill -0 "$gui" 2>/dev/null; then cat "$RUNNER_TEMP/gui.log"; echo "::error title=GUI (macOS)::exited after starting"; exit 1; fi
           ps -A -o args= > "$RUNNER_TEMP/processes.txt"
-          grep -Fx "$PREFIX/service" "$RUNNER_TEMP/processes.txt" || { echo "::error title=GUI (macOS)::did not start the service beside it"; kill "$gui"; exit 1; }
+          # The install puts the three inside `Repos Explorer.app` and links
+          # them beside it, so the graphical application's own path - and the
+          # service it starts next to itself - is either the link or the file
+          # in Contents/MacOS, depending on whether macOS resolved the link
+          # before handing the path over. Both are the same install.
+          grep -Ex "${PREFIX}(/Repos Explorer\.app/Contents/MacOS)?/service" "$RUNNER_TEMP/processes.txt" || { echo "::error title=GUI (macOS)::did not start the service beside it"; kill "$gui"; exit 1; }
           kill "$gui"
           for _ in $(seq 1 20); do kill -0 "$gui" 2>/dev/null || exit 0; sleep 0.5; done
           echo "::error title=GUI (macOS)::did not stop"; exit 1
+
+      # The other way onto a Mac, and the one most readers take: mount the
+      # disk image, drag `Repos Explorer.app` onto Applications, open it from
+      # there. A scratch Applications rather than the machine's, because this
+      # runner is not disposable in the way a container is.
+      #
+      # Everything above this tests loose executables put down by
+      # install.sh. Nothing tested the bundle until here: that macOS reads
+      # its property list, that LaunchServices accepts it as an application,
+      # that opening it starts the service from `Contents/MacOS` beside it,
+      # and that an update run inside it leaves the bundle's shape intact.
+      - name: The disk image installs by dragging, and the bundle runs from Applications (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -uo pipefail
+          fail() { echo "::error title=Disk image (macOS)::$*"; exit 1; }
+          image="release/ReposExplorer.dmg"
+          if [ "$FROM_ARTIFACTS" = true ]; then
+            [ -f "$image" ] || fail "this run built no ReposExplorer.dmg"
+          else
+            version="$(tr -d '\r\n' < release/manifest.json | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+            gh release download "v${version}" --repo "${{ github.repository }}" \
+              --pattern ReposExplorer.dmg --dir release || true
+            if [ ! -f "$image" ]; then
+              echo "::notice title=Disk image (macOS)::skipped: v${version} publishes no ReposExplorer.dmg. Needs a release cut since the bundle landed."
+              exit 0
+            fi
+          fi
+
+          mount="$RUNNER_TEMP/mounted-image"
+          hdiutil attach "$image" -mountpoint "$mount" -nobrowse -readonly || fail "the disk image would not mount"
+          ls -la "$mount"
+          [ -d "$mount/Repos Explorer.app" ] || fail "the disk image holds no Repos Explorer.app"
+          [ "$(readlink "$mount/Applications")" = /Applications ] \
+            || fail "there is no /Applications shortcut beside the bundle to drag onto"
+
+          applications="$RUNNER_TEMP/scratch-applications"
+          rm -rf "$applications"
+          mkdir -p "$applications"
+          cp -R "$mount/Repos Explorer.app" "$applications/" || fail "the bundle would not copy out of the image"
+          hdiutil detach "$mount" || hdiutil detach "$mount" -force
+          app="$applications/Repos Explorer.app"
+
+          # macOS's own readers, not ours: plutil parses the property list,
+          # and LaunchServices is what Finder, the Dock and `open` ask.
+          plutil -lint "$app/Contents/Info.plist" || fail "Info.plist is not a valid property list"
+          for key in CFBundleIdentifier CFBundleName CFBundleDisplayName CFBundleExecutable \
+                     CFBundleIconFile CFBundleVersion CFBundleShortVersionString \
+                     LSMinimumSystemVersion NSHighResolutionCapable; do
+            value="$(plutil -extract "$key" raw -o - "$app/Contents/Info.plist")" \
+              || fail "Info.plist has no $key"
+            echo "$key = $value"
+          done
+          [ -f "$app/Contents/Resources/AppIcon.icns" ] || fail "the bundle carries no icon"
+          lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+          "$lsregister" -f "$app" || fail "LaunchServices would not register the bundle"
+          "$lsregister" -dump > "$RUNNER_TEMP/lsregister.txt"
+          # The identifier rather than the path: it comes out of the property
+          # list, so finding it proves LaunchServices read the bundle and
+          # filed it as this application, whatever it made of the path.
+          grep -n -F "io.github.stewartscottrogers.RepoSphereExplorer" "$RUNNER_TEMP/lsregister.txt" \
+            > "$RUNNER_TEMP/registered.txt" \
+            || fail "LaunchServices does not know the bundle's identifier after registering it"
+          head -20 "$RUNNER_TEMP/registered.txt"
+          # Spotlight has to have indexed the folder to answer; printed when
+          # it does, and not made a gate when it does not.
+          mdls -name kMDItemKind -name kMDItemDisplayName -name kMDItemVersion "$app" || true
+
+          # A service left running by an earlier step would be reused rather
+          # than replaced, and the bundle starting its own out of
+          # Contents/MacOS is exactly what is being tested here.
+          pkill -x service || true
+          sleep 2
+          "$app/Contents/MacOS/RepoSphereExplorerGui" "$RUNNER_TEMP/scratch" > "$RUNNER_TEMP/bundle-gui.log" 2>&1 &
+          gui=$!
+          sleep 10
+          if ! kill -0 "$gui" 2>/dev/null; then cat "$RUNNER_TEMP/bundle-gui.log"; fail "the bundle's application exited after starting"; fi
+          ps -A -o args= > "$RUNNER_TEMP/bundle-processes.txt"
+          grep -Fx "$app/Contents/MacOS/service" "$RUNNER_TEMP/bundle-processes.txt" \
+            || { kill "$gui"; fail "it did not start the service from Contents/MacOS"; }
+          kill "$gui"
+          for _ in $(seq 1 20); do kill -0 "$gui" 2>/dev/null || break; sleep 0.5; done
+
+          # Self-update from inside the bundle: it replaces the executable
+          # where it stands, so Contents/MacOS must still hold exactly the
+          # three afterwards and no staging file beside them.
+          output="$("$app/Contents/MacOS/RepoSphereExplorerTui" --self-update 2>&1)" \
+            || { echo "$output"; fail "--self-update failed inside the bundle"; }
+          echo "$output"
+          case "$output" in *"tui is up to date"*) ;; *) fail "--self-update inside the bundle did not report up to date" ;; esac
+          inside="$(ls -A "$app/Contents/MacOS" | sort | tr '\n' ' ')"
+          [ "$inside" = "RepoSphereExplorerGui RepoSphereExplorerTui service " ] \
+            || fail "Contents/MacOS holds '$inside' after the update"
+
+          # Dragging it to the Bin is how a Mac user removes an application.
+          # Its service outlives the window, as it does on every platform, so
+          # it is stopped first - the later steps check what install.sh left,
+          # and a process out of this scratch folder is not that.
+          pkill -x service || true
+          rm -rf "$app"
+          [ ! -e "$app" ] || fail "the bundle would not delete"
+          ls -la "$applications"
 
       # The terminal application has no flag that draws and exits, and a
       # runner has no terminal to draw in. --self-update is what it does

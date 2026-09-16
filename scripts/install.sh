@@ -6,6 +6,13 @@
 # signed update manifest before placing anything, and puts the three side by
 # side in a per-user folder. No administrator rights are needed.
 #
+# On macOS the three go inside "Repos Explorer.app" in that folder, because a
+# Mac expects an application and not three files: an icon in Finder, a name in
+# Launchpad, and the Dock showing the application rather than a terminal. It
+# is the same bundle the disk image carries, so a Mac has one layout however
+# it was installed, and the executables are also linked beside it so the
+# command line can still name them.
+#
 # Verification is the scheme the in-application updater uses: each file's
 # Secure Hash Algorithm 256 (SHA-256) digest must match the manifest, and the
 # manifest's Ed25519 signature over that digest must verify against the public
@@ -67,10 +74,14 @@ while [ $# -gt 0 ]; do
         --uninstall) uninstall=1; shift ;;
         --purge) purge=1; shift ;;
         --yes) yes=1; shift ;;
-        -h | --help) sed -n '2,35p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,43p' "$0"; exit 0 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
+
+# Empty everywhere but macOS, where it names the application bundle the three
+# executables go inside.
+bundle=""
 
 case "$(uname -s)/$(uname -m)" in
     Linux/x86_64)
@@ -83,10 +94,53 @@ case "$(uname -s)/$(uname -m)" in
         target="aarch64-apple-darwin"
         data_directory="$HOME/Library/Application Support/RepoSphereExplorer"
         prefix="${prefix:-$HOME/Applications/RepoSphereExplorer}"
+        bundle="Repos Explorer.app"
         [ -z "$bin_dir" ] || fail "--bin-dir is for Linux only"
         ;;
     *) fail "no release is built for $(uname -s) on $(uname -m)" ;;
 esac
+
+# The property list macOS reads to learn that a folder is an application:
+# what it is called, which of the three executables to start, which icon to
+# draw and what version it is.
+#
+# crates/macos-bundle writes this very same text for the disk image, and its
+# the_install_script_writes_the_same_plist test fails the moment the two part
+# company. It is duplicated rather than shared because this script is
+# downloaded and run on its own, with no checkout and no cargo beside it.
+write_info_plist() {
+    local path="$1" version="$2"
+    cat > "$path" <<INFO_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.stewartscottrogers.RepoSphereExplorer</string>
+    <key>CFBundleName</key>
+    <string>Repos Explorer</string>
+    <key>CFBundleDisplayName</key>
+    <string>Repos Explorer</string>
+    <key>CFBundleExecutable</key>
+    <string>RepoSphereExplorerGui</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundleVersion</key>
+    <string>$version</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$version</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+INFO_PLIST
+}
 
 # Processes whose executable lives under the folder $1.
 pids_in() {
@@ -130,6 +184,19 @@ do_uninstall() {
         fi
     done < "$receipt_path"
     rm -f "$receipt_path"
+    if [ -n "$bundle" ]; then
+        # The bundle's folders are the shape of the install rather than files
+        # it placed, so the receipt does not list them. Remove them once what
+        # they held has gone, and leave any that a reader has put something
+        # else in.
+        local folder
+        for folder in "Contents/MacOS" "Contents/Resources" "Contents" ""; do
+            folder="$prefix/$bundle${folder:+/$folder}"
+            if rmdir "$folder" 2>/dev/null; then
+                echo "removed $folder"
+            fi
+        done
+    fi
     if rmdir "$prefix" 2>/dev/null; then
         echo "removed $prefix"
     else
@@ -206,6 +273,17 @@ do_install() {
         fail "release $version publishes no${missing} for $target (it publishes: ${published})"
     fi
 
+    # The bundle's icon, wanted rather than required: it is not an executable,
+    # and a release cut before the bundle existed publishes none. An install
+    # from one of those gets the application without a drawing on it, which is
+    # a worse icon rather than a failed install.
+    if [ -n "$bundle" ]; then
+        object="$(printf '%s\n' "$objects" \
+            | grep -E "\"binary\"[[:space:]]*:[[:space:]]*\"AppIcon\"" \
+            | grep -E "\"target\"[[:space:]]*:[[:space:]]*\"$target\"" | sed -n 1p || true)"
+        [ -z "$object" ] || wanted="$wanted AppIcon"
+    fi
+
     for binary in $wanted; do
         object="$(printf '%s\n' "$objects" \
             | grep -E "\"binary\"[[:space:]]*:[[:space:]]*\"$binary\"" \
@@ -235,14 +313,40 @@ do_install() {
     fi
 
     mkdir -p "$prefix"
-    local placed="" destination
+    local placed="" destination into="$prefix" inside
+    if [ -n "$bundle" ]; then
+        into="$prefix/$bundle/Contents/MacOS"
+        mkdir -p "$into" "$prefix/$bundle/Contents/Resources"
+        inside="$prefix/$bundle/Contents/Info.plist"
+        write_info_plist "$inside" "$version"
+        placed="$placed$inside"$'\n'
+        echo "placed $inside"
+        if [ -n "${file_AppIcon:-}" ]; then
+            inside="$prefix/$bundle/Contents/Resources/AppIcon.icns"
+            cp "$file_AppIcon" "$inside"
+            placed="$placed$inside"$'\n'
+            echo "placed $inside"
+        else
+            echo "release $version publishes no icon for the bundle, so macOS will draw the generic one"
+        fi
+    fi
     for binary in $INSTALLED; do
-        destination="$prefix/$binary"
+        destination="$into/$binary"
         eval "cp \"\$file_$binary\" \"\$destination\""
         chmod +x "$destination"
         placed="$placed$destination"$'\n'
         echo "placed $destination"
     done
+    if [ -n "$bundle" ]; then
+        # Links beside the bundle, so the command line can still name the
+        # three the way it could before they moved inside - the same service
+        # the Linux install's links do.
+        for binary in $INSTALLED; do
+            ln -sfn "$bundle/Contents/MacOS/$binary" "$prefix/$binary"
+            placed="$placed$prefix/$binary"$'\n'
+            echo "linked $prefix/$binary"
+        done
+    fi
     if [ "$target" = "x86_64-unknown-linux-gnu" ]; then
         mkdir -p "$bin_dir"
         for binary in RepoSphereExplorerGui RepoSphereExplorerTui; do

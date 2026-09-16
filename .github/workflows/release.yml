@@ -52,6 +52,48 @@ jobs:
             cp "target/${{ matrix.target }}/release/ReposExplorerSetup.exe" \
                "dist/ReposExplorerSetup.exe"
           fi
+
+      # A Mac user does not install three Unix executables. They drag one icon
+      # onto Applications, and what they drag is an application bundle: a
+      # folder macOS reads as a program, with the icon, the name and the
+      # version in its property list. `macos-bundle` builds that folder -
+      # tested on every platform, because it is ordinary file work - and
+      # `hdiutil` puts it in a disk image beside a shortcut to /Applications,
+      # which is the one-drag convention.
+      #
+      # Unsigned, per DECISIONS.md D3: there is no Developer ID here, so
+      # Gatekeeper stops a first double-click and the README says how to get
+      # past it. Nothing in this step pretends otherwise.
+      - name: Build the application bundle and its disk image (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # macOS's own reader on the icon before anything is built around
+          # it: iconutil refuses an icon set it cannot parse, and unpacks the
+          # types it understood into a folder we can count. `cargo run -p
+          # icon` wrote the file on a developer's machine, and this is what
+          # says macOS agrees with it.
+          iconutil --convert iconset --output "${RUNNER_TEMP}/icon.iconset" \
+            assets/RepoSphereExplorer.icns
+          ls -la "${RUNNER_TEMP}/icon.iconset"
+
+          staging="${RUNNER_TEMP}/disk-image"
+          rm -rf "$staging"
+          mkdir -p "$staging"
+          cargo run -p macos-bundle -- \
+            "target/${{ matrix.target }}/release" \
+            assets/RepoSphereExplorer.icns \
+            "$staging/Repos Explorer.app"
+          plutil -lint "$staging/Repos Explorer.app/Contents/Info.plist"
+          plutil -p "$staging/Repos Explorer.app/Contents/Info.plist"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "Repos Explorer" -srcfolder "$staging" \
+            -ov -format UDZO dist/ReposExplorer.dmg
+          # The icon travels as a release file of its own as well, so that
+          # scripts/install.sh can build the same bundle and hold the icon to
+          # the same signature as everything else it places.
+          cp assets/RepoSphereExplorer.icns "dist/AppIcon-${{ matrix.target }}.icns"
+          ls -la dist
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}

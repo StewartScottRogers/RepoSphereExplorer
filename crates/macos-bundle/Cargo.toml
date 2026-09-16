@@ -1,0 +1,26 @@
+[package]
+name = "macos-bundle"
+description = "The macOS application bundle: the shape of Repos Explorer.app and the Info.plist that tells macOS what it is."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "macos-bundle"
+path = "src/main.rs"
+
+[dependencies]
+# None: a bundle is a folder with a shape, and the standard library places
+# folders and files.
+
+# Test-only: the property list is generated as text, and a test that read it
+# back with the same string handling that wrote it would prove nothing.
+# Already in the tree through the icon crate's rasteriser, which parses the
+# drawing with it.
+[dev-dependencies]
+roxmltree = "0.21"
+
+[lints]
+workspace = true

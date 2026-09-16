@@ -1015,6 +1015,36 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Inside a macOS application bundle the executable is several folders
+    /// down and its bundle folder has a space in its name. The update is
+    /// staged beside the target and renamed over it, so a bundle install
+    /// updates itself in place and the bundle keeps its shape - no file
+    /// appears where `Contents/MacOS` should hold only the three executables.
+    #[test]
+    fn apply_atomic_replaces_an_executable_inside_an_application_bundle() {
+        let dir = scratch_dir("inside-a-bundle");
+        let executables = dir.join("Repos Explorer.app/Contents/MacOS");
+        std::fs::create_dir_all(&executables).unwrap();
+        let target = executables.join("RepoSphereExplorerTui");
+        std::fs::write(&target, b"the release that was installed").unwrap();
+
+        apply_atomic(b"the release it updated to", &target).unwrap();
+
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"the release it updated to"
+        );
+        let left: Vec<_> = std::fs::read_dir(&executables)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            left,
+            vec![std::ffi::OsString::from("RepoSphereExplorerTui")]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn apply_atomic_leaves_no_staging_file_beside_the_binary_on_success() {
         let dir = scratch_dir("no-leftovers");
