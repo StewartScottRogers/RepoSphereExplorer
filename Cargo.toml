@@ -6,6 +6,7 @@ members = [
     "crates/plugin-api",
     "crates/syntax",
     "crates/icon",
+    "crates/macos-bundle",
     "crates/service",
     "crates/tui",
     "crates/gui",

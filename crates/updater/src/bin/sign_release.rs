@@ -24,7 +24,15 @@ const KNOWN_BINARIES: &[&str] = &[
     "RepoSphereExplorerTui",
     "RepoSphereExplorerGui",
     "verify",
+    // Not a binary: the icon the macOS application bundle carries, published
+    // so that `scripts/install.sh` can build the same bundle the disk image
+    // does and hold the icon to the same signature as everything else it
+    // places.
+    "AppIcon",
 ];
+
+/// The suffixes a published file's name may carry after its target triple.
+const EXTENSIONS: &[&str] = &[".exe", ".icns"];
 
 /// `(current name, name v0.6.0 and earlier asked for)`. A file published
 /// under either name is listed in the manifest under both.
@@ -129,8 +137,7 @@ fn parse_filename(filename: &str) -> Option<(String, String)> {
             .strip_prefix(binary)
             .and_then(|r| r.strip_prefix('-'))
         {
-            let target = rest.strip_suffix(".exe").unwrap_or(rest);
-            return Some(((*binary).to_owned(), target.to_owned()));
+            return Some(((*binary).to_owned(), triple(rest).to_owned()));
         }
     }
     for (current, legacy) in LEGACY_NAMES {
@@ -138,11 +145,20 @@ fn parse_filename(filename: &str) -> Option<(String, String)> {
             .strip_prefix(legacy)
             .and_then(|r| r.strip_prefix('-'))
         {
-            let target = rest.strip_suffix(".exe").unwrap_or(rest);
-            return Some(((*current).to_owned(), target.to_owned()));
+            return Some(((*current).to_owned(), triple(rest).to_owned()));
         }
     }
     None
+}
+
+/// What is left of a published file's name once the binary name has been
+/// taken off the front: the target triple, and whatever suffix the platform
+/// puts after it.
+fn triple(rest: &str) -> &str {
+    EXTENSIONS
+        .iter()
+        .find_map(|extension| rest.strip_suffix(extension))
+        .unwrap_or(rest)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -288,6 +304,33 @@ mod tests {
                 "RepoSphereExplorerTui".to_owned(),
                 "aarch64-apple-darwin".to_owned()
             ))
+        );
+    }
+
+    /// The macOS bundle's icon is published beside the binaries so the
+    /// install script can place it under the same signature. Its name ends
+    /// in `.icns`, and a triple with an extension left on it would send the
+    /// script looking for a target nothing publishes.
+    #[test]
+    fn parse_filename_takes_the_icon_extension_off_the_triple() {
+        assert_eq!(
+            parse_filename("AppIcon-aarch64-apple-darwin.icns"),
+            Some(("AppIcon".to_owned(), "aarch64-apple-darwin".to_owned()))
+        );
+    }
+
+    #[test]
+    fn the_bundle_icon_is_signed_like_everything_else() {
+        let filename = "AppIcon-aarch64-apple-darwin.icns";
+        let manifest = signed_manifest("bundle-icon", &[filename]);
+        let icon = manifest
+            .find("AppIcon", "aarch64-apple-darwin")
+            .expect("the icon is listed for the macOS target");
+        assert!(icon.url.ends_with(&format!("/{filename}")), "{}", icon.url);
+        assert_eq!(
+            manifest.targets.len(),
+            1,
+            "the icon has no legacy name to list"
         );
     }
 

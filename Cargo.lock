@@ -5097,6 +5097,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "macos-bundle"
+version = "0.7.0"
+dependencies = [
+ "roxmltree 0.21.1",
+]
+
+[[package]]
 name = "matrixmultiply"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
