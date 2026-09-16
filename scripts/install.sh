@@ -6,20 +6,18 @@
 # signed update manifest before placing anything, and puts the three side by
 # side in a per-user folder. No administrator rights are needed.
 #
-<<<<<<< HEAD
 # On macOS the three go inside "Repos Explorer.app" in that folder, because a
 # Mac expects an application and not three files: an icon in Finder, a name in
 # Launchpad, and the Dock showing the application rather than a terminal. It
 # is the same bundle the disk image carries, so a Mac has one layout however
 # it was installed, and the executables are also linked beside it so the
 # command line can still name them.
-=======
+#
 # On Linux it also does what a free desktop expects of an installed
 # application: a desktop entry in ~/.local/share/applications, so it appears
 # in the applications menu, and the themed icon in ~/.local/share/icons, so
 # the menu and the window have a picture. The icon travels inside this
 # script, because this script travels on its own.
->>>>>>> 229a912 (feat(#562): Linux gets a desktop entry, themed icons and a one-file AppImage)
 #
 # Verification is the scheme the in-application updater uses: each file's
 # Secure Hash Algorithm 256 (SHA-256) digest must match the manifest, and the
@@ -424,11 +422,7 @@ while [ $# -gt 0 ]; do
         --uninstall) uninstall=1; shift ;;
         --purge) purge=1; shift ;;
         --yes) yes=1; shift ;;
-<<<<<<< HEAD
-        -h | --help) sed -n '2,43p' "$0"; exit 0 ;;
-=======
-        -h | --help) sed -n '2,48p' "$0"; exit 0 ;;
->>>>>>> 229a912 (feat(#562): Linux gets a desktop entry, themed icons and a one-file AppImage)
+        -h | --help) sed -n '2,55p' "$0"; exit 0 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
@@ -542,8 +536,7 @@ do_uninstall() {
         fi
     done < "$receipt_path"
     rm -f "$receipt_path"
-<<<<<<< HEAD
-    if [ -n "$bundle" ]; then
+if [ -n "$bundle" ]; then
         # The bundle's folders are the shape of the install rather than files
         # it placed, so the receipt does not list them. Remove them once what
         # they held has gone, and leave any that a reader has put something
@@ -555,7 +548,7 @@ do_uninstall() {
                 echo "removed $folder"
             fi
         done
-=======
+    fi
     if [ "$target" = "x86_64-unknown-linux-gnu" ]; then
         # The icon theme's directories are shared with the desktop's own
         # icons, so rmdir is the right tool: it takes away the ones this
@@ -566,7 +559,6 @@ do_uninstall() {
         done
         rmdir "$icons/scalable/apps" "$icons/scalable" 2>/dev/null || true
         refresh_desktop "$applications" "$icons"
->>>>>>> 229a912 (feat(#562): Linux gets a desktop entry, themed icons and a one-file AppImage)
     fi
     if rmdir "$prefix" 2>/dev/null; then
         echo "removed $prefix"
