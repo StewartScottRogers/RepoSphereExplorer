@@ -12,8 +12,6 @@
 //! Nothing links this crate into a shipped binary: the front ends take it as
 //! a development dependency, for their tests.
 
-use image::ExtendedColorType;
-use image::codecs::ico::{IcoEncoder, IcoFrame};
 use object::LittleEndian;
 use object::read::pe::{PeFile64, ResourceDirectory, ResourceNameOrId};
 use resvg::{tiny_skia, usvg};
@@ -30,6 +28,9 @@ pub const DRAWING: &str = include_str!("../../../assets/RepoSphereExplorer.svg")
 /// The icon directory, as committed - what
 /// [`ico`] last wrote and what the two Windows binaries embed.
 pub const COMMITTED: &[u8] = include_bytes!("../../../assets/RepoSphereExplorer.ico");
+
+/// The length of the `BITMAPINFOHEADER` that opens a bitmap entry.
+const BITMAP_HEADER: usize = 40;
 
 /// The Windows resource type of a single icon image.
 const RT_ICON: u16 = 3;
@@ -71,27 +72,115 @@ pub fn render(drawing: &str, size: u32) -> Result<Vec<u8>, String> {
 /// Renders `drawing` into the bytes of an icon (`.ico`) file holding one
 /// image per entry of [`SIZES`].
 ///
-/// Every entry is a portable network graphic (PNG), which Windows has read at
-/// any icon size since Vista, rather than the older device-independent bitmap
-/// with its separate transparency mask.
+/// Every entry is a device-independent bitmap (DIB). An icon may instead hold
+/// a portable network graphic (PNG) per entry, which is smaller and which
+/// Windows has read since Vista - but only through the shell and the newer
+/// imaging calls. The graphics device interface (GDI) path underneath
+/// `System.Drawing`, which the shortcut property pages, some installers and a
+/// good deal of Windows tooling still sit on, draws a picture entry as noise
+/// at the small sizes and refuses it outright at the large ones. Measured on
+/// this drawing: as pictures, every size failed; as bitmaps, every size draws.
+/// The largest entry costs a quarter of a megabyte, which is the price of an
+/// icon that every reader can read.
+///
+/// The directory is written here rather than by a library because the one in
+/// the tree writes pictures only, and the format is a six byte header, a
+/// sixteen byte entry apiece, and the payloads.
 ///
 /// # Errors
 ///
-/// When `drawing` will not render, or the images will not encode.
+/// When `drawing` will not render, or an image is too large for an entry.
 pub fn ico(drawing: &str) -> Result<Vec<u8>, String> {
-    let frames = SIZES
+    let payloads = SIZES
         .iter()
         .map(|&size| {
             let pixels = render(drawing, size)?;
-            IcoFrame::as_png(&pixels, size, size, ExtendedColorType::Rgba8)
-                .map_err(|err| format!("the {size} pixel image will not encode: {err}"))
+            let side = usize::try_from(size)
+                .map_err(|_| format!("{size} pixels is wider than this machine can address"))?;
+            bitmap_entry(&pixels, side)
         })
         .collect::<Result<Vec<_>, String>>()?;
+
+    let count = u16::try_from(SIZES.len()).map_err(|_| "too many sizes for one icon".to_owned())?;
     let mut bytes = Vec::new();
-    IcoEncoder::new(&mut bytes)
-        .encode_images(&frames)
-        .map_err(|err| format!("the icon directory will not encode: {err}"))?;
+    // Zero, then one for an icon rather than a cursor, then the count.
+    bytes.extend_from_slice(&[0, 0, 1, 0]);
+    bytes.extend_from_slice(&count.to_le_bytes());
+    let header = 6 + 16 * u32::from(count);
+    let mut offset = header;
+    for (&size, payload) in SIZES.iter().zip(&payloads) {
+        let length = u32::try_from(payload.len())
+            .map_err(|_| format!("the {size} pixel image is too long for an icon entry"))?;
+        // A side is one byte, so 256 - the largest an icon can be - is
+        // written as zero.
+        let side = u8::try_from(size).unwrap_or(0);
+        bytes.extend_from_slice(&[side, side, 0, 0]);
+        // One colour plane, and the thirty-two bits a pixel the bitmap holds.
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&32u16.to_le_bytes());
+        bytes.extend_from_slice(&length.to_le_bytes());
+        bytes.extend_from_slice(&offset.to_le_bytes());
+        offset = offset
+            .checked_add(length)
+            .ok_or_else(|| "the icon is longer than its directory can address".to_owned())?;
+    }
+    for payload in payloads {
+        bytes.extend_from_slice(&payload);
+    }
     Ok(bytes)
+}
+
+/// Encodes `pixels` - straight RGBA, top row first - as the device-
+/// independent bitmap (DIB) an icon entry holds.
+///
+/// A `BITMAPINFOHEADER` whose height is doubled to cover the mask that
+/// follows the colours, then rows of blue, green, red and alpha from the
+/// bottom up, then the mask.
+///
+/// The mask is one bit a pixel - rows padded to four bytes, as every bitmap
+/// row is - and is what a reader with no alpha channel cut the shape out
+/// with. Every pixel here carries its own alpha, so the mask is zero
+/// throughout, meaning "draw it", and the alpha channel does the work.
+fn bitmap_entry(pixels: &[u8], side: usize) -> Result<Vec<u8>, String> {
+    let width = u32::try_from(side).map_err(|_| format!("{side} pixels is wider than any icon"))?;
+    let height = width
+        .checked_mul(2)
+        .ok_or_else(|| format!("{side} pixels is taller than any icon"))?;
+    let mask_row = side.div_ceil(8).div_ceil(4) * 4;
+    let mut bytes = Vec::with_capacity(BITMAP_HEADER + side * side * 4 + side * mask_row);
+    for field in [
+        u32::try_from(BITMAP_HEADER).map_err(|_| "the header is not a header".to_owned())?,
+        width,
+        height,
+    ] {
+        bytes.extend_from_slice(&field.to_le_bytes());
+    }
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // colour planes
+    bytes.extend_from_slice(&32u16.to_le_bytes()); // bits a pixel
+    // No compression, and no stated image length: a reader of an uncompressed
+    // bitmap works it out from the other fields, and the crates that write
+    // these leave it zero.
+    bytes.extend_from_slice(&[0; 24]);
+
+    for row in (0..side).rev() {
+        let start = row * side * 4;
+        for pixel in pixels[start..start + side * 4].as_chunks::<4>().0 {
+            bytes.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+        }
+    }
+    bytes.resize(bytes.len() + side * mask_row, 0);
+    Ok(bytes)
+}
+
+/// How an icon entry's image is encoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoding {
+    /// A device-independent bitmap (DIB), which every Windows imaging call
+    /// reads, back to the ones that predate the alpha channel.
+    Bitmap,
+    /// A portable network graphic (PNG), which Windows has read inside an
+    /// icon since Vista and the older calls have not.
+    Picture,
 }
 
 /// One image in an icon file, as its directory describes it.
@@ -100,8 +189,21 @@ pub struct Entry<'a> {
     pub width: u32,
     /// Its height in pixels.
     pub height: u32,
-    /// The encoded image - a PNG, for every entry [`ico`] writes.
+    /// The encoded image, in whichever of the two encodings this entry uses.
     pub payload: &'a [u8],
+}
+
+impl Entry<'_> {
+    /// How this entry's image is encoded, taken from the payload's first
+    /// bytes: a picture names itself, and nothing else in an icon does.
+    #[must_use]
+    pub fn encoding(&self) -> Encoding {
+        if self.payload.starts_with(b"\x89PNG") {
+            Encoding::Picture
+        } else {
+            Encoding::Bitmap
+        }
+    }
 }
 
 /// The images `bytes` holds, read from its icon directory.
@@ -249,7 +351,41 @@ fn table(
 
 #[cfg(test)]
 mod tests {
-    use super::{COMMITTED, DRAWING, SIZES, entries, render};
+    use super::{BITMAP_HEADER, COMMITTED, DRAWING, Encoding, Entry, SIZES, entries, render};
+
+    /// One entry's pixels, straight RGBA with the top row first, whichever
+    /// way it is encoded.
+    fn decode(entry: &Entry<'_>) -> Vec<u8> {
+        let side = usize::try_from(entry.width).expect("an icon fits in this machine");
+        match entry.encoding() {
+            Encoding::Picture => {
+                image::load_from_memory_with_format(entry.payload, image::ImageFormat::Png)
+                    .expect("a picture entry is a portable network graphic")
+                    .to_rgba8()
+                    .into_raw()
+            }
+            // The colours are rows of blue, green, red and alpha from the
+            // bottom up; the mask after them says nothing this drawing's own
+            // alpha channel does not already say.
+            Encoding::Bitmap => {
+                let colours = &entry.payload[BITMAP_HEADER..];
+                let mut pixels = vec![0u8; side * side * 4];
+                for row in 0..side {
+                    let from = (side - 1 - row) * side * 4;
+                    for (column, bgra) in colours[from..from + side * 4]
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .enumerate()
+                    {
+                        let at = (row * side + column) * 4;
+                        pixels[at..at + 4].copy_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
+                    }
+                }
+                pixels
+            }
+        }
+    }
 
     /// The committed icon, decoded entry by entry.
     fn committed() -> Vec<(u32, Vec<u8>)> {
@@ -258,16 +394,15 @@ mod tests {
             .into_iter()
             .map(|entry| {
                 assert_eq!(entry.width, entry.height, "every entry is square");
-                let image =
-                    image::load_from_memory_with_format(entry.payload, image::ImageFormat::Png)
-                        .expect("every entry is a portable network graphic")
-                        .to_rgba8();
+                let pixels = decode(&entry);
+                let side = usize::try_from(entry.width).expect("an icon fits in this machine");
                 assert_eq!(
-                    (image.width(), image.height()),
-                    (entry.width, entry.height),
-                    "the image is the size the directory claims"
+                    pixels.len(),
+                    side * side * 4,
+                    "{}: the image is the size the directory claims",
+                    entry.width
                 );
-                (entry.width, image.into_raw())
+                (entry.width, pixels)
             })
             .collect()
     }
@@ -276,6 +411,23 @@ mod tests {
     fn the_committed_icon_carries_every_size() {
         let sizes: Vec<u32> = committed().into_iter().map(|(size, _)| size).collect();
         assert_eq!(sizes, SIZES, "one entry per size, smallest first");
+    }
+
+    /// The encoding is not a detail. The first version of this asset wrote
+    /// every entry as a picture; Explorer showed it perfectly, and everything
+    /// sitting on the older imaging calls drew noise at the small sizes and
+    /// threw at the large ones. This is the check that would have caught it.
+    #[test]
+    fn every_entry_is_a_bitmap() {
+        for entry in entries(COMMITTED).expect("the committed icon is an icon file") {
+            assert_eq!(
+                entry.encoding(),
+                Encoding::Bitmap,
+                "the {} pixel entry is a picture, which the older Windows \
+                 imaging calls cannot draw; run `cargo run -p icon`",
+                entry.width
+            );
+        }
     }
 
     /// The committed icon has to be the committed drawing, or the asset is

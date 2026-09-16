@@ -12,15 +12,17 @@ name = "icon"
 path = "src/main.rs"
 
 [dependencies]
-# Writes the icon directory. `ico` pulls in `png`, which is what each entry
-# is encoded as.
-image = { version = "0.25", default-features = false, features = ["ico"] }
 # Reads the resource directory out of a built Windows binary. Already in the
 # tree through `plugin-executable`, which reads the same containers.
 object = "0.40"
 # Rasterises the drawing. Already in the tree through Slint, which renders
 # the file-type icons with it.
 resvg = "0.47"
+
+# Test-only: the entries this crate writes are bitmaps it decodes itself, but
+# an icon entry may be a picture and the test that reads one has to say so.
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [lints]
 workspace = true
