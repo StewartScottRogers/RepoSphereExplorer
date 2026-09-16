@@ -54,6 +54,8 @@ jobs:
             Windows)
               echo "PREFIX=${LOCALAPPDATA}\\Programs\\RepoSphereExplorer" >> "$GITHUB_ENV"
               echo "DATA_DIR=${LOCALAPPDATA}\\RepoSphereExplorer" >> "$GITHUB_ENV"
+              echo "SHORTCUT=${APPDATA}\\Microsoft\\Windows\\Start Menu\\Programs\\Repos Explorer.lnk" >> "$GITHUB_ENV"
+              echo "UNINSTALL_KEY=HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ReposExplorer" >> "$GITHUB_ENV"
               ;;
             Linux)
               echo "PREFIX=${HOME}/.local/share/RepoSphereExplorer" >> "$GITHUB_ENV"
@@ -122,6 +124,61 @@ jobs:
               Write-Output "::error title=Install (Windows)::$name is not in $env:PREFIX"; exit 1
             }
           }
+      # A per-user install that Windows does not know about is half an
+      # install: no Start menu entry, nothing in Settings > Apps, no way to
+      # remove it but the script a reader downloaded and probably deleted.
+      - name: Windows knows the application is installed (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $failed = $false
+          $gui = Join-Path $env:PREFIX 'RepoSphereExplorerGui.exe'
+
+          if (-not (Test-Path -LiteralPath $env:SHORTCUT)) {
+            Write-Output "::error title=Start menu (Windows)::no shortcut at $env:SHORTCUT"; exit 1
+          }
+          $shell = New-Object -ComObject WScript.Shell
+          $link = $shell.CreateShortcut($env:SHORTCUT)
+          Write-Output "shortcut $env:SHORTCUT"
+          Write-Output "  target '$($link.TargetPath)' in '$($link.WorkingDirectory)'"
+          Write-Output "  icon '$($link.IconLocation)' description '$($link.Description)'"
+          if ($link.TargetPath -ne $gui) {
+            Write-Output "::error title=Start menu (Windows)::the shortcut points at '$($link.TargetPath)', not $gui"; $failed = $true
+          }
+          if ($link.WorkingDirectory -ne $env:PREFIX) {
+            Write-Output "::error title=Start menu (Windows)::the shortcut works in '$($link.WorkingDirectory)', not $env:PREFIX"; $failed = $true
+          }
+          foreach ($part in @(@('Description', $link.Description), @('IconLocation', $link.IconLocation))) {
+            if (-not $part[1]) { Write-Output "::error title=Start menu (Windows)::the shortcut has no $($part[0])"; $failed = $true }
+          }
+
+          if (-not (Test-Path -LiteralPath $env:UNINSTALL_KEY)) {
+            Write-Output "::error title=Apps entry (Windows)::no registry key at $env:UNINSTALL_KEY"; exit 1
+          }
+          $entry = Get-ItemProperty -LiteralPath $env:UNINSTALL_KEY
+          $entry | Format-List DisplayName, DisplayVersion, Publisher, DisplayIcon, InstallLocation,
+            EstimatedSize, NoModify, NoRepair, UninstallString | Out-String -Width 200
+          foreach ($name in 'DisplayName', 'DisplayVersion', 'Publisher', 'DisplayIcon', 'InstallLocation',
+            'EstimatedSize', 'NoModify', 'NoRepair', 'UninstallString') {
+            if (-not $entry.$name) { Write-Output "::error title=Apps entry (Windows)::$name is missing or empty"; $failed = $true }
+          }
+          if ($entry.InstallLocation -ne $env:PREFIX) {
+            Write-Output "::error title=Apps entry (Windows)::InstallLocation is '$($entry.InstallLocation)', not $env:PREFIX"; $failed = $true
+          }
+          if ($entry.DisplayIcon -ne $gui) {
+            Write-Output "::error title=Apps entry (Windows)::DisplayIcon is '$($entry.DisplayIcon)', not $gui"; $failed = $true
+          }
+          # The Uninstall button runs this string long after the downloaded
+          # copy of the script is gone, so it has to name a script that is
+          # still there. The uninstall step below runs the string itself.
+          if ($entry.UninstallString -notmatch '-File "([^"]+)"') {
+            Write-Output "::error title=Apps entry (Windows)::UninstallString runs no -File script: $($entry.UninstallString)"; $failed = $true
+          }
+          elseif (-not (Test-Path -LiteralPath $matches[1])) {
+            Write-Output "::error title=Apps entry (Windows)::UninstallString runs $($matches[1]), which is not there"; $failed = $true
+          }
+          if ($failed) { exit 1 }
+
       - name: Install (${{ runner.os }})
         if: runner.os != 'Windows'
         shell: bash
@@ -322,8 +379,14 @@ jobs:
           $previous = $tags[$index + 1]
           $assets = @(gh release view $previous --repo "${{ github.repository }}" --json assets --jq '.assets[].name')
           if ($assets -notcontains 'manifest.json') { Write-Output "::notice title=Self-update (Windows)::skipped: $previous carries no signed manifest.json, so it cannot be installed with verification. Needs two releases cut since distribution.yml."; exit 0 }
+          # A second copy beside the real one: its Start menu shortcut and
+          # Apps entry go somewhere harmless, so installing and removing it
+          # does not take the real install's away.
           $prefix = Join-Path $env:RUNNER_TEMP 'previous'
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Tag $previous -Prefix $prefix
+          $menu = Join-Path $env:RUNNER_TEMP 'previous-start-menu'
+          $key = 'HKCU:\Software\RepoSphereExplorerDistributionCheck\Uninstall\ReposExplorer'
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Tag $previous -Prefix $prefix `
+            -StartMenuDirectory $menu -UninstallRegistryKey $key
           if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Self-update (Windows)::could not install $previous"; exit 1 }
           $from = $previous.TrimStart('v')
           foreach ($pair in @(@('service', 'service'), @('RepoSphereExplorerTui', 'tui'), @('RepoSphereExplorerGui', 'gui'))) {
@@ -397,13 +460,26 @@ jobs:
           # straight away failed with "access to the path is denied".
           $gui = Start-Process -FilePath (Join-Path $env:PREFIX 'RepoSphereExplorerGui.exe') -ArgumentList "`"$env:RUNNER_TEMP\scratch`"" -PassThru
           Start-Sleep -Seconds 5
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall -Purge
-          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Uninstall (Windows)::install.ps1 -Uninstall -Purge failed"; exit 1 }
+          # Remove it the way Settings > Apps does: run the UninstallString
+          # the install wrote, through the command processor, which also
+          # proves that string works. -Purge is this check's addition; the
+          # button itself keeps the journal and the configuration.
+          $uninstall = (Get-ItemProperty -LiteralPath $env:UNINSTALL_KEY).UninstallString
+          Write-Output "UninstallString: $uninstall"
+          $command = Join-Path $env:RUNNER_TEMP 'uninstall.cmd'
+          Set-Content -LiteralPath $command -Value "$uninstall -Purge" -Encoding ASCII
+          & $env:ComSpec /c $command
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=Uninstall (Windows)::the UninstallString failed"; exit 1 }
           Write-Output "--- $env:LOCALAPPDATA"; Get-ChildItem -Force $env:LOCALAPPDATA | Format-Table -AutoSize | Out-String -Width 200
           Write-Output "--- $env:LOCALAPPDATA\Programs"; Get-ChildItem -Force (Join-Path $env:LOCALAPPDATA 'Programs') -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String -Width 200
           $failed = $false
           if (Test-Path $env:PREFIX) { Write-Output "::error title=Uninstall (Windows)::$env:PREFIX remains"; $failed = $true }
           if (Test-Path $env:DATA_DIR) { Write-Output "::error title=Uninstall (Windows)::$env:DATA_DIR remains"; $failed = $true }
+          if (Test-Path -LiteralPath $env:SHORTCUT) { Write-Output "::error title=Uninstall (Windows)::$env:SHORTCUT remains"; $failed = $true }
+          if (Test-Path -LiteralPath $env:UNINSTALL_KEY) { Write-Output "::error title=Uninstall (Windows)::$env:UNINSTALL_KEY remains"; $failed = $true }
+          # Nothing left to remove, so the second time it says so and stops.
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Uninstall
+          if ($LASTEXITCODE -eq 0) { Write-Output "::error title=Uninstall (Windows)::a second uninstall was not refused"; $failed = $true }
           $left = @(Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($env:PREFIX, [StringComparison]::OrdinalIgnoreCase) })
           $left | Format-Table Id, Path -AutoSize | Out-String -Width 200
           if ($left.Count -gt 0) { Write-Output "::error title=Uninstall (Windows)::processes from the install remain"; $failed = $true }

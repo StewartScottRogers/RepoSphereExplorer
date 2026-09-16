@@ -8,6 +8,13 @@ and service for this machine, verifies every file against the release's
 signed update manifest before placing anything, and puts the three side by
 side in a per-user folder. No administrator rights are needed.
 
+It then tells Windows the application is here: a "Repos Explorer" shortcut in
+the Start menu pointing at the graphical application, and a per-user entry in
+Settings > Apps whose Uninstall button runs this script back. A copy of this
+script is placed in the install folder for that button to run, because the
+script is downloaded rather than installed and the downloaded copy may be
+gone by then.
+
 Verification is the scheme the in-application updater uses: each file's
 Secure Hash Algorithm 256 (SHA-256) digest must match the manifest, and the
 manifest's Ed25519 signature over that digest must verify against the public
@@ -16,10 +23,12 @@ checked against its manifest digest before it is run, and verifies itself
 along with the rest.
 
 Uninstall stops application and service processes started from the install
-folder, removes what install placed, and says what it removed. -Purge also
-removes the per-user data folder (the journal, the Repos Directory
-configuration and window settings), and refuses unless -Yes is given or the
-CI environment variable is "true".
+folder, removes what install placed - the files, the Start menu shortcut and
+the Settings > Apps entry, each one read back from the receipt install wrote,
+so it removes exactly those and nothing else - and says what it removed.
+-Purge also removes the per-user data folder (the journal, the Repos
+Directory configuration and window settings), and refuses unless -Yes is
+given or the CI environment variable is "true".
 
 .PARAMETER Tag
 The release to install, for example v0.7.0. Default: latest, read from the
@@ -38,6 +47,20 @@ use it for anything you mean to run.
 .PARAMETER Prefix
 Where to install. Default: %LOCALAPPDATA%\Programs\RepoSphereExplorer.
 
+.PARAMETER StartMenuDirectory
+Install only. Where the Start menu shortcut goes. Default: this user's Start
+menu Programs folder.
+
+.PARAMETER UninstallRegistryKey
+Install only. The registry key for the Settings > Apps entry, under
+HKEY_CURRENT_USER (HKCU), this user's own hive. Default:
+HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ReposExplorer.
+
+Both exist for the same reason -Prefix does: a second copy installed beside
+the real one - the release check's self-update test - points them somewhere
+harmless so it does not take over the first copy's Start menu shortcut and
+Apps entry. Uninstall needs neither: it reads both back from the receipt.
+
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File install.ps1
 powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
@@ -48,6 +71,8 @@ param(
     [string]$FromDirectory,
     [switch]$UnsignedTestManifest,
     [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'Programs\RepoSphereExplorer'),
+    [string]$StartMenuDirectory = (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
+    [string]$UninstallRegistryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ReposExplorer',
     [switch]$Uninstall,
     [switch]$Purge,
     [switch]$Yes
@@ -61,6 +86,15 @@ $LatestManifestUrl = 'https://stewartscottrogers.github.io/RepoSphereExplorer/la
 $Installed = @('RepoSphereExplorerGui', 'RepoSphereExplorerTui', 'service')
 $Receipt = 'installed-files.txt'
 $DataDirectory = Join-Path $env:LOCALAPPDATA 'RepoSphereExplorer'
+$Application = 'Repos Explorer'
+$Publisher = 'Stewart Scott Rogers'
+$Summary = 'Repos Explorer - a front door to the working copies your source control checks code out into'
+$UninstallScript = 'install.ps1'
+
+# A receipt line is a path to remove, unless it starts with this, in which
+# case the rest of it is a registry key to remove. install.sh writes paths
+# only; nothing outside Windows reads or writes a line of this shape.
+$RegistryLine = 'registry:'
 
 $TagGiven = $PSBoundParameters.ContainsKey('Tag')
 
@@ -112,10 +146,18 @@ function Invoke-Uninstall {
     }
 
     Stop-ProcessesIn $Prefix
-    foreach ($path in Get-Content -LiteralPath $receiptPath) {
-        if ($path -and (Test-Path -LiteralPath $path)) {
-            Remove-FileWhenUnlocked $path
-            Write-Output "removed $path"
+    foreach ($line in Get-Content -LiteralPath $receiptPath) {
+        if (-not $line) { continue }
+        if ($line.StartsWith($RegistryLine)) {
+            $key = $line.Substring($RegistryLine.Length)
+            if (Test-Path -LiteralPath $key) {
+                Remove-Item -LiteralPath $key -Recurse -Force
+                Write-Output "removed $key"
+            }
+        }
+        elseif (Test-Path -LiteralPath $line) {
+            Remove-FileWhenUnlocked $line
+            Write-Output "removed $line"
         }
     }
     Remove-FileWhenUnlocked $receiptPath
@@ -143,6 +185,53 @@ function Invoke-Uninstall {
     }
 }
 
+# The Start menu shortcut, pointing at the installed graphical application.
+#
+# The icon is the executable's own, so nothing has to be placed beside the
+# shortcut for it. An executable carrying no icon resource yet degrades
+# quietly to the generic one Windows draws for any program.
+function New-Shortcut([string]$Path, [string]$Executable) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut($Path)
+        $link.TargetPath = $Executable
+        $link.WorkingDirectory = $Prefix
+        $link.Description = $Summary
+        $link.IconLocation = "$Executable,0"
+        $link.Save()
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+    }
+}
+
+# The Settings > Apps entry, under this user's hive: no administrator rights,
+# and no claim on anyone else's account.
+#
+# UninstallString is what the Uninstall button runs, so it must still work
+# long after the downloaded copy of this script is gone: it runs the copy
+# install placed in $Prefix, against $Prefix.
+function Register-Application([string]$Key, [string]$Executable, [string]$Uninstaller, [string]$Version, [int]$Kilobytes) {
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $values = [ordered]@{
+        DisplayName     = $Application
+        DisplayVersion  = $Version
+        Publisher       = $Publisher
+        DisplayIcon     = $Executable
+        InstallLocation = $Prefix
+        UninstallString = "`"$powershell`" -NoProfile -ExecutionPolicy Bypass -File `"$Uninstaller`" -Uninstall -Prefix `"$Prefix`""
+    }
+    New-Item -Path $Key -Force | Out-Null
+    foreach ($name in $values.Keys) {
+        New-ItemProperty -Path $Key -Name $name -Value $values[$name] -PropertyType String -Force | Out-Null
+    }
+    New-ItemProperty -Path $Key -Name 'EstimatedSize' -Value $Kilobytes -PropertyType DWord -Force | Out-Null
+    foreach ($name in @('NoModify', 'NoRepair')) {
+        New-ItemProperty -Path $Key -Name $name -Value 1 -PropertyType DWord -Force | Out-Null
+    }
+}
+
 function Get-Target {
     if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { return 'x86_64-pc-windows-msvc' }
     Fail "no release is built for Windows on $env:PROCESSOR_ARCHITECTURE"
@@ -166,6 +255,11 @@ function Invoke-Install {
     }
     if (Test-Path -LiteralPath (Join-Path $Prefix $Receipt)) {
         Fail "Repos Explorer is already installed at $Prefix; uninstall it first"
+    }
+    if (-not $PSCommandPath) {
+        Fail ('run this from a saved file (powershell -ExecutionPolicy Bypass -File install.ps1): install places a ' +
+            'copy of the script in the install folder for the Uninstall button to run, and a script piped straight ' +
+            'into PowerShell has no file to copy')
     }
     $target = Get-Target
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -243,9 +337,27 @@ function Invoke-Install {
             $placed += $destination
             Write-Output "placed $destination"
         }
-        Set-Content -LiteralPath (Join-Path $Prefix $Receipt) -Value $placed -Encoding UTF8
+
+        $gui = Join-Path $Prefix 'RepoSphereExplorerGui.exe'
+        $uninstaller = Join-Path $Prefix $UninstallScript
+        Copy-Item -LiteralPath $PSCommandPath -Destination $uninstaller -Force
+        $placed += $uninstaller
+        Write-Output "placed $uninstaller"
+
+        $shortcut = Join-Path $StartMenuDirectory "$Application.lnk"
+        New-Shortcut $shortcut $gui
+        $placed += $shortcut
+        Write-Output "placed $shortcut"
+
+        $kilobytes = [int](((@($placed) | ForEach-Object { (Get-Item -LiteralPath $_).Length }) |
+                Measure-Object -Sum).Sum / 1KB)
+        Register-Application $UninstallRegistryKey $gui $uninstaller $manifest.version $kilobytes
+        Write-Output "registered $UninstallRegistryKey"
+
+        Set-Content -LiteralPath (Join-Path $Prefix $Receipt) `
+            -Value ($placed + ($RegistryLine + $UninstallRegistryKey)) -Encoding UTF8
         Write-Output "installed Repos Explorer $($manifest.version) in $Prefix"
-        Write-Output "run: & '$(Join-Path $Prefix 'RepoSphereExplorerGui.exe')'"
+        Write-Output "run: & '$gui', or Repos Explorer in the Start menu"
     }
     finally {
         Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
