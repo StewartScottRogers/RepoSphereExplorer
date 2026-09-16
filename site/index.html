@@ -104,7 +104,8 @@
     <h2>Download</h2>
     <p class="note">
       Binaries are unsigned (no code-signing budget yet), so Windows SmartScreen and macOS
-      Gatekeeper will warn on first run. <code>tui</code> and <code>gui</code> each auto-launch
+      Gatekeeper will warn on first run &mdash; see the macOS panel for what to do about it.
+      <code>tui</code> and <code>gui</code> each auto-launch
       <code>service</code> if it isn't already running &mdash; keep the files together in one
       folder.
     </p>
@@ -115,7 +116,18 @@
       </div>
       <div class="platform" data-os="macos">
         <h3>macOS <span class="badge" hidden>Detected</span></h3>
-        <ul id="macos-links"></ul>
+        <ul id="macos-links">
+          <li><a href="https://github.com/StewartScottRogers/RepoSphereExplorer/releases/latest/download/ReposExplorer.dmg"><strong>ReposExplorer.dmg</strong></a> &mdash; the application, drag it to Applications</li>
+        </ul>
+        <p class="note">
+          The disk image holds <strong>Repos Explorer.app</strong> and a shortcut to
+          <code>/Applications</code>: drag one onto the other. The application is not signed
+          with an Apple Developer ID, so the first launch has to be
+          <strong>right-click &rarr; Open &rarr; Open</strong> &mdash; a double-click is refused
+          by Gatekeeper with &ldquo;cannot be opened because the developer cannot be verified&rdquo;.
+          After that first time, it opens like anything else.
+          The loose executables below are for the terminal application and for scripting.
+        </p>
       </div>
       <div class="platform" data-os="linux">
         <h3>Linux <span class="badge" hidden>Detected</span></h3>
