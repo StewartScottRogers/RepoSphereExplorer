@@ -823,6 +823,8 @@ fn found_row(found_match: &protocol::NameMatch) -> ContentRow {
     ContentRow {
         branch: String::new(),
         marker: String::new(),
+        marker_tooltip: String::new(),
+        marker_warning: false,
         icon: icon_for(name, found_match.is_dir),
         is_dir: found_match.is_dir,
         name: if found_match.is_dir {
@@ -1040,8 +1042,10 @@ fn colour_lines(text: &str, spans: &[Span]) -> Vec<Vec<ColouredRun>> {
 }
 
 /// Drawn beside a repository row's branch when its tracked files have
-/// uncommitted changes.
-pub const CHANGED_MARKER: &str = "\u{25cf}";
+/// uncommitted changes. `M`, so the shape itself reads "modified" the way
+/// `git status` already does, rather than relying on the colour it is also
+/// given (#574).
+pub const CHANGED_MARKER: &str = "M";
 
 /// Drawn beside a repository row's branch until its status has been asked
 /// for and answered. Nothing at all would read as "no changes".
@@ -1051,6 +1055,17 @@ pub const NOT_KNOWN_YET_MARKER: &str = "\u{2026}";
 /// cannot say: the index could not be read, or the count stopped short
 /// without finding a change.
 pub const CANNOT_TELL_MARKER: &str = "?";
+
+/// The words a marker's tooltip and accessible label share; empty for no
+/// marker at all, which is what a clean row draws.
+fn marker_tooltip(marker: &str) -> &'static str {
+    match marker {
+        CHANGED_MARKER => "Uncommitted changes to tracked files",
+        NOT_KNOWN_YET_MARKER => "Checking for changes…",
+        CANNOT_TELL_MARKER => "Could not tell whether there are changes",
+        _ => "",
+    }
+}
 
 /// What the Contents pane knows about one repository row's working tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1086,6 +1101,15 @@ pub struct ContentRow {
     /// Beside the branch: [`CHANGED_MARKER`], [`NOT_KNOWN_YET_MARKER`],
     /// [`CANNOT_TELL_MARKER`], or empty for no uncommitted changes.
     pub marker: String,
+    /// What `marker` means, in words: shown in a tooltip and given as its
+    /// accessible label, since a screen reader user and a mouse user who
+    /// does not know the glyphs both get nothing from `marker` alone.
+    /// Empty exactly when `marker` is.
+    pub marker_tooltip: String,
+    /// Whether `marker` is [`CHANGED_MARKER`], so the front end can give it
+    /// the warning colour rather than the neutral one the other markers
+    /// use.
+    pub marker_warning: bool,
 }
 
 /// The three-pane explorer's state.
@@ -3205,36 +3229,41 @@ impl App {
         }
         self.contents
             .iter()
-            .map(|entry| ContentRow {
-                icon: icon_for(&entry.name, entry.is_dir),
-                is_dir: entry.is_dir,
-                name: if entry.is_dir {
-                    format!("{}/", entry.name)
+            .map(|entry| {
+                let marker = if entry.repository.is_some() {
+                    self.marker_for(&entry.name)
                 } else {
-                    entry.name.clone()
-                },
-                size: if entry.is_dir {
-                    String::new()
-                } else {
-                    format_size(entry.size)
-                },
-                kind: format_kind_of(&entry.name, entry.is_dir, entry.repository.as_ref()),
-                modified: format_timestamp(entry.modified),
-                is_repository: entry.repository.is_some(),
-                branch: entry
-                    .repository
-                    .as_ref()
-                    .map_or_else(String::new, |repository| {
-                        repository
-                            .branch
-                            .clone()
-                            .unwrap_or_else(|| "detached".to_owned())
-                    }),
-                marker: if entry.repository.is_some() {
-                    self.marker_for(&entry.name).to_owned()
-                } else {
-                    String::new()
-                },
+                    ""
+                };
+                ContentRow {
+                    icon: icon_for(&entry.name, entry.is_dir),
+                    is_dir: entry.is_dir,
+                    name: if entry.is_dir {
+                        format!("{}/", entry.name)
+                    } else {
+                        entry.name.clone()
+                    },
+                    size: if entry.is_dir {
+                        String::new()
+                    } else {
+                        format_size(entry.size)
+                    },
+                    kind: format_kind_of(&entry.name, entry.is_dir, entry.repository.as_ref()),
+                    modified: format_timestamp(entry.modified),
+                    is_repository: entry.repository.is_some(),
+                    branch: entry
+                        .repository
+                        .as_ref()
+                        .map_or_else(String::new, |repository| {
+                            repository
+                                .branch
+                                .clone()
+                                .unwrap_or_else(|| "detached".to_owned())
+                        }),
+                    marker: marker.to_owned(),
+                    marker_tooltip: marker_tooltip(marker).to_owned(),
+                    marker_warning: marker == CHANGED_MARKER,
+                }
             })
             .collect()
     }
@@ -6807,6 +6836,60 @@ third",
                 .contains("4 repositories, 1 with uncommitted changes (2 not known)"),
             "{}",
             app.status_text()
+        );
+    }
+
+    /// What the row named `name` draws its marker's tooltip and warning
+    /// flag as - the words and the colour a mouse or screen reader user
+    /// gets when the glyph alone would tell them nothing (#574).
+    fn marker_tooltip_and_warning_of(app: &App, name: &str) -> (String, bool) {
+        app.content_rows()
+            .into_iter()
+            .find(|row| row.name.trim_end_matches('/') == name)
+            .map_or_else(
+                || panic!("no row named {name}"),
+                |row| (row.marker_tooltip, row.marker_warning),
+            )
+    }
+
+    #[test]
+    fn each_marker_carries_the_words_it_means_and_only_the_changed_one_warns() {
+        let mut app = app_listing_checkouts(&["alpha", "beta", "gamma", "delta"]);
+        app.ask_for_statuses(0..4);
+
+        app.apply_status_result_for_test("alpha", working_tree(0, false));
+        app.apply_status_result_for_test("beta", working_tree(2, false));
+        app.apply_status_result_for_test(
+            "gamma",
+            Response::WorkingTree {
+                path: String::new(),
+                status: None,
+            },
+        );
+        // "delta" is left waiting, so it still carries the not-known-yet
+        // marker.
+
+        assert_eq!(
+            marker_tooltip_and_warning_of(&app, "alpha"),
+            (String::new(), false),
+            "no marker, no words and no warning"
+        );
+        assert_eq!(
+            marker_tooltip_and_warning_of(&app, "beta"),
+            ("Uncommitted changes to tracked files".to_owned(), true)
+        );
+        assert_eq!(
+            marker_tooltip_and_warning_of(&app, "gamma"),
+            ("Could not tell whether there are changes".to_owned(), false)
+        );
+        assert_eq!(
+            marker_tooltip_and_warning_of(&app, "delta"),
+            ("Checking for changes…".to_owned(), false)
+        );
+        assert_eq!(
+            marker_tooltip_and_warning_of(&app, "plain.txt"),
+            (String::new(), false),
+            "a plain file has no marker to explain"
         );
     }
 

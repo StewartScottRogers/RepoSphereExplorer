@@ -988,7 +988,9 @@ fn a_checkout_behind_its_remote_says_how_far_in_the_file_pane() {
 }
 
 // ---------------------------------------------------------------------
-// The name has priority over the branch beside it (#573).
+// The name has priority over the branch beside it (#573), and the
+// uncommitted-changes marker names itself for a mouse or screen reader
+// user who does not know its glyph (#574).
 // ---------------------------------------------------------------------
 
 /// The `nth` element the pane draws with `element_id`, in the order the
@@ -999,6 +1001,42 @@ fn nth_drawn(ui: &MainWindow, element_id: &str, index: usize) -> ElementHandle {
     ElementHandle::find_by_element_id(ui, element_id)
         .nth(index)
         .unwrap_or_else(|| panic!("no {element_id} at position {index}"))
+}
+
+#[test]
+fn a_changed_repositorys_marker_names_itself_and_a_clean_ones_does_not() {
+    let _serial = serially();
+    let root = scratch("marker-words");
+    checkout(&root, "alpha", "main", None, 1);
+    let beta = checkout(&root, "beta", "main", None, 1);
+    // Committed, then edited: a tracked file that differs from the index.
+    file(
+        &beta,
+        "tracked-0.txt",
+        "the body after somebody edited it\n",
+    );
+    let (ui, app) = window_at(&root);
+
+    settle_statuses(&ui, &app);
+
+    let alpha_marker = nth_drawn(&ui, "ContentsPane::marker-text", index_of(&ui, "alpha"));
+    let beta_marker = nth_drawn(&ui, "ContentsPane::marker-text", index_of(&ui, "beta"));
+
+    assert!(
+        alpha_marker
+            .accessible_label()
+            .is_none_or(|label| label.is_empty()),
+        "a clean checkout has no marker to explain, so its accessible label \
+         should say nothing either"
+    );
+    assert_eq!(
+        beta_marker
+            .accessible_label()
+            .map(|label| label.to_string()),
+        Some("Uncommitted changes to tracked files".to_owned()),
+        "an edited checkout's marker should name what it means, not just \
+         show a glyph"
+    );
 }
 
 #[test]
@@ -1066,5 +1104,71 @@ fn a_narrower_contents_width_hides_the_branch_while_the_marker_stays_beside_the_
         marker.size().width > 0.0,
         "the uncommitted-changes marker stays attached to the name once the \
          branch beside it is gone"
+    );
+}
+
+/// Moves the pointer over row `index` of the Contents pane without
+/// clicking, the way a reader hovers to read a tooltip.
+fn hover_row(ui: &MainWindow, index: usize) {
+    let pane = ElementHandle::find_by_element_id(ui, "ContentsPane::click-area")
+        .next()
+        .expect("the contents pane has a click area");
+    let origin = pane.absolute_position();
+    let rows_down = f32::from(u16::try_from(index).expect("a small listing"));
+    let position = LogicalPosition::new(
+        origin.x + 20.0,
+        origin.y + rows_down.mul_add(ROW_HEIGHT, ROW_HEIGHT / 2.0),
+    );
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+}
+
+/// What the hover tooltip says, or `None` when none is drawn.
+fn tooltip(ui: &MainWindow) -> Option<String> {
+    ElementHandle::find_by_element_id(ui, "ContentsPane::marker-tip-text")
+        .next()
+        .and_then(|tip| tip.accessible_label())
+        .map(|label| label.to_string())
+}
+
+#[test]
+fn hovering_a_repository_shows_its_full_name_branch_and_marker_and_a_plain_folder_shows_none() {
+    let _serial = serially();
+    let root = scratch("hover-tooltip");
+    let changed = checkout(
+        &root,
+        "AgenticCliOptions",
+        "chore/solution-drift-model-refresh-agenttools",
+        None,
+        1,
+    );
+    file(
+        &changed,
+        "tracked-0.txt",
+        "the body after somebody edited it\n",
+    );
+    plain_folder(&root, "notes", 1);
+    let (ui, app) = window_at(&root);
+    settle_statuses(&ui, &app);
+    // Narrow enough that the branch is hidden and the name may elide:
+    // the tooltip is where what was cut can still be read (#573).
+    ui.set_contents_width(250.0);
+
+    hover_row(&ui, index_of(&ui, "AgenticCliOptions"));
+    assert_eq!(
+        tooltip(&ui).as_deref(),
+        Some(
+            "AgenticCliOptions/\nchore/solution-drift-model-refresh-agenttools\n\
+             Uncommitted changes to tracked files"
+        ),
+        "hovering a changed repository should show its full name, its full \
+         branch and what its marker means (#573, #574)"
+    );
+
+    hover_row(&ui, index_of(&ui, "notes"));
+    assert_eq!(
+        tooltip(&ui),
+        None,
+        "a plain folder has nothing cut and no marker, so it gets no tooltip"
     );
 }

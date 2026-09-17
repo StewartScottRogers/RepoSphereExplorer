@@ -721,6 +721,8 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
                 modified: row.modified.into(),
                 branch: row.branch.into(),
                 marker: row.marker.into(),
+                marker_tooltip: row.marker_tooltip.into(),
+                marker_warning: row.marker_warning,
                 selected: app.is_selected(index),
             })
             .collect::<Vec<_>>(),
