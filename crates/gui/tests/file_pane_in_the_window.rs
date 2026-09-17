@@ -460,9 +460,11 @@ fn a_type_with_fewer_views_does_not_leave_the_tab_index_past_the_strip() {
         "a folder offers one view, so there is nothing to choose between"
     );
     assert!(
-        shown(&ui).contains("entry") || shown(&ui).contains("entries"),
+        ui.get_file_facts()
+            .iter()
+            .any(|fact| fact.label == "Entries"),
         "and the pane describes the folder: {:?}",
-        shown(&ui)
+        ui.get_file_facts()
     );
 }
 

@@ -105,6 +105,14 @@ export struct FolderRow {
     expanded: bool,
 }
 
+/// One row of the File pane's fact table. Mirrors `app::FactRow` (#576).
+export struct FactRow {
+    label: string,
+    display-value: string,
+    full-value: string,
+    dim: bool,
+}
+
 component Pane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
@@ -1369,6 +1377,11 @@ export component MainWindow inherits Window {
     in property <[ContentRow]> content-rows;
     in property <int> content-selected;
     in property <string> file-text;
+    // The File pane's fact table (#576), drawn in place of `file-text`
+    // whenever a plugin offers one - a working copy's provider, branch,
+    // tracking and remote, which used to be sentences `file-text` wrapped
+    // across five lines at the pane's default width.
+    in property <[FactRow]> file-facts;
     // The views the previewed type offers, and which one is showing. A type
     // offering one view gets no switcher, so it looks as it always did.
     in property <[string]> file-views;
@@ -2159,6 +2172,80 @@ export component MainWindow inherits Window {
                                     clicked => {
                                         file-tab-selected(i);
                                     }
+                                }
+                            }
+                        }
+
+                        // The File pane's fact table (#576): a working
+                        // copy's provider, branch, tracking and remote as
+                        // a right-aligned label beside its value, in place
+                        // of the sentences a narrow pane used to wrap
+                        // across five lines. A blank row (empty label and
+                        // value) separates them from the folder facts -
+                        // entry count, total size - that follow, drawn
+                        // dim rather than sharing the table's full weight.
+                        if !editing-file && file-facts.length > 0: facts-table := Rectangle {
+                            property <length> fact-row-height: 20px;
+                            property <length> fact-label-column: 100px;
+                            // The row under the pointer, so a value elided
+                            // in the middle can still show in full on
+                            // hover (#576 requirement 2) - the same
+                            // mouse-y-over-row-height shape the Contents
+                            // pane's own hover tooltip uses.
+                            property <int> hovered-fact: (facts-touch.has-hover
+                                    && facts-touch.mouse-y < file-facts.length * fact-row-height)
+                                ? clamp(floor(facts-touch.mouse-y / fact-row-height), 0, file-facts.length - 1)
+                                : -1;
+                            height: file-facts.length * fact-row-height + 8px;
+
+                            for fact[i] in file-facts: Rectangle {
+                                y: 4px + i * fact-row-height;
+                                height: fact-row-height;
+                                width: 100%;
+                                HorizontalLayout {
+                                    padding-left: 4px;
+                                    padding-right: 4px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: fact.label;
+                                        width: fact-label-column;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                        color: Theme.dim-text;
+                                        horizontal-stretch: 0;
+                                    }
+                                    Text {
+                                        text: fact.display-value;
+                                        vertical-alignment: center;
+                                        color: fact.dim ? Theme.dim-text : Palette.foreground;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+
+                            facts-touch := TouchArea {
+                                width: 100%;
+                                height: 100%;
+                            }
+
+                            // Shown only when the row's value was actually
+                            // elided: a short value that already fits has
+                            // nothing more to say on hover.
+                            if hovered-fact >= 0
+                                    && file-facts[hovered-fact].display-value != file-facts[hovered-fact].full-value: Rectangle {
+                                x: facts-touch.mouse-x + 12px;
+                                y: facts-touch.mouse-y + 12px;
+                                width: fact-tip-text.preferred-width + 8px;
+                                height: fact-tip-text.preferred-height + 6px;
+                                background: Theme.panel;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                fact-tip-text := Text {
+                                    x: 4px;
+                                    y: 3px;
+                                    text: file-facts[hovered-fact].full-value;
+                                    color: Palette.foreground;
                                 }
                             }
                         }
