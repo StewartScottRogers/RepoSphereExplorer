@@ -1106,3 +1106,69 @@ fn a_narrower_contents_width_hides_the_branch_while_the_marker_stays_beside_the_
          branch beside it is gone"
     );
 }
+
+/// Moves the pointer over row `index` of the Contents pane without
+/// clicking, the way a reader hovers to read a tooltip.
+fn hover_row(ui: &MainWindow, index: usize) {
+    let pane = ElementHandle::find_by_element_id(ui, "ContentsPane::click-area")
+        .next()
+        .expect("the contents pane has a click area");
+    let origin = pane.absolute_position();
+    let rows_down = f32::from(u16::try_from(index).expect("a small listing"));
+    let position = LogicalPosition::new(
+        origin.x + 20.0,
+        origin.y + rows_down.mul_add(ROW_HEIGHT, ROW_HEIGHT / 2.0),
+    );
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+}
+
+/// What the hover tooltip says, or `None` when none is drawn.
+fn tooltip(ui: &MainWindow) -> Option<String> {
+    ElementHandle::find_by_element_id(ui, "ContentsPane::marker-tip-text")
+        .next()
+        .and_then(|tip| tip.accessible_label())
+        .map(|label| label.to_string())
+}
+
+#[test]
+fn hovering_a_repository_shows_its_full_name_branch_and_marker_and_a_plain_folder_shows_none() {
+    let _serial = serially();
+    let root = scratch("hover-tooltip");
+    let changed = checkout(
+        &root,
+        "AgenticCliOptions",
+        "chore/solution-drift-model-refresh-agenttools",
+        None,
+        1,
+    );
+    file(
+        &changed,
+        "tracked-0.txt",
+        "the body after somebody edited it\n",
+    );
+    plain_folder(&root, "notes", 1);
+    let (ui, app) = window_at(&root);
+    settle_statuses(&ui, &app);
+    // Narrow enough that the branch is hidden and the name may elide:
+    // the tooltip is where what was cut can still be read (#573).
+    ui.set_contents_width(250.0);
+
+    hover_row(&ui, index_of(&ui, "AgenticCliOptions"));
+    assert_eq!(
+        tooltip(&ui).as_deref(),
+        Some(
+            "AgenticCliOptions/\nchore/solution-drift-model-refresh-agenttools\n\
+             Uncommitted changes to tracked files"
+        ),
+        "hovering a changed repository should show its full name, its full \
+         branch and what its marker means (#573, #574)"
+    );
+
+    hover_row(&ui, index_of(&ui, "notes"));
+    assert_eq!(
+        tooltip(&ui),
+        None,
+        "a plain folder has nothing cut and no marker, so it gets no tooltip"
+    );
+}
