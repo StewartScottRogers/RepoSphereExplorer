@@ -30,6 +30,7 @@ jobs:
           python3 -m pip install --quiet --disable-pip-version-check pyyaml
           bash .github/tests/hold.sh
           bash .github/tests/review-landed.sh
+          bash .github/tests/review-verdict.sh
       - name: Install gui's native build dependencies (Slint)
         run: |
           sudo apt-get update
