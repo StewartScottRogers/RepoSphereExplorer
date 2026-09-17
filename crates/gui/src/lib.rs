@@ -279,6 +279,247 @@ pub fn fit_pane_widths_to_window(ui: &MainWindow) {
     ui.set_contents_width(contents);
 }
 
+/// `ui`'s current position and size, in logical pixels, as a
+/// [`settings::WindowGeometry`] with `maximized: false` - or `None` while it
+/// is maximised, since a maximised window's actual bounds are the display's
+/// full work area, not the bounds a reader would want back on
+/// un-maximising.
+///
+/// `main` calls this on every tick a window is not maximised, so the last
+/// normal bounds are always in hand to save even if the window closes
+/// maximised (#583's "un-maximising it returns to the last normal size and
+/// position").
+#[must_use]
+pub fn normal_window_geometry(ui: &MainWindow) -> Option<settings::WindowGeometry> {
+    let window = ui.window();
+    if window.is_maximized() {
+        return None;
+    }
+    let scale = window.scale_factor();
+    let position = window.position().to_logical(scale);
+    let size = window.size().to_logical(scale);
+    Some(settings::WindowGeometry {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+        maximized: false,
+    })
+}
+
+/// Applies `remembered` to `ui` and takes charge of its geometry from then
+/// on: the correction against the displays actually connected, which needs
+/// the event loop running, is scheduled for the moment it starts.
+///
+/// The wiring lives here rather than in `main` so a window test drives the
+/// same code the application does (rule 14). `main` calls this before
+/// showing the window, then [`observe_window_geometry`] on every tick and
+/// [`geometry_to_save`] on the way out.
+#[must_use]
+pub fn wire_window_geometry(
+    ui: &MainWindow,
+    remembered: Option<settings::WindowGeometry>,
+) -> Rc<RefCell<GeometryTracker>> {
+    if let Some(geometry) = remembered {
+        let window = ui.window();
+        window.set_position(slint::LogicalPosition::new(geometry.x, geometry.y));
+        window.set_size(slint::LogicalSize::new(geometry.width, geometry.height));
+        if geometry.maximized {
+            window.set_maximized(true);
+        }
+    }
+    let tracker = Rc::new(RefCell::new(GeometryTracker::opening_at(remembered)));
+    if let Some(geometry) = remembered {
+        let settle_ui = ui.as_weak();
+        let settle_tracker = tracker.clone();
+        // Zero delay: as soon as the event loop is running, which is when
+        // the connected displays can be asked for at all.
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if let Some(ui) = settle_ui.upgrade()
+                && let Some(resolved) = settle_remembered_geometry(&ui, geometry)
+            {
+                settle_tracker.borrow_mut().corrected_to(resolved);
+            }
+        });
+    }
+    tracker
+}
+
+/// Keeps `tracker` up to date with the window, and puts the window back
+/// onto a connected display the moment it stops being maximised - which is
+/// when the platform has just restored bounds this application did not
+/// choose. `main` calls this on every tick.
+pub fn observe_window_geometry(ui: &MainWindow, tracker: &Rc<RefCell<GeometryTracker>>) {
+    let just_restored = tracker
+        .borrow_mut()
+        .observed(normal_window_geometry(ui), ui.window().is_maximized());
+    if just_restored && let Some(resolved) = settle_window_onto_a_display(ui) {
+        tracker.borrow_mut().corrected_to(resolved);
+    }
+}
+
+/// The geometry to write on the way out: the window's own bounds when it is
+/// not maximised, otherwise the last bounds it had while it was not, with
+/// `maximized` as the window is now.
+#[must_use]
+pub fn geometry_to_save(
+    ui: &MainWindow,
+    tracker: &Rc<RefCell<GeometryTracker>>,
+) -> Option<settings::WindowGeometry> {
+    let maximized = ui.window().is_maximized();
+    normal_window_geometry(ui)
+        .map(|geometry| settings::WindowGeometry {
+            maximized,
+            ..geometry
+        })
+        .or_else(|| tracker.borrow().closing_at(maximized))
+}
+
+/// What the window's geometry needs as the window is used: which bounds to
+/// save, and when to put an off-display window back onto a display.
+///
+/// A window opened maximised carries its *last normal* bounds, which is
+/// what un-maximising returns to - and those can name a display that has
+/// since been unplugged. Correcting only the window that opens un-maximised
+/// leaves the maximised one to un-maximise off-screen later, and then to
+/// save those same bounds again, so it never heals (the review of #624).
+///
+/// Pure, so the rules can be tested without a desktop: `main` reads the
+/// window and acts on what this returns.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GeometryTracker {
+    last_normal: Option<settings::WindowGeometry>,
+    was_maximized: bool,
+}
+
+impl GeometryTracker {
+    /// A tracker for a window opening at `remembered`.
+    #[must_use]
+    pub fn opening_at(remembered: Option<settings::WindowGeometry>) -> Self {
+        Self {
+            last_normal: remembered.map(|geometry| settings::WindowGeometry {
+                maximized: false,
+                ..geometry
+            }),
+            was_maximized: remembered.is_some_and(|geometry| geometry.maximized),
+        }
+    }
+
+    /// The remembered bounds, corrected against the displays that are
+    /// actually connected. Held whether or not the window is maximised, so
+    /// a window that opens maximised still un-maximises - and still saves -
+    /// onto a display that exists.
+    pub fn corrected_to(&mut self, resolved: settings::WindowGeometry) {
+        self.last_normal = Some(settings::WindowGeometry {
+            maximized: false,
+            ..resolved
+        });
+    }
+
+    /// Called every tick with the window's current normal bounds (`None`
+    /// while it is maximised) and whether it is maximised now.
+    ///
+    /// Returns `true` the moment the window stops being maximised, which is
+    /// when the platform has just restored bounds this application did not
+    /// choose and which may be off every display.
+    pub fn observed(&mut self, normal: Option<settings::WindowGeometry>, maximized: bool) -> bool {
+        let just_restored = self.was_maximized && !maximized;
+        self.was_maximized = maximized;
+        if let Some(geometry) = normal {
+            self.last_normal = Some(geometry);
+        }
+        just_restored
+    }
+
+    /// The bounds to save: the last ones the window had while not
+    /// maximised, with `maximized` as it is now.
+    #[must_use]
+    pub fn closing_at(&self, maximized: bool) -> Option<settings::WindowGeometry> {
+        self.last_normal.map(|geometry| settings::WindowGeometry {
+            maximized,
+            ..geometry
+        })
+    }
+}
+
+/// The connected displays' bounds, in logical pixels, and which of them is
+/// the primary one - or `None` when they cannot be found, whether because
+/// this window is not backed by winit (Slint's own UI-testing backend, used
+/// throughout `tests/`, never is) or because the platform reports none.
+///
+/// Slint's own cross-platform `Window` has no notion of a display: only the
+/// winit window underneath it does.
+fn connected_displays(
+    window: &slint::Window,
+) -> Option<(Vec<settings::DisplayBounds>, settings::DisplayBounds)> {
+    use slint::winit_030::{WinitWindowAccessor as _, winit};
+
+    let to_bounds = |monitor: &winit::monitor::MonitorHandle| {
+        #[allow(clippy::cast_possible_truncation)]
+        let scale = monitor.scale_factor() as f32;
+        let position = monitor.position();
+        let size = monitor.size();
+        settings::DisplayBounds {
+            #[allow(clippy::cast_precision_loss)]
+            x: position.x as f32 / scale,
+            #[allow(clippy::cast_precision_loss)]
+            y: position.y as f32 / scale,
+            #[allow(clippy::cast_precision_loss)]
+            width: size.width as f32 / scale,
+            #[allow(clippy::cast_precision_loss)]
+            height: size.height as f32 / scale,
+        }
+    };
+
+    window.with_winit_window(|winit_window| {
+        let monitors: Vec<_> = winit_window.available_monitors().collect();
+        let primary = winit_window
+            .primary_monitor()
+            .or_else(|| monitors.first().cloned())?;
+        Some((
+            monitors.iter().map(to_bounds).collect(),
+            to_bounds(&primary),
+        ))
+    })?
+}
+
+/// Corrects `remembered` against the displays actually connected right now,
+/// and applies it to `ui` if that moved it - the window has already opened
+/// at `remembered` by the time this runs (main applies it before showing
+/// the window), so there is nothing to do when it is still on a display.
+///
+/// Finding the connected displays needs winit's event loop to be running,
+/// which is only true once `ui.run()` has started - so `main` calls this
+/// from a timer fired the moment the loop starts, rather than before
+/// showing the window as the rest of the remembered geometry is applied.
+#[must_use]
+pub fn settle_remembered_geometry(
+    ui: &MainWindow,
+    remembered: settings::WindowGeometry,
+) -> Option<settings::WindowGeometry> {
+    let (displays, primary) = connected_displays(ui.window())?;
+    let resolved = settings::geometry_on_a_display(remembered, &displays, primary);
+    // A maximised window fills a display it is already on; moving it now
+    // would un-maximise it. Its corrected bounds are still worth having,
+    // for un-maximising and for saving, so they are returned either way.
+    if resolved != remembered && !ui.window().is_maximized() {
+        ui.window()
+            .set_position(slint::LogicalPosition::new(resolved.x, resolved.y));
+        ui.window()
+            .set_size(slint::LogicalSize::new(resolved.width, resolved.height));
+    }
+    Some(resolved)
+}
+
+/// Puts the window back onto a connected display if the platform has just
+/// left it off every one - what un-maximising does when the bounds it
+/// restores name a display that has been unplugged since.
+#[must_use]
+pub fn settle_window_onto_a_display(ui: &MainWindow) -> Option<settings::WindowGeometry> {
+    let current = normal_window_geometry(ui)?;
+    settle_remembered_geometry(ui, current)
+}
+
 /// Asks for the working-tree status of the repository rows the Contents
 /// pane has on screen. `main` calls this on every tick, after drawing, so
 /// scrolling asks for the rows it brings into view.
@@ -1052,6 +1293,75 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
 
 #[cfg(test)]
 mod tests {
+    use super::GeometryTracker;
+    use crate::settings::WindowGeometry;
+
+    const fn geometry(x: f32, maximized: bool) -> WindowGeometry {
+        WindowGeometry {
+            x,
+            y: 10.0,
+            width: 800.0,
+            height: 600.0,
+            maximized,
+        }
+    }
+
+    #[test]
+    fn a_window_that_opens_maximised_still_remembers_normal_bounds_to_return_to() {
+        let tracker = GeometryTracker::opening_at(Some(geometry(100.0, true)));
+        assert_eq!(tracker.closing_at(true), Some(geometry(100.0, true)));
+        assert_eq!(tracker.closing_at(false), Some(geometry(100.0, false)));
+    }
+
+    #[test]
+    fn correcting_replaces_bounds_that_named_a_display_that_is_gone() {
+        // The review of #624: a window left maximised on a monitor since
+        // unplugged never had its normal bounds corrected, so un-maximising
+        // put it off-screen and saving put the same bounds back.
+        let mut tracker = GeometryTracker::opening_at(Some(geometry(-4000.0, true)));
+        tracker.corrected_to(geometry(60.0, true));
+        assert_eq!(tracker.closing_at(true), Some(geometry(60.0, true)));
+    }
+
+    #[test]
+    fn leaving_maximised_asks_once_for_the_window_to_be_settled() {
+        let mut tracker = GeometryTracker::opening_at(Some(geometry(100.0, true)));
+
+        assert!(
+            !tracker.observed(None, true),
+            "still maximised: nothing to settle"
+        );
+        assert!(
+            tracker.observed(Some(geometry(-4000.0, false)), false),
+            "just un-maximised: the platform chose these bounds, so check them"
+        );
+        assert!(
+            !tracker.observed(Some(geometry(-4000.0, false)), false),
+            "asked once, not on every tick afterwards"
+        );
+        assert!(
+            !tracker.observed(None, true),
+            "maximising again asks nothing"
+        );
+        assert!(tracker.observed(Some(geometry(50.0, false)), false));
+    }
+
+    #[test]
+    fn a_window_that_never_maximises_is_never_asked_to_settle() {
+        let mut tracker = GeometryTracker::opening_at(Some(geometry(100.0, false)));
+        assert!(!tracker.observed(Some(geometry(100.0, false)), false));
+        assert!(!tracker.observed(Some(geometry(120.0, false)), false));
+        assert_eq!(tracker.closing_at(false), Some(geometry(120.0, false)));
+    }
+
+    #[test]
+    fn with_nothing_remembered_there_is_nothing_to_save_until_the_window_reports_bounds() {
+        let mut tracker = GeometryTracker::opening_at(None);
+        assert_eq!(tracker.closing_at(false), None);
+        tracker.observed(Some(geometry(30.0, false)), false);
+        assert_eq!(tracker.closing_at(false), Some(geometry(30.0, false)));
+    }
+
     use super::{
         MIN_CONTENTS_WIDTH, MIN_FOLDERS_WIDTH, ROW_HEIGHT, RepositoryMark, fit_pane_widths,
         icon_svg, scroll_offset_for, visible_rows,
