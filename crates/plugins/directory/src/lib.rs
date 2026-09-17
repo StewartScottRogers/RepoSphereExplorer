@@ -6,6 +6,7 @@
 //! attempting `sniff`; [`DirectoryCore::sniff`] always returns `false` and
 //! exists only to satisfy the trait.
 
+pub mod readme;
 pub mod repository;
 pub mod status;
 pub mod tracking;
@@ -102,6 +103,12 @@ pub struct DirectoryView {
     /// different one (GUIDANCE.md 2.5).
     #[serde(default)]
     pub repository: Option<repository::Repository>,
+    /// The working copy's README, when it has one at its top level (#584).
+    /// Always `None` for an ordinary folder, whatever it holds: a README
+    /// describes what a project *is*, which is what `repository` above is
+    /// about, and an arbitrary folder is not that.
+    #[serde(default)]
+    pub readme: Option<readme::ReadmeExcerpt>,
 }
 
 /// The directory-as-file plugin's core half.
@@ -133,13 +140,18 @@ impl PluginCore for DirectoryCore {
                 total_size += metadata.len();
             }
         }
+        // The full description, status included: `view` runs for the one
+        // directory a reader selected, which is the moment the extra pass
+        // over its tracked files is worth making.
+        let repository = repository::describe_with_status(path);
+        // A README describes a project, and a folder is only proven one by
+        // `repository` being `Some` - never read for an ordinary folder.
+        let readme = repository.is_some().then(|| readme::find(path)).flatten();
         let view = DirectoryView {
             entry_count,
             total_size,
-            // The full description, status included: `view` runs for the
-            // one directory a reader selected, which is the moment the
-            // extra pass over its tracked files is worth making.
-            repository: repository::describe_with_status(path),
+            repository,
+            readme,
         };
         serde_json::to_value(view).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
@@ -229,6 +241,14 @@ impl PluginPresentation for DirectoryPresentation {
             match &repository.status {
                 Some(status) => lines.push(format!("Working tree: {}", status.summary())),
                 None => lines.push("Working tree: could not read the index".to_owned()),
+            }
+            if let Some(readme) = &view.readme {
+                lines.push(String::new());
+                lines.push(readme.title.clone().unwrap_or_else(|| "README".to_owned()));
+                if !readme.excerpt.is_empty() {
+                    lines.push(String::new());
+                    lines.extend(readme.excerpt.clone());
+                }
             }
             lines.push(String::new());
         }
@@ -339,6 +359,7 @@ mod tests {
             entry_count: 4,
             total_size: 1024,
             repository: None,
+            readme: None,
         })
         .unwrap();
 
@@ -353,6 +374,7 @@ mod tests {
             entry_count: 1,
             total_size: 10,
             repository: None,
+            readme: None,
         };
         let data = serde_json::to_value(view).unwrap();
 
@@ -373,6 +395,7 @@ mod tests {
                 tracking: None,
                 status: None,
             }),
+            readme: None,
         })
         .unwrap();
 
@@ -399,6 +422,7 @@ mod tests {
             entry_count: 3,
             total_size: 90,
             repository: Some(super::repository::Repository::default()),
+            readme: None,
         })
         .unwrap();
 
@@ -415,6 +439,7 @@ mod tests {
             entry_count: 2,
             total_size: 15,
             repository: None,
+            readme: None,
         })
         .unwrap();
 
@@ -439,6 +464,7 @@ mod tests {
                     partial: false,
                 }),
             }),
+            readme: None,
         })
         .unwrap();
 
@@ -466,6 +492,7 @@ mod tests {
                     partial: false,
                 }),
             }),
+            readme: None,
         })
         .unwrap();
 
@@ -579,6 +606,7 @@ mod tests {
             entry_count: 12,
             total_size: 17357,
             repository,
+            readme: None,
         })
         .unwrap()
     }
