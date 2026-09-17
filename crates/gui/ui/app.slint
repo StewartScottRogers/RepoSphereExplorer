@@ -116,6 +116,78 @@ export struct FactRow {
     dim: bool,
 }
 
+component ContextMenuItem inherits Rectangle {
+    in property <string> label;
+    in property <string> shortcut;
+    in property <bool> item-enabled: true;
+    in property <length> item-height;
+    // Said only while the item is disabled, so a reader who hovers "Open in
+    // editor" with nothing configured is told what to set rather than left
+    // guessing (#581).
+    in property <string> tooltip;
+    callback activated();
+
+    height: item-height;
+    background: touch.has-hover && item-enabled ? Theme.accent : transparent;
+    // Named for assistive technology, and so a test can find the item by
+    // the label the user reads rather than by its position in the menu.
+    accessible-role: button;
+    accessible-label: label;
+    accessible-enabled: item-enabled;
+    accessible-description: item-enabled ? "" : tooltip;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 16px;
+        Text {
+            text: label;
+            color: item-enabled ? Palette.foreground : Theme.dim-text;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: shortcut;
+            color: Theme.dim-text;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        // Always enabled, so a greyed item swallows the press rather than
+        // letting it through. A disabled TouchArea is transparent to the
+        // pointer, and the row menu sits directly over the Contents
+        // pane's own overlay area - so pressing a greyed item selected
+        // whatever row happened to be behind it.
+        clicked => {
+            if (item-enabled) {
+                activated();
+            }
+        }
+    }
+
+    // Drawn beside the item rather than below it, so it never overlaps the
+    // menu items that follow this one in the same list.
+    if !item-enabled && tooltip != "" && touch.has-hover: Rectangle {
+        x: parent.width + 4px;
+        y: 0px;
+        width: tip-text.preferred-width + 8px;
+        height: tip-text.preferred-height + 6px;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        tip-text := Text {
+            x: 4px;
+            y: 3px;
+            text: tooltip;
+            color: Palette.foreground;
+        }
+    }
+}
+
 component Pane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
@@ -126,6 +198,25 @@ component Pane inherits Rectangle {
     // `app::chevron_hit`.
     callback row-clicked(int, length);
     callback row-double-clicked(int);
+    // Handing the right-clicked folder to a program the user already has
+    // (#581): a terminal, the configured editor, the platform's file
+    // manager, or the clipboard, for its path or its remote address.
+    callback open-terminal-requested();
+    callback open-in-editor-requested();
+    callback copy-path-requested();
+    callback copy-remote-address-requested();
+    callback show-in-file-manager-requested();
+    in property <bool> editor-available;
+    in property <bool> remote-address-copyable;
+    in property <string> file-manager-label: "Show in File Explorer";
+    // Where the last right-click landed, and whether its menu is open - see
+    // `ContentsPane`'s identical properties for why an ordinary element is
+    // used here rather than a `PopupWindow`.
+    property <length> menu-x;
+    property <length> menu-y;
+    property <bool> menu-open;
+    property <length> menu-width: 150px;
+    property <length> menu-item-height: 24px;
 
     // The scroll offset, and how much of the listing fits. Both surfaced so
     // the front end can put the selected row on screen: the rule for that is
@@ -287,16 +378,73 @@ component Pane inherits Rectangle {
                     click-area := TouchArea {
                         width: 100%;
                         height: 100%;
-                        clicked => {
-                            if (rows.length > 0) {
-                                row-clicked(
-                                    clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1),
-                                    click-area.mouse-x);
-                            }
-                        }
                         double-clicked => {
                             if (rows.length > 0) {
                                 row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                            }
+                        }
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.down) {
+                                // Any press dismisses an open context menu,
+                                // the same as `ContentsPane`.
+                                menu-open = false;
+                            }
+                            if (event.kind == PointerEventKind.down
+                                    && rows.length > 0
+                                    && click-area.mouse-y < rows.length * row-height) {
+                                if (event.button == PointerEventButton.left) {
+                                    row-clicked(
+                                        clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1),
+                                        click-area.mouse-x);
+                                }
+                                if (event.button == PointerEventButton.right) {
+                                    row-clicked(
+                                        clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1),
+                                        click-area.mouse-x);
+                                    menu-x = click-area.mouse-x;
+                                    menu-y = click-area.mouse-y;
+                                    menu-open = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if menu-open: Rectangle {
+                        x: menu-x;
+                        y: menu-y;
+                        width: menu-width;
+                        height: folder-menu-items.preferred-height;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        folder-menu-items := VerticalLayout {
+                            ContextMenuItem {
+                                label: "Open terminal here";
+                                item-height: menu-item-height;
+                                activated => { menu-open = false; open-terminal-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Open in editor";
+                                item-enabled: editor-available;
+                                item-height: menu-item-height;
+                                tooltip: "Set \"editor\" in the settings file, or install Visual Studio Code";
+                                activated => { menu-open = false; open-in-editor-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Copy path";
+                                item-height: menu-item-height;
+                                activated => { menu-open = false; copy-path-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Copy remote address";
+                                item-enabled: remote-address-copyable;
+                                item-height: menu-item-height;
+                                activated => { menu-open = false; copy-remote-address-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: file-manager-label;
+                                item-height: menu-item-height;
+                                activated => { menu-open = false; show-in-file-manager-requested(); }
                             }
                         }
                     }
@@ -558,55 +706,6 @@ component CommandSeparator inherits Rectangle {
     }
 }
 
-component ContextMenuItem inherits Rectangle {
-    in property <string> label;
-    in property <string> shortcut;
-    in property <bool> item-enabled: true;
-    in property <length> item-height;
-    callback activated();
-
-    height: item-height;
-    background: touch.has-hover && item-enabled ? Theme.accent : transparent;
-    // Named for assistive technology, and so a test can find the item by
-    // the label the user reads rather than by its position in the menu.
-    accessible-role: button;
-    accessible-label: label;
-    accessible-enabled: item-enabled;
-
-    HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
-        spacing: 16px;
-        Text {
-            text: label;
-            color: item-enabled ? Palette.foreground : Theme.dim-text;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-        }
-        Text {
-            text: shortcut;
-            color: Theme.dim-text;
-            vertical-alignment: center;
-            horizontal-stretch: 0;
-        }
-    }
-
-    touch := TouchArea {
-        width: 100%;
-        height: 100%;
-        // Always enabled, so a greyed item swallows the press rather than
-        // letting it through. A disabled TouchArea is transparent to the
-        // pointer, and the row menu sits directly over the Contents
-        // pane's own overlay area - so pressing a greyed item selected
-        // whatever row happened to be behind it.
-        clicked => {
-            if (item-enabled) {
-                activated();
-            }
-        }
-    }
-}
-
 // The contents pane's own variant of `Pane`, with a right-click context menu
 // added on top of the same row rendering. Uses the same Text-row / single
 // overlay TouchArea workaround as `Pane` (see its comment) for the Slint
@@ -667,6 +766,17 @@ component ContentsPane inherits Rectangle {
     callback extract-requested();
     callback new-folder-requested();
     callback new-file-requested();
+    // Handing the selected folder to a program the user already has
+    // (#581): a terminal, the configured editor, the platform's file
+    // manager, or the clipboard, for its path or its remote address.
+    callback open-terminal-requested();
+    callback open-in-editor-requested();
+    callback copy-path-requested();
+    callback copy-remote-address-requested();
+    callback show-in-file-manager-requested();
+    in property <bool> editor-available;
+    in property <bool> remote-address-copyable;
+    in property <string> file-manager-label: "Show in File Explorer";
 
     property <length> row-height: 20px;
     // Where the last right-click landed, which both popups place themselves
@@ -1149,6 +1259,37 @@ component ContentsPane inherits Rectangle {
                                 item-enabled: extract-enabled;
                                 activated => { open-context = -1; extract-requested(); }
                             }
+                            ContextMenuItem {
+                                label: "Open terminal here";
+                                item-enabled: can-open;
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; open-terminal-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Open in editor";
+                                item-enabled: editor-available;
+                                item-height: menu-item-height;
+                                tooltip: "Set \"editor\" in the settings file, or install Visual Studio Code";
+                                activated => { open-context = -1; open-in-editor-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Copy path";
+                                item-enabled: can-open;
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; copy-path-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: "Copy remote address";
+                                item-enabled: remote-address-copyable;
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; copy-remote-address-requested(); }
+                            }
+                            ContextMenuItem {
+                                label: file-manager-label;
+                                item-enabled: can-open;
+                                item-height: menu-item-height;
+                                activated => { open-context = -1; show-in-file-manager-requested(); }
+                            }
                         }
                     }
                 }
@@ -1536,6 +1677,26 @@ export component MainWindow inherits Window {
     in property <bool> can-open;
     in property <string> web-provider;
     callback open-web-requested();
+    // Handing a selected folder to a program the user already has (#581).
+    // The Contents pane's row menu and the File menu share these - both
+    // act on the Contents pane's selection, the same as Open, Rename and
+    // Delete already do - while the Folders pane's row menu gets its own,
+    // acting on whichever row was right-clicked there instead.
+    in property <bool> editor-available;
+    in property <bool> content-remote-address-copyable;
+    in property <string> file-manager-label: "Show in File Explorer";
+    callback open-terminal-requested();
+    callback open-in-editor-requested();
+    callback copy-path-requested();
+    callback copy-remote-address-requested();
+    callback show-in-file-manager-requested();
+    in property <bool> folder-editor-available;
+    in property <bool> folder-remote-address-copyable;
+    callback folder-open-terminal-requested();
+    callback folder-open-in-editor-requested();
+    callback folder-copy-path-requested();
+    callback folder-copy-remote-address-requested();
+    callback folder-show-in-file-manager-requested();
     in property <bool> showing-found;
     // Whether the current listing holds a file, so the Size column - blank
     // on every row otherwise - is drawn only once there is a size to show
@@ -1949,6 +2110,14 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 0;
                     row-clicked(i, x) => { folder-row-clicked(i, x); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
+                    editor-available: folder-editor-available;
+                    remote-address-copyable: folder-remote-address-copyable;
+                    file-manager-label: file-manager-label;
+                    open-terminal-requested => { folder-open-terminal-requested(); }
+                    open-in-editor-requested => { folder-open-in-editor-requested(); }
+                    copy-path-requested => { folder-copy-path-requested(); }
+                    copy-remote-address-requested => { folder-copy-remote-address-requested(); }
+                    show-in-file-manager-requested => { folder-show-in-file-manager-requested(); }
                 }
                 folders-splitter := Splitter {
                     dragged(delta) => {
@@ -1998,6 +2167,14 @@ export component MainWindow inherits Window {
                     sort-requested(c) => { content-sort-requested(c); }
                     new-folder-requested => { new-folder-requested(); }
                     new-file-requested => { new-file-requested(); }
+                    editor-available: editor-available;
+                    remote-address-copyable: content-remote-address-copyable;
+                    file-manager-label: file-manager-label;
+                    open-terminal-requested => { open-terminal-requested(); }
+                    open-in-editor-requested => { open-in-editor-requested(); }
+                    copy-path-requested => { copy-path-requested(); }
+                    copy-remote-address-requested => { copy-remote-address-requested(); }
+                    show-in-file-manager-requested => { show-in-file-manager-requested(); }
                 }
                 Splitter {
                     dragged(delta) => {
@@ -2434,6 +2611,37 @@ export component MainWindow inherits Window {
                     item-enabled: has-selection;
                     item-height: menu-item-h;
                     activated => { open-menu = -1; delete-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Open terminal here";
+                    item-enabled: can-open;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; open-terminal-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Open in editor";
+                    item-enabled: editor-available;
+                    item-height: menu-item-h;
+                    tooltip: "Set \"editor\" in the settings file, or install Visual Studio Code";
+                    activated => { open-menu = -1; open-in-editor-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Copy path";
+                    item-enabled: can-open;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; copy-path-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Copy remote address";
+                    item-enabled: content-remote-address-copyable;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; copy-remote-address-requested(); }
+                }
+                ContextMenuItem {
+                    label: file-manager-label;
+                    item-enabled: can-open;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; show-in-file-manager-requested(); }
                 }
                 ContextMenuItem {
                     label: "Repos Directory...";

@@ -52,8 +52,30 @@ pub fn load_pane_widths() -> Option<PaneWidths> {
     })
 }
 
+/// `existing` with its `folders_width` and `contents_width` fields set from
+/// `widths`, every other field - a hand-edited `editor` key (#581) among
+/// them - left as it was. A non-object `existing` (a missing or malformed
+/// file) is treated as empty rather than kept, since there is nothing in it
+/// worth preserving.
+fn merged_pane_widths(existing: &serde_json::Value, widths: PaneWidths) -> serde_json::Value {
+    let mut existing = existing.as_object().cloned().unwrap_or_default();
+    existing.insert(
+        "folders_width".to_owned(),
+        serde_json::json!(widths.folders),
+    );
+    existing.insert(
+        "contents_width".to_owned(),
+        serde_json::json!(widths.contents),
+    );
+    serde_json::Value::Object(existing)
+}
+
 /// Writes `widths` to the settings file, creating its directory if needed.
 /// Best-effort: a window that cannot save its layout should still close.
+///
+/// Reads the file first and only changes the two width fields, rather than
+/// overwriting it whole: a hand-edited `editor` key would otherwise be lost
+/// the next time a splitter moved.
 pub fn save_pane_widths(widths: PaneWidths) {
     let Some(path) = settings_path() else {
         return;
@@ -63,18 +85,37 @@ pub fn save_pane_widths(widths: PaneWidths) {
     {
         return;
     }
-    let value = serde_json::json!({
-        "folders_width": widths.folders,
-        "contents_width": widths.contents,
-    });
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let value = merged_pane_widths(&existing, widths);
     if let Ok(text) = serde_json::to_string_pretty(&value) {
         let _ = std::fs::write(&path, text);
     }
 }
 
+/// Reads the `editor` field out of `value`: the command a folder is handed
+/// to for "Open in editor" (#581). `None` for a missing, non-string or
+/// blank setting, the same as every other field this module reads - the
+/// menu item this drives falls back to Visual Studio Code, or disables
+/// itself, rather than erroring.
+fn editor_field(value: &serde_json::Value) -> Option<String> {
+    let editor = value.get("editor")?.as_str()?.trim();
+    (!editor.is_empty()).then(|| editor.to_owned())
+}
+
+/// The `editor` setting from the settings file. `None` for a missing,
+/// unreadable or malformed file, the same as [`load_pane_widths`].
+#[must_use]
+pub fn load_editor() -> Option<String> {
+    let text = std::fs::read_to_string(settings_path()?).ok()?;
+    editor_field(&serde_json::from_str(&text).ok()?)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MAX_WIDTH, MIN_WIDTH, width_field};
+    use super::{MAX_WIDTH, MIN_WIDTH, PaneWidths, editor_field, merged_pane_widths, width_field};
 
     #[test]
     fn a_width_inside_the_usable_range_is_read_back() {
@@ -99,5 +140,49 @@ mod tests {
         assert_eq!(width_field(&serde_json::json!({}), "folders_width"), None);
         let text = serde_json::json!({ "folders_width": "wide" });
         assert_eq!(width_field(&text, "folders_width"), None);
+    }
+
+    #[test]
+    fn saving_pane_widths_keeps_a_hand_edited_editor_key() {
+        let existing = serde_json::json!({ "editor": "subl", "folders_width": 200.0 });
+        let merged = merged_pane_widths(
+            &existing,
+            PaneWidths {
+                folders: 300.0,
+                contents: 500.0,
+            },
+        );
+        assert_eq!(
+            merged,
+            serde_json::json!({ "editor": "subl", "folders_width": 300.0, "contents_width": 500.0 })
+        );
+    }
+
+    #[test]
+    fn saving_pane_widths_over_a_missing_file_writes_only_the_widths() {
+        let merged = merged_pane_widths(
+            &serde_json::Value::Null,
+            PaneWidths {
+                folders: 300.0,
+                contents: 500.0,
+            },
+        );
+        assert_eq!(
+            merged,
+            serde_json::json!({ "folders_width": 300.0, "contents_width": 500.0 })
+        );
+    }
+
+    #[test]
+    fn an_editor_setting_is_read_back() {
+        let value = serde_json::json!({ "editor": "subl" });
+        assert_eq!(editor_field(&value), Some("subl".to_owned()));
+    }
+
+    #[test]
+    fn a_blank_or_missing_editor_setting_is_none() {
+        assert_eq!(editor_field(&serde_json::json!({})), None);
+        assert_eq!(editor_field(&serde_json::json!({ "editor": "   " })), None);
+        assert_eq!(editor_field(&serde_json::json!({ "editor": 5 })), None);
     }
 }

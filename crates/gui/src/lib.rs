@@ -12,6 +12,7 @@ pub use generated::{
 };
 
 pub mod app;
+pub mod launch;
 pub mod renderer;
 pub mod settings;
 
@@ -587,6 +588,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             }
         });
     }
+    wire_folder_actions(ui, app);
     {
         // Paste needs the system clipboard for the prompts, so it cannot be
         // one of the plain events above.
@@ -665,6 +667,76 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     }
     on_event!(on_new_folder_requested, request_new_folder);
     on_event!(on_new_file_requested, request_new_file);
+}
+
+/// Runs `command`, detached: the caller outlives nothing it should not, and
+/// a slow-starting terminal or editor does not hold the window.
+fn run_detached(command: &launch::Launch) -> std::io::Result<()> {
+    std::process::Command::new(&command.program)
+        .args(&command.args)
+        .spawn()
+        .map(|_| ())
+}
+
+/// Wires handing a selected folder to a program the user already has
+/// (#581): the Contents pane's row menu and the File menu share one set of
+/// callbacks, since both act on the Contents pane's selection the same way
+/// Open, Rename and Delete already do; the Folders pane's row menu gets its
+/// own, acting on whichever row was right-clicked there.
+fn wire_folder_actions(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    use editor::Clipboard as _;
+
+    macro_rules! on_launch {
+        ($setter:ident, $method:ident) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.$method(run_detached);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+    macro_rules! on_copy {
+        ($setter:ident, $method:ident) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            let mut clipboard = clipboard();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.$method(|text| clipboard.write(text));
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+
+    on_launch!(on_open_terminal_requested, open_terminal_here);
+    on_launch!(on_open_in_editor_requested, open_selected_in_editor);
+    on_launch!(
+        on_show_in_file_manager_requested,
+        show_selected_in_file_manager
+    );
+    on_copy!(on_copy_path_requested, copy_selected_path);
+    on_copy!(
+        on_copy_remote_address_requested,
+        copy_selected_remote_address
+    );
+
+    on_launch!(on_folder_open_terminal_requested, open_terminal_at_folder);
+    on_launch!(on_folder_open_in_editor_requested, open_folder_in_editor);
+    on_launch!(
+        on_folder_show_in_file_manager_requested,
+        show_folder_in_file_manager
+    );
+    on_copy!(on_folder_copy_path_requested, copy_folder_path);
+    on_copy!(
+        on_folder_copy_remote_address_requested,
+        copy_folder_remote_address
+    );
 }
 
 /// Wires the operations that act on the selected contents row.
@@ -899,6 +971,12 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_can_edit(app.can_edit());
     ui.set_can_open(app.can_open());
     ui.set_web_provider(app.web_provider().unwrap_or_default().into());
+    // Handing a selected folder to a program the user already has (#581).
+    ui.set_editor_available(app.can_open_selected_in_editor());
+    ui.set_content_remote_address_copyable(app.can_copy_selected_remote_address());
+    ui.set_folder_editor_available(app.editor_available());
+    ui.set_folder_remote_address_copyable(app.can_copy_folder_remote_address());
+    ui.set_file_manager_label(app.file_manager_label().into());
     sync_editor(ui, app);
     ui.set_location_icon(icon_image(app::icon_for("", true), true, None));
 }
