@@ -7080,9 +7080,16 @@ third",
         });
 
         let command = launched.expect("a folder was selected");
+        // The folder reaches the terminal as its working directory, and on
+        // some platforms as an argument too; a terminal that takes it only
+        // one way still opens in the right place.
         assert!(
-            command.args.iter().any(|arg| arg.contains("name")),
-            "the selected folder's path should be somewhere in the command: {command:?}"
+            command
+                .current_dir
+                .as_deref()
+                .is_some_and(|dir| dir.contains("name"))
+                || command.args.iter().any(|arg| arg.contains("name")),
+            "the selected folder's path should reach the terminal: {command:?}"
         );
         assert!(app.status_text().contains("opened a terminal"));
     }
@@ -7125,7 +7132,14 @@ third",
         });
 
         let command = launched.expect("the folders pane always has a folder selected");
-        assert!(command.args.iter().any(|arg| arg.contains("src")));
+        assert!(
+            command
+                .current_dir
+                .as_deref()
+                .is_some_and(|dir| dir.contains("src"))
+                || command.args.iter().any(|arg| arg.contains("src")),
+            "the right-clicked folder's path should reach the terminal: {command:?}"
+        );
     }
 
     #[test]
