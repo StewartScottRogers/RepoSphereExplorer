@@ -1252,11 +1252,42 @@ pub struct FactRow {
     pub dim: bool,
 }
 
+/// The Contents pane's filter state (#582): a name typed into its field,
+/// and/or the status bar's "N with uncommitted changes" link.
+#[derive(Default)]
+struct Filter {
+    /// Typed into the filter field, matched case-insensitively as a
+    /// substring. Empty when nothing is typed.
+    text: String,
+    /// Whether the status bar's changed-only link has narrowed the
+    /// listing to just repositories with uncommitted changes.
+    changed_only: bool,
+    /// Whether the filter field has the keyboard: a typed character
+    /// narrows the listing instead of jumping to a name.
+    focused: bool,
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
     folder_selected: usize,
+    /// The last listing the service sent for the browsed folder, never
+    /// itself filtered - what a cleared filter (#582) restores from.
+    all_contents: Vec<DirectoryEntry>,
+    /// What the Contents pane is actually drawing: `all_contents` when no
+    /// filter is narrowing it, or the subset that passes one otherwise.
+    /// Every existing index into this - `content_selected`, `selection`,
+    /// `anchor` - keeps meaning "row on screen" whichever it holds.
     contents: Vec<DirectoryEntry>,
+    /// The Contents pane's filter (#582): a name typed into its field
+    /// and/or the status bar's changed-only link.
+    filter: Filter,
+    /// Set alongside `reselect` by an operation, a save, or a manual
+    /// refresh - a reload of the folder already on screen, as opposed to a
+    /// navigation to a different one. Read once by the next listing to
+    /// arrive, which is why the filter (#582) survives the former and is
+    /// dropped by the latter.
+    same_folder_reload: bool,
     content_selected: usize,
     file_view: Option<Response>,
     /// Which of the previewed type's views the pane is showing, as an index
@@ -1367,7 +1398,10 @@ impl App {
         let mut app = Self {
             root: FolderNode::root(root),
             folder_selected: 0,
+            all_contents: Vec::new(),
             contents: Vec::new(),
+            filter: Filter::default(),
+            same_folder_reload: false,
             content_selected: 0,
             file_view: None,
             file_view_index: 0,
@@ -1594,8 +1628,10 @@ impl App {
         }
     }
 
-    /// `, 12 repositories, 3 with uncommitted changes` for a listing that
-    /// holds working copies, and nothing for one that holds none.
+    /// `, 12 repositories (3 not known)` for a listing that holds working
+    /// copies, and nothing for one that holds none. The changed count that
+    /// used to sit in this sentence is [`Self::status_changed_label`] now:
+    /// the status bar draws it as a link (#582).
     fn repositories_summary(&self) -> String {
         let markers: Vec<&str> = self
             .contents
@@ -1611,10 +1647,6 @@ impl App {
         } else {
             "repositories"
         };
-        let changed = markers
-            .iter()
-            .filter(|marker| **marker == CHANGED_MARKER)
-            .count();
         let not_known = markers
             .iter()
             .filter(|marker| matches!(**marker, NOT_KNOWN_YET_MARKER | CANNOT_TELL_MARKER))
@@ -1624,14 +1656,62 @@ impl App {
         } else {
             format!(" ({not_known} not known)")
         };
-        format!(
-            ", {} {noun}, {changed} with uncommitted changes{not_known}",
-            markers.len()
-        )
+        format!(", {} {noun}{not_known}", markers.len())
+    }
+
+    /// How many listed repositories carry uncommitted changes, by the same
+    /// marker the row beside their branch already shows - so this always
+    /// agrees with what clicking the status bar's link (#582) would filter
+    /// the pane down to.
+    fn changed_marker_count(&self) -> usize {
+        self.contents
+            .iter()
+            .filter(|entry| entry.repository.is_some())
+            .filter(|entry| self.marker_for(&entry.name) == CHANGED_MARKER)
+            .count()
+    }
+
+    /// Rebuilds the displayed listing from [`Self::all_contents`] - the
+    /// last one the service sent - by the filter typed into the Contents
+    /// pane's field and/or the status bar's changed-only link (#582).
+    /// Reads nothing new: narrowing is a view of a listing already in
+    /// hand, not a fresh directory read.
+    fn recompute_contents(&mut self) {
+        self.contents = self
+            .all_contents
+            .iter()
+            .filter(|entry| self.entry_passes_filter(entry))
+            .cloned()
+            .collect();
+    }
+
+    fn entry_passes_filter(&self, entry: &DirectoryEntry) -> bool {
+        if self.filter.changed_only && self.marker_for(&entry.name) != CHANGED_MARKER {
+            return false;
+        }
+        self.filter.text.is_empty()
+            || entry
+                .name
+                .to_lowercase()
+                .contains(&self.filter.text.to_lowercase())
+    }
+
+    /// Puts the selection back on the first row after a filter (#582)
+    /// changes what the pane is showing: the entry the old index pointed
+    /// to may now be a different row, or gone.
+    fn reset_selection_after_filter(&mut self) {
+        self.content_selected = 0;
+        self.anchor = 0;
+        self.selection.clear();
+        if !self.contents.is_empty() {
+            self.selection.insert(0);
+        }
+        self.load_file_view();
     }
 
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
         self.status = None;
+        let same_folder_reload = std::mem::take(&mut self.same_folder_reload);
         match result {
             Ok(Response::Directory { entries }) => {
                 if let Some(node) = self.root.node_at_mut(indices) {
@@ -1642,8 +1722,16 @@ impl App {
                 // replaces.
                 self.row_statuses.clear();
                 self.pending_statuses.clear();
-                self.contents = entries;
+                self.all_contents = entries;
                 self.sort_contents();
+                // The filter (#582) is a view of the folder on screen, so a
+                // navigation to a different one drops it; a reload of this
+                // same folder - after an operation, a save, or a manual
+                // refresh - keeps it.
+                if !same_folder_reload {
+                    self.filter = Filter::default();
+                }
+                self.recompute_contents();
                 // A listing arriving after an operation is the same folder
                 // reloaded, so put the selection back on the entry that
                 // operation produced rather than dropping it to the top.
@@ -1824,6 +1912,7 @@ impl App {
         };
         self.pending_operation = Some(spawn_request(request));
         self.reselect = Some(name.clone());
+        self.same_folder_reload = true;
         self.after_operation = Some(AfterOperation::EnterRename { path, input: name });
         self.status = Some("working...".to_owned());
     }
@@ -1943,6 +2032,7 @@ impl App {
         };
         if let Some((request, produced)) = request {
             self.reselect = Some(produced);
+            self.same_folder_reload = true;
             self.pending_operation = Some(spawn_request(request));
             self.status = Some("working...".to_owned());
         }
@@ -1962,9 +2052,16 @@ impl App {
         }
     }
 
-    /// Removes the last character of a pending rename/copy/extract input;
-    /// a no-op otherwise.
+    /// Removes the last character of a pending rename/copy/extract input,
+    /// or of the Contents pane's filter text (#582) while it has the
+    /// keyboard; a no-op otherwise.
     pub fn backspace(&mut self) {
+        if matches!(self.mode, Mode::Normal) && self.filter.focused {
+            self.filter.text.pop();
+            self.recompute_contents();
+            self.reset_selection_after_filter();
+            return;
+        }
         if let Some(input) = self.input_mut() {
             input.pop();
         }
@@ -1990,6 +2087,9 @@ impl App {
             | Mode::ReposRootInput { .. } => {
                 self.confirm_text_input();
             }
+            // The filter (#582) already narrows as it is typed; Return
+            // just hands the keyboard back to the listing.
+            Mode::Normal if self.filter.focused => self.filter.focused = false,
             // Return renames on macOS, which is that platform's
             // convention and the reason this is parameterised at all.
             Mode::Normal if os == "macos" => self.request_rename(),
@@ -2032,11 +2132,29 @@ impl App {
             | Mode::ReposRootInput { .. } => {
                 self.type_char(text);
             }
+            // While the filter field has the keyboard (#582), a typed
+            // character narrows the listing rather than jumping to a name.
+            Mode::Normal if self.filter.focused => self.type_into_filter(text),
             // Explorer's type-ahead: a typed letter jumps to a name, it is
             // not a command. Rename, copy and extract are on F2, Ctrl+C and
             // the context menu.
             Mode::Normal => self.type_ahead(text),
         }
+    }
+
+    /// Appends one typed character to the Contents pane's filter text
+    /// (#582), narrowing the listing live. The same guard [`Self::type_char`]
+    /// uses for a rename, so a control character never lands in either.
+    fn type_into_filter(&mut self, text: &str) {
+        let Some(c) = text.chars().next() else {
+            return;
+        };
+        if !typeable(c) {
+            return;
+        }
+        self.filter.text.push(c);
+        self.recompute_contents();
+        self.reset_selection_after_filter();
     }
 
     /// Whether the selected contents row previewed as an archive. The
@@ -2105,6 +2223,14 @@ impl App {
         {
             self.pending_find = None;
             self.select_content(found.previous_selected);
+            self.status = None;
+            return;
+        }
+        // Escape in Contents (#582): drops a filter the same way "clear"
+        // does, rather than falling through to the generic cancel below,
+        // which has nothing else pending to say "cancelled" about.
+        if matches!(self.mode, Mode::Normal) && self.focus == Pane::Contents && self.filtering() {
+            self.clear_filters();
             self.status = None;
             return;
         }
@@ -2507,6 +2633,7 @@ impl App {
             self.clipboard = None;
         }
         self.reselect = last;
+        self.same_folder_reload = true;
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("working...".to_owned());
     }
@@ -2790,6 +2917,7 @@ impl App {
         self.reselect = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned());
+        self.same_folder_reload = true;
         self.editing_file = None;
         self.pending_operation = Some(spawn_request(Request::WriteFile {
             path: path.to_string_lossy().into_owned(),
@@ -2891,6 +3019,7 @@ impl App {
             .contents
             .get(self.content_selected)
             .map(|entry| entry.name.clone());
+        self.same_folder_reload = true;
         self.load_contents_for_selected();
     }
 
@@ -3473,13 +3602,15 @@ impl App {
             .collect()
     }
 
-    /// Orders `contents` by the current sort column. Directories come
+    /// Orders `all_contents` by the current sort column. Directories come
     /// first whichever column is chosen, the way Explorer groups them, and
-    /// the name is the tiebreak so the order is total and stable.
+    /// the name is the tiebreak so the order is total and stable. Sorts
+    /// the unfiltered listing, not the pane's filtered view of it (#582),
+    /// so the order survives a filter being typed or cleared.
     fn sort_contents(&mut self) {
         let key = self.sort_key;
         let ascending = self.sort_ascending;
-        self.contents.sort_by(|a, b| {
+        self.all_contents.sort_by(|a, b| {
             let ordering = match key {
                 SortKey::Name => std::cmp::Ordering::Equal,
                 SortKey::Size => a.size.cmp(&b.size),
@@ -3537,6 +3668,7 @@ impl App {
             .collect();
 
         self.sort_contents();
+        self.recompute_contents();
 
         let row_of = |name: &str, contents: &[DirectoryEntry]| {
             contents.iter().position(|entry| entry.name == name)
@@ -3633,6 +3765,85 @@ impl App {
             .map(|found| found.query.clone())
             .unwrap_or_default();
         self.mode = Mode::FindInput { input };
+    }
+
+    /// Ctrl+F, or a click on the Contents pane's filter field: gives it the
+    /// keyboard, so a typed character narrows the listing instead of
+    /// jumping to a name (#582). Refused while another prompt or the
+    /// editor already has the keyboard, and while a cross-repository
+    /// search is showing - its results are not this folder's listing to
+    /// filter.
+    pub fn begin_filter(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing_file.is_some() || self.found.is_some()
+        {
+            return;
+        }
+        self.filter.focused = true;
+        self.focus = Pane::Contents;
+    }
+
+    /// Clicking "N with uncommitted changes" in the status bar (#582):
+    /// narrows the Contents pane to just those rows.
+    pub fn filter_to_changed(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.found.is_some() {
+            return;
+        }
+        self.filter.changed_only = true;
+        self.focus = Pane::Contents;
+        self.recompute_contents();
+        self.reset_selection_after_filter();
+    }
+
+    /// "clear", or Escape in the Contents pane: drops every active filter
+    /// (#582) and restores the listing the service last sent.
+    pub fn clear_filters(&mut self) {
+        self.filter = Filter::default();
+        self.recompute_contents();
+        self.reset_selection_after_filter();
+    }
+
+    /// Whether a filter (#582) is narrowing the Contents pane, or has the
+    /// keyboard to type one.
+    fn filtering(&self) -> bool {
+        self.filter.focused || !self.filter.text.is_empty() || self.filter.changed_only
+    }
+
+    /// The Contents pane filter field's current text (#582).
+    #[must_use]
+    pub fn filter_text(&self) -> String {
+        self.filter.text.clone()
+    }
+
+    /// Whether the Contents pane filter field has the keyboard (#582).
+    #[must_use]
+    pub const fn filter_focused(&self) -> bool {
+        self.filter.focused
+    }
+
+    /// "3 with uncommitted changes" - the status bar's clickable link
+    /// (#582), shown whenever [`Self::repositories_summary`] would have a
+    /// repository to count, even when none of them has changed: 0 is still
+    /// worth clicking through to confirm. Empty while a transient message
+    /// is showing, while the changed-only filter it activates has already
+    /// narrowed the pane, or while the listing holds no repository.
+    #[must_use]
+    pub fn status_changed_label(&self) -> String {
+        let has_repository = self.contents.iter().any(|entry| entry.repository.is_some());
+        if !matches!(self.mode, Mode::Normal)
+            || self.status.is_some()
+            || self.filter.changed_only
+            || !has_repository
+        {
+            return String::new();
+        }
+        format!("{} with uncommitted changes", self.changed_marker_count())
+    }
+
+    /// Whether the status bar's "clear" link is showing: only while the
+    /// changed-only filter (#582) is narrowing the Contents pane.
+    #[must_use]
+    pub fn status_show_clear_link(&self) -> bool {
+        matches!(self.mode, Mode::Normal) && self.status.is_none() && self.filter.changed_only
     }
 
     /// Whether the Contents pane is showing a search's results rather
@@ -4047,8 +4258,13 @@ impl App {
     /// Item count, total size, and current selection for the browsed
     /// folder, e.g. `"42 items, 1.2 MB — selected: notes.txt (3 of 42)"`.
     /// Falls back to a usage hint when the folder hasn't loaded any
-    /// contents yet.
+    /// contents yet, and to a short line naming just the changed-only
+    /// filter (#582) while that is narrowing the pane - the size and
+    /// selection a full summary carries say nothing a filtered view needs.
     fn contents_summary(&self) -> String {
+        if self.filter.changed_only {
+            return format!("showing {} with uncommitted changes", self.contents.len());
+        }
         if self.contents.is_empty() {
             return "Click a folder or file. Double-click to open. Delete/r/c/x on a file. \
                     Esc cancels."
@@ -4056,12 +4272,20 @@ impl App {
         }
         let count = self.contents.len();
         let noun = if count == 1 { "item" } else { "items" };
-        let total_size: u64 = self.contents.iter().map(|entry| entry.size).sum();
-        let header = format!(
-            "{count} {noun}, {}{}",
-            format_size(total_size),
-            self.repositories_summary()
-        );
+        // The Size column, and this size, are worth drawing only once the
+        // listing holds a file: every row is a folder in the common case
+        // of browsing a Repos Directory, where an empty size is noise
+        // (#582).
+        let header = if self.content_size_column_visible() {
+            let total_size: u64 = self.contents.iter().map(|entry| entry.size).sum();
+            format!(
+                "{count} {noun}, {}{}",
+                format_size(total_size),
+                self.repositories_summary()
+            )
+        } else {
+            format!("{count} {noun}{}", self.repositories_summary())
+        };
         let selected = self.selected_count();
         if selected > 1 {
             return format!("{header} — {selected} selected");
@@ -7524,11 +7748,11 @@ third",
         assert_eq!(rows[2].branch, "", "a plain file has no branch");
         assert_eq!(rows[2].marker, "");
         assert!(
-            app.status_text()
-                .contains("2 repositories, 0 with uncommitted changes (2 not known)"),
+            app.status_text().contains("2 repositories (2 not known)"),
             "{}",
             app.status_text()
         );
+        assert_eq!(app.status_changed_label(), "0 with uncommitted changes");
     }
 
     #[test]
@@ -7560,11 +7784,143 @@ third",
             "a count that stopped short without a change cannot say clean"
         );
         assert!(
-            app.status_text()
-                .contains("4 repositories, 1 with uncommitted changes (2 not known)"),
+            app.status_text().contains("4 repositories (2 not known)"),
             "{}",
             app.status_text()
         );
+        assert_eq!(app.status_changed_label(), "1 with uncommitted changes");
+    }
+
+    // ---- status bar filters (#582) ----
+
+    #[test]
+    fn contents_summary_omits_size_for_a_folders_only_listing() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("alpha", true), ("beta", true)]),
+            }),
+        );
+        let status = app.status_text();
+        assert!(status.starts_with("2 items"), "{status}");
+        assert!(!status.contains("0 B"), "{status}");
+    }
+
+    #[test]
+    fn typing_into_the_filter_narrows_the_listing_by_name() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[
+                    ("alpha.txt", false),
+                    ("beta.txt", false),
+                    ("gamma.txt", false),
+                ]),
+            }),
+        );
+
+        app.begin_filter();
+        assert!(app.filter_focused());
+        // Case-insensitive, per #582.
+        app.handle_key_text("A");
+        app.handle_key_text("L");
+
+        let names: Vec<_> = app.content_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["alpha.txt".to_owned()]);
+
+        app.clear_filters();
+        assert_eq!(app.content_rows().len(), 3);
+    }
+
+    #[test]
+    fn clicking_the_changed_count_narrows_to_repositories_with_uncommitted_changes() {
+        let mut app = app_listing_checkouts(&["alpha", "beta", "gamma"]);
+        app.ask_for_statuses(0..4);
+        app.apply_status_result_for_test("alpha", working_tree(0, false));
+        app.apply_status_result_for_test("beta", working_tree(2, false));
+        app.apply_status_result_for_test("gamma", working_tree(0, false));
+
+        app.filter_to_changed();
+
+        let names: Vec<_> = app.content_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["beta/".to_owned()]);
+        assert!(
+            app.status_text()
+                .contains("showing 1 with uncommitted changes"),
+            "{}",
+            app.status_text()
+        );
+
+        app.clear_filters();
+        assert_eq!(app.content_rows().len(), 4, "the plain file is back too");
+    }
+
+    #[test]
+    fn the_two_filters_combine() {
+        let mut app = app_listing_checkouts(&["alpha", "alberta", "beta"]);
+        app.ask_for_statuses(0..4);
+        app.apply_status_result_for_test("alpha", working_tree(1, false));
+        app.apply_status_result_for_test("alberta", working_tree(0, false));
+        app.apply_status_result_for_test("beta", working_tree(1, false));
+
+        app.filter_to_changed();
+        app.begin_filter();
+        app.handle_key_text("a");
+        app.handle_key_text("l");
+
+        // "alberta" matches the typed text but has nothing changed, and
+        // "beta" has changed but does not match the typed text - only
+        // "alpha" passes both.
+        let names: Vec<_> = app.content_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["alpha/".to_owned()]);
+    }
+
+    #[test]
+    fn escape_in_contents_clears_an_active_filter() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("alpha.txt", false), ("test.txt", false)]),
+            }),
+        );
+        app.begin_filter();
+        app.handle_key_text("a");
+        assert_eq!(app.content_rows().len(), 1);
+
+        app.cancel_pending();
+
+        assert_eq!(app.content_rows().len(), 2);
+        assert!(!app.filter_focused());
+    }
+
+    #[test]
+    fn navigating_to_a_different_folder_drops_the_filter() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("alpha.txt", false), ("test.txt", false)]),
+            }),
+        );
+        app.begin_filter();
+        app.handle_key_text("a");
+        assert_eq!(app.content_rows().len(), 1);
+
+        // A real navigation, unlike a refresh, is not the same folder
+        // reloaded (#582).
+        app.navigate_to_parent();
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("alpha.txt", false), ("test.txt", false)]),
+            }),
+        );
+
+        assert_eq!(app.content_rows().len(), 2);
+        assert!(!app.filter_focused());
     }
 
     /// What the row named `name` draws its marker's tooltip and warning

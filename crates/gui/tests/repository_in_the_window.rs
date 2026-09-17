@@ -1009,10 +1009,102 @@ fn each_checkout_row_marks_uncommitted_changes_as_they_really_are() {
     );
     let status = ui.get_status_text().to_string();
     assert!(
-        status.contains("4 repositories, 1 with uncommitted changes"),
+        status.contains("4 repositories"),
         "the status bar sums the listing up; it reads: {status}"
     );
     assert!(!status.contains("not known"), "{status}");
+    assert_eq!(
+        ui.get_status_changed_label().to_string(),
+        "1 with uncommitted changes",
+        "the changed count is its own clickable link now (#582)"
+    );
+}
+
+// ---------------------------------------------------------------------
+// The status bar's clickable counts and filter field (#582).
+// ---------------------------------------------------------------------
+
+/// A click at `handle`'s position, the way a mouse presses and releases in
+/// place.
+fn click_element(ui: &MainWindow, handle: &ElementHandle) {
+    let position = handle.absolute_position();
+    let window = ui.window();
+    window.dispatch_event(WindowEvent::PointerMoved { position });
+    window.dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    window.dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
+}
+
+/// The status bar's one link on screen at a time - the changed count
+/// before the filter is on, "clear" once it is (#582).
+fn the_status_links_link(ui: &MainWindow) -> ElementHandle {
+    ElementHandle::find_by_element_id(ui, "StatusLink::link-touch")
+        .next()
+        .expect("a status bar link is drawn")
+}
+
+#[test]
+fn clicking_the_changed_count_narrows_the_pane_and_clear_restores_it() {
+    let _serial = serially();
+    let root = scratch("changed-only-filter");
+    checkout(&root, "alpha", "main", None, 1);
+    let beta = checkout(&root, "beta", "main", None, 1);
+    file(&beta, "tracked-0.txt", "edited so the checkout is dirty\n");
+    checkout(&root, "gamma", "main", None, 1);
+    let (ui, app) = window_at(&root);
+    settle_statuses(&ui, &app);
+    assert_eq!(
+        ui.get_status_changed_label().to_string(),
+        "1 with uncommitted changes"
+    );
+
+    click_element(&ui, &the_status_links_link(&ui));
+
+    assert_eq!(
+        listing(&ui),
+        vec!["beta".to_owned()],
+        "clicking the changed count should narrow to just that row"
+    );
+    assert!(ui.get_status_show_clear_link());
+
+    click_element(&ui, &the_status_links_link(&ui));
+
+    assert_eq!(
+        listing(&ui).len(),
+        3,
+        "clear should restore every row the folder holds"
+    );
+    assert!(!ui.get_status_show_clear_link());
+}
+
+#[test]
+fn typing_into_the_filter_field_narrows_the_listing_by_name() {
+    let _serial = serially();
+    let root = scratch("name-filter");
+    checkout(&root, "alpha", "main", None, 1);
+    checkout(&root, "beta", "main", None, 1);
+    checkout(&root, "gamma", "main", None, 1);
+    let (ui, app) = window_at(&root);
+    settle(&ui, &app);
+
+    press_with(&ui, "f", &[Key::Control]);
+    press_with(&ui, "b", &[]);
+    press_with(&ui, "e", &[]);
+
+    assert_eq!(
+        listing(&ui),
+        vec!["beta".to_owned()],
+        "Ctrl+F then typing should narrow the listing to matching names"
+    );
+
+    press_key(&ui, Key::Escape);
+
+    assert_eq!(listing(&ui).len(), 3, "Escape in Contents restores it");
 }
 
 // ---------------------------------------------------------------------
