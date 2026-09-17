@@ -234,6 +234,16 @@ would only add file-manager buttons unrelated to a repository (#580).
 Splitters are draggable and persisted. Everything reachable by mouse is also
 reachable by keyboard.
 
+A selected folder's right-click menu and the File menu also reach outward,
+to the tools a developer works in once they have found what they were
+looking for: opening a terminal or the configured editor at that folder,
+copying its path or - for a working copy with one - its remote address to
+the clipboard, and revealing it in the platform's own file manager (#581).
+Each hands the folder to a program the user already has, or a fact the
+application has already read, to the clipboard; it never installs or
+configures that program, and per D10 none of it runs a source control
+command.
+
 ### 2.5 The Repos Directory
 
 The anchor the whole application is arranged around.
