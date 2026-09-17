@@ -170,6 +170,14 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - uses: anthropics/claude-code-action@v1
+        # A command that runs past the agent runtime's two-minute default
+        # is moved to the background, and an agent that then ends its turn
+        # to wait is killed with the job. A clippy or test run over `gui`
+        # takes longer than that: shift 35230067688 and #610's review both
+        # died this way. Thirty minutes by default, an hour at most.
+        env:
+          BASH_DEFAULT_TIMEOUT_MS: "1800000"
+          BASH_MAX_TIMEOUT_MS: "3600000"
         id: reviewer
         if: steps.hold.outputs.stand_aside == ''
         with:
@@ -207,6 +215,14 @@ jobs:
         run: bash .github/review-landed.sh
 
       - uses: anthropics/claude-code-action@v1
+        # A command that runs past the agent runtime's two-minute default
+        # is moved to the background, and an agent that then ends its turn
+        # to wait is killed with the job. A clippy or test run over `gui`
+        # takes longer than that: shift 35230067688 and #610's review both
+        # died this way. Thirty minutes by default, an hour at most.
+        env:
+          BASH_DEFAULT_TIMEOUT_MS: "1800000"
+          BASH_MAX_TIMEOUT_MS: "3600000"
         id: retry
         if: always() && steps.hold.outputs.stand_aside == ''
           && steps.first-pass.outputs.landed == 'false'
