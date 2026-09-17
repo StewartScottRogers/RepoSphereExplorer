@@ -35,6 +35,12 @@ use std::time::{Duration, Instant};
 mod common;
 use common::ensure_service;
 
+/// What this platform calls its file manager's menu item. The tests ran
+/// only on Linux in continuous integration, so they said "Show in Files"
+/// outright and failed on Windows, where the item says "Show in File
+/// Explorer".
+const FILE_MANAGER: &str = gui::launch::file_manager_label(gui::launch::Platform::current());
+
 /// Row height in `app.slint`'s contents pane, so a pointer can be aimed at
 /// a row. The one measurement that has no element to ask: a row is a `Text`
 /// laid out by hand inside one overlay touch area, not an element of its
@@ -828,7 +834,7 @@ fn the_row_menu_offers_what_a_row_can_do() {
             "Open in editor".to_owned(),
             "Copy path".to_owned(),
             "Copy remote address".to_owned(),
-            "Show in Files".to_owned(),
+            FILE_MANAGER.to_owned(),
         ],
         "the row menu should offer the row's own commands"
     );
@@ -1221,7 +1227,7 @@ fn the_row_menu_offers_a_working_copy_every_way_to_open_it() {
         "Open terminal here",
         "Copy path",
         "Copy remote address",
-        "Show in Files",
+        FILE_MANAGER,
     ] {
         assert_eq!(
             item(&ui, label).accessible_enabled(),
@@ -1249,7 +1255,7 @@ fn copy_remote_address_is_disabled_for_a_plain_folder() {
         Some(false),
         "a plain folder has no remote to copy"
     );
-    for label in ["Open terminal here", "Copy path", "Show in Files"] {
+    for label in ["Open terminal here", "Copy path", FILE_MANAGER] {
         assert_eq!(
             item(&ui, label).accessible_enabled(),
             Some(true),
@@ -1276,7 +1282,7 @@ fn the_folders_pane_row_menu_offers_what_a_row_can_do() {
         ("Open in editor", false),
         ("Copy path", true),
         ("Copy remote address", true),
-        ("Show in Files", true),
+        (FILE_MANAGER, true),
     ] {
         assert_eq!(
             item(&ui, label).accessible_enabled(),

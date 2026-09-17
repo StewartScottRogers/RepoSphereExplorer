@@ -672,10 +672,17 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
 /// Runs `command`, detached: the caller outlives nothing it should not, and
 /// a slow-starting terminal or editor does not hold the window.
 fn run_detached(command: &launch::Launch) -> std::io::Result<()> {
-    std::process::Command::new(&command.program)
-        .args(&command.args)
-        .spawn()
-        .map(|_| ())
+    // The full path when the `PATH` has it, so `code` finds `code.cmd` on
+    // Windows; otherwise the name as given, for the operating system to
+    // resolve or refuse.
+    let program = launch::find_on_path(&command.program)
+        .map_or_else(|| command.program.clone().into(), std::ffi::OsString::from);
+    let mut process = std::process::Command::new(program);
+    process.args(&command.args);
+    if let Some(dir) = &command.current_dir {
+        process.current_dir(dir);
+    }
+    process.spawn().map(|_| ())
 }
 
 /// Wires handing a selected folder to a program the user already has
