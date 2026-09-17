@@ -12,7 +12,7 @@
 //! naming: a defect in `main`'s own wiring cannot be seen from here.
 
 use gui::app::App;
-use gui::{ContentRow, MainWindow, sync_ui};
+use gui::{ContentRow, MainWindow, Theme, sync_ui};
 use i_slint_backend_testing::ElementHandle;
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model as _};
@@ -1000,5 +1000,49 @@ fn a_range_built_with_shift_is_what_copy_takes() {
         app.borrow().status_text().contains("3 items"),
         "the status bar should report the three rows Shift built; it said {:?}",
         app.borrow().status_text()
+    );
+}
+
+/// #575: two panes must never both draw their selection in the same
+/// strong accent, or an arrow key's destination is a guess. The window
+/// opens with the Folders pane focused; clicking a Contents row is how a
+/// reader moves the keyboard there, and the muted colour has to follow.
+#[test]
+fn only_the_focused_pane_draws_its_selection_in_the_full_accent() {
+    i_slint_backend_testing::init_no_event_loop();
+    let (ui, _app) = files("focus-colour", 3);
+    let theme = ui.global::<Theme>();
+
+    assert_ne!(
+        format!("{:?}", theme.get_accent()),
+        format!("{:?}", theme.get_selection_inactive()),
+        "the two selection colours have to be visually distinct, or an \
+         unfocused pane's selection reads as a focused one"
+    );
+    assert_eq!(
+        format!("{:?}", ui.get_folders_selection_colour()),
+        format!("{:?}", theme.get_accent()),
+        "the window opens with the Folders pane holding the keyboard"
+    );
+    assert_eq!(
+        format!("{:?}", ui.get_contents_selection_colour()),
+        format!("{:?}", theme.get_selection_inactive()),
+        "the Contents pane does not hold the keyboard yet, so its \
+         selection should be the muted colour"
+    );
+
+    focus_the_listing(&ui);
+
+    assert_eq!(
+        format!("{:?}", ui.get_contents_selection_colour()),
+        format!("{:?}", theme.get_accent()),
+        "the click moved the keyboard to the Contents pane, so its \
+         selection should now be the full accent"
+    );
+    assert_eq!(
+        format!("{:?}", ui.get_folders_selection_colour()),
+        format!("{:?}", theme.get_selection_inactive()),
+        "and the Folders pane, no longer focused, should have gone back \
+         to the muted colour"
     );
 }

@@ -20,6 +20,12 @@ export global Theme {
     out property <brush> hover: dark
         ? Palette.background.brighter(0.7)
         : Palette.background.darker(0.12);
+    // A selected row in a pane that does not hold the keyboard: a step
+    // past `hover`, so the two panes' selections are told apart at a
+    // glance rather than both reading as the same strong accent (#575).
+    out property <brush> selection-inactive: dark
+        ? Palette.background.brighter(0.85)
+        : Palette.background.darker(0.16);
     // Secondary text: the size, type and date columns.
     out property <brush> dim-text: Palette.foreground.transparentize(0.35);
     // Text on a pane heading that is not focused.
@@ -138,6 +144,12 @@ component Pane inherits Rectangle {
         ? clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1)
         : -1;
 
+    // The selected row's colour: the full accent while this pane holds the
+    // keyboard, a muted grey while it does not, so two panes never draw
+    // two equally strong selections at once (#575). Exposed so a window
+    // test can ask what is actually drawn rather than re-deriving it.
+    out property <brush> selection-colour: focused ? Theme.accent : Theme.selection-inactive;
+
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
 
@@ -145,7 +157,9 @@ component Pane inherits Rectangle {
         Text {
             text: title;
             font-weight: 700;
-            color: focused ? Theme.accent : Theme.heading-text;
+            // The border and the selection say which pane is focused; the
+            // title does not turn blue as well (#575).
+            color: Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
         }
@@ -167,7 +181,7 @@ component Pane inherits Rectangle {
                         // Explorer: the pointer passing over the selection
                         // must not make it look unselected.
                         background: i == selected
-                            ? Theme.accent
+                            ? selection-colour
                             : (i == hovered ? Theme.hover : transparent);
                         // Named and labelled so a test can ask which rows
                         // the pane is showing, the same way the contents
@@ -192,7 +206,7 @@ component Pane inherits Rectangle {
                                     y: (parent.height - self.height) / 2;
                                     viewbox-width: 7;
                                     viewbox-height: 9;
-                                    stroke: i == selected ? Theme.on-accent : Theme.dim-text;
+                                    stroke: i == selected && focused ? Theme.on-accent : Theme.dim-text;
                                     stroke-width: 1.4px;
                                     commands: row.expanded
                                         ? "M 0.5 2.5 L 3.5 6 L 6.5 2.5"
@@ -216,7 +230,7 @@ component Pane inherits Rectangle {
                             }
                             Text {
                                 text: row.name;
-                                color: i == selected ? Theme.on-accent : Palette.foreground;
+                                color: i == selected && focused ? Theme.on-accent : Palette.foreground;
                                 vertical-alignment: center;
                                 overflow: elide;
                                 horizontal-stretch: 1;
@@ -654,6 +668,10 @@ component ContentsPane inherits Rectangle {
     in-out property <length> scroll-y;
     out property <length> viewport-height: scroll.visible-height;
 
+    // As `Pane`: exposed so a window test can ask what colour the
+    // selection is actually drawn in (#575).
+    out property <brush> selection-colour: focused ? Theme.accent : Theme.selection-inactive;
+
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
 
@@ -661,7 +679,9 @@ component ContentsPane inherits Rectangle {
         Text {
             text: title;
             font-weight: 700;
-            color: focused ? Theme.accent : Theme.heading-text;
+            // The border and the selection say which pane is focused; the
+            // title does not turn blue as well (#575).
+            color: Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
         }
@@ -734,7 +754,7 @@ component ContentsPane inherits Rectangle {
                         y: i * row-height;
                         height: row.selected ? row-height : 0px;
                         width: 100%;
-                        background: Theme.accent;
+                        background: selection-colour;
                     }
 
                     for row[i] in rows: listing-row := Rectangle {
@@ -767,7 +787,7 @@ component ContentsPane inherits Rectangle {
                                     // colour and in bold: distinguishable at a
                                     // glance from an ordinary folder, which
                                     // stays listed and stays plain.
-                                    color: row.selected
+                                    color: row.selected && focused
                                         ? Theme.on-accent
                                         : (row.is-repository ? Theme.accent : Palette.foreground);
                                     font-weight: row.is-repository ? 700 : 400;
@@ -794,7 +814,7 @@ component ContentsPane inherits Rectangle {
                                 // has already given up all of its room.
                                 branch-text := Text {
                                     text: row.branch;
-                                    color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                    color: row.selected && focused ? Theme.on-accent : Theme.dim-text;
                                     overflow: elide;
                                     vertical-alignment: center;
                                     property <length> room: row.branch == ""
@@ -817,7 +837,7 @@ component ContentsPane inherits Rectangle {
                                     // few pixels (#574); the other markers
                                     // stay neutral, since they are not an
                                     // attention state.
-                                    color: row.selected
+                                    color: row.selected && focused
                                         ? Theme.on-accent
                                         : (row.marker-warning ? Theme.warning : Theme.dim-text);
                                     vertical-alignment: center;
@@ -828,7 +848,7 @@ component ContentsPane inherits Rectangle {
                             }
                             Text {
                                 text: row.size;
-                                color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                color: row.selected && focused ? Theme.on-accent : Theme.dim-text;
                                 width: size-column;
                                 horizontal-alignment: right;
                                 vertical-alignment: center;
@@ -836,7 +856,7 @@ component ContentsPane inherits Rectangle {
                             }
                             Text {
                                 text: row.kind;
-                                color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                color: row.selected && focused ? Theme.on-accent : Theme.dim-text;
                                 width: kind-column;
                                 overflow: elide;
                                 horizontal-alignment: right;
@@ -845,7 +865,7 @@ component ContentsPane inherits Rectangle {
                             }
                             Text {
                                 text: row.modified;
-                                color: row.selected ? Theme.on-accent : Theme.dim-text;
+                                color: row.selected && focused ? Theme.on-accent : Theme.dim-text;
                                 width: modified-column;
                                 overflow: elide;
                                 horizontal-alignment: right;
@@ -1537,6 +1557,10 @@ export component MainWindow inherits Window {
     // selected row needs bringing into view at all.
     out property <length> folders-viewport-height: folders-pane.viewport-height;
     out property <length> content-viewport-height: contents-pane.viewport-height;
+    // What colour each pane's selection is actually drawn in, so a window
+    // test can ask rather than re-deriving it from `focus-pane` (#575).
+    out property <brush> folders-selection-colour: folders-pane.selection-colour;
+    out property <brush> contents-selection-colour: contents-pane.selection-colour;
     // Which menu is open: -1 none, then File, Edit, View, Help. A menu is a
     // property rather than a `PopupWindow` so it can be sized, placed and
     // clicked like any other element.
@@ -1935,7 +1959,9 @@ export component MainWindow inherits Window {
                         Text {
                             text: "File";
                             font-weight: 700;
-                            color: focus-pane == 2 ? Theme.accent : Theme.heading-text;
+                            // As the other panes: the border says which pane
+                            // is focused, not the title (#575).
+                            color: Theme.heading-text;
                             height: 22px;
                             horizontal-alignment: center;
                         }
