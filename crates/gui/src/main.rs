@@ -56,6 +56,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.borrow_mut()
             .begin_repos_root_edit(&opening.root.to_string_lossy());
     }
+    // What "Open in editor" (#581) launches, decided once at startup rather
+    // than on every timer tick: a settings-file read and a PATH search on
+    // every tick would be real, pointless work for a fact that does not
+    // change while the window is open.
+    app.borrow_mut()
+        .set_editor(gui::settings::load_editor(), gui::launch::on_path("code"));
     // Before the window exists: once it does, the renderer is fixed.
     eprintln!("{}", gui::renderer::select()?.message());
     let ui = MainWindow::new()?;

@@ -6,6 +6,7 @@
 
 use crate::document::Document;
 use crate::editor;
+use crate::launch::{self, Launch, Platform};
 use plugin_api::{
     Class, Fact, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span,
     TEXT_VIEW, UNKNOWN_ICON,
@@ -13,7 +14,7 @@ use plugin_api::{
 use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
 /// Every presentation plugin linked into this front end.
@@ -356,6 +357,9 @@ pub struct FolderNode {
     pub is_repository: bool,
     /// The working copy's provider, where the listing found one.
     pub provider: Option<String>,
+    /// The working copy's remote, as written in its own configuration
+    /// (#581) - what "Copy remote address" copies for a Folders pane row.
+    pub remote: Option<String>,
 }
 
 impl FolderNode {
@@ -373,6 +377,7 @@ impl FolderNode {
             children: None,
             is_repository: false,
             provider: None,
+            remote: None,
         }
     }
 
@@ -412,6 +417,7 @@ impl FolderNode {
                         children: None,
                         is_repository: false,
                         provider: None,
+                        remote: None,
                     });
                     // Read fresh each time rather than only on first sight:
                     // a folder can turn into a working copy (or stop being
@@ -421,6 +427,10 @@ impl FolderNode {
                         .repository
                         .as_ref()
                         .and_then(|repository| repository.provider.clone());
+                    node.remote = entry
+                        .repository
+                        .as_ref()
+                        .and_then(|repository| repository.remote.clone());
                     node
                 })
                 .collect(),
@@ -1308,6 +1318,15 @@ pub struct App {
     mode: Mode,
     pending_operation: Option<Receiver<io::Result<Response>>>,
     after_operation: Option<AfterOperation>,
+    /// The `editor` setting, and whether Visual Studio Code is on the
+    /// `PATH` - what "Open in editor" (#581) needs to know whether it has
+    /// anything to launch. `None`/`false` until [`Self::set_editor`] is
+    /// called, which the real window does once at startup; a test that
+    /// wants the item enabled calls it directly, rather than this struct
+    /// searching the `PATH` itself and making every test's result depend
+    /// on what happens to be installed on the machine running it.
+    editor_setting: Option<String>,
+    code_on_path: bool,
 }
 
 /// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
@@ -1374,6 +1393,8 @@ impl App {
             mode: Mode::Normal,
             pending_operation: None,
             after_operation: None,
+            editor_setting: None,
+            code_on_path: false,
         };
         app.load_contents_for_selected();
         app
@@ -3061,6 +3082,199 @@ impl App {
             .clone()
             .unwrap_or_else(|| "the web".to_owned());
         Some((provider, address))
+    }
+
+    /// The folder a Contents-pane row menu item or a File-menu item hands
+    /// to a terminal, an editor or the file manager (#581): the selected
+    /// row, when it is a folder. `None` for a selected file, or nothing
+    /// selected at all - the same gate [`Self::can_open`] uses, since both
+    /// mean "step into this folder".
+    fn selected_content_folder(&self) -> Option<PathBuf> {
+        let entry = self.contents.get(self.content_selected)?;
+        entry
+            .is_dir
+            .then(|| self.selected_dir_path().join(&entry.name))
+    }
+
+    /// The remote address a Contents-pane row's "Copy remote address"
+    /// copies, or `None` when the row is not a working copy with a remote.
+    fn selected_content_remote(&self) -> Option<String> {
+        self.contents
+            .get(self.content_selected)?
+            .repository
+            .as_ref()?
+            .remote
+            .clone()
+    }
+
+    /// The tree node a Folders-pane row menu item acts on: the selected row.
+    fn selected_folder_node(&self) -> Option<&FolderNode> {
+        let rows = self.root.flatten();
+        let (_, indices) = rows.get(self.folder_selected)?;
+        self.root.node_at(indices)
+    }
+
+    /// Whether the Contents pane's selected row is a working copy with a
+    /// remote address to copy (#581).
+    #[must_use]
+    pub fn can_copy_selected_remote_address(&self) -> bool {
+        self.selected_content_remote().is_some()
+    }
+
+    /// Whether the Folders pane's selected row is a working copy with a
+    /// remote address to copy (#581).
+    #[must_use]
+    pub fn can_copy_folder_remote_address(&self) -> bool {
+        self.selected_folder_node()
+            .is_some_and(|node| node.remote.is_some())
+    }
+
+    /// Whether "Open in editor" (#581) has anywhere to send a folder: an
+    /// `editor` setting, or Visual Studio Code on the `PATH`. Set once at
+    /// startup by [`Self::set_editor`].
+    #[must_use]
+    pub fn editor_available(&self) -> bool {
+        self.editor_setting.is_some() || self.code_on_path
+    }
+
+    /// What this platform's file manager is called (#581): "Show in File
+    /// Explorer", "Show in Finder" or "Show in Files".
+    #[must_use]
+    pub fn file_manager_label(&self) -> &'static str {
+        launch::file_manager_label(Platform::current())
+    }
+
+    /// Whether "Open in editor" is enabled for the Contents pane's row menu
+    /// and the File menu: a folder selected, with something to open it in.
+    #[must_use]
+    pub fn can_open_selected_in_editor(&self) -> bool {
+        self.can_open() && self.editor_available()
+    }
+
+    /// Records what "Open in editor" (#581) has to launch: the `editor`
+    /// setting from the settings file, and whether Visual Studio Code is on
+    /// the `PATH`.
+    ///
+    /// Called once, by the real window at startup
+    /// (`gui::settings::load_editor`, `gui::launch::on_path("code")`); a
+    /// test calls it directly to force a deterministic scenario, rather
+    /// than this struct searching the `PATH` itself and making every
+    /// test's result depend on what happens to be installed on the machine
+    /// running it.
+    pub fn set_editor(&mut self, editor_setting: Option<String>, code_on_path: bool) {
+        self.editor_setting = editor_setting;
+        self.code_on_path = code_on_path;
+    }
+
+    fn report_launch(&mut self, what: &str, result: io::Result<()>) {
+        self.status = Some(match result {
+            Ok(()) => format!("opened {what}"),
+            Err(err) => format!("could not open {what}: {err}"),
+        });
+    }
+
+    /// Builds and hands off the terminal command for `path` (#581): Windows
+    /// Terminal or PowerShell, `xdg-terminal-exec` or `x-terminal-emulator`,
+    /// or `open -a Terminal` on macOS - see `launch::terminal_launch`.
+    fn launch_terminal(&mut self, path: &Path, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        let platform = Platform::current();
+        let preferred_available = match platform {
+            Platform::Windows => launch::on_path("wt"),
+            Platform::Linux => launch::on_path("xdg-terminal-exec"),
+            Platform::MacOs => false,
+        };
+        let command = launch::terminal_launch(platform, path, preferred_available);
+        let result = launch(&command);
+        self.report_launch("a terminal", result);
+    }
+
+    fn launch_editor(&mut self, path: &Path, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        let Some(command) =
+            launch::editor_launch(self.editor_setting.as_deref(), self.code_on_path, path)
+        else {
+            return;
+        };
+        let result = launch(&command);
+        self.report_launch("an editor", result);
+    }
+
+    fn launch_file_manager(&mut self, path: &Path, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        let command = launch::file_manager_launch(Platform::current(), path);
+        let result = launch(&command);
+        self.report_launch("the file manager", result);
+    }
+
+    /// Opens a terminal at the Contents pane's selected folder (#581).
+    pub fn open_terminal_here(&mut self, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        if let Some(path) = self.selected_content_folder() {
+            self.launch_terminal(&path, launch);
+        }
+    }
+
+    /// Opens a terminal at the Folders pane's selected folder (#581).
+    pub fn open_terminal_at_folder(&mut self, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        let path = self.selected_dir_path();
+        self.launch_terminal(&path, launch);
+    }
+
+    /// Opens the Contents pane's selected folder in an editor (#581).
+    pub fn open_selected_in_editor(&mut self, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        if let Some(path) = self.selected_content_folder() {
+            self.launch_editor(&path, launch);
+        }
+    }
+
+    /// Opens the Folders pane's selected folder in an editor (#581).
+    pub fn open_folder_in_editor(&mut self, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        let path = self.selected_dir_path();
+        self.launch_editor(&path, launch);
+    }
+
+    /// Shows the Contents pane's selected folder in the platform's file
+    /// manager (#581).
+    pub fn show_selected_in_file_manager(
+        &mut self,
+        launch: impl FnOnce(&Launch) -> io::Result<()>,
+    ) {
+        if let Some(path) = self.selected_content_folder() {
+            self.launch_file_manager(&path, launch);
+        }
+    }
+
+    /// Shows the Folders pane's selected folder in the platform's file
+    /// manager (#581).
+    pub fn show_folder_in_file_manager(&mut self, launch: impl FnOnce(&Launch) -> io::Result<()>) {
+        let path = self.selected_dir_path();
+        self.launch_file_manager(&path, launch);
+    }
+
+    /// Copies the Contents pane's selected folder's full path (#581).
+    pub fn copy_selected_path(&mut self, write: impl FnOnce(&str)) {
+        if let Some(path) = self.selected_content_folder() {
+            write(&path.to_string_lossy());
+        }
+    }
+
+    /// Copies the Folders pane's selected folder's full path (#581).
+    pub fn copy_folder_path(&mut self, write: impl FnOnce(&str)) {
+        write(&self.selected_dir_path().to_string_lossy());
+    }
+
+    /// Copies the Contents pane's selected folder's remote address (#581).
+    pub fn copy_selected_remote_address(&mut self, write: impl FnOnce(&str)) {
+        if let Some(remote) = self.selected_content_remote() {
+            write(&remote);
+        }
+    }
+
+    /// Copies the Folders pane's selected folder's remote address (#581).
+    pub fn copy_folder_remote_address(&mut self, write: impl FnOnce(&str)) {
+        if let Some(remote) = self
+            .selected_folder_node()
+            .and_then(|node| node.remote.clone())
+        {
+            write(&remote);
+        }
     }
 
     /// Whether a command that acts on the Contents pane may run.
@@ -6851,6 +7065,218 @@ third",
             "{}",
             app.status_text()
         );
+    }
+
+    // ---- Open a repository in the tools you work on it with (#581) ------
+
+    #[test]
+    fn opening_a_terminal_hands_the_launcher_the_selected_folders_path() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        let mut launched = None;
+
+        app.open_terminal_here(|command| {
+            launched = Some(command.clone());
+            Ok(())
+        });
+
+        let command = launched.expect("a folder was selected");
+        // The folder reaches the terminal as its working directory, and on
+        // some platforms as an argument too; a terminal that takes it only
+        // one way still opens in the right place.
+        assert!(
+            command
+                .current_dir
+                .as_deref()
+                .is_some_and(|dir| dir.contains("name"))
+                || command.args.iter().any(|arg| arg.contains("name")),
+            "the selected folder's path should reach the terminal: {command:?}"
+        );
+        assert!(app.status_text().contains("opened a terminal"));
+    }
+
+    #[test]
+    fn opening_a_terminal_on_a_selected_file_does_nothing() {
+        let mut app = App::new(std::env::temp_dir().join("rse-notional-terminal"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("readme.md", false)]),
+            }),
+        );
+        app.select_content(0);
+        let mut launched = false;
+
+        app.open_terminal_here(|_| {
+            launched = true;
+            Ok(())
+        });
+
+        assert!(!launched, "a file has no terminal to open");
+    }
+
+    #[test]
+    fn opening_a_terminal_at_the_folders_pane_selection_hands_off_its_path() {
+        let mut app = App::new(std::env::temp_dir().join("rse-notional-folder-terminal"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("src", true)]),
+            }),
+        );
+        app.select_folder(1);
+        let mut launched = None;
+
+        app.open_terminal_at_folder(|command| {
+            launched = Some(command.clone());
+            Ok(())
+        });
+
+        let command = launched.expect("the folders pane always has a folder selected");
+        assert!(
+            command
+                .current_dir
+                .as_deref()
+                .is_some_and(|dir| dir.contains("src"))
+                || command.args.iter().any(|arg| arg.contains("src")),
+            "the right-clicked folder's path should reach the terminal: {command:?}"
+        );
+    }
+
+    #[test]
+    fn a_terminal_that_will_not_start_is_reported() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+
+        app.open_terminal_here(|_| Err(std::io::Error::other("no terminal here")));
+
+        assert!(
+            app.status_text()
+                .contains("could not open a terminal: no terminal here"),
+            "{}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn opening_in_an_editor_is_refused_with_nothing_configured() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        assert!(!app.can_open_selected_in_editor());
+        let mut launched = false;
+
+        app.open_selected_in_editor(|_| {
+            launched = true;
+            Ok(())
+        });
+
+        assert!(!launched, "there is nothing to open it with");
+    }
+
+    #[test]
+    fn a_configured_editor_is_handed_the_selected_folder() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        app.set_editor(Some("subl".to_owned()), false);
+        assert!(app.can_open_selected_in_editor());
+        let mut launched = None;
+
+        app.open_selected_in_editor(|command| {
+            launched = Some(command.clone());
+            Ok(())
+        });
+
+        let command = launched.expect("an editor was configured");
+        assert_eq!(command.program, "subl");
+    }
+
+    #[test]
+    fn visual_studio_code_is_used_when_nothing_is_configured_but_it_is_on_the_path() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        app.set_editor(None, true);
+        let mut launched = None;
+
+        app.open_selected_in_editor(|command| {
+            launched = Some(command.clone());
+            Ok(())
+        });
+
+        assert_eq!(launched.expect("code is on the PATH").program, "code");
+    }
+
+    #[test]
+    fn a_folder_with_no_remote_has_no_address_to_copy() {
+        let mut app = app_with_a_checkout(Some("main"), None);
+        assert!(!app.can_copy_selected_remote_address());
+        let mut copied = None;
+
+        app.copy_selected_remote_address(|text| copied = Some(text.to_owned()));
+
+        assert_eq!(copied, None);
+    }
+
+    #[test]
+    fn a_working_copys_remote_address_is_copied_as_the_checkout_wrote_it() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        assert!(app.can_copy_selected_remote_address());
+        let mut copied = None;
+
+        app.copy_selected_remote_address(|text| copied = Some(text.to_owned()));
+
+        assert_eq!(copied.as_deref(), Some("git@github.com:owner/name.git"));
+    }
+
+    #[test]
+    fn the_folders_pane_selections_remote_address_is_copied_too() {
+        let mut app = App::new(std::env::temp_dir().join("rse-notional-folder-remote"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "name".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(RepositoryInfo {
+                        provider: Some("github.com".to_owned()),
+                        branch: Some("main".to_owned()),
+                        remote: Some("git@github.com:owner/name.git".to_owned()),
+                    }),
+                }],
+            }),
+        );
+        app.select_folder(1);
+        assert!(app.can_copy_folder_remote_address());
+        let mut copied = None;
+
+        app.copy_folder_remote_address(|text| copied = Some(text.to_owned()));
+
+        assert_eq!(copied.as_deref(), Some("git@github.com:owner/name.git"));
+    }
+
+    #[test]
+    fn copying_the_selected_folders_path_copies_its_full_path() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        let mut copied = None;
+
+        app.copy_selected_path(|text| copied = Some(text.to_owned()));
+
+        let copied = copied.expect("a folder was selected");
+        assert!(copied.ends_with("name"), "{copied}");
+    }
+
+    #[test]
+    fn showing_the_selected_folder_in_the_file_manager_hands_off_its_path() {
+        let mut app = app_with_a_checkout(Some("main"), Some("git@github.com:owner/name.git"));
+        let mut launched = None;
+
+        app.show_selected_in_file_manager(|command| {
+            launched = Some(command.clone());
+            Ok(())
+        });
+
+        // What each platform's command looks like is `launch`'s own unit
+        // tests (`launch::tests`); this only proves the join - that the
+        // selected folder's path reaches it at all.
+        let command = launched.expect("a folder was selected");
+        assert!(!command.program.is_empty());
+        assert!(app.status_text().contains("opened the file manager"));
     }
 
     // ---- finding a name across every repository (#536) ------------------

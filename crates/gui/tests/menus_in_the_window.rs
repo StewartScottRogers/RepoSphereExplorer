@@ -35,6 +35,12 @@ use std::time::{Duration, Instant};
 mod common;
 use common::ensure_service;
 
+/// What this platform calls its file manager's menu item. The tests ran
+/// only on Linux in continuous integration, so they said "Show in Files"
+/// outright and failed on Windows, where the item says "Show in File
+/// Explorer".
+const FILE_MANAGER: &str = gui::launch::file_manager_label(gui::launch::Platform::current());
+
 /// Row height in `app.slint`'s contents pane, so a pointer can be aimed at
 /// a row. The one measurement that has no element to ask: a row is a `Text`
 /// laid out by hand inside one overlay touch area, not an element of its
@@ -208,6 +214,39 @@ fn ctrl_click_row(ui: &MainWindow, rows_down: f32) {
 /// Past the last row that opens the empty-area menu; on one, the row menu.
 fn right_click_row(ui: &MainWindow, rows_down: f32) {
     click_row_with(ui, rows_down, PointerEventButton::Right, &[]);
+}
+
+/// The folders pane's row rectangles, in the order they are drawn.
+fn folder_rows(ui: &MainWindow) -> Vec<ElementHandle> {
+    ElementHandle::find_by_element_id(ui, "Pane::tree-row").collect()
+}
+
+/// The row index of `name` in the folders tree, as drawn.
+fn folder_row_of(ui: &MainWindow, name: &str) -> usize {
+    folder_rows(ui)
+        .iter()
+        .position(|row| row.accessible_label().as_deref() == Some(name))
+        .unwrap_or_else(|| panic!("{name} is not drawn in the folders tree"))
+}
+
+/// Right-clicks the folders tree's row `index`, the way a reader opens its
+/// context menu (#581).
+fn right_click_folder_row(ui: &MainWindow, index: usize) {
+    let rows = folder_rows(ui);
+    let handle = rows.get(index).expect("the tree draws that row");
+    let at = handle.absolute_position();
+    let size = handle.size();
+    let position = LogicalPosition::new(at.x + 20.0, at.y + size.height / 2.0);
+    let window = ui.window();
+    window.dispatch_event(WindowEvent::PointerMoved { position });
+    window.dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Right,
+    });
+    window.dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Right,
+    });
 }
 
 /// The names the contents pane is drawing, in the order it draws them.
@@ -788,6 +827,14 @@ fn the_row_menu_offers_what_a_row_can_do() {
             "Copy to...".to_owned(),
             "Delete".to_owned(),
             "Extract".to_owned(),
+            // Handing the row to a program the user already has (#581),
+            // greyed here since "notes.txt" is a file rather than a
+            // folder.
+            "Open terminal here".to_owned(),
+            "Open in editor".to_owned(),
+            "Copy path".to_owned(),
+            "Copy remote address".to_owned(),
+            FILE_MANAGER.to_owned(),
         ],
         "the row menu should offer the row's own commands"
     );
@@ -1154,13 +1201,142 @@ fn open_on_the_web_is_refused_where_there_is_no_web_page() {
     );
 }
 
-/// Closes an open context menu the way a reader does: a press on the pane.
-///
-/// Well below the menu, which opens where the right-click landed - a press
-/// on the row that was right-clicked lands on the menu itself and is
-/// swallowed there.
+// ---- Open a repository in the tools you work on it with (#581) ---------
+
+/// The contents pane's row menu offers all five actions, enabled, for a
+/// right-clicked working copy - what "choosing one hands the expected
+/// command to the captured launcher" comes down to at the window: the
+/// item is there and clickable. What clicking it then does is
+/// `App::open_terminal_here` and its siblings' own job, proved with a
+/// captured launcher of their own in `app.rs`'s unit tests; clicking a
+/// real one here would open a real terminal on the machine running the
+/// tests, the same reason `the_row_menu_offers_a_repository_on_the_host_it_came_from`
+/// does not click "Open on the web".
+#[test]
+fn the_row_menu_offers_a_working_copy_every_way_to_open_it() {
+    let _serial = serially();
+    let dir = scratch("open-tools-row-menu");
+    checkout(&dir, "name");
+    let (ui, app) = window_at(&dir);
+    click_row(&ui, row_of(&ui, "name"));
+    pump(&ui, &app);
+
+    right_click_row(&ui, row_of(&ui, "name"));
+
+    for label in [
+        "Open terminal here",
+        "Copy path",
+        "Copy remote address",
+        FILE_MANAGER,
+    ] {
+        assert_eq!(
+            item(&ui, label).accessible_enabled(),
+            Some(true),
+            "{label} should be offered for a working copy"
+        );
+    }
+}
+
+/// "Copy remote address" is refused for a plain folder - nothing a working
+/// copy's remote address could be copied from.
+#[test]
+fn copy_remote_address_is_disabled_for_a_plain_folder() {
+    let _serial = serially();
+    let dir = scratch("open-tools-plain-folder");
+    std::fs::create_dir_all(dir.join("plain")).expect("a plain folder");
+    let (ui, app) = window_at(&dir);
+    click_row(&ui, row_of(&ui, "plain"));
+    pump(&ui, &app);
+
+    right_click_row(&ui, row_of(&ui, "plain"));
+
+    assert_eq!(
+        item(&ui, "Copy remote address").accessible_enabled(),
+        Some(false),
+        "a plain folder has no remote to copy"
+    );
+    for label in ["Open terminal here", "Copy path", FILE_MANAGER] {
+        assert_eq!(
+            item(&ui, label).accessible_enabled(),
+            Some(true),
+            "{label} should still be offered for a plain folder"
+        );
+    }
+}
+
+/// The folders pane's row menu offers the same five actions as the
+/// contents pane's, for the row that was right-clicked: enabled for
+/// "name", a checkout with a remote, except "Open in editor" - nothing is
+/// configured for these tests to launch.
+#[test]
+fn the_folders_pane_row_menu_offers_what_a_row_can_do() {
+    let _serial = serially();
+    let dir = scratch("folder-row-menu");
+    checkout(&dir, "name");
+    let (ui, _app) = window_at(&dir);
+
+    right_click_folder_row(&ui, folder_row_of(&ui, "name"));
+
+    for (label, enabled) in [
+        ("Open terminal here", true),
+        ("Open in editor", false),
+        ("Copy path", true),
+        ("Copy remote address", true),
+        (FILE_MANAGER, true),
+    ] {
+        assert_eq!(
+            item(&ui, label).accessible_enabled(),
+            Some(enabled),
+            "{label} should be {}",
+            if enabled { "enabled" } else { "refused" }
+        );
+    }
+}
+
+/// A refused item in the folders pane's row menu does nothing when
+/// clicked, the same as the contents pane's (rule: this file clicks a
+/// refusal rather than trusting the property that draws it).
+#[test]
+fn a_refused_item_in_the_folders_pane_row_menu_does_nothing() {
+    let _serial = serially();
+    let dir = scratch("folder-row-menu-refused");
+    std::fs::create_dir_all(dir.join("plain")).expect("a plain folder");
+    let (ui, app) = window_at(&dir);
+
+    right_click_folder_row(&ui, folder_row_of(&ui, "plain"));
+    pump(&ui, &app);
+    let status = ui.get_status_text().to_string();
+    let row_item = item(&ui, "Open in editor");
+    assert_eq!(row_item.accessible_enabled(), Some(false));
+    row_item.mock_single_click(PointerEventButton::Left);
+    pump(&ui, &app);
+
+    assert_eq!(
+        ui.get_status_text().to_string(),
+        status,
+        "a refused Open in editor opens nothing and says nothing"
+    );
+}
+
+/// Dismisses whichever context menu is open, by clicking row 0 far to the
+/// right of any menu's fixed 150px width - rather than several rows below
+/// the menu, which #581's five new items made tall enough to cover: a
+/// click meant to land on the pane underneath the menu instead landed on
+/// one of the menu's own (greyed) items, which swallows a press without
+/// dismissing anything.
 fn close_context_menu(ui: &MainWindow, app: &Rc<RefCell<App>>) {
-    click_row(ui, 14.0);
+    let origin = contents_area(ui).absolute_position();
+    let position = LogicalPosition::new(origin.x + 400.0, origin.y + ROW_HEIGHT / 2.0);
+    let window = ui.window();
+    window.dispatch_event(WindowEvent::PointerMoved { position });
+    window.dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    window.dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
     pump(ui, app);
 }
 
