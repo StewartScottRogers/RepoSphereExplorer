@@ -38,6 +38,8 @@ on:
 permissions:
   actions: write
   issues: read
+  # To see whether the last shift's pull request is still open, below.
+  pull-requests: read
 
 jobs:
   continue:
@@ -57,6 +59,26 @@ jobs:
           # rather than reading as success and chaining forever.
           if [ "$last_conclusion" != "success" ] && [ "$last_conclusion" != "none" ]; then
             echo "Last run ended as '$last_conclusion'; halting the chain for a human to look at."
+            exit 0
+          fi
+
+          # A shift branches from main as it is when the shift starts. While
+          # the last shift's pull request is still open, the next one would
+          # branch without it and conflict with it: #597 had to be merged by
+          # hand after the shift for #574 started before #595 landed. So wait
+          # for it; this workflow runs again in ten minutes.
+          # An answer that is not a number - the call refused or failed - is
+          # treated as "still open": starting a shift blind is the race this
+          # guard exists to prevent.
+          open_prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq 'length' || true)
+          case "$open_prs" in
+            ''|*[!0-9]*)
+              echo "Could not tell whether a pull request is open ('$open_prs'); not starting a shift."
+              exit 0
+              ;;
+          esac
+          if [ "$open_prs" -gt 0 ]; then
+            echo "$open_prs auto-merge pull request(s) still open; the next shift waits for them to land."
             exit 0
           fi
 
