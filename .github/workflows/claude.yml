@@ -96,6 +96,14 @@ jobs:
           echo "path=${binary}" >> "${GITHUB_OUTPUT}"
 
       - uses: anthropics/claude-code-action@v1
+        # A command that runs past the agent runtime's two-minute default
+        # is moved to the background, and an agent that then ends its turn
+        # to wait is killed with the job. A clippy or test run over `gui`
+        # takes longer than that: shift 35230067688 and #610's review both
+        # died this way. Thirty minutes by default, an hour at most.
+        env:
+          BASH_DEFAULT_TIMEOUT_MS: "1800000"
+          BASH_MAX_TIMEOUT_MS: "3600000"
         with:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
