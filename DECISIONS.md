@@ -326,3 +326,73 @@ still the only process that touches the filesystem, `save_file_edit`
 still sends `Request::WriteFile`, and nothing about the editing surface
 alters D10: it reads and writes the file a reader chose, and runs
 nothing.
+
+## D15 — Panes dock or float; the right-hand pane hosts tools
+
+**Settled 2026-09-17.**
+
+The window has been three fixed columns since the GUI began: Folders,
+Contents, and a File pane that showed one file plugin's view of the
+selection. That third pane is renamed and widened. It is no longer "the
+File pane" — it is a **tool slot**, home to whichever tool applies to
+what is selected. The editor (§3.6) is its first tool, compiled in
+exactly as file-type plugins are (§3.2); a certificate tool is its
+second, and it is **read-only**: it finds the certificates committed
+under the Repos Directory and reports which are expired or expiring,
+with no issuing, renewing, revoking or deploying. Those four are
+lifecycle operations - driving rather than reading, the distinction D10
+already draws for source control - and renewing or deploying a
+certificate means handling its private key, which §2.1 already treats
+as part of the attack surface, not a convenience to add to. More tools
+will follow as they are discovered, and each earns its place the way §0
+already asks: by working on what is committed to a repository, not on
+the machine at large.
+
+Alongside the tool slot, every pane - Folders, Contents and the tool
+slot alike - can pop out into its own window inside the same
+application and dock back. GUIDANCE.md §2.6 writes down the mechanics:
+one shared selection with a pin, what closing a window does, the
+last-window rule, and remembered layout.
+
+### Why
+
+The owner wants the editor, certificate management and whatever tool
+comes after them to stand on their own: a reader working through a
+certificate audit across forty repositories should not have to keep the
+Folders tree in the same rectangle as the thing they are reading. A
+fixed three-column window has no room for that; a tool slot that can
+float does.
+
+### What already supports it
+
+§2's service/thin-front-end split means a second window costs nothing
+structural: every window is another view on the same `App`, talking to
+the one connection to the service, not a second copy of the
+application. The plugin split in §3.1 already separates a tool's core
+from its presentation, so a certificate tool is one more crate in that
+shape, not a new kind of thing. Nothing about the inter-process
+communication (IPC) boundary, the security model in §2.1, or D10's
+read-only stance on source control changes to accommodate this - the
+new surface is windows and where tools live, not what any of them is
+allowed to touch.
+
+### What it would take to revisit
+
+The tool slot and the pop-out mechanism are each one seam. Which tool is
+shown for a selection is a lookup the same shape as the file-plugin
+dispatch in §3.1; a window's docked-or-floating state is one property
+per pane, read at startup and written at shutdown alongside the rest of
+window layout. Reverting to a fixed third pane means removing the
+pop-out affordance from that one property, which is smaller than adding
+it was. Reverting the tool slot to "the File pane" means taking the
+certificate tool back out of scope, which only a decision superseding
+this one can do.
+
+### What this supersedes
+
+GUIDANCE.md §2.4 as it read before this work order, which named three
+panes and called the third "the File pane, supplied entirely by the
+file-type plugin". GUIDANCE.md §3.6 "The File pane is an editor" (D14)
+is renamed by this work order to "The editor tool"; D14's editing
+boundary is unchanged and still binding - this only renames what hosts
+the editor, not what the editor may do.

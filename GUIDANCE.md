@@ -22,6 +22,12 @@ not the goal, and no feature is justified by "a file explorer would do this".
 The question a proposal has to answer is whether it helps somebody reach and
 understand the repositories they work in.
 
+The same question settles what earns a place in the tool slot (§2.4, §2.6,
+D15): a tool has to work on what is *in* those repositories, not on the
+machine at large. A certificate tool passes because it finds the
+certificates committed to a repository; a tool aimed at the wider machine
+would not.
+
 That scope was set on 2026-09-08 and is recorded in
 [DECISIONS.md](DECISIONS.md); §2.5 and decisions D7–D10 below carry the detail.
 
@@ -204,10 +210,11 @@ Native *feel* per platform — two behaviour profiles, not one averaged one.
 | Modals | dialogs | sheets |
 | Chrome | title bar, menu bar | traffic lights, unified toolbar |
 
-### 2.4 The three panes
+### 2.4 The panes
 
 Windows Explorer-inspired in its handling, mouse-first, keyboard as a peer —
-but pointed at the Repos Directory rather than at the machine:
+but pointed at the Repos Directory rather than at the machine. Three panes,
+each of which can dock in the main window or float in its own (§2.6, D15):
 
 1. **Folders view** — tree, expand/collapse, drag targets. Its root is the
    Repos Directory, not a list of drives: this is a workspace, not a volume
@@ -216,12 +223,14 @@ but pointed at the Repos Directory rather than at the machine:
    select, drag-and-drop, context menus, inline rename. A child of the root
    that is a working copy is marked as one and names its provider; a folder
    that is not stays visible and looks different.
-3. **File pane** — supplied entirely by the file-type plugin: view, edit, and
-   the operations that type offers. A type may offer more than one view of
-   the same file - its own rendering, and the file's plain text where it has
-   one - which the pane switches between; the plugin names them and decides
-   how many there are. For a repository, the pane reports the provider, the
-   branch checked out, and the remote it tracks.
+3. **The tool slot** — hosts whichever compiled-in tool applies to the
+   current selection, view, operate, and edit where the tool offers it. The
+   editor (§3.6) is the default tool for a file. When more than one tool
+   applies to the same selection, a picker appears so the reader chooses
+   between them; a tool may itself offer more than one view of what it is
+   showing - the editor's own rendering, and a file's plain text where it
+   has one - which it switches between and names. For a repository, a tool
+   reports the provider, the branch checked out, and the remote it tracks.
 
 **The command bar** carries only actions a reader takes on the selected
 repository or folder often enough to want one click away: opening it on the
@@ -262,6 +271,37 @@ The anchor the whole application is arranged around.
 - **The boundary is soft.** The root is home base, not a cage: navigating above
   or outside it is allowed. Soft against hard is one setting in one place
   (D8), so it can be reconsidered without hunting through the code.
+
+### 2.6 Panes and windows
+
+Settled 2026-09-17 (D15). The panes named in §2.4 - Folders, Contents and
+the tool slot - are not bound to the main window.
+
+- **Every pane can pop out.** All three: Folders, Contents and the tool
+  slot alike. A popped-out pane becomes its own window inside the same
+  application - one process, one connection to the service, several
+  windows - never a separate program and never a second copy of anything,
+  which is what §2's service/thin-front-end split already buys.
+- **One shared selection, by default.** Every window, docked or floating,
+  follows the same selection: choosing a folder or a file in one is
+  reflected in every other. A popped-out tool window can be **pinned** to
+  keep showing what it currently shows while the selection elsewhere moves
+  on, for exactly the case a floating tool window exists for - reading one
+  thing while browsing to the next.
+- **Closing a popped-out window docks its pane back** into the main window,
+  rather than discarding it. The pane's content survives; only its window
+  does not.
+- **Closing the application.** There is no distinguished main window to
+  quit from a floating one and leave the rest running: the application
+  exits when its last window closes, of whatever kind that window is.
+- **Layout is remembered between launches.** Which panes are popped out,
+  and each window's position and size, persist across a restart. This is
+  window arrangement, not a location: it does not touch D7's rule that
+  every launch opens at the Repos Directory. The two are independent
+  pieces of remembered state, and D7 is not reopened by this decision.
+- **The terminal front end is unchanged.** §2.2's Ratatui interface has no
+  windows to pop panes into and none of this applies to it; only the
+  graphical front end (§2.3) gains docking and floating panes.
 
 ## 3. File types as plugins
 
@@ -349,18 +389,22 @@ manifest the author wrote and never runs the build tool. Resolving a manifest
 into what would actually build needs the registry, the lock file and the
 network, which is a different job from describing a folder.
 
-### 3.6 The File pane is an editor
+### 3.6 The editor tool
 
 A plugin says what a file *is*. It also says what its parts *are*: which
-run of bytes is a keyword, which a string, which a comment. The pane
-paints what it is told and knows nothing about any language, exactly as
-§3 already has it for the icon and the view.
+run of bytes is a keyword, which a string, which a comment. The editor
+tool paints what it is told and knows nothing about any language, exactly
+as §3 already has it for the icon and the view.
 
-That makes the File pane an editor rather than only a reader, and the
+That makes the editor tool an editor rather than only a reader, and the
 step is deliberate (D14). It is the smaller half of a lesson worth
 taking from the Roslyn C# compiler platform: classification belongs to
 the thing that already parses the format, it is layered, and the fast
 lexical answer is never held up by a slower one.
+
+Popping the editor tool out into its own window (§2.6, D15) changes where
+it is drawn and nothing about what it may do: the boundary below is
+unchanged and just as binding docked or floating.
 
 **Included.** Syntax colouring; a caret; selection; undo and redo;
 saving through the service, which stays the only process that touches
@@ -514,12 +558,18 @@ Stated so the factory does not drift into them.
 - **No cloud sync, no remote browsing** of a provider's servers: this reads the
   working copies on this machine, not the repositories on a host.
 - **No third-party binary plugins, no mobile front end, no in-app package
-  management** beyond the updater, and **no telemetry of any kind.**
-- **Not an integrated development environment.** The File pane edits a
+  management** beyond the updater, and **no telemetry of any kind.** Tools
+  in the tool slot (§2.4, §2.6, D15) are compiled in the same way file-type
+  plugins are (§3.2); there is no loadable third-party tool.
+- **Not an integrated development environment.** The editor tool edits a
   file's text and colours it (§3.6, D14). It does not find and replace,
   match brackets, indent for you, fold code, complete a name, or resolve
   anything across files. §3.6 holds the full list; a feature that is on
   it needs that line changed first.
+- **No certificate lifecycle operations.** The certificate tool (D15)
+  finds certificates under the Repos Directory and reports which are
+  expired or expiring. Issuing, renewing, revoking or deploying a
+  certificate are out of scope until a decision says otherwise.
 
 ## 7. Decisions
 
