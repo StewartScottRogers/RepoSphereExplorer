@@ -573,6 +573,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_back_requested, go_back);
     on_event!(on_forward_requested, go_forward);
     on_event!(on_find_requested, begin_find);
+    wire_filter_actions(ui, app);
     on_event!(on_clipboard_copy_requested, copy_to_clipboard);
     on_event!(on_clipboard_cut_requested, cut_to_clipboard);
     {
@@ -683,6 +684,28 @@ fn run_detached(command: &launch::Launch) -> std::io::Result<()> {
         process.current_dir(dir);
     }
     process.spawn().map(|_| ())
+}
+
+/// Wires the Contents pane's filter field and the status bar's two links
+/// (#582): Ctrl+F or a click on the field, the changed count, and "clear".
+fn wire_filter_actions(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    macro_rules! on_event {
+        ($setter:ident, $method:ident) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.$method();
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+
+    on_event!(on_filter_focus_requested, begin_filter);
+    on_event!(on_status_changed_link_clicked, filter_to_changed);
+    on_event!(on_status_clear_filter_clicked, clear_filters);
 }
 
 /// Wires handing a selected folder to a program the user already has
@@ -874,6 +897,15 @@ fn folder_row_view(row: app::FolderRow) -> FolderRow {
     }
 }
 
+/// Copies the Contents pane's filter field and the status bar's two links
+/// (#582) into `ui`'s bound properties.
+fn sync_filter(ui: &MainWindow, app: &App) {
+    ui.set_filter_text(app.filter_text().into());
+    ui.set_filter_focused(app.filter_focused());
+    ui.set_status_changed_label(app.status_changed_label().into());
+    ui.set_status_show_clear_link(app.status_show_clear_link());
+}
+
 /// Copies `app`'s current state into `ui`'s bound properties.
 pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_rows(ModelRc::new(VecModel::from(
@@ -956,6 +988,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_file_text(app.file_text().into());
     ui.set_file_facts(ModelRc::new(VecModel::from(fact_rows(app))));
     ui.set_status_text(app.status_text().into());
+    sync_filter(ui, app);
     ui.set_focus_pane(app.focus_index());
     ui.set_content_is_archive(app.selected_is_archive());
     ui.set_content_prompt_text(app.prompt_text().into());

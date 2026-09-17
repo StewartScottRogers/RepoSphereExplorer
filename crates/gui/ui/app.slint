@@ -547,6 +547,35 @@ component Crumb inherits Rectangle {
     }
 }
 
+// A clickable word in the status bar (#582): the changed count and
+// "clear", styled and hit-tested the way a breadcrumb already is.
+component StatusLink inherits Rectangle {
+    in property <string> label;
+    callback activated();
+
+    background: link-touch.has-hover ? Theme.hover : transparent;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        Text {
+            text: label;
+            color: Theme.accent;
+            vertical-alignment: center;
+            accessible-role: text;
+            accessible-label: label;
+        }
+    }
+
+    link-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { activated(); }
+    }
+}
+
 component ColumnHeader inherits Rectangle {
     in property <string> label;
     in property <bool> active;
@@ -777,6 +806,12 @@ component ContentsPane inherits Rectangle {
     in property <bool> editor-available;
     in property <bool> remote-address-copyable;
     in property <string> file-manager-label: "Show in File Explorer";
+    // The filter field at the top of the pane (#582): drawn like the
+    // rename/copy/extract prompt over a row, since Rust owns every
+    // keystroke here the same way it owns theirs.
+    in property <string> filter-text;
+    in property <bool> filter-focused;
+    callback filter-focus-requested();
 
     property <length> row-height: 20px;
     // Where the last right-click landed, which both popups place themselves
@@ -848,6 +883,41 @@ component ContentsPane inherits Rectangle {
             color: Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
+        }
+        // The name filter (#582): narrows the listing as it is typed,
+        // rather than opening a modal prompt the way Find does - drawn the
+        // same way the rename/copy/extract prompt over a row is, since
+        // Rust owns every keystroke either way (rule 14).
+        filter-field := Rectangle {
+            height: 22px;
+            background: Theme.field;
+            border-width: 1px;
+            border-color: filter-focused ? Theme.accent : Theme.border;
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                spacing: 2px;
+                Text {
+                    text: filter-text == "" ? "Filter by name" : filter-text;
+                    color: filter-text == "" ? Theme.dim-text : Palette.foreground;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: text;
+                    accessible-label: "Filter by name";
+                }
+                if filter-focused: Rectangle {
+                    width: 1px;
+                    background: Theme.accent;
+                    y: 3px;
+                    height: 16px;
+                }
+            }
+            filter-touch := TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: text;
+                clicked => { filter-focus-requested(); }
+            }
         }
         Rectangle {
             height: header-height;
@@ -1703,6 +1773,17 @@ export component MainWindow inherits Window {
     // (#578).
     in property <bool> content-size-column-visible: true;
     callback find-requested();
+    // The Contents pane's filter field and the status bar's two links
+    // (#582): a name typed narrows the listing live, the changed count is
+    // a link that does the same for uncommitted changes, and "clear"
+    // drops both.
+    in property <string> filter-text;
+    in property <bool> filter-focused;
+    callback filter-focus-requested();
+    in property <string> status-changed-label;
+    in property <bool> status-show-clear-link;
+    callback status-changed-link-clicked();
+    callback status-clear-filter-clicked();
     in-out property <string> edit-text;
     // The coloured surface's half of the editor. `editing-in-colour` is
     // false for a file it cannot serve - see `editor::code_editor_suits`
@@ -1859,6 +1940,8 @@ export component MainWindow inherits Window {
                 parent-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "f" || event.text == "F")) {
                 find-requested();
+            } else if (event.modifiers.control && (event.text == "f" || event.text == "F")) {
+                filter-focus-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
                 new-folder-requested();
             } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
@@ -2175,6 +2258,9 @@ export component MainWindow inherits Window {
                     copy-path-requested => { copy-path-requested(); }
                     copy-remote-address-requested => { copy-remote-address-requested(); }
                     show-in-file-manager-requested => { show-in-file-manager-requested(); }
+                    filter-text: filter-text;
+                    filter-focused: filter-focused;
+                    filter-focus-requested => { filter-focus-requested(); }
                 }
                 Splitter {
                     dragged(delta) => {
@@ -2530,12 +2616,28 @@ export component MainWindow inherits Window {
                     }
                 }
             }
-            Text {
-                text: status-text;
-                color: Palette.foreground;
+            HorizontalLayout {
                 height: 22px;
-                x: 4px;
-                vertical-alignment: center;
+                padding-left: 4px;
+                alignment: start;
+                Text {
+                    text: status-text;
+                    color: Palette.foreground;
+                    vertical-alignment: center;
+                }
+                if status-changed-label != "": StatusLink {
+                    label: status-changed-label;
+                    activated => { status-changed-link-clicked(); }
+                }
+                if status-show-clear-link: Text {
+                    text: " — ";
+                    color: Palette.foreground;
+                    vertical-alignment: center;
+                }
+                if status-show-clear-link: StatusLink {
+                    label: "clear";
+                    activated => { status-clear-filter-clicked(); }
+                }
             }
         }
 
