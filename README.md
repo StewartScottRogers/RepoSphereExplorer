@@ -1,5 +1,17 @@
 # Repos Explorer
 
+## Repository history
+
+**[Repository history film](https://stewartscottrogers.github.io/RepoSphereExplorer/#film)**
+— a [Gource](https://gource.io/) visualization of every commit, re-rendered
+nightly at 06:00 Coordinated Universal Time (UTC) (see
+[`pages.yml`](.github/workflows/pages.yml)) so it stays current with whatever
+the factory merged since yesterday, not just what shipped in the last release.
+Direct link to the current video:
+[`gource.mp4`](https://stewartscottrogers.github.io/RepoSphereExplorer/gource.mp4).
+
+## What it is
+
 A front door to your development workspace: one window onto the local working
 directories that source control systems — GitHub, GitLab, Bitbucket, Azure
 DevOps, plain Git remotes — check code out into. It opens at your **Repos
@@ -204,16 +216,6 @@ These are not renamed yet, each for a reason:
 | Release binaries `RepoSphereExplorerGui` / `RepoSphereExplorerTui` | Installed copies self-update by name against the published manifest; renaming breaks the upgrade path for anyone already running one |
 | Settings and journal directory `RepoSphereExplorer/` | Holds live user data. A rename needs a migration that moves the existing directory rather than orphaning it |
 | Cargo package `repo_sphere_explorer` (the `explore` placeholder) | Parked rather than renamed, since it is scheduled for removal |
-
-## Watch it build
-
-**[Repository history film](https://stewartscottrogers.github.io/RepoSphereExplorer/#film)**
-— a [Gource](https://gource.io/) visualization of every commit, re-rendered
-nightly at 06:00 Coordinated Universal Time (UTC) (see
-[`pages.yml`](.github/workflows/pages.yml)) so it stays current with whatever
-the factory merged since yesterday, not just what shipped in the last release.
-Direct link to the current video:
-[`gource.mp4`](https://stewartscottrogers.github.io/RepoSphereExplorer/gource.mp4).
 
 ## The floor
 
