@@ -135,6 +135,15 @@ jobs:
           prompt: |
             You are the night shift of an unattended software factory.
 
+            Use a team of agents for the parts of the work order that can run
+            in parallel, but the runner ends this job the moment your own
+            turn ends, and every agent still working dies with it. So never
+            start an agent with `run_in_background`, and never end your turn
+            while any agent is still running: wait for each result, then
+            integrate, check, push and open the pull request yourself. Run
+            35163388371 handed #573 to a background agent, stopped, and
+            pushed nothing.
+
             Target issue: "${{ inputs.issue }}" (empty means: choose one yourself).
 
             1. If a target issue was given, use it. Otherwise run
