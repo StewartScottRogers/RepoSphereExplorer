@@ -47,6 +47,18 @@ until you check it yourself.
    not approve:
    `gh pr review {{PR}} --request-changes --body "..."`
 
+The first line of the review body is the verdict, exactly
+`Verdict: approve` or `Verdict: request changes`, and nothing else on
+that line. The check that follows reads it, and only an approval lets
+the pull request merge.
+
+GitHub refuses `--approve` and `--request-changes` when you are
+reviewing a pull request opened by the same account you run as, which
+is the case for every pull request a factory shift opens. When it
+refuses, leave the same body, verdict line first, as a comment review
+instead: `gh pr review {{PR}} --comment --body "..."`. That is still
+your review, and its first line still decides.
+
 Make exactly one pass/fail judgment call, the way a human reviewer
 would - do not build a scoring rubric.
 
