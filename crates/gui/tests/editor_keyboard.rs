@@ -443,12 +443,12 @@ fn save_from_the_panes_own_row_writes_the_file() {
     assert!(ui.get_edit_modified(), "the row's Save is enabled now");
 
     // The row's own button reads "Save *" once the text has changed,
-    // which is what tells it apart from the toolbar's.
+    // which is what tells it apart from the File menu's.
     click_command(&ui, "Save *");
 
     assert!(
         commands(&log).contains(&"save".to_owned()),
-        "the pane's Save asks the same of the window as the toolbar's \
+        "the pane's Save asks the same of the window as the File menu's \
          does; it asked {:?}",
         commands(&log)
     );
@@ -456,17 +456,20 @@ fn save_from_the_panes_own_row_writes_the_file() {
     assert_eq!(app.borrow().status_text(), "saving...");
 }
 
+/// Save left the window's command bar for the File menu (#580); the pane's
+/// own row keeps its Save regardless, tested just above.
 #[test]
-fn save_from_the_toolbar_writes_the_file() {
+fn save_from_the_file_menu_writes_the_file() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("toolbar-save", "fn main() {}\n");
+    let (ui, app, log) = editing("file-menu-save", "fn main() {}\n");
 
     press(&ui, "x");
+    click_command(&ui, "File");
     click_command(&ui, "Save");
 
     assert!(
         commands(&log).contains(&"save".to_owned()),
-        "the toolbar's Save ran; it saw {:?}",
+        "the File menu's Save ran; it saw {:?}",
         commands(&log)
     );
     assert!(!app.borrow().editing_file());

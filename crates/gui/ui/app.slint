@@ -512,6 +512,7 @@ component CommandButton inherits Rectangle {
         // which is the only way to check a row of buttons from outside.
         accessible-role: text;
         accessible-label: label;
+        accessible-enabled: button-enabled;
         color: button-enabled ? Palette.foreground : Theme.dim-text;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -1797,28 +1798,14 @@ export component MainWindow inherits Window {
                     spacing: 1px;
                     alignment: start;
                     CommandButton {
-                        label: "New folder";
-                        activated => { new-folder-requested(); }
-                    }
-                    CommandButton {
-                        label: "New file";
-                        activated => { new-file-requested(); }
+                        label: web-provider == "" ? "Open on the web" : "Open on " + web-provider;
+                        button-enabled: web-provider != "";
+                        activated => { open-web-requested(); }
                     }
                     CommandSeparator { }
                     CommandButton {
-                        label: "Cut";
-                        button-enabled: has-selection;
-                        activated => { clipboard-cut-requested(); }
-                    }
-                    CommandButton {
-                        label: "Copy";
-                        button-enabled: has-selection;
-                        activated => { clipboard-copy-requested(); }
-                    }
-                    CommandButton {
-                        label: "Paste";
-                        button-enabled: can-paste;
-                        activated => { clipboard-paste-requested(); }
+                        label: "New folder";
+                        activated => { new-folder-requested(); }
                     }
                     CommandSeparator { }
                     CommandButton {
@@ -1830,22 +1817,6 @@ export component MainWindow inherits Window {
                         label: "Delete";
                         button-enabled: has-selection;
                         activated => { delete-requested(); }
-                    }
-                    CommandButton {
-                        label: "Extract";
-                        button-enabled: content-is-archive;
-                        activated => { content-extract-requested(); }
-                    }
-                    CommandSeparator { }
-                    CommandButton {
-                        label: "Edit";
-                        button-enabled: can-edit;
-                        activated => { edit-requested(); }
-                    }
-                    CommandButton {
-                        label: "Save";
-                        button-enabled: editing-file;
-                        activated => { save-requested(); }
                     }
                     CommandSeparator { }
                     CommandButton {

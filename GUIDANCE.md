@@ -223,6 +223,14 @@ but pointed at the Repos Directory rather than at the machine:
    how many there are. For a repository, the pane reports the provider, the
    branch checked out, and the remote it tracks.
 
+**The command bar** carries only actions a reader takes on the selected
+repository or folder often enough to want one click away: opening it on the
+web, creating a folder, renaming, deleting, undoing, and refreshing. Clipboard
+actions, extracting an archive, and editing and saving a file's own content
+stay off it - they already live in the menu bar, the Contents pane's
+right-click menu, or a keyboard shortcut, and duplicating them onto the bar
+would only add file-manager buttons unrelated to a repository (#580).
+
 Splitters are draggable and persisted. Everything reachable by mouse is also
 reachable by keyboard.
 
