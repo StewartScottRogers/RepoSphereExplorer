@@ -978,3 +978,63 @@ fn a_checkout_behind_its_remote_says_how_far_in_the_file_pane() {
          reads:\n{pane}"
     );
 }
+
+// ---------------------------------------------------------------------
+// The uncommitted-changes marker names itself, for a mouse or screen
+// reader user who does not know its glyph (#574).
+// ---------------------------------------------------------------------
+
+/// The row index of `name` in the drawn listing, as a `usize` rather than
+/// [`row_of`]'s `f32` - which a click needs, and an element lookup does not.
+fn index_of(ui: &MainWindow, name: &str) -> usize {
+    listing(ui)
+        .iter()
+        .position(|drawn| drawn == name)
+        .unwrap_or_else(|| panic!("{name} is not in the listing: {:?}", listing(ui)))
+}
+
+/// The `nth` element the pane draws with `element_id`, in the order the
+/// per-row `for` loop in `app.slint` instantiates them - the same order
+/// [`listing`] lists the rows in, since both come from the one loop over
+/// the same model.
+fn nth_drawn(ui: &MainWindow, element_id: &str, index: usize) -> ElementHandle {
+    ElementHandle::find_by_element_id(ui, element_id)
+        .nth(index)
+        .unwrap_or_else(|| panic!("no {element_id} at position {index}"))
+}
+
+#[test]
+fn a_changed_repositorys_marker_names_itself_and_a_clean_ones_does_not() {
+    let _serial = serially();
+    let root = scratch("marker-words");
+    checkout(&root, "alpha", "main", None, 1);
+    let beta = checkout(&root, "beta", "main", None, 1);
+    // Committed, then edited: a tracked file that differs from the index.
+    file(
+        &beta,
+        "tracked-0.txt",
+        "the body after somebody edited it\n",
+    );
+    let (ui, app) = window_at(&root);
+
+    settle_statuses(&ui, &app);
+
+    let alpha_marker = nth_drawn(&ui, "ContentsPane::marker-text", index_of(&ui, "alpha"));
+    let beta_marker = nth_drawn(&ui, "ContentsPane::marker-text", index_of(&ui, "beta"));
+
+    assert!(
+        alpha_marker
+            .accessible_label()
+            .is_none_or(|label| label.is_empty()),
+        "a clean checkout has no marker to explain, so its accessible label \
+         should say nothing either"
+    );
+    assert_eq!(
+        beta_marker
+            .accessible_label()
+            .map(|label| label.to_string()),
+        Some("Uncommitted changes to tracked files".to_owned()),
+        "an edited checkout's marker should name what it means, not just \
+         show a glyph"
+    );
+}

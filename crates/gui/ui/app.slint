@@ -41,6 +41,16 @@ export global Theme {
         : Palette.background.darker(0.20);
     out property <brush> accent: Palette.accent-background;
     out property <brush> on-accent: Palette.accent-foreground;
+    // The uncommitted-changes marker's own colour: a warm amber, so it does
+    // not read as one more use of `accent` (already the repository name,
+    // the pane border, the address bar and the selection) and stands out
+    // without depending on colour alone (#574). Fixed per scheme rather
+    // than derived from `Palette`, the way the syntax colours below are,
+    // so it keeps at least 3:1 contrast against `Theme.panel` whatever the
+    // system accent colour is: against this project's representative panel
+    // shades (`#f0f0f0` light, `#2b2b2b` dark) this pair measures about
+    // 5.0:1 light and 8.0:1 dark.
+    out property <brush> warning: dark ? #ffb454 : #935900;
 
     // Syntax colours, one pair per class, chosen for the two schemes
     // rather than derived from the palette: a hue that reads as "string"
@@ -246,10 +256,18 @@ export struct ContentRow {
     // A working copy's branch, "detached" when it is on none; empty for any
     // other row.
     branch: string,
-    // Beside the branch: a dot for uncommitted changes to tracked files, an
+    // Beside the branch: "M" for uncommitted changes to tracked files, an
     // ellipsis until that is known, "?" when it cannot be told, empty for
     // none.
     marker: string,
+    // What `marker` means, in words; empty exactly when `marker` is. Shown
+    // in a tooltip on hover and as the marker's accessible label, so colour
+    // and the glyph alone are never the only way to read it.
+    marker-tooltip: string,
+    // Whether `marker` is the uncommitted-changes marker, so it can be
+    // drawn in the warning colour rather than the neutral one the other
+    // markers use.
+    marker-warning: bool,
     // Whether this row is a source control working copy. The Repos Directory
     // is a workspace, so which of its folders are checkouts is the first
     // thing a reader is looking for.
@@ -596,6 +614,18 @@ component ContentsPane inherits Rectangle {
     property <bool> banding;
     property <length> band-from;
     property <length> band-to;
+    // The row under the pointer, or -1 when there is none to show a
+    // tooltip for: no rows, a marquee under way, a context menu open, or
+    // the pointer past the last row. Hovering the marker or anywhere else
+    // on a repository row's line says what its marker means, in words
+    // (#574).
+    property <int> hovered-row: (click-area.has-hover
+            && !banding
+            && open-context == -1
+            && rows.length > 0
+            && click-area.mouse-y < rows.length * row-height)
+        ? clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1)
+        : -1;
     // Details-view columns. The three trailing ones are fixed and Name
     // stretches into the rest, in both the header and every row, so the two
     // line up without either deriving a width from the pane's own width -
@@ -746,11 +776,25 @@ component ContentsPane inherits Rectangle {
                                     horizontal-stretch: 0;
                                     max-width: 120px;
                                 }
-                                Text {
+                                marker-text := Text {
                                     text: row.marker;
-                                    color: row.selected ? Theme.on-accent : Theme.accent;
+                                    // Selected wins, for the same legibility
+                                    // reason the name and branch above give
+                                    // it. Otherwise the changed marker gets
+                                    // its own warning colour rather than
+                                    // `Theme.accent`, which already names
+                                    // the repository itself and would leave
+                                    // the two told apart by nothing but a
+                                    // few pixels (#574); the other markers
+                                    // stay neutral, since they are not an
+                                    // attention state.
+                                    color: row.selected
+                                        ? Theme.on-accent
+                                        : (row.marker-warning ? Theme.warning : Theme.dim-text);
                                     vertical-alignment: center;
                                     horizontal-stretch: 0;
+                                    accessible-role: text;
+                                    accessible-label: row.marker-tooltip;
                                 }
                             }
                             Text {
@@ -779,6 +823,26 @@ component ContentsPane inherits Rectangle {
                                 vertical-alignment: center;
                                 horizontal-stretch: 0;
                             }
+                        }
+                    }
+
+                    // What the hovered row's marker means, in words: a
+                    // mouse user who does not know the glyphs gets this
+                    // instead of nothing (#574). Empty for a clean row,
+                    // which has no marker to explain.
+                    if hovered-row >= 0 && rows[hovered-row].marker-tooltip != "": Rectangle {
+                        x: click-area.mouse-x + 12px;
+                        y: click-area.mouse-y + 12px;
+                        width: marker-tip-text.preferred-width + 8px;
+                        height: marker-tip-text.preferred-height + 6px;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        marker-tip-text := Text {
+                            x: 4px;
+                            y: 3px;
+                            text: rows[hovered-row].marker-tooltip;
+                            color: Palette.foreground;
                         }
                     }
 

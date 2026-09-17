@@ -38,6 +38,8 @@ fn row(name: &str) -> ContentRow {
         is_repository: false,
         branch: SharedString::new(),
         marker: SharedString::new(),
+        marker_tooltip: SharedString::new(),
+        marker_warning: false,
     }
 }
 
