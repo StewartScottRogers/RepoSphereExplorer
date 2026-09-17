@@ -533,6 +533,12 @@ component ContextMenuItem inherits Rectangle {
 component ContentsPane inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
+    // A repeat of the width the caller gives this pane, threaded in as a
+    // plain value rather than read back from `width` here: `width` is
+    // itself resolved by this component's own layout, and a row that used
+    // it to size the branch beside a repository's name would close the
+    // same binding loop the columns below are worded to avoid.
+    in property <length> pane-width: 470px;
     in property <[ContentRow]> rows;
     in property <int> selected;
     // Which column the list is sorted by, and which way, so the header can
@@ -596,6 +602,18 @@ component ContentsPane inherits Rectangle {
     property <bool> banding;
     property <length> band-from;
     property <length> band-to;
+    // The repository row under the pointer, or -1 when there is none - a
+    // click menu open, a marquee under way, or the pointer over a plain
+    // folder or file - so a tooltip can show what eliding or hiding the
+    // branch (below) cut from view (#573).
+    property <int> hovered-repository-row: (click-area.has-hover
+            && !banding
+            && open-context == -1
+            && rows.length > 0
+            && click-area.mouse-y < rows.length * row-height
+            && rows[clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1)].is-repository)
+        ? clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1)
+        : -1;
     // Details-view columns. The three trailing ones are fixed and Name
     // stretches into the rest, in both the header and every row, so the two
     // line up without either deriving a width from the pane's own width -
@@ -604,6 +622,14 @@ component ContentsPane inherits Rectangle {
     property <length> kind-column: 90px;
     property <length> modified-column: 118px;
     property <length> header-height: 20px;
+    // What is left of `pane-width` for the icon+name+branch+marker line
+    // once the fixed columns, the row's own padding and the pane's border
+    // are taken out - an approximation of what that line's own layout
+    // resolves to, kept independent of it so the branch's width (below)
+    // can be computed from the name's rather than fought over through
+    // stretch, which is what let a long branch crush a name to a letter
+    // or two (#573).
+    property <length> content-line-width: pane-width - 2px - 8px - size-column - kind-column - modified-column;
 
     // As `Pane`: the offset and the visible height, so the front end can
     // scroll the selected row into view from Rust.
@@ -717,7 +743,7 @@ component ContentsPane inherits Rectangle {
                                     image-fit: contain;
                                     horizontal-stretch: 0;
                                 }
-                                Text {
+                                name-text := Text {
                                     text: row.name;
                                     // A working copy is named in the accent
                                     // colour and in bold: distinguishable at a
@@ -737,16 +763,31 @@ component ContentsPane inherits Rectangle {
                                 // the pane is narrow, and a fixed Branch
                                 // column would cut every repository name to a
                                 // few letters to leave room for a word most
-                                // rows would repeat.
-                                Text {
+                                // rows would repeat (#573). The name has
+                                // priority: `room` is what is left over once
+                                // the name has its natural width, so the
+                                // branch is the one that gives way, eliding
+                                // as the pane narrows and disappearing under
+                                // about 40px rather than sitting there as a
+                                // sliver of ellipsis. `name-text` is left as
+                                // the line's only stretched child, so it is
+                                // only the name that ever falls back to its
+                                // own `min-width`, and only once the branch
+                                // has already given up all of its room.
+                                branch-text := Text {
                                     text: row.branch;
                                     color: row.selected ? Theme.on-accent : Theme.dim-text;
                                     overflow: elide;
                                     vertical-alignment: center;
-                                    horizontal-stretch: 0;
-                                    max-width: 120px;
+                                    property <length> room: row.branch == ""
+                                        ? 0px
+                                        : content-line-width - 16px - 15px
+                                            - marker-text.preferred-width
+                                            - name-text.preferred-width;
+                                    width: room < 40px ? 0px : min(room, 120px);
+                                    visible: room >= 40px;
                                 }
-                                Text {
+                                marker-text := Text {
                                     text: row.marker;
                                     color: row.selected ? Theme.on-accent : Theme.accent;
                                     vertical-alignment: center;
@@ -884,6 +925,29 @@ component ContentsPane inherits Rectangle {
                                     open-context = 1;
                                 }
                             }
+                        }
+                    }
+
+                    // Nothing that eliding or hiding cuts from the branch
+                    // beside a repository's name (above) is lost for good:
+                    // hovering the row shows both in full beside the
+                    // pointer (#573).
+                    if hovered-repository-row >= 0: Rectangle {
+                        x: click-area.mouse-x + 12px;
+                        y: click-area.mouse-y + 12px;
+                        width: tip-text.preferred-width + 8px;
+                        height: tip-text.preferred-height + 6px;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        tip-text := Text {
+                            x: 4px;
+                            y: 3px;
+                            text: rows[hovered-repository-row].name
+                                + (rows[hovered-repository-row].branch == ""
+                                    ? ""
+                                    : "\n" + rows[hovered-repository-row].branch);
+                            color: Palette.foreground;
                         }
                     }
 
@@ -1797,6 +1861,7 @@ export component MainWindow inherits Window {
                     selected: content-selected;
                     scroll-y <=> content-scroll-y;
                     width: contents-width;
+                    pane-width: contents-width;
                     horizontal-stretch: 0;
                     row-clicked(i) => { content-row-clicked(i); }
                     row-ctrl-clicked(i) => { content-row-ctrl-clicked(i); }

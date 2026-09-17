@@ -978,3 +978,81 @@ fn a_checkout_behind_its_remote_says_how_far_in_the_file_pane() {
          reads:\n{pane}"
     );
 }
+
+// ---------------------------------------------------------------------
+// The name has priority over the branch beside it (#573).
+// ---------------------------------------------------------------------
+
+/// The `nth` element the pane draws with `element_id`, in the order the
+/// per-row `for` loop in `app.slint` instantiates them - the same order
+/// `ui.get_content_rows()` lists the rows in, since both come from one
+/// loop over the same model.
+fn nth_drawn(ui: &MainWindow, element_id: &str, index: usize) -> ElementHandle {
+    ElementHandle::find_by_element_id(ui, element_id)
+        .nth(index)
+        .unwrap_or_else(|| panic!("no {element_id} at position {index}"))
+}
+
+#[test]
+fn a_long_name_keeps_its_full_width_beside_a_long_branch_at_the_default_contents_width() {
+    let _serial = serially();
+    let root = scratch("name-priority-default-width");
+    checkout(
+        &root,
+        "AgenticCliOptions",
+        "chore/solution-drift-model-refresh-agenttools",
+        None,
+        1,
+    );
+    let (ui, _app) = window_at(&root);
+    assert_eq!(
+        ui.get_contents_width(),
+        470.0,
+        "the pane should still be at its default width"
+    );
+
+    let index = row_of(&ui, "AgenticCliOptions") as usize;
+    let name = nth_drawn(&ui, "ContentsPane::name-text", index);
+
+    // Crushed to a letter or two, the bug this reproduces, draws at
+    // something close to the 24px floor `min-width` gives it; a name this
+    // short shown in full is well over three times that.
+    assert!(
+        name.size().width > 80.0,
+        "the name should keep its own width even with a long branch beside \
+         it; it drew at {}px",
+        name.size().width
+    );
+}
+
+#[test]
+fn a_narrower_contents_width_hides_the_branch_while_the_marker_stays_beside_the_name() {
+    let _serial = serially();
+    let root = scratch("name-priority-narrow-width");
+    checkout(
+        &root,
+        "AgenticCliOptions",
+        "chore/solution-drift-model-refresh-agenttools",
+        None,
+        1,
+    );
+    let (ui, _app) = window_at(&root);
+    ui.set_contents_width(250.0);
+
+    let index = row_of(&ui, "AgenticCliOptions") as usize;
+    let branch = nth_drawn(&ui, "ContentsPane::branch-text", index);
+    let marker = nth_drawn(&ui, "ContentsPane::marker-text", index);
+
+    assert!(
+        branch.size().width < 1.0,
+        "a branch this long has no room left at a 250px contents width and \
+         should disappear rather than sit there as a sliver of ellipsis; it \
+         drew at {}px",
+        branch.size().width
+    );
+    assert!(
+        marker.size().width > 0.0,
+        "the uncommitted-changes marker stays attached to the name once the \
+         branch beside it is gone"
+    );
+}
