@@ -1040,15 +1040,20 @@ fn a_narrower_contents_width_hides_the_branch_while_the_marker_stays_beside_the_
     ui.set_contents_width(250.0);
 
     let index = row_of(&ui, "AgenticCliOptions") as usize;
-    let branch = nth_drawn(&ui, "ContentsPane::branch-text", index);
     let marker = nth_drawn(&ui, "ContentsPane::marker-text", index);
 
+    // A hidden element is left out of an element search altogether, so the
+    // branch is not looked up by position: the only repository row here
+    // must have no branch drawn with any width.
+    let drawn: Vec<f32> = ElementHandle::find_by_element_id(&ui, "ContentsPane::branch-text")
+        .map(|branch| branch.size().width)
+        .filter(|width| *width >= 1.0)
+        .collect();
     assert!(
-        branch.size().width < 1.0,
+        drawn.is_empty(),
         "a branch this long has no room left at a 250px contents width and \
          should disappear rather than sit there as a sliver of ellipsis; it \
-         drew at {}px",
-        branch.size().width
+         drew at {drawn:?}px"
     );
     assert!(
         marker.size().width > 0.0,
