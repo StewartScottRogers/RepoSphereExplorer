@@ -175,6 +175,11 @@ jobs:
         with:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # A factory shift opens its pull request as the Claude app, and the
+          # action refuses a run started by a bot unless it is named here.
+          # Without this, every factory pull request fails a required check
+          # (#595: "Workflow initiated by non-human actor: claude").
+          allowed_bots: "claude,claude[bot]"
           claude_args: |
             --max-turns 150
             --allowedTools "Bash(cargo *),Bash(gh *),Read,Grep,Glob"
@@ -208,6 +213,11 @@ jobs:
         with:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # A factory shift opens its pull request as the Claude app, and the
+          # action refuses a run started by a bot unless it is named here.
+          # Without this, every factory pull request fails a required check
+          # (#595: "Workflow initiated by non-human actor: claude").
+          allowed_bots: "claude,claude[bot]"
           claude_args: |
             --max-turns 150
             --allowedTools "Bash(cargo *),Bash(gh *),Read,Grep,Glob"
