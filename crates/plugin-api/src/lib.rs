@@ -214,6 +214,38 @@ impl Span {
     }
 }
 
+/// One row of the File pane's fact table: a label and its value.
+///
+/// Structured rather than a sentence, so a front end can lay the value
+/// out in its own column, elide it, and show the full text on hover
+/// without parsing a sentence back apart to find where the label ends and
+/// the value begins (#576).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fact {
+    /// What the value is: `"Branch"`, `"Provider"`.
+    pub label: String,
+    /// The value itself: `"main"`, `"github.com"`.
+    pub value: String,
+    /// Drawn in the front end's secondary-text colour rather than the
+    /// foreground, for a value that should not be read as current or as
+    /// important as the rows around it - an old "up to date" that has not
+    /// been true since a stale fetch, or a folder count next to a working
+    /// copy's own facts.
+    pub dim: bool,
+}
+
+impl Fact {
+    /// A row in the foreground colour: the common case.
+    #[must_use]
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: value.into(),
+            dim: false,
+        }
+    }
+}
+
 /// The presentation half of a file-type plugin: turns the core half's view
 /// data into lines of text a front end can render, without ever touching
 /// raw file bytes.
@@ -224,6 +256,20 @@ pub trait PluginPresentation: Send + Sync {
     /// Turns `data` (as produced by the matching core half) into the lines
     /// a front end should display.
     fn present(&self, data: &serde_json::Value) -> Vec<String>;
+
+    /// The File pane's fact table for `data`: label/value pairs a front
+    /// end draws as a two-column table in place of [`Self::present`]'s
+    /// lines, whenever this is non-empty.
+    ///
+    /// Empty by default - most types have nothing tabular to say, and
+    /// their [`Self::present`] lines are exactly right on their own. The
+    /// directory plugin overrides this for a working copy's provider,
+    /// branch, tracking and remote (#576), which used to be sentences
+    /// glued together that a narrow File pane wrapped across five lines.
+    fn facts(&self, data: &serde_json::Value) -> Vec<Fact> {
+        let _ = data;
+        Vec::new()
+    }
 
     /// How this type is marked in a listing.
     ///
@@ -339,7 +385,7 @@ pub trait PluginPresentation: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::{
-        Class, FolderCore, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginCore,
+        Class, Fact, FolderCore, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginCore,
         PluginPresentation, Span, TEXT_VIEW, UNKNOWN_ICON,
     };
     use std::collections::HashSet;
@@ -356,6 +402,16 @@ mod tests {
         fn present(&self, _data: &serde_json::Value) -> Vec<String> {
             vec!["functions: main".to_owned(), "fn main() {}".to_owned()]
         }
+    }
+
+    #[test]
+    fn a_type_that_does_not_override_facts_has_none() {
+        let data = with_content("fn main() {}", false);
+        assert_eq!(
+            Textish.facts(&data),
+            Vec::new(),
+            "most types have nothing tabular to say, and present's lines are right on their own"
+        );
     }
 
     /// A type with nothing to read as text, like the 25 that carry none.
@@ -487,6 +543,9 @@ mod tests {
         }
         fn editable_text(&self, _data: &serde_json::Value) -> Option<String> {
             Some("from the override".to_owned())
+        }
+        fn facts(&self, _data: &serde_json::Value) -> Vec<Fact> {
+            vec![Fact::new("Chart kind", "bar")]
         }
     }
 
@@ -914,6 +973,11 @@ mod tests {
             Everything.editable_text(&data),
             Some("from the override".to_owned()),
             "not the content key the default would have read"
+        );
+        assert_eq!(
+            Everything.facts(&data),
+            vec![Fact::new("Chart kind", "bar")],
+            "not the empty table the default would have offered"
         );
     }
 

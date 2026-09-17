@@ -7,8 +7,8 @@
 use crate::document::Document;
 use crate::editor;
 use plugin_api::{
-    Class, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span, TEXT_VIEW,
-    UNKNOWN_ICON,
+    Class, Fact, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span,
+    TEXT_VIEW, UNKNOWN_ICON,
 };
 use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
 use std::collections::HashMap;
@@ -277,6 +277,17 @@ pub fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
         Some(candidate) => candidate.present(data),
         None => vec![format!("no presentation for plugin `{plugin}`")],
     }
+}
+
+/// The File pane's fact table for `data`, via whichever registered
+/// presentation plugin matches `plugin`. Empty for an unrecognised plugin,
+/// the same as a plugin that has none of its own.
+#[must_use]
+pub fn facts(plugin: &str, data: &serde_json::Value) -> Vec<Fact> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+        .map_or_else(Vec::new, |candidate| candidate.facts(data))
 }
 
 /// Renders the view named `view` of `data`, via whichever registered
@@ -602,6 +613,31 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{value:.1} {unit}")
     }
+}
+
+/// How many characters a fact table's value column shows before eliding,
+/// at the File pane's default width. Not derived from a measured pixel
+/// width - Slint's own `overflow: elide` is that, cutting from the end,
+/// and stays as the safety net for a narrower pane - but from the same
+/// budget a branch or remote address needs to show both where it starts
+/// and where it ends (#576).
+const FACT_VALUE_BUDGET: usize = 40;
+
+/// `value`, unchanged if it already fits in `budget` characters, or its
+/// first and last few characters joined by an ellipsis so both ends still
+/// show - unlike end-eliding, which would show only the start.
+fn middle_elide(value: &str, budget: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= budget {
+        return value.to_owned();
+    }
+    // A third of the budget for the tail keeps most of it for the start,
+    // which is where a branch or provider name's own words usually sit.
+    let tail = budget / 3;
+    let head = budget - tail - 1;
+    let start: String = chars[..head].iter().collect();
+    let end: String = chars[chars.len() - tail..].iter().collect();
+    format!("{start}…{end}")
 }
 
 /// Explorer's "Type" column: `"File folder"` for a directory, otherwise the
@@ -1110,6 +1146,22 @@ pub struct ContentRow {
     /// the warning colour rather than the neutral one the other markers
     /// use.
     pub marker_warning: bool,
+}
+
+/// One row of the File pane's fact table (#576).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactRow {
+    /// The right-aligned label: `"Branch"`, `"Provider"`. Empty for a
+    /// blank row separating a working copy's own facts from the folder
+    /// facts that follow.
+    pub label: String,
+    /// The value, elided to [`FACT_VALUE_BUDGET`] characters when longer.
+    pub display_value: String,
+    /// The value in full, for a front end to show on hover when it
+    /// differs from `display_value`.
+    pub full_value: String,
+    /// Drawn in the secondary-text colour rather than the foreground.
+    pub dim: bool,
 }
 
 /// The three-pane explorer's state.
@@ -3527,15 +3579,43 @@ impl App {
         }
     }
 
+    /// The File pane's fact table for the selected file: the label/value
+    /// pairs [`Self::file_text`] draws as sentences instead, when the
+    /// plugin has nothing tabular to offer.
+    #[must_use]
+    pub fn file_facts(&self) -> Vec<FactRow> {
+        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
+            return Vec::new();
+        };
+        facts(plugin, data)
+            .into_iter()
+            .map(|fact| FactRow {
+                label: fact.label,
+                display_value: middle_elide(&fact.value, FACT_VALUE_BUDGET),
+                full_value: fact.value,
+                dim: fact.dim,
+            })
+            .collect()
+    }
+
     /// Display text for the file pane, in whichever view is selected.
     #[must_use]
     pub fn file_text(&self) -> String {
         match &self.file_view {
             Some(Response::FileView { plugin, data, also }) => {
-                let views = self.file_views();
-                let mut lines = match views.get(self.file_view_index) {
-                    Some(view) => present_view(plugin, view, data),
-                    None => present(plugin, data),
+                // A plugin offering a fact table (#576) draws it there
+                // instead of these lines - drawing both would say the same
+                // thing twice. What is never covered by the table, a
+                // stacked folder plugin's own lines (D12), still belongs
+                // here.
+                let mut lines = if facts(plugin, data).is_empty() {
+                    let views = self.file_views();
+                    match views.get(self.file_view_index) {
+                        Some(view) => present_view(plugin, view, data),
+                        None => present(plugin, data),
+                    }
+                } else {
+                    Vec::new()
                 };
                 // A folder is several things at once, and each folder
                 // plugin that recognises it adds its lines below the
@@ -3701,7 +3781,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        Class, ColouredRun, EditCommand, colour_summary_line, file_starts_in_preview, summary_label,
+        Class, ColouredRun, EditCommand, colour_summary_line, file_starts_in_preview, middle_elide,
+        summary_label,
     };
 
     use super::{
@@ -4047,6 +4128,63 @@ second", "truncated": false }),
             app.file_text(),
             "fn main() {}",
             "the file's own text, with none of the outline the preview adds"
+        );
+    }
+
+    #[test]
+    fn middle_elide_leaves_a_short_value_alone() {
+        assert_eq!(middle_elide("short", 10), "short");
+    }
+
+    #[test]
+    fn middle_elide_keeps_both_ends_of_a_long_value() {
+        assert_eq!(
+            middle_elide("abcdefghijklmnopqrstuvwxyz", 10),
+            "abcdef…xyz",
+            "both the start and the end should still be readable"
+        );
+    }
+
+    #[test]
+    fn a_repositorys_facts_are_a_table_and_left_out_of_the_plain_text() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        let long_branch = "chore/solution-drift-model-refresh-agenttools-and-then-some-more";
+        let data = serde_json::to_value(plugin_directory::DirectoryView {
+            entry_count: 3,
+            total_size: 4096,
+            repository: Some(plugin_directory::repository::Repository {
+                provider: Some("github.com".to_owned()),
+                branch: Some(long_branch.to_owned()),
+                remote: None,
+                tracking: None,
+                status: None,
+            }),
+        })
+        .unwrap();
+        app.set_file_view("directory", data);
+
+        let facts = app.file_facts();
+        let branch = facts
+            .iter()
+            .find(|fact| fact.label == "Branch")
+            .expect("a branch row");
+        assert_eq!(branch.full_value, long_branch);
+        assert_ne!(
+            branch.display_value, long_branch,
+            "a branch this long should elide in the value column"
+        );
+        assert!(branch.display_value.contains('…'));
+        assert!(
+            facts.iter().any(|fact| fact.label == "Provider"),
+            "{facts:?}"
+        );
+
+        assert_eq!(
+            app.file_text(),
+            "",
+            "the table already says everything the plain text used to; \
+             showing both would say it twice"
         );
     }
 

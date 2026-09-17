@@ -7,7 +7,9 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::{CodeEditorHarness, ColouredRun, ContentRow, FolderRow, MainWindow, Theme};
+pub use generated::{
+    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, Theme,
+};
 
 pub mod app;
 pub mod renderer;
@@ -778,6 +780,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             .collect::<Vec<_>>(),
     )));
     ui.set_file_text(app.file_text().into());
+    ui.set_file_facts(ModelRc::new(VecModel::from(fact_rows(app))));
     ui.set_status_text(app.status_text().into());
     ui.set_focus_pane(app.focus_index());
     ui.set_content_is_archive(app.selected_is_archive());
@@ -802,6 +805,20 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_web_provider(app.web_provider().unwrap_or_default().into());
     sync_editor(ui, app);
     ui.set_location_icon(icon_image(app::icon_for("", true), true));
+}
+
+/// The File pane's fact table rows, converted from `app`'s own
+/// [`app::FactRow`] to the Slint-generated struct `sync_ui` binds.
+fn fact_rows(app: &App) -> Vec<FactRow> {
+    app.file_facts()
+        .into_iter()
+        .map(|fact| FactRow {
+            label: fact.label.into(),
+            display_value: fact.display_value.into(),
+            full_value: fact.full_value.into(),
+            dim: fact.dim,
+        })
+        .collect()
 }
 
 /// Converts a row index to the `i32` Slint properties expect, saturating

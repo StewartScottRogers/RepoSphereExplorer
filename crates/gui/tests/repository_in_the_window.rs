@@ -220,15 +220,39 @@ fn settle_until_pane_says(ui: &MainWindow, app: &Rc<RefCell<App>>, marker: &str)
             app.tick();
             sync_ui(ui, &app);
         }
-        if ui.get_file_text().contains(marker) {
+        if pane_text(ui).contains(marker) {
             return;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
     panic!(
         "the File pane never showed {marker:?}; it reads:\n{}",
-        ui.get_file_text()
+        pane_text(ui)
     );
+}
+
+/// The File pane's fact table (#576) and its plain text, joined back into
+/// one string so the sentences this file has always asserted against -
+/// `"Branch: main"`, `"2 entries"` - still name what the pane shows,
+/// whichever of the two actually carries them now. `full-value` rather
+/// than `display-value`, so a test can still find a value the pane itself
+/// would elide.
+fn pane_text(ui: &MainWindow) -> String {
+    let facts: Vec<String> = ui
+        .get_file_facts()
+        .iter()
+        .map(|fact| {
+            if fact.label.is_empty() {
+                String::new()
+            } else if fact.label == "Entries" {
+                let count: u64 = fact.full_value.parse().unwrap_or_default();
+                format!("{count} {}", if count == 1 { "entry" } else { "entries" })
+            } else {
+                format!("{}: {}", fact.label, fact.full_value)
+            }
+        })
+        .collect();
+    format!("{}\n{}", facts.join("\n"), ui.get_file_text())
 }
 
 /// Presses `text` as a key with `modifiers` held. Slint tracks modifier
@@ -395,10 +419,12 @@ fn the_file_pane_reports_the_provider_branch_and_remote_of_the_selected_checkout
     // ".git" plus one tracked file: an entry count no other fixture here
     // shares, so waiting for it proves alpha's own preview arrived.
     select_and_wait(&ui, &app, "alpha", "2 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
-        pane.contains("Source control working copy"),
+        ui.get_file_facts()
+            .iter()
+            .any(|fact| fact.label == "Branch"),
         "the pane should lead with what the folder is; it reads:\n{pane}"
     );
     assert!(
@@ -441,7 +467,7 @@ fn a_checkout_with_a_changed_tracked_file_says_so_in_the_file_pane() {
     let (ui, app) = window_at(&root);
 
     select_and_wait(&ui, &app, "alpha", "2 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
         pane.contains("Working tree: 1 tracked file changed"),
@@ -464,7 +490,7 @@ fn a_checkout_with_no_remote_says_so_in_both_panes() {
     );
 
     select_and_wait(&ui, &app, "alpha", "2 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
         pane.contains("Remote: none configured"),
@@ -492,10 +518,12 @@ fn a_detached_head_says_so_rather_than_naming_a_branch() {
     let (ui, app) = window_at(&root);
 
     select_and_wait(&ui, &app, "alpha", "2 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
-        pane.contains("Source control working copy"),
+        ui.get_file_facts()
+            .iter()
+            .any(|fact| fact.label == "Branch"),
         "a detached head is still a working copy; it reads:\n{pane}"
     );
     assert!(
@@ -529,10 +557,12 @@ fn a_checkout_with_no_commits_is_still_a_checkout() {
 
     // Only ".git" is in it.
     select_and_wait(&ui, &app, "alpha", "1 entry");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
-        pane.contains("Source control working copy"),
+        ui.get_file_facts()
+            .iter()
+            .any(|fact| fact.label == "Branch"),
         "a fresh checkout should say what it is; it reads:\n{pane}"
     );
     assert!(
@@ -581,7 +611,7 @@ fn a_worktree_whose_git_marker_is_a_file_is_detected_as_a_checkout() {
     // ".git" file, the tracked file, and the untracked note: three, where
     // the clone beside it has two.
     select_and_wait(&ui, &app, "linked", "3 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
         pane.contains("Branch: side"),
@@ -597,7 +627,7 @@ fn a_worktree_reports_the_remote_its_clone_tracks() {
     let (ui, app) = window_at(&root);
 
     select_and_wait(&ui, &app, "linked", "3 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
         pane.contains("Remote: https://github.com/owner/clone.git"),
@@ -657,13 +687,13 @@ fn moving_from_one_checkout_to_another_reports_the_second_ones_branch() {
     // recognisable without looking at the fields under test.
     select_and_wait(&ui, &app, "alpha", "2 entries");
     assert!(
-        ui.get_file_text().contains("Branch: main"),
+        pane_text(&ui).contains("Branch: main"),
         "alpha is on main; the pane reads:\n{}",
-        ui.get_file_text()
+        pane_text(&ui)
     );
 
     select_and_wait(&ui, &app, "beta", "4 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
         pane.contains("Branch: release"),
@@ -696,15 +726,19 @@ fn leaving_a_checkout_for_a_plain_folder_stops_reporting_source_control() {
 
     select_and_wait(&ui, &app, "alpha", "2 entries");
     assert!(
-        ui.get_file_text().contains("Source control working copy"),
+        ui.get_file_facts()
+            .iter()
+            .any(|fact| fact.label == "Branch"),
         "the checkout was described first"
     );
 
     select_and_wait(&ui, &app, "notes", "3 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
-        !pane.contains("Source control working copy"),
+        !ui.get_file_facts()
+            .iter()
+            .any(|fact| fact.label == "Branch"),
         "a plain folder is not a working copy, and the panel from the folder \
          before it must not still be on screen; it reads:\n{pane}"
     );
@@ -755,7 +789,7 @@ fn coming_back_from_inside_a_checkout_still_reports_that_checkouts_branch() {
     );
 
     select_and_wait(&ui, &app, "beta", "4 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
         pane.contains("Branch: release"),
@@ -764,7 +798,7 @@ fn coming_back_from_inside_a_checkout_still_reports_that_checkouts_branch() {
     );
 
     select_and_wait(&ui, &app, "alpha", "2 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
         pane.contains("Branch: main"),
@@ -800,16 +834,21 @@ fn a_checkout_that_is_also_a_cargo_project_reports_both() {
     let (ui, app) = window_at(&root);
 
     select_and_wait(&ui, &app, "alpha", "2 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
-        pane.contains("Source control working copy"),
-        "the folder's own description comes first; it reads:\n{pane}"
+        pane.contains("Branch: main"),
+        "the folder's own facts come first; it reads:\n{pane}"
     );
     assert!(
         pane.contains("Package: demo 0.1.0"),
         "a folder plugin's lines are added below, never in place of, what the \
          folder already reports (D12); it reads:\n{pane}"
+    );
+    assert!(
+        pane.find("Branch: main").unwrap() < pane.find("Package: demo 0.1.0").unwrap(),
+        "and stay first, ahead of what a stacked folder plugin adds; it \
+         reads:\n{pane}"
     );
 }
 
@@ -978,12 +1017,73 @@ fn a_checkout_behind_its_remote_says_how_far_in_the_file_pane() {
     let (ui, app) = window_at(&root);
 
     select_and_wait(&ui, &app, "alpha", "2 entries");
-    let pane = ui.get_file_text().to_string();
+    let pane = pane_text(&ui);
 
     assert!(
-        pane.contains("Branch: main - 2 behind origin/main (never fetched)"),
-        "the pane should say how far behind its upstream the branch is; it \
-         reads:\n{pane}"
+        pane.contains("Branch: main"),
+        "the pane should still name the branch on its own row; it reads:\n{pane}"
+    );
+    assert!(
+        pane.contains("Tracking: 2 behind origin/main"),
+        "and how far behind its upstream it is, as its own row rather than \
+         glued onto the branch (#576); it reads:\n{pane}"
+    );
+    assert!(
+        pane.contains("Last fetched: never"),
+        "and when, also as its own row; it reads:\n{pane}"
+    );
+}
+
+#[test]
+fn the_fact_table_shows_each_label_once_with_tracking_and_last_fetched_apart() {
+    let _serial = serially();
+    let root = scratch("fact-table");
+    let alpha = checkout(
+        &root,
+        "alpha",
+        "main",
+        Some("https://github.com/owner/alpha.git"),
+        1,
+    );
+    git(&alpha, &["config", "branch.main.remote", "origin"]);
+    git(&alpha, &["config", "branch.main.merge", "refs/heads/main"]);
+    git(&alpha, &["update-ref", "refs/remotes/origin/main", "main"]);
+    let (ui, app) = window_at(&root);
+
+    select_and_wait(&ui, &app, "alpha", "2 entries");
+    let facts = ui.get_file_facts();
+
+    for label in [
+        "Provider",
+        "Branch",
+        "Tracking",
+        "Last fetched",
+        "Remote",
+        "Working tree",
+    ] {
+        let count = facts.iter().filter(|fact| fact.label == label).count();
+        assert_eq!(
+            count, 1,
+            "{label} should appear exactly once, not {count}: {facts:?}"
+        );
+    }
+
+    let tracking = facts
+        .iter()
+        .find(|fact| fact.label == "Tracking")
+        .expect("a tracked branch has a Tracking row");
+    let fetched = facts
+        .iter()
+        .find(|fact| fact.label == "Last fetched")
+        .expect("and its own Last fetched row");
+    assert_ne!(
+        tracking.full_value, fetched.full_value,
+        "the two rows should say different things, not repeat one glued sentence"
+    );
+    assert!(
+        tracking.full_value.contains("up to date with origin/main"),
+        "{:?}",
+        tracking.full_value
     );
 }
 

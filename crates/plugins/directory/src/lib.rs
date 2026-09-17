@@ -10,11 +10,46 @@ pub mod repository;
 pub mod status;
 pub mod tracking;
 
-use plugin_api::{Icon, PluginCore, PluginPresentation};
+use plugin_api::{Fact, Icon, PluginCore, PluginPresentation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 use std::time::SystemTime;
+
+/// How far the age of a fetch has to be before it is too old to read the
+/// comparison measured against it as current (#576).
+const STALE_FETCH: std::time::Duration = std::time::Duration::from_hours(30 * 24);
+
+/// How a branch stands against its upstream: `up to date with origin/main`,
+/// `2 ahead, 5 behind origin/main`, `no upstream`.
+///
+/// Carries no word of when this was measured - that is [`tracking_summary`]
+/// and the File pane's own "Last fetched" row's job - because nothing here
+/// fetches, and a bare comparison is only ever true as of some fetch.
+#[must_use]
+pub fn tracking_comparison(tracking: &tracking::Tracking) -> String {
+    use tracking::{Count, Upstream};
+
+    let count = |count: &Count| match count {
+        Count::Exact(n) => n.to_string(),
+        Count::AtLeast(n) => format!("{n}+"),
+    };
+    match &tracking.upstream {
+        Upstream::None => "no upstream".to_owned(),
+        Upstream::NotFetched { name } => format!("{name} not fetched yet"),
+        Upstream::Unreadable { name } => format!("cannot compare with {name}"),
+        Upstream::Compared {
+            name,
+            ahead,
+            behind,
+        } => match (ahead, behind) {
+            (Count::Exact(0), Count::Exact(0)) => format!("up to date with {name}"),
+            (ahead, Count::Exact(0)) => format!("{} ahead of {name}", count(ahead)),
+            (Count::Exact(0), behind) => format!("{} behind {name}", count(behind)),
+            (ahead, behind) => format!("{} ahead, {} behind {name}", count(ahead), count(behind)),
+        },
+    }
+}
 
 /// How a branch stands against its upstream, for the Branch line:
 /// `2 ahead, 5 behind origin/main (as of last fetch, 3 days ago)`.
@@ -25,12 +60,6 @@ use std::time::SystemTime;
 /// fix the clock.
 #[must_use]
 pub fn tracking_summary(tracking: &tracking::Tracking, now: SystemTime) -> String {
-    use tracking::{Count, Upstream};
-
-    let count = |count: &Count| match count {
-        Count::Exact(n) => n.to_string(),
-        Count::AtLeast(n) => format!("{n}+"),
-    };
     let fetched = match tracking.last_fetch {
         Some(at) => format!(
             "as of last fetch, {}",
@@ -38,25 +67,11 @@ pub fn tracking_summary(tracking: &tracking::Tracking, now: SystemTime) -> Strin
         ),
         None => "never fetched".to_owned(),
     };
-    match &tracking.upstream {
-        Upstream::None => "no upstream".to_owned(),
-        Upstream::NotFetched { name } => format!("{name} not fetched yet"),
-        Upstream::Unreadable { name } => format!("cannot compare with {name}"),
-        Upstream::Compared {
-            name,
-            ahead,
-            behind,
-        } => {
-            let comparison = match (ahead, behind) {
-                (Count::Exact(0), Count::Exact(0)) => format!("up to date with {name}"),
-                (ahead, Count::Exact(0)) => format!("{} ahead of {name}", count(ahead)),
-                (Count::Exact(0), behind) => format!("{} behind {name}", count(behind)),
-                (ahead, behind) => {
-                    format!("{} ahead, {} behind {name}", count(ahead), count(behind))
-                }
-            };
-            format!("{comparison} ({fetched})")
-        }
+    let comparison = tracking_comparison(tracking);
+    if matches!(tracking.upstream, tracking::Upstream::Compared { .. }) {
+        format!("{comparison} ({fetched})")
+    } else {
+        comparison
     }
 }
 
@@ -135,6 +150,27 @@ fn entries_noun(count: u64) -> &'static str {
     if count == 1 { "entry" } else { "entries" }
 }
 
+/// A byte count the way the Contents pane's Size column formats one, e.g.
+/// `17.0 KB` rather than `17357 bytes total` (#576).
+#[allow(clippy::cast_precision_loss)]
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = "B";
+    for candidate in UNITS {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = candidate;
+    }
+    if unit == "B" {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {unit}")
+    }
+}
+
 /// The directory-as-file plugin's presentation half.
 #[derive(Debug, Default)]
 pub struct DirectoryPresentation;
@@ -205,12 +241,70 @@ impl PluginPresentation for DirectoryPresentation {
         lines.push(format!("{} bytes total", view.total_size));
         lines
     }
+
+    fn facts(&self, data: &serde_json::Value) -> Vec<Fact> {
+        let Ok(view) = serde_json::from_value::<DirectoryView>(data.clone()) else {
+            return Vec::new();
+        };
+
+        let mut facts = Vec::new();
+        if let Some(repository) = &view.repository {
+            if let Some(provider) = &repository.provider {
+                facts.push(Fact::new("Provider", provider));
+            }
+            match &repository.branch {
+                Some(branch) => facts.push(Fact::new("Branch", branch)),
+                None => facts.push(Fact::new("Branch", "none checked out (detached head)")),
+            }
+            if let Some(tracking) = &repository.tracking {
+                facts.push(Fact::new("Tracking", tracking_comparison(tracking)));
+                let (value, stale) = match tracking.last_fetch {
+                    Some(at) => {
+                        let elapsed = SystemTime::now().duration_since(at).unwrap_or_default();
+                        (age(elapsed), elapsed > STALE_FETCH)
+                    }
+                    None => ("never".to_owned(), true),
+                };
+                facts.push(Fact {
+                    label: "Last fetched".to_owned(),
+                    value,
+                    dim: stale,
+                });
+            }
+            facts.push(Fact::new(
+                "Remote",
+                repository.remote.as_deref().unwrap_or("none configured"),
+            ));
+            facts.push(Fact::new(
+                "Working tree",
+                repository.status.as_ref().map_or_else(
+                    || "could not read the index".to_owned(),
+                    status::WorkingTree::summary,
+                ),
+            ));
+            // A blank row, separating the working copy's own facts from
+            // the folder facts that follow - not repository facts, and so
+            // drawn dim rather than sharing the table's full weight.
+            facts.push(Fact::new("", ""));
+        }
+        facts.push(Fact {
+            label: "Entries".to_owned(),
+            value: view.entry_count.to_string(),
+            dim: true,
+        });
+        facts.push(Fact {
+            label: "Total size".to_owned(),
+            value: format_size(view.total_size),
+            dim: true,
+        });
+        facts
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DirectoryCore, DirectoryPresentation, DirectoryView};
-    use plugin_api::{PluginCore, PluginPresentation};
+    use plugin_api::{Fact, PluginCore, PluginPresentation};
 
     fn unique_temp_dir(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("rse-plugin-dir-test-{}-{name}", std::process::id()))
@@ -475,6 +569,181 @@ mod tests {
         assert_eq!(
             line,
             "up to date with origin/main (as of last fetch, just now)"
+        );
+    }
+
+    // ---- the File pane's fact table (#576) ------------------------------
+
+    fn view_with(repository: Option<super::repository::Repository>) -> serde_json::Value {
+        serde_json::to_value(DirectoryView {
+            entry_count: 12,
+            total_size: 17357,
+            repository,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn facts_for_a_checkout_with_an_upstream_ahead_and_behind() {
+        let data = view_with(Some(super::repository::Repository {
+            provider: Some("github.com".to_owned()),
+            branch: Some("main".to_owned()),
+            remote: Some("https://github.com/owner/name.git".to_owned()),
+            tracking: Some(super::tracking::Tracking {
+                branch: "main".to_owned(),
+                upstream: compared(
+                    super::tracking::Count::Exact(2),
+                    super::tracking::Count::Exact(5),
+                ),
+                last_fetch: Some(
+                    std::time::SystemTime::now() - std::time::Duration::from_hours(3 * 24),
+                ),
+            }),
+            status: Some(super::status::WorkingTree {
+                changed: 0,
+                examined: 20,
+                partial: false,
+            }),
+        }));
+
+        let facts = DirectoryPresentation.facts(&data);
+
+        assert_eq!(
+            facts,
+            vec![
+                Fact::new("Provider", "github.com"),
+                Fact::new("Branch", "main"),
+                Fact::new("Tracking", "2 ahead, 5 behind origin/main"),
+                Fact {
+                    label: "Last fetched".to_owned(),
+                    value: "3 days ago".to_owned(),
+                    dim: false,
+                },
+                Fact::new("Remote", "https://github.com/owner/name.git"),
+                Fact::new("Working tree", "no uncommitted changes to tracked files"),
+                Fact::new("", ""),
+                Fact {
+                    label: "Entries".to_owned(),
+                    value: "12".to_owned(),
+                    dim: true,
+                },
+                Fact {
+                    label: "Total size".to_owned(),
+                    value: "17.0 KB".to_owned(),
+                    dim: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn facts_for_a_checkout_with_no_upstream_and_never_fetched() {
+        let data = view_with(Some(super::repository::Repository {
+            provider: None,
+            branch: Some("trunk".to_owned()),
+            remote: None,
+            tracking: Some(super::tracking::Tracking {
+                branch: "trunk".to_owned(),
+                upstream: super::tracking::Upstream::None,
+                last_fetch: None,
+            }),
+            status: None,
+        }));
+
+        let facts = DirectoryPresentation.facts(&data);
+
+        assert!(
+            !facts.iter().any(|fact| fact.label == "Provider"),
+            "no remote means no provider row: {facts:?}"
+        );
+        assert!(facts.contains(&Fact::new("Branch", "trunk")));
+        assert!(facts.contains(&Fact::new("Tracking", "no upstream")));
+        assert!(
+            facts.contains(&Fact {
+                label: "Last fetched".to_owned(),
+                value: "never".to_owned(),
+                dim: true,
+            }),
+            "a fetch that never happened is at least as stale as an old one: {facts:?}"
+        );
+        assert!(facts.contains(&Fact::new("Remote", "none configured")));
+        assert!(facts.contains(&Fact::new("Working tree", "could not read the index")));
+    }
+
+    #[test]
+    fn facts_for_a_detached_head_names_no_branch_and_no_tracking() {
+        let data = view_with(Some(super::repository::Repository {
+            provider: Some("gitlab.com".to_owned()),
+            branch: None,
+            remote: Some("git@gitlab.com:group/project.git".to_owned()),
+            tracking: None,
+            status: None,
+        }));
+
+        let facts = DirectoryPresentation.facts(&data);
+
+        assert!(facts.contains(&Fact::new("Branch", "none checked out (detached head)")));
+        assert!(
+            !facts.iter().any(|fact| fact.label == "Tracking"),
+            "a detached head has no branch to compare with an upstream: {facts:?}"
+        );
+        assert!(
+            !facts.iter().any(|fact| fact.label == "Last fetched"),
+            "and so nothing to say when it was last fetched: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_fetch_older_than_thirty_days_reads_as_stale() {
+        let data = view_with(Some(super::repository::Repository {
+            provider: None,
+            branch: Some("main".to_owned()),
+            remote: None,
+            tracking: Some(super::tracking::Tracking {
+                branch: "main".to_owned(),
+                upstream: compared(
+                    super::tracking::Count::Exact(0),
+                    super::tracking::Count::Exact(0),
+                ),
+                last_fetch: Some(
+                    std::time::SystemTime::now() - std::time::Duration::from_hours(40 * 24),
+                ),
+            }),
+            status: None,
+        }));
+
+        let facts = DirectoryPresentation.facts(&data);
+
+        let fetched = facts
+            .iter()
+            .find(|fact| fact.label == "Last fetched")
+            .expect("a tracked branch has a last-fetched row");
+        assert!(
+            fetched.dim,
+            "an old \"up to date\" should not be read as current: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_plain_folders_facts_are_only_the_folder_ones() {
+        let data = view_with(None);
+
+        let facts = DirectoryPresentation.facts(&data);
+
+        assert_eq!(
+            facts,
+            vec![
+                Fact {
+                    label: "Entries".to_owned(),
+                    value: "12".to_owned(),
+                    dim: true,
+                },
+                Fact {
+                    label: "Total size".to_owned(),
+                    value: "17.0 KB".to_owned(),
+                    dim: true,
+                },
+            ]
         );
     }
 }
