@@ -298,15 +298,21 @@ jobs:
             exit 0
           fi
 
-          for i in $(seq 1 60); do
+          # Two hours. A pull request takes about forty minutes to land -
+          # a twenty-five minute test run, then the review - and a review
+          # that has to be re-run takes longer. Day shift is meant to pick
+          # up anything this misses, but GitHub runs its ten-minute schedule
+          # when it likes: on 2026-09-17 at 06:45, 08:33 and 12:12, and not
+          # between, so after #607 the chain sat idle until started by hand.
+          for i in $(seq 1 240); do
             open_prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq 'length')
             if [ "$open_prs" -eq 0 ]; then
               break
             fi
-            echo "Waiting on $open_prs open auto-merge PR(s) to resolve (attempt $i/60)..."
+            echo "Waiting on $open_prs open auto-merge PR(s) to resolve (attempt $i/240)..."
             sleep 30
           done
-          # Still open after half an hour: do not start the next shift anyway.
+          # Still open after two hours: do not start the next shift anyway.
           # It would branch from a main without that pull request and
           # conflict with it (#597). Day shift checks every ten minutes and
           # dispatches the next shift once nothing is open.
