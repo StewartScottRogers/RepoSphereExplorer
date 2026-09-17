@@ -20,7 +20,7 @@ pub mod editor;
 
 pub use app::PRESENTATION_PLUGINS;
 
-use app::App;
+use app::{App, RepositoryMark};
 use plugin_api::{Class, Graphic, Icon};
 use slint::ComponentHandle as _;
 use slint::{Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
@@ -28,28 +28,55 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// [`ICON_CACHE`]'s key: a plugin's label and tint, and the branch mark (if
+/// any) drawn on top of them.
+type IconCacheKey = (&'static str, u32, Option<RepositoryMark>);
+
 thread_local! {
-    /// Rendered icons, keyed by the label and tint they were drawn from.
-    /// A folder of a thousand files holds a handful of distinct types, so
-    /// this turns per-row rasterisation into per-type.
-    static ICON_CACHE: RefCell<HashMap<(&'static str, u32), Image>> =
+    /// Rendered icons, keyed by [`IconCacheKey`]. A folder of a thousand
+    /// files holds a handful of distinct types, so this turns per-row
+    /// rasterisation into per-type.
+    static ICON_CACHE: RefCell<HashMap<IconCacheKey, Image>> =
         RefCell::new(HashMap::new());
+}
+
+/// The small provider badge drawn in a working copy folder icon's
+/// bottom-right corner (#579): a filled circle in the provider's brand
+/// colour, carrying a plain branch glyph rather than the provider's
+/// trademarked logo. The glyph is the same shape for every provider, so
+/// the badge reads as "working copy" by shape alone - the fact GUIDANCE.md
+/// §2.4 asks for - even to a reader who cannot tell the fill colour from a
+/// plain folder's tint; the colour then names *which* provider, for a
+/// reader who can.
+fn repository_mark_badge(mark: RepositoryMark) -> String {
+    let tint = match mark {
+        RepositoryMark::GitHub => "#24292f",
+        RepositoryMark::GitLab => "#e24329",
+        RepositoryMark::Bitbucket => "#0052cc",
+        RepositoryMark::AzureDevOps => "#0078d4",
+        RepositoryMark::Generic => "#57606a",
+    };
+    format!(
+        "<circle cx='24' cy='23' r='7.5' fill='{tint}' stroke='#ffffff' stroke-width='1.2'/>         <line x1='21' y1='19' x2='21' y2='27' stroke='#ffffff' stroke-width='1.3' stroke-linecap='round'/>         <path d='M21 23c3 0 4.5-1.5 4.5-3' fill='none' stroke='#ffffff' stroke-width='1.3' stroke-linecap='round'/>         <circle cx='21' cy='19' r='1.3' fill='#ffffff'/>         <circle cx='21' cy='27' r='1.3' fill='#ffffff'/>         <circle cx='25.5' cy='19.4' r='1.3' fill='#ffffff'/>"
+    )
 }
 
 /// Draws `icon` as a document sheet with a folded corner and a coloured
 /// band carrying the type's label, or as a folder for the directory plugin.
 /// The plugin owns the label and the colour (GUIDANCE.md §3); the shape is
 /// shared, so a listing reads as one set rather than eighty-one drawings.
-fn icon_svg(icon: Icon, folder: bool) -> String {
+/// `mark`, only ever set on a folder, adds the working-copy badge (#579).
+fn icon_svg(icon: Icon, folder: bool, mark: Option<RepositoryMark>) -> String {
     let (r, g, b) = (
         (icon.tint >> 16) & 0xff,
         (icon.tint >> 8) & 0xff,
         icon.tint & 0xff,
     );
     let tint = format!("#{r:02x}{g:02x}{b:02x}");
+    let badge = mark.map(repository_mark_badge).unwrap_or_default();
     if folder {
         return format!(
-            "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'>             <path d='M2 7a2 2 0 0 1 2-2h8l3 3h11a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z'              fill='{tint}'/>             <path d='M2 12h28v13a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z' fill='{tint}'              fill-opacity='0.75'/></svg>"
+            "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'>             <path d='M2 7a2 2 0 0 1 2-2h8l3 3h11a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z'              fill='{tint}'/>             <path d='M2 12h28v13a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z' fill='{tint}'              fill-opacity='0.75'/>{badge}</svg>"
         );
     }
     // A type with no label is the generic document: a plain sheet, no band.
@@ -72,7 +99,7 @@ fn icon_svg(icon: Icon, folder: bool) -> String {
         )
     };
     format!(
-        "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'>         <path d='M6 2h13l7 7v21a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z'          fill='#ffffff' stroke='#9ca3af' stroke-width='1.2'/>         <path d='M19 2l7 7h-7z' fill='#d1d5db'/>{band}</svg>"
+        "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'>         <path d='M6 2h13l7 7v21a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z'          fill='#ffffff' stroke='#9ca3af' stroke-width='1.2'/>         <path d='M19 2l7 7h-7z' fill='#d1d5db'/>{band}{badge}</svg>"
     )
 }
 
@@ -98,12 +125,12 @@ fn graphic_image(graphic: &Graphic) -> Option<Image> {
 }
 
 /// The rendered image for `icon`, drawing it the first time it is asked for.
-fn icon_image(icon: Icon, folder: bool) -> Image {
+fn icon_image(icon: Icon, folder: bool, mark: Option<RepositoryMark>) -> Image {
     ICON_CACHE.with_borrow_mut(|cache| {
         cache
-            .entry((icon.label, icon.tint))
+            .entry((icon.label, icon.tint, mark))
             .or_insert_with(|| {
-                let svg = icon_svg(icon, folder);
+                let svg = icon_svg(icon, folder, mark);
                 Image::load_from_svg_data(svg.as_bytes()).unwrap_or_default()
             })
             .clone()
@@ -754,18 +781,26 @@ pub fn wire_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     }
 }
 
+/// A tree row's application state, rendered into the Slint struct the pane
+/// draws: the icon carries the branch mark (#579), and `is_repository`
+/// tells the pane's name text to match it.
+fn folder_row_view(row: app::FolderRow) -> FolderRow {
+    FolderRow {
+        icon: icon_image(row.icon, true, row.mark),
+        name: row.name.into(),
+        depth: row_index(row.depth),
+        expandable: row.expandable,
+        expanded: row.expanded,
+        is_repository: row.mark.is_some(),
+    }
+}
+
 /// Copies `app`'s current state into `ui`'s bound properties.
 pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_folder_rows(ModelRc::new(VecModel::from(
         app.folder_rows()
             .into_iter()
-            .map(|row| FolderRow {
-                icon: icon_image(row.icon, true),
-                name: row.name.into(),
-                depth: row_index(row.depth),
-                expandable: row.expandable,
-                expanded: row.expanded,
-            })
+            .map(folder_row_view)
             .collect::<Vec<_>>(),
     )));
     let folder_moved = ui.get_folder_selected() != row_index(app.folder_selected());
@@ -775,7 +810,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             .into_iter()
             .enumerate()
             .map(|(index, row)| ContentRow {
-                icon: icon_image(row.icon, row.is_dir),
+                icon: icon_image(row.icon, row.is_dir, row.mark),
                 is_repository: row.is_repository,
                 name: row.name.into(),
                 size: row.size.into(),
@@ -865,7 +900,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_can_open(app.can_open());
     ui.set_web_provider(app.web_provider().unwrap_or_default().into());
     sync_editor(ui, app);
-    ui.set_location_icon(icon_image(app::icon_for("", true), true));
+    ui.set_location_icon(icon_image(app::icon_for("", true), true, None));
 }
 
 /// The File pane's fact table rows, converted from `app`'s own
@@ -900,9 +935,50 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MIN_CONTENTS_WIDTH, MIN_FOLDERS_WIDTH, ROW_HEIGHT, fit_pane_widths, scroll_offset_for,
-        visible_rows,
+        MIN_CONTENTS_WIDTH, MIN_FOLDERS_WIDTH, ROW_HEIGHT, RepositoryMark, fit_pane_widths,
+        icon_svg, scroll_offset_for, visible_rows,
     };
+    use crate::app::icon_for;
+
+    /// A plain folder's icon is unchanged by #579: nothing this project
+    /// draws for the common case - a folder with no repository below it -
+    /// should move.
+    #[test]
+    fn a_plain_folder_carries_no_badge() {
+        let plain = icon_svg(icon_for("src", true), true, None);
+        assert!(
+            !plain.contains("circle"),
+            "a plain folder should draw no badge: {plain}"
+        );
+    }
+
+    /// Each known provider, one with no remote, and a plain folder all draw
+    /// a distinct icon: the acceptance check for #579.
+    #[test]
+    fn a_working_copy_draws_a_badge_that_differs_by_provider() {
+        let folder = icon_for("src", true);
+        let plain = icon_svg(folder, true, None);
+        let marks = [
+            RepositoryMark::GitHub,
+            RepositoryMark::GitLab,
+            RepositoryMark::Bitbucket,
+            RepositoryMark::AzureDevOps,
+            RepositoryMark::Generic,
+        ];
+        let mut drawn: Vec<String> = marks
+            .into_iter()
+            .map(|mark| icon_svg(folder, true, Some(mark)))
+            .collect();
+        drawn.push(plain);
+        for (index, icon) in drawn.iter().enumerate() {
+            for (other_index, other) in drawn.iter().enumerate() {
+                assert!(
+                    index == other_index || icon != other,
+                    "icon {index} and icon {other_index} should differ"
+                );
+            }
+        }
+    }
 
     #[test]
     fn the_rows_on_screen_are_the_ones_any_part_of_which_shows() {

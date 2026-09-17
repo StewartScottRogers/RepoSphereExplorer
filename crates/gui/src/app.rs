@@ -236,6 +236,42 @@ pub fn icon_for(name: &str, is_dir: bool) -> Icon {
         .map_or(UNKNOWN_ICON, |plugin| plugin.icon())
 }
 
+/// The small branch mark a working copy's folder icon carries (#579),
+/// naming the provider where one is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RepositoryMark {
+    /// `github.com`.
+    GitHub,
+    /// `gitlab.com`.
+    GitLab,
+    /// `bitbucket.org`.
+    Bitbucket,
+    /// `dev.azure.com`.
+    AzureDevOps,
+    /// A checkout with no remote, or a host this project does not name -
+    /// a self-hosted GitLab or Bitbucket instance included. Still a
+    /// working copy, just not one of the four named providers.
+    Generic,
+}
+
+/// The mark drawn on a folder's icon, from what the listing already read
+/// (GUIDANCE.md §2.5): `None` for a plain folder, so a reader who cannot
+/// tell the Contents pane's accent colour from its foreground text still
+/// sees a working copy drawn differently (GUIDANCE.md §2.4).
+#[must_use]
+pub fn repository_mark(is_repository: bool, provider: Option<&str>) -> Option<RepositoryMark> {
+    if !is_repository {
+        return None;
+    }
+    Some(match provider {
+        Some("github.com") => RepositoryMark::GitHub,
+        Some("gitlab.com") => RepositoryMark::GitLab,
+        Some("bitbucket.org") => RepositoryMark::Bitbucket,
+        Some("dev.azure.com") => RepositoryMark::AzureDevOps,
+        _ => RepositoryMark::Generic,
+    })
+}
+
 /// The picture a plugin offers for `data`, if its type is one.
 #[must_use]
 pub fn present_graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic> {
@@ -315,6 +351,11 @@ pub struct FolderNode {
     pub expanded: bool,
     /// Subdirectories, once fetched.
     pub children: Option<Vec<FolderNode>>,
+    /// Whether this folder is a source control working copy (#579), from
+    /// the same listing that populated `children`.
+    pub is_repository: bool,
+    /// The working copy's provider, where the listing found one.
+    pub provider: Option<String>,
 }
 
 impl FolderNode {
@@ -330,6 +371,8 @@ impl FolderNode {
             name,
             expanded: true,
             children: None,
+            is_repository: false,
+            provider: None,
         }
     }
 
@@ -362,12 +405,23 @@ impl FolderNode {
                 .iter()
                 .filter(|entry| entry.is_dir)
                 .map(|entry| {
-                    previous.remove(&entry.name).unwrap_or_else(|| FolderNode {
+                    let mut node = previous.remove(&entry.name).unwrap_or_else(|| FolderNode {
                         path: path.join(&entry.name),
                         name: entry.name.clone(),
                         expanded: false,
                         children: None,
-                    })
+                        is_repository: false,
+                        provider: None,
+                    });
+                    // Read fresh each time rather than only on first sight:
+                    // a folder can turn into a working copy (or stop being
+                    // one) between listings, same as its children can.
+                    node.is_repository = entry.repository.is_some();
+                    node.provider = entry
+                        .repository
+                        .as_ref()
+                        .and_then(|repository| repository.provider.clone());
+                    node
                 })
                 .collect(),
         );
@@ -785,6 +839,9 @@ pub struct FolderRow {
     pub expandable: bool,
     /// Whether that chevron points down.
     pub expanded: bool,
+    /// The branch mark this row's icon carries, or `None` for a plain
+    /// folder (#579).
+    pub mark: Option<RepositoryMark>,
 }
 
 /// How far one level of the tree indents, in pixels.
@@ -889,6 +946,7 @@ fn found_row(found_match: &protocol::NameMatch) -> ContentRow {
         kind: repository,
         modified: String::new(),
         is_repository: false,
+        mark: None,
     }
 }
 
@@ -1163,6 +1221,9 @@ pub struct ContentRow {
     /// the warning colour rather than the neutral one the other markers
     /// use.
     pub marker_warning: bool,
+    /// The branch mark this row's icon carries, or `None` for a plain
+    /// folder or a file (#579).
+    pub mark: Option<RepositoryMark>,
 }
 
 /// One row of the File pane's fact table (#576).
@@ -3154,6 +3215,8 @@ impl App {
                     // of every empty folder in the listing.
                     expandable: node.is_some_and(|n| n.children.is_some()),
                     expanded: node.is_some_and(|n| n.expanded),
+                    mark: node
+                        .and_then(|n| repository_mark(n.is_repository, n.provider.as_deref())),
                 }
             })
             .collect()
@@ -3320,6 +3383,13 @@ impl App {
                     kind: format_kind_of(&entry.name, entry.is_dir, entry.repository.as_ref()),
                     modified: format_timestamp(entry.modified),
                     is_repository: entry.repository.is_some(),
+                    mark: repository_mark(
+                        entry.repository.is_some(),
+                        entry
+                            .repository
+                            .as_ref()
+                            .and_then(|r| r.provider.as_deref()),
+                    ),
                     branch: entry
                         .repository
                         .as_ref()
@@ -3814,9 +3884,9 @@ mod tests {
     };
 
     use super::{
-        App, CANNOT_TELL_MARKER, CHANGED_MARKER, NOT_KNOWN_YET_MARKER, PathBuf, UNKNOWN_ICON,
-        chevron_hit, format_kind, format_kind_of, format_timestamp, icon_for,
-        strip_verbatim_prefix,
+        App, CANNOT_TELL_MARKER, CHANGED_MARKER, NOT_KNOWN_YET_MARKER, PathBuf, RepositoryMark,
+        UNKNOWN_ICON, chevron_hit, format_kind, format_kind_of, format_timestamp, icon_for,
+        repository_mark, strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, Response};
@@ -5839,6 +5909,44 @@ third",
 
         assert!(rows[0].is_repository);
         assert_eq!(rows[0].kind, "Git repository");
+    }
+
+    /// A working copy's icon carries the mark for each known provider, the
+    /// generic mark for one with no remote (or a host this project does
+    /// not name), and no mark at all for a plain folder (#579).
+    #[test]
+    fn the_mark_names_the_provider_or_falls_back_to_generic() {
+        assert_eq!(
+            repository_mark(true, Some("github.com")),
+            Some(RepositoryMark::GitHub)
+        );
+        assert_eq!(
+            repository_mark(true, Some("gitlab.com")),
+            Some(RepositoryMark::GitLab)
+        );
+        assert_eq!(
+            repository_mark(true, Some("bitbucket.org")),
+            Some(RepositoryMark::Bitbucket)
+        );
+        assert_eq!(
+            repository_mark(true, Some("dev.azure.com")),
+            Some(RepositoryMark::AzureDevOps)
+        );
+        assert_eq!(
+            repository_mark(true, Some("git.example.com")),
+            Some(RepositoryMark::Generic),
+            "a host this project does not name still reads as a working copy"
+        );
+        assert_eq!(
+            repository_mark(true, None),
+            Some(RepositoryMark::Generic),
+            "a checkout with no remote is still a working copy"
+        );
+        assert_eq!(
+            repository_mark(false, None),
+            None,
+            "a plain folder carries no mark"
+        );
     }
 
     #[test]

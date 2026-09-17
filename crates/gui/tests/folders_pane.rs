@@ -21,6 +21,7 @@ fn row(name: &str, depth: i32, expandable: bool) -> FolderRow {
         depth,
         expandable,
         expanded: false,
+        is_repository: false,
     }
 }
 
