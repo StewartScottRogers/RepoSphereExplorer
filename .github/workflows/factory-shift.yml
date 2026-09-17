@@ -131,14 +131,18 @@ jobs:
           claude_args: |
             --max-turns ${{ inputs.max_turns || '150' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write"
-            --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*),Agent,Task"
+            --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"
           prompt: |
             You are the night shift of an unattended software factory.
 
-            Do the work yourself, in this session. The runner ends the job
-            the moment you stop, so anything handed to a helper agent or left
-            running in the background is killed unfinished. Run 35163388371
-            did that and pushed nothing.
+            Use a team of agents for the parts of the work order that can run
+            in parallel, but the runner ends this job the moment your own
+            turn ends, and every agent still working dies with it. So never
+            start an agent with `run_in_background`, and never end your turn
+            while any agent is still running: wait for each result, then
+            integrate, check, push and open the pull request yourself. Run
+            35163388371 handed #573 to a background agent, stopped, and
+            pushed nothing.
 
             Target issue: "${{ inputs.issue }}" (empty means: choose one yourself).
 
