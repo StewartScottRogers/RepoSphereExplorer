@@ -618,6 +618,10 @@ component ContentsPane inherits Rectangle {
     // While a search's results fill the pane, its columns hold a result's
     // repository and folder rather than a size, type and date.
     in property <bool> showing-found;
+    // Whether the Size column is worth drawing: a search's results keep
+    // their own columns regardless of this, and an ordinary listing hides
+    // it, giving its width to Name, until it holds a file (#578).
+    in property <bool> show-size-column: true;
     in property <bool> sort-ascending;
     callback sort-requested(int);
     // Whether the selected row previewed as an archive; Extract is greyed
@@ -689,7 +693,7 @@ component ContentsPane inherits Rectangle {
     // stretches into the rest, in both the header and every row, so the two
     // line up without either deriving a width from the pane's own width -
     // which would close a layout binding loop.
-    property <length> size-column: 80px;
+    property <length> size-column: show-size-column ? 80px : 0px;
     property <length> kind-column: 90px;
     property <length> modified-column: 118px;
     property <length> header-height: 20px;
@@ -741,7 +745,7 @@ component ContentsPane inherits Rectangle {
                 ColumnHeader {
                     width: size-column;
                     horizontal-stretch: 0;
-                    label: showing-found ? "" : "Size";
+                    label: showing-found || !show-size-column ? "" : "Size";
                     align-right: true;
                     active: sort-column == 1;
                     ascending: sort-ascending;
@@ -1522,6 +1526,10 @@ export component MainWindow inherits Window {
     in property <string> web-provider;
     callback open-web-requested();
     in property <bool> showing-found;
+    // Whether the current listing holds a file, so the Size column - blank
+    // on every row otherwise - is drawn only once there is a size to show
+    // (#578).
+    in property <bool> content-size-column-visible: true;
     callback find-requested();
     in-out property <string> edit-text;
     // The coloured surface's half of the editor. `editing-in-colour` is
@@ -2004,6 +2012,7 @@ export component MainWindow inherits Window {
                     prompt-editable: content-prompt-editable;
                     sort-column: showing-found ? -1 : content-sort-column;
                     showing-found: showing-found;
+                    show-size-column: content-size-column-visible;
                     sort-ascending: content-sort-ascending;
                     sort-requested(c) => { content-sort-requested(c); }
                     new-folder-requested => { new-folder-requested(); }

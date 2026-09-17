@@ -646,6 +646,13 @@ fn format_kind(name: &str, is_dir: bool) -> String {
     format_kind_of(name, is_dir, None)
 }
 
+/// How many characters fit in the Type column's default width. Not derived
+/// from a measured pixel width, for the same reason [`FACT_VALUE_BUDGET`]
+/// is not: the column's own `overflow: elide` (`kind-column` in app.slint)
+/// stays the safety net for a narrower pane, rather than the first line of
+/// defence (#578).
+const KIND_COLUMN_BUDGET: usize = 22;
+
 /// As [`format_kind`], but for an entry the service has told us something
 /// about as a source control working copy.
 ///
@@ -655,15 +662,25 @@ fn format_kind(name: &str, is_dir: bool) -> String {
 /// (GUIDANCE.md 2.5).
 fn format_kind_of(name: &str, is_dir: bool, repository: Option<&RepositoryInfo>) -> String {
     if let Some(repository) = repository {
-        // The provider alone, because the Type column is narrow and
-        // "Repository (github.com)" elides to "Repository (git..." - which
-        // keeps the half a reader already knows from the row's own styling
-        // and throws away the half they do not. A checkout with no remote
-        // has no provider to name, and says what it is instead.
-        return repository
-            .provider
-            .clone()
-            .unwrap_or_else(|| "Repository".to_owned());
+        return match &repository.provider {
+            // "Git repository · github.com" names both halves of the fact,
+            // but a long provider address can still overrun the column
+            // that "Repository (github.com)" already overran (#578) - so
+            // it gives way to the shorter "Repository · github.com",
+            // which keeps the provider and drops only the word that was
+            // already said by the row's own accent colour and bold name.
+            Some(provider) => {
+                let named = format!("Git repository · {provider}");
+                if named.chars().count() <= KIND_COLUMN_BUDGET {
+                    named
+                } else {
+                    format!("Repository · {provider}")
+                }
+            }
+            // A checkout with no remote has no provider to name, and says
+            // what it is instead.
+            None => "Git repository".to_owned(),
+        };
     }
     if is_dir {
         return "File folder".to_owned();
@@ -3341,6 +3358,17 @@ impl App {
         self.found.is_some()
     }
 
+    /// Whether the Contents pane should draw its Size column: a search's
+    /// results keep their own columns regardless (#578), and an ordinary
+    /// listing draws it only once it holds a file - every row is a folder
+    /// in the common case of browsing a Repos Directory, where an empty,
+    /// fixed-width Size column only crowds out the Name and Type columns
+    /// for a fact no row has.
+    #[must_use]
+    pub fn content_size_column_visible(&self) -> bool {
+        self.found.is_some() || self.contents.iter().any(|entry| !entry.is_dir)
+    }
+
     /// Plants a search's answer, for a test that has one without a service.
     pub fn apply_find_result_for_test(&mut self, query: &str, response: Response) {
         self.apply_find_result(query, Ok(response));
@@ -3787,7 +3815,8 @@ mod tests {
 
     use super::{
         App, CANNOT_TELL_MARKER, CHANGED_MARKER, NOT_KNOWN_YET_MARKER, PathBuf, UNKNOWN_ICON,
-        chevron_hit, format_kind, format_timestamp, icon_for, strip_verbatim_prefix,
+        chevron_hit, format_kind, format_kind_of, format_timestamp, icon_for,
+        strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, Response};
@@ -4572,6 +4601,33 @@ third",
         assert_eq!(format_kind("main.rs", false), "RS file");
         assert_eq!(format_kind("archive.TAR", false), "TAR file");
         assert_eq!(format_kind("LICENSE", false), "File");
+    }
+
+    #[test]
+    fn the_type_column_names_a_working_copy_and_its_provider() {
+        let with_provider = RepositoryInfo {
+            provider: Some("github.com".to_owned()),
+            branch: None,
+            remote: None,
+        };
+        assert_eq!(
+            format_kind_of("repo", true, Some(&with_provider)),
+            "Repository · github.com",
+            "the full \"Git repository · github.com\" still overruns the column, \
+             so the shorter form keeps the provider"
+        );
+
+        let without_provider = RepositoryInfo {
+            provider: None,
+            branch: None,
+            remote: None,
+        };
+        assert_eq!(
+            format_kind_of("repo", true, Some(&without_provider)),
+            "Git repository"
+        );
+
+        assert_eq!(format_kind_of("plain", true, None), "File folder");
     }
 
     #[test]
@@ -5752,7 +5808,7 @@ third",
         let rows = app.content_rows();
 
         assert!(rows[0].is_repository, "a checkout should be marked as one");
-        assert_eq!(rows[0].kind, "github.com");
+        assert_eq!(rows[0].kind, "Repository · github.com");
         assert!(
             !rows[1].is_repository,
             "an ordinary folder is not a checkout"
@@ -5782,7 +5838,7 @@ third",
         let rows = app.content_rows();
 
         assert!(rows[0].is_repository);
-        assert_eq!(rows[0].kind, "Repository");
+        assert_eq!(rows[0].kind, "Git repository");
     }
 
     #[test]

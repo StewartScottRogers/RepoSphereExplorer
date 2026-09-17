@@ -389,7 +389,7 @@ fn a_checkout_is_marked_in_the_listing_and_a_plain_folder_is_not() {
     );
     assert_eq!(
         kind_of(&ui, "alpha"),
-        "github.com",
+        "Repository · github.com",
         "the Type column names the provider a checkout came from"
     );
     assert_eq!(
@@ -485,7 +485,7 @@ fn a_checkout_with_no_remote_says_so_in_both_panes() {
 
     assert_eq!(
         kind_of(&ui, "alpha"),
-        "Repository",
+        "Git repository",
         "a checkout with no remote has no provider to name, and says what it is"
     );
 
@@ -551,7 +551,7 @@ fn a_checkout_with_no_commits_is_still_a_checkout() {
     );
     assert_eq!(
         kind_of(&ui, "alpha"),
-        "github.com",
+        "Repository · github.com",
         "the provider comes from the remote, not from having commits"
     );
 
@@ -652,7 +652,7 @@ fn the_type_column_names_the_provider_of_a_worktree() {
 
     assert_eq!(
         kind_of(&ui, "linked"),
-        "github.com",
+        "Repository · github.com",
         "the clone beside it reads {:?}: two checkouts of the same GitHub \
          repository, and only one of them names the provider",
         kind_of(&ui, "clone")
