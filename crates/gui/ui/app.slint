@@ -158,6 +158,33 @@ component Pane inherits Rectangle {
     // test can ask what is actually drawn rather than re-deriving it.
     out property <brush> selection-colour: focused ? Theme.accent : Theme.selection-inactive;
 
+    // The width every row would need to show its name in full, for
+    // double-clicking the splitter to fit to (#577). An off-screen copy of
+    // each row rather than a number worked out in Rust: nothing on the
+    // Rust side knows how wide this font renders a string, and
+    // `VerticalLayout` already sizes itself to its widest child.
+    row-measure := VerticalLayout {
+        visible: false;
+        x: -10000px;
+        for row[i] in rows: HorizontalLayout {
+            padding-left: pad + row.depth * indent;
+            padding-right: pad;
+            Rectangle {
+                width: chevron;
+            }
+            Rectangle {
+                width: 16px;
+            }
+            Rectangle {
+                width: 5px;
+            }
+            Text {
+                text: row.name;
+            }
+        }
+    }
+    out property <length> fit-width: row-measure.preferred-width;
+
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
 
@@ -402,6 +429,7 @@ component ColumnHeader inherits Rectangle {
 // the window can widen one pane and narrow the next.
 component Splitter inherits Rectangle {
     callback dragged(length);
+    callback double-clicked();
 
     width: 5px;
     background: split-touch.has-hover || split-touch.pressed ? Theme.accent : Theme.border;
@@ -414,6 +442,9 @@ component Splitter inherits Rectangle {
             if (self.pressed) {
                 dragged(self.mouse-x - self.pressed-x);
             }
+        }
+        double-clicked => {
+            double-clicked();
         }
     }
 }
@@ -1561,6 +1592,16 @@ export component MainWindow inherits Window {
     // the window closes; the splitters move them in between.
     in-out property <length> folders-width: 240px;
     in-out property <length> contents-width: 470px;
+    // The File pane's own floor (#577), and what a splitter drag leaves
+    // Folders and Contents down to. Named rather than repeated as literals,
+    // so the drag clamps below and Rust's `fit_pane_widths` cannot drift
+    // apart from what is actually drawn.
+    property <length> min-folders-width: 120px;
+    property <length> min-contents-width: 200px;
+    property <length> min-file-pane-width: 280px;
+    // The two splitters, 5px each - width neither pane nor the File pane
+    // ever gets to claim.
+    property <length> splitters-width: 10px;
     // Each pane's scroll offset, so the front end can bring the selected row
     // into view. Two-way: the user scrolls with the wheel and the scrollbar
     // too, and whatever they left it at is where the next adjustment starts.
@@ -1920,9 +1961,18 @@ export component MainWindow inherits Window {
                     row-clicked(i, x) => { folder-row-clicked(i, x); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
                 }
-                Splitter {
+                folders-splitter := Splitter {
                     dragged(delta) => {
-                        folders-width = clamp(folders-width + delta, 120px, root.width - contents-width - 200px);
+                        folders-width = clamp(
+                            folders-width + delta,
+                            min-folders-width,
+                            root.width - contents-width - min-file-pane-width - splitters-width);
+                    }
+                    double-clicked => {
+                        folders-width = clamp(
+                            folders-pane.fit-width,
+                            min-folders-width,
+                            root.width - contents-width - min-file-pane-width - splitters-width);
                     }
                 }
                 contents-pane := ContentsPane {
@@ -1961,11 +2011,15 @@ export component MainWindow inherits Window {
                 }
                 Splitter {
                     dragged(delta) => {
-                        contents-width = clamp(contents-width + delta, 200px, root.width - folders-width - 160px);
+                        contents-width = clamp(
+                            contents-width + delta,
+                            min-contents-width,
+                            root.width - folders-width - min-file-pane-width - splitters-width);
                     }
                 }
                 file-pane := Rectangle {
                     horizontal-stretch: 1;
+                    min-width: min-file-pane-width;
                     border-width: 1px;
                     border-color: focus-pane == 2 ? Theme.accent : Theme.border;
                     VerticalLayout {

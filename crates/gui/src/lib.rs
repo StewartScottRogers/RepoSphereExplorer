@@ -191,6 +191,66 @@ pub fn visible_rows(
     usize::from(first)..usize::from(end)
 }
 
+/// Narrowest the File pane may be (#577). Below this, a working copy's
+/// facts (#576) wrap across several lines instead of sitting on one.
+pub const MIN_FILE_PANE_WIDTH: f32 = 280.0;
+/// Narrowest the Folders pane may be, matching `app.slint`'s splitter clamp
+/// and `settings::MIN_WIDTH`.
+pub const MIN_FOLDERS_WIDTH: f32 = 120.0;
+/// Narrowest the Contents pane may be, matching `app.slint`'s splitter
+/// clamp.
+pub const MIN_CONTENTS_WIDTH: f32 = 200.0;
+/// The two splitters between the three panes, `app.slint`'s 5px each -
+/// width no pane ever gets to claim.
+const SPLITTERS_WIDTH: f32 = 10.0;
+
+/// Shrinks `folders` and `contents` just enough that the File pane - what
+/// `window_width` leaves once they and the splitters are taken out - keeps
+/// its minimum. Contents gives way first, down to its own minimum, then
+/// Folders; neither is ever left narrower than its floor, however small
+/// `window_width` is, so the File pane simply gets whatever is left.
+///
+/// This lives here rather than in a `changed root.width` handler in
+/// `app.slint`, for the reason `scroll_offset_for` does: such a handler
+/// only runs inside an event loop, so nothing could test it.
+#[must_use]
+pub fn fit_pane_widths(window_width: f32, folders: f32, contents: f32) -> (f32, f32) {
+    let folders = folders.max(MIN_FOLDERS_WIDTH);
+    let contents = contents.max(MIN_CONTENTS_WIDTH);
+    let available = window_width - SPLITTERS_WIDTH;
+    let shortfall = folders + contents + MIN_FILE_PANE_WIDTH - available;
+    if shortfall <= 0.0 {
+        return (folders, contents);
+    }
+    let from_contents = shortfall.min(contents - MIN_CONTENTS_WIDTH).max(0.0);
+    let contents = contents - from_contents;
+    let remaining = shortfall - from_contents;
+    let from_folders = remaining.min(folders - MIN_FOLDERS_WIDTH).max(0.0);
+    let folders = folders - from_folders;
+    (folders, contents)
+}
+
+/// Applies [`fit_pane_widths`] against `ui`'s actual current width, so
+/// widths restored from `gui.json` or left over from a wider window are
+/// corrected rather than trusted. `main` calls this on every tick - the
+/// same timer that drives `sync_ui` - so a resize corrects them without
+/// the reader doing anything.
+pub fn fit_pane_widths_to_window(ui: &MainWindow) {
+    let window = ui.window();
+    let window_width = window.size().to_logical(window.scale_factor()).width;
+    // Not yet laid out: nothing to correct against.
+    if window_width <= 0.0 {
+        return;
+    }
+    let (folders, contents) = fit_pane_widths(
+        window_width,
+        ui.get_folders_width(),
+        ui.get_contents_width(),
+    );
+    ui.set_folders_width(folders);
+    ui.set_contents_width(contents);
+}
+
 /// Asks for the working-tree status of the repository rows the Contents
 /// pane has on screen. `main` calls this on every tick, after drawing, so
 /// scrolling asks for the rows it brings into view.
@@ -838,7 +898,10 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ROW_HEIGHT, scroll_offset_for, visible_rows};
+    use super::{
+        MIN_CONTENTS_WIDTH, MIN_FOLDERS_WIDTH, ROW_HEIGHT, fit_pane_widths, scroll_offset_for,
+        visible_rows,
+    };
 
     #[test]
     fn the_rows_on_screen_are_the_ones_any_part_of_which_shows() {
@@ -932,5 +995,38 @@ mod tests {
         }
 
         assert!(same(offset, -20.0 * ROW_HEIGHT));
+    }
+
+    #[test]
+    fn widths_that_already_fit_are_left_unchanged() {
+        // 240 + 470 + the File pane's 280px minimum, plus the two 5px
+        // splitters, is exactly 1000: nothing has to give.
+        assert_eq!(fit_pane_widths(1000.0, 240.0, 470.0), (240.0, 470.0));
+    }
+
+    #[test]
+    fn a_smaller_window_shrinks_contents_before_folders() {
+        // The window above, narrowed to 750px. Contents alone has enough
+        // headroom above its 200px floor to absorb the shortfall, so
+        // Folders is untouched.
+        assert_eq!(fit_pane_widths(750.0, 240.0, 470.0), (240.0, 220.0));
+
+        // Narrower still: Contents is already at its floor, so Folders
+        // gives up the 120px Contents could not.
+        assert_eq!(
+            fit_pane_widths(600.0, 240.0, 470.0),
+            (MIN_FOLDERS_WIDTH, MIN_CONTENTS_WIDTH)
+        );
+    }
+
+    #[test]
+    fn a_window_too_small_for_every_minimum_never_goes_negative() {
+        let (folders, contents) = fit_pane_widths(50.0, 240.0, 470.0);
+
+        assert_eq!(
+            (folders, contents),
+            (MIN_FOLDERS_WIDTH, MIN_CONTENTS_WIDTH),
+            "both panes settle on their floor rather than going negative"
+        );
     }
 }
