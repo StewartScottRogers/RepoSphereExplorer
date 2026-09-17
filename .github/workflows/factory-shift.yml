@@ -127,6 +127,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - uses: anthropics/claude-code-action@v1
+        # A command that runs past the agent runtime's two-minute default
+        # is moved to the background, and an agent that then ends its turn
+        # to wait is killed with the job. A clippy or test run over `gui`
+        # takes longer than that: shift 35230067688 and #610's review both
+        # died this way. Thirty minutes by default, an hour at most.
+        env:
+          BASH_DEFAULT_TIMEOUT_MS: "1800000"
+          BASH_MAX_TIMEOUT_MS: "3600000"
         id: build
         with:
           path_to_claude_code_executable: ${{ steps.agent-runtime.outputs.path }}
@@ -155,7 +163,18 @@ jobs:
             while any agent is still running: wait for each result, then
             integrate, check, push and open the pull request yourself. Run
             35163388371 handed #573 to a background agent, stopped, and
-            pushed nothing.
+            pushed nothing. The same goes for commands: run every command
+            in the foreground and wait for it. Never start one in the
+            background or set a monitor to wake you - run 35230067688
+            started the test suite that way, ended its turn to wait, and
+            was killed with nothing pushed.
+
+            Your GitHub token expires about an hour after the shift starts,
+            and `gh` fails with 401 from then on. Run 35223101311 finished
+            #581, pushed it, and could not open the pull request. So keep
+            the shift short: test what you changed (step 5), not the whole
+            workspace, and open the pull request as soon as those checks
+            pass.
 
             Target issue: "${{ inputs.issue }}" (empty means: choose one yourself).
 
@@ -189,9 +208,14 @@ jobs:
                instead conclude the format can't reasonably become a plugin,
                add a row to Rejected with a one-line reason, push nothing, and
                close the issue with that explanation instead of opening a PR.
-            5. Run `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`
-               and `cargo test --all-features`. All three must pass, plus the
-               acceptance checks named in the issue.
+            5. Run `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`
+               and `cargo test --all-features -p <crate>` for each crate
+               the change touches (a path under `crates/plugins/foo/` is
+               `-p plugin-foo`, one under `crates/foo/` is `-p foo`). All
+               must pass, plus the acceptance checks named in the issue.
+               Do not run the whole workspace's tests: that is twenty-five
+               minutes, and the required `fmt / clippy / test` check runs
+               it on the pull request anyway.
             6. Open a pull request that says `Closes #<issue>` and lists the
                acceptance checks you ran with their results, and label it
                `auto-merge` so it lands itself once the required checks pass
@@ -298,15 +322,21 @@ jobs:
             exit 0
           fi
 
-          for i in $(seq 1 60); do
+          # Two hours. A pull request takes about forty minutes to land -
+          # a twenty-five minute test run, then the review - and a review
+          # that has to be re-run takes longer. Day shift is meant to pick
+          # up anything this misses, but GitHub runs its ten-minute schedule
+          # when it likes: on 2026-09-17 at 06:45, 08:33 and 12:12, and not
+          # between, so after #607 the chain sat idle until started by hand.
+          for i in $(seq 1 240); do
             open_prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq 'length')
             if [ "$open_prs" -eq 0 ]; then
               break
             fi
-            echo "Waiting on $open_prs open auto-merge PR(s) to resolve (attempt $i/60)..."
+            echo "Waiting on $open_prs open auto-merge PR(s) to resolve (attempt $i/240)..."
             sleep 30
           done
-          # Still open after half an hour: do not start the next shift anyway.
+          # Still open after two hours: do not start the next shift anyway.
           # It would branch from a main without that pull request and
           # conflict with it (#597). Day shift checks every ten minutes and
           # dispatches the next shift once nothing is open.
