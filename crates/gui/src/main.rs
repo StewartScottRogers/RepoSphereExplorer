@@ -73,13 +73,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_folders_width(widths.folders);
         ui.set_contents_width(widths.contents);
     }
+    // Applied before the window is shown, the same as the pane widths
+    // above; a remembered position off every currently connected display
+    // is corrected once the event loop - and with it, the ability to ask
+    // winit what is connected - starts, below.
+    let remembered_geometry = gui::settings::load_window_geometry();
+    if let Some(geometry) = remembered_geometry {
+        let window = ui.window();
+        window.set_position(slint::LogicalPosition::new(geometry.x, geometry.y));
+        window.set_size(slint::LogicalSize::new(geometry.width, geometry.height));
+        if geometry.maximized {
+            window.set_maximized(true);
+        }
+    }
     sync_ui(&ui, &app.borrow());
 
     gui::wire_callbacks(&ui, &app);
 
+    if let Some(geometry) = remembered_geometry
+        && !geometry.maximized
+    {
+        let settle_ui = ui.as_weak();
+        Timer::single_shot(Duration::ZERO, move || {
+            if let Some(ui) = settle_ui.upgrade() {
+                gui::settle_remembered_geometry(&ui, geometry);
+            }
+        });
+    }
+
+    // The window's bounds the last time it was not maximised - #583's "last
+    // normal size and position" to save even if the window closes
+    // maximised, since a maximised window's own bounds are the display's
+    // full work area, not what un-maximising should return to.
+    let last_normal_geometry = Rc::new(RefCell::new(remembered_geometry.map(|geometry| {
+        gui::settings::WindowGeometry {
+            maximized: false,
+            ..geometry
+        }
+    })));
+
     let timer = Timer::default();
     let tick_app = app.clone();
     let tick_ui = ui.as_weak();
+    let tick_last_normal_geometry = last_normal_geometry.clone();
     timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
         let mut app = tick_app.borrow_mut();
         app.tick();
@@ -87,16 +123,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sync_ui(&ui, &app);
             gui::ask_for_visible_statuses(&ui, &mut app);
             gui::fit_pane_widths_to_window(&ui);
+            if let Some(geometry) = gui::normal_window_geometry(&ui) {
+                *tick_last_normal_geometry.borrow_mut() = Some(geometry);
+            }
         }
     });
 
     ui.run()?;
-    // Written on the way out rather than on every drag: a splitter moves a
-    // pixel at a time, and the layout only has to survive to the next run.
+    // Written on the way out rather than on every drag or move: the layout
+    // only has to survive to the next run.
     gui::settings::save_pane_widths(gui::settings::PaneWidths {
         folders: ui.get_folders_width(),
         contents: ui.get_contents_width(),
     });
+    let closing_normal_geometry = gui::normal_window_geometry(&ui)
+        .or_else(|| *last_normal_geometry.borrow())
+        .map(|geometry| gui::settings::WindowGeometry {
+            maximized: ui.window().is_maximized(),
+            ..geometry
+        });
+    if let Some(geometry) = closing_normal_geometry {
+        gui::settings::save_window_geometry(geometry);
+    }
     Ok(())
 }
 

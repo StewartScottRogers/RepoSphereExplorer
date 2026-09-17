@@ -279,6 +279,98 @@ pub fn fit_pane_widths_to_window(ui: &MainWindow) {
     ui.set_contents_width(contents);
 }
 
+/// `ui`'s current position and size, in logical pixels, as a
+/// [`settings::WindowGeometry`] with `maximized: false` - or `None` while it
+/// is maximised, since a maximised window's actual bounds are the display's
+/// full work area, not the bounds a reader would want back on
+/// un-maximising.
+///
+/// `main` calls this on every tick a window is not maximised, so the last
+/// normal bounds are always in hand to save even if the window closes
+/// maximised (#583's "un-maximising it returns to the last normal size and
+/// position").
+#[must_use]
+pub fn normal_window_geometry(ui: &MainWindow) -> Option<settings::WindowGeometry> {
+    let window = ui.window();
+    if window.is_maximized() {
+        return None;
+    }
+    let scale = window.scale_factor();
+    let position = window.position().to_logical(scale);
+    let size = window.size().to_logical(scale);
+    Some(settings::WindowGeometry {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+        maximized: false,
+    })
+}
+
+/// The connected displays' bounds, in logical pixels, and which of them is
+/// the primary one - or `None` when they cannot be found, whether because
+/// this window is not backed by winit (Slint's own UI-testing backend, used
+/// throughout `tests/`, never is) or because the platform reports none.
+///
+/// Slint's own cross-platform `Window` has no notion of a display: only the
+/// winit window underneath it does.
+fn connected_displays(
+    window: &slint::Window,
+) -> Option<(Vec<settings::DisplayBounds>, settings::DisplayBounds)> {
+    use slint::winit_030::{WinitWindowAccessor as _, winit};
+
+    let to_bounds = |monitor: &winit::monitor::MonitorHandle| {
+        #[allow(clippy::cast_possible_truncation)]
+        let scale = monitor.scale_factor() as f32;
+        let position = monitor.position();
+        let size = monitor.size();
+        settings::DisplayBounds {
+            #[allow(clippy::cast_precision_loss)]
+            x: position.x as f32 / scale,
+            #[allow(clippy::cast_precision_loss)]
+            y: position.y as f32 / scale,
+            #[allow(clippy::cast_precision_loss)]
+            width: size.width as f32 / scale,
+            #[allow(clippy::cast_precision_loss)]
+            height: size.height as f32 / scale,
+        }
+    };
+
+    window.with_winit_window(|winit_window| {
+        let monitors: Vec<_> = winit_window.available_monitors().collect();
+        let primary = winit_window
+            .primary_monitor()
+            .or_else(|| monitors.first().cloned())?;
+        Some((
+            monitors.iter().map(to_bounds).collect(),
+            to_bounds(&primary),
+        ))
+    })?
+}
+
+/// Corrects `remembered` against the displays actually connected right now,
+/// and applies it to `ui` if that moved it - the window has already opened
+/// at `remembered` by the time this runs (main applies it before showing
+/// the window), so there is nothing to do when it is still on a display.
+///
+/// Finding the connected displays needs winit's event loop to be running,
+/// which is only true once `ui.run()` has started - so `main` calls this
+/// from a timer fired the moment the loop starts, rather than before
+/// showing the window as the rest of the remembered geometry is applied.
+pub fn settle_remembered_geometry(ui: &MainWindow, remembered: settings::WindowGeometry) {
+    let Some((displays, primary)) = connected_displays(ui.window()) else {
+        return;
+    };
+    let resolved = settings::geometry_on_a_display(remembered, &displays, primary);
+    if resolved == remembered {
+        return;
+    }
+    ui.window()
+        .set_position(slint::LogicalPosition::new(resolved.x, resolved.y));
+    ui.window()
+        .set_size(slint::LogicalSize::new(resolved.width, resolved.height));
+}
+
 /// Asks for the working-tree status of the repository rows the Contents
 /// pane has on screen. `main` calls this on every tick, after drawing, so
 /// scrolling asks for the rows it brings into view.
