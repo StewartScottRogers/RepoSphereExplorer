@@ -16,10 +16,10 @@ use slint::ComponentHandle;
 /// itself and the next.
 const DIVIDER_SLOT: f32 = 15.0;
 
-/// How many groups the command bar has: new, clipboard, file operations,
-/// editing, history. One divider fewer than that, plus the one in the
+/// How many groups the command bar has: opening on the web, new, renaming
+/// and deleting, history. One divider fewer than that, plus the one in the
 /// address bar between the history buttons and up.
-const COMMAND_BAR_DIVIDERS: usize = 4;
+const COMMAND_BAR_DIVIDERS: usize = 3;
 const ADDRESS_BAR_DIVIDERS: usize = 1;
 
 /// Wide enough to span a bar rather than to be some incidental hairline:

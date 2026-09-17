@@ -53,6 +53,7 @@ fn ready_window() -> MainWindow {
     // the top of a tree. This window has no application behind it, so it
     // says so itself.
     ui.set_can_open(true);
+    ui.set_web_provider(SharedString::from("GitHub"));
     ui.show().expect("the window should show");
     ui
 }
@@ -202,28 +203,20 @@ fn the_help_menu_reaches_its_callback() {
 fn every_command_bar_button_reaches_its_callback() {
     i_slint_backend_testing::init_no_event_loop();
     let ui = ready_window();
-    let (folder, file, cut, copy, paste) = (flag(), flag(), flag(), flag(), flag());
-    let (rename, delete, extract, refresh, undo) = (flag(), flag(), flag(), flag(), flag());
+    let (open_web, folder, rename, delete, refresh, undo) =
+        (flag(), flag(), flag(), flag(), flag(), flag());
+    watch!(ui, on_open_web_requested, open_web);
     watch!(ui, on_new_folder_requested, folder);
-    watch!(ui, on_new_file_requested, file);
-    watch!(ui, on_clipboard_cut_requested, cut);
-    watch!(ui, on_clipboard_copy_requested, copy);
-    watch!(ui, on_clipboard_paste_requested, paste);
     watch!(ui, on_content_rename_requested, rename);
     watch!(ui, on_delete_requested, delete);
-    watch!(ui, on_content_extract_requested, extract);
     watch!(ui, on_refresh_requested, refresh);
     watch!(ui, on_undo_requested, undo);
 
     for (button, fired) in [
+        ("Open on GitHub", &open_web),
         ("New folder", &folder),
-        ("New file", &file),
-        ("Cut", &cut),
-        ("Copy", &copy),
-        ("Paste", &paste),
         ("Rename", &rename),
         ("Delete", &delete),
-        ("Extract", &extract),
         ("Undo", &undo),
         ("Refresh", &refresh),
     ] {
@@ -231,6 +224,108 @@ fn every_command_bar_button_reaches_its_callback() {
         assert!(
             fired.get(),
             "the {button} button did not reach its callback"
+        );
+    }
+}
+
+/// #580: only repository actions get a fixed place on the command bar, in
+/// this order; everything else that used to sit there is still reachable
+/// from a menu.
+#[test]
+fn the_command_bar_holds_only_repository_actions_in_order() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = ready_window();
+
+    let mut buttons: Vec<ElementHandle> = [
+        "Open on GitHub",
+        "New folder",
+        "Rename",
+        "Delete",
+        "Undo",
+        "Refresh",
+    ]
+    .iter()
+    .map(|label| {
+        let mut found: Vec<ElementHandle> = ElementHandle::find_by_accessible_label(&ui, label)
+            .filter(|item| item.size().width < MENU_MIN_WIDTH)
+            .collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "exactly one command-bar button should be labelled {label:?}"
+        );
+        found.remove(0)
+    })
+    .collect();
+    buttons.sort_by(|a, b| {
+        a.absolute_position()
+            .x
+            .partial_cmp(&b.absolute_position().x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let order: Vec<String> = buttons
+        .iter()
+        .map(|b| b.accessible_label().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            "Open on GitHub",
+            "New folder",
+            "Rename",
+            "Delete",
+            "Undo",
+            "Refresh"
+        ],
+        "the command bar's buttons should read left to right in this order"
+    );
+    // Every command-bar button sits on the same row; used below to tell a
+    // removed button apart from a menu-bar title or menu item sharing its
+    // word, which `MENU_MIN_WIDTH` alone cannot do for a short word like
+    // "Edit".
+    let bar_y = buttons[0].absolute_position().y;
+
+    // Cut, Copy, Paste, New file, Extract, Edit and Save left the bar (#580)
+    // but stay reachable: the first four from the File and Edit menus,
+    // Extract from the Contents pane's right-click menu, tested against a
+    // real `App` in `menus_in_the_window.rs`.
+    let (cut, copy, paste, file) = (flag(), flag(), flag(), flag());
+    watch!(ui, on_clipboard_cut_requested, cut);
+    watch!(ui, on_clipboard_copy_requested, copy);
+    watch!(ui, on_clipboard_paste_requested, paste);
+    watch!(ui, on_new_file_requested, file);
+    choose_from_menu(&ui, "File", "New File");
+    assert!(
+        file.get(),
+        "New File should still be reachable from the File menu"
+    );
+    choose_from_menu(&ui, "Edit", "Cut");
+    assert!(
+        cut.get(),
+        "Cut should still be reachable from the Edit menu"
+    );
+    choose_from_menu(&ui, "Edit", "Copy");
+    assert!(
+        copy.get(),
+        "Copy should still be reachable from the Edit menu"
+    );
+    choose_from_menu(&ui, "Edit", "Paste");
+    assert!(
+        paste.get(),
+        "Paste should still be reachable from the Edit menu"
+    );
+
+    for removed in [
+        "Cut", "Copy", "Paste", "New file", "Extract", "Edit", "Save",
+    ] {
+        assert!(
+            ElementHandle::find_by_accessible_label(&ui, removed)
+                .find(|item| {
+                    item.size().width < MENU_MIN_WIDTH
+                        && (item.absolute_position().y - bar_y).abs() < 1.0
+                })
+                .is_none(),
+            "{removed} should no longer be a command-bar button"
         );
     }
 }
@@ -259,23 +354,48 @@ fn a_command_with_nothing_to_act_on_is_not_clickable() {
     i_slint_backend_testing::init_no_event_loop();
     let ui = MainWindow::new().expect("the window should build");
     ui.set_content_rows(ModelRc::new(VecModel::from(vec![row("a.txt")])));
-    // No selection, no clipboard, nothing archive-shaped: Cut, Paste and
-    // Extract all have nothing to do and are drawn greyed out.
+    // No selection and no web provider: Delete and Open on the web both
+    // have nothing to do and are drawn greyed out.
     ui.show().expect("the window should show");
-    let (cut, paste, extract) = (flag(), flag(), flag());
-    watch!(ui, on_clipboard_cut_requested, cut);
-    watch!(ui, on_clipboard_paste_requested, paste);
-    watch!(ui, on_content_extract_requested, extract);
+    let (delete, open_web) = (flag(), flag());
+    watch!(ui, on_delete_requested, delete);
+    watch!(ui, on_open_web_requested, open_web);
 
-    for label in ["Cut", "Paste", "Extract"] {
+    for label in ["Delete", "Open on the web"] {
         click_button(&ui, label);
     }
 
-    assert!(!cut.get(), "Cut fired without a selection");
-    assert!(!paste.get(), "Paste fired with an empty clipboard");
-    assert!(
-        !extract.get(),
-        "Extract fired on something that is not an archive"
+    assert!(!delete.get(), "Delete fired with nothing selected");
+    assert!(!open_web.get(), "Open on the web fired with no provider");
+}
+
+/// #580: a disabled command-bar button reports itself as disabled, which is
+/// what tells it apart from an enabled one for assistive technology - the
+/// same `button-enabled` flag also drives the greyed-out colour and drops
+/// its hover and border.
+#[test]
+fn a_disabled_command_bar_button_is_reported_disabled() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("the window should build");
+    ui.set_content_rows(ModelRc::new(VecModel::from(vec![row("a.txt")])));
+    ui.show().expect("the window should show");
+
+    let delete = ElementHandle::find_by_accessible_label(&ui, "Delete")
+        .find(|item| item.size().width < MENU_MIN_WIDTH)
+        .expect("a Delete button in the command bar");
+    let refresh = ElementHandle::find_by_accessible_label(&ui, "Refresh")
+        .find(|item| item.size().width < MENU_MIN_WIDTH)
+        .expect("a Refresh button in the command bar");
+
+    assert_eq!(
+        delete.accessible_enabled(),
+        Some(false),
+        "Delete should be drawn greyed with nothing selected"
+    );
+    assert_ne!(
+        delete.accessible_enabled(),
+        refresh.accessible_enabled(),
+        "Delete's drawn state should differ from an enabled button's"
     );
 }
 
