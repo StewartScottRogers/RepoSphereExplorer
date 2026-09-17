@@ -74,45 +74,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_contents_width(widths.contents);
     }
     // Applied before the window is shown, the same as the pane widths
-    // above; a remembered position off every currently connected display
-    // is corrected once the event loop - and with it, the ability to ask
-    // winit what is connected - starts, below.
-    let remembered_geometry = gui::settings::load_window_geometry();
-    if let Some(geometry) = remembered_geometry {
-        let window = ui.window();
-        window.set_position(slint::LogicalPosition::new(geometry.x, geometry.y));
-        window.set_size(slint::LogicalSize::new(geometry.width, geometry.height));
-        if geometry.maximized {
-            window.set_maximized(true);
-        }
-    }
+    // above. The wiring is in the library so a window test drives the same
+    // code this does (rule 14).
+    let geometry_tracker = gui::wire_window_geometry(&ui, gui::settings::load_window_geometry());
     sync_ui(&ui, &app.borrow());
 
     gui::wire_callbacks(&ui, &app);
-
-    // The window's bounds the last time it was not maximised - #583's "last
-    // normal size and position" to save even if the window closes
-    // maximised, since a maximised window's own bounds are the display's
-    // full work area, not what un-maximising should return to.
-    let geometry_tracker = Rc::new(RefCell::new(gui::GeometryTracker::opening_at(
-        remembered_geometry,
-    )));
-
-    // The correction against the displays actually connected, which needs
-    // the event loop running. It happens whether or not the window opened
-    // maximised: a maximised window is not moved, but the bounds it will
-    // un-maximise to - and save - are corrected all the same.
-    if let Some(geometry) = remembered_geometry {
-        let settle_ui = ui.as_weak();
-        let settle_tracker = geometry_tracker.clone();
-        Timer::single_shot(Duration::ZERO, move || {
-            if let Some(ui) = settle_ui.upgrade()
-                && let Some(resolved) = gui::settle_remembered_geometry(&ui, geometry)
-            {
-                settle_tracker.borrow_mut().corrected_to(resolved);
-            }
-        });
-    }
 
     let timer = Timer::default();
     let tick_app = app.clone();
@@ -125,14 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sync_ui(&ui, &app);
             gui::ask_for_visible_statuses(&ui, &mut app);
             gui::fit_pane_widths_to_window(&ui);
-            let just_restored = tick_geometry_tracker
-                .borrow_mut()
-                .observed(gui::normal_window_geometry(&ui), ui.window().is_maximized());
-            // Un-maximising restores bounds the platform chose, which can
-            // name a display that has been unplugged since they were set.
-            if just_restored && let Some(resolved) = gui::settle_window_onto_a_display(&ui) {
-                tick_geometry_tracker.borrow_mut().corrected_to(resolved);
-            }
+            gui::observe_window_geometry(&ui, &tick_geometry_tracker);
         }
     });
 
@@ -143,14 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         folders: ui.get_folders_width(),
         contents: ui.get_contents_width(),
     });
-    let maximized = ui.window().is_maximized();
-    if let Some(geometry) = gui::normal_window_geometry(&ui)
-        .map(|geometry| gui::settings::WindowGeometry {
-            maximized,
-            ..geometry
-        })
-        .or_else(|| geometry_tracker.borrow().closing_at(maximized))
-    {
+    if let Some(geometry) = gui::geometry_to_save(&ui, &geometry_tracker) {
         gui::settings::save_window_geometry(geometry);
     }
     Ok(())

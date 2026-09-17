@@ -307,6 +307,74 @@ pub fn normal_window_geometry(ui: &MainWindow) -> Option<settings::WindowGeometr
     })
 }
 
+/// Applies `remembered` to `ui` and takes charge of its geometry from then
+/// on: the correction against the displays actually connected, which needs
+/// the event loop running, is scheduled for the moment it starts.
+///
+/// The wiring lives here rather than in `main` so a window test drives the
+/// same code the application does (rule 14). `main` calls this before
+/// showing the window, then [`observe_window_geometry`] on every tick and
+/// [`geometry_to_save`] on the way out.
+#[must_use]
+pub fn wire_window_geometry(
+    ui: &MainWindow,
+    remembered: Option<settings::WindowGeometry>,
+) -> Rc<RefCell<GeometryTracker>> {
+    if let Some(geometry) = remembered {
+        let window = ui.window();
+        window.set_position(slint::LogicalPosition::new(geometry.x, geometry.y));
+        window.set_size(slint::LogicalSize::new(geometry.width, geometry.height));
+        if geometry.maximized {
+            window.set_maximized(true);
+        }
+    }
+    let tracker = Rc::new(RefCell::new(GeometryTracker::opening_at(remembered)));
+    if let Some(geometry) = remembered {
+        let settle_ui = ui.as_weak();
+        let settle_tracker = tracker.clone();
+        // Zero delay: as soon as the event loop is running, which is when
+        // the connected displays can be asked for at all.
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if let Some(ui) = settle_ui.upgrade()
+                && let Some(resolved) = settle_remembered_geometry(&ui, geometry)
+            {
+                settle_tracker.borrow_mut().corrected_to(resolved);
+            }
+        });
+    }
+    tracker
+}
+
+/// Keeps `tracker` up to date with the window, and puts the window back
+/// onto a connected display the moment it stops being maximised - which is
+/// when the platform has just restored bounds this application did not
+/// choose. `main` calls this on every tick.
+pub fn observe_window_geometry(ui: &MainWindow, tracker: &Rc<RefCell<GeometryTracker>>) {
+    let just_restored = tracker
+        .borrow_mut()
+        .observed(normal_window_geometry(ui), ui.window().is_maximized());
+    if just_restored && let Some(resolved) = settle_window_onto_a_display(ui) {
+        tracker.borrow_mut().corrected_to(resolved);
+    }
+}
+
+/// The geometry to write on the way out: the window's own bounds when it is
+/// not maximised, otherwise the last bounds it had while it was not, with
+/// `maximized` as the window is now.
+#[must_use]
+pub fn geometry_to_save(
+    ui: &MainWindow,
+    tracker: &Rc<RefCell<GeometryTracker>>,
+) -> Option<settings::WindowGeometry> {
+    let maximized = ui.window().is_maximized();
+    normal_window_geometry(ui)
+        .map(|geometry| settings::WindowGeometry {
+            maximized,
+            ..geometry
+        })
+        .or_else(|| tracker.borrow().closing_at(maximized))
+}
+
 /// What the window's geometry needs as the window is used: which bounds to
 /// save, and when to put an off-display window back onto a display.
 ///
