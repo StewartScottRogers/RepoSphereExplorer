@@ -60,6 +60,17 @@ jobs:
             exit 0
           fi
 
+          # A shift branches from main as it is when the shift starts. While
+          # the last shift's pull request is still open, the next one would
+          # branch without it and conflict with it: #597 had to be merged by
+          # hand after the shift for #574 started before #595 landed. So wait
+          # for it; this workflow runs again in ten minutes.
+          open_prs=$(gh pr list --repo "$REPO" --label auto-merge --state open --json number --jq 'length')
+          if [ "$open_prs" -gt 0 ]; then
+            echo "$open_prs auto-merge pull request(s) still open; the next shift waits for them to land."
+            exit 0
+          fi
+
           remaining=$(gh issue list --repo "$REPO" --label work-order --state open --limit 1000 --json number --jq 'length')
           echo "Open work-order issues remaining: $remaining"
           if [ "$remaining" -gt 0 ]; then
