@@ -103,6 +103,9 @@ export struct FolderRow {
     depth: int,
     expandable: bool,
     expanded: bool,
+    // Whether this row is a source control working copy, matching the
+    // Contents pane's `ContentRow.is-repository` (#579).
+    is-repository: bool,
 }
 
 /// One row of the File pane's fact table. Mirrors `app::FactRow` (#576).
@@ -265,7 +268,14 @@ component Pane inherits Rectangle {
                             }
                             Text {
                                 text: row.name;
-                                color: i == selected && focused ? Theme.on-accent : Palette.foreground;
+                                // A working copy is named in the accent
+                                // colour, matching the Contents pane
+                                // (`name-text` below), so both panes say
+                                // the same thing the same way (#579).
+                                color: i == selected && focused
+                                    ? Theme.on-accent
+                                    : (row.is-repository ? Theme.accent : Palette.foreground);
+                                font-weight: row.is-repository ? 700 : 400;
                                 vertical-alignment: center;
                                 overflow: elide;
                                 horizontal-stretch: 1;

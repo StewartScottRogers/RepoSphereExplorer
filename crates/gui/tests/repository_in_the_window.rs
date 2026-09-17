@@ -349,6 +349,17 @@ fn drawn_as_a_checkout(ui: &MainWindow, name: &str) -> bool {
         .is_repository
 }
 
+/// Whether the Folders tree is drawing the row named `name` as a working
+/// copy - which is what gives its icon the branch mark and its name the
+/// accent colour and bold weight, matching the Contents pane (#579).
+fn drawn_as_a_checkout_in_the_tree(ui: &MainWindow, name: &str) -> bool {
+    ui.get_folder_rows()
+        .iter()
+        .find(|row| row.name == name)
+        .unwrap_or_else(|| panic!("{name} is not in the tree"))
+        .is_repository
+}
+
 /// Selects the folder named `name` in the contents pane and waits for its
 /// own preview, recognised by `marker`.
 fn select_and_wait(ui: &MainWindow, app: &Rc<RefCell<App>>, name: &str, marker: &str) {
@@ -396,6 +407,35 @@ fn a_checkout_is_marked_in_the_listing_and_a_plain_folder_is_not() {
         kind_of(&ui, "notes"),
         "File folder",
         "a plain folder is still a plain folder"
+    );
+}
+
+#[test]
+fn a_checkout_is_marked_in_the_tree_and_a_plain_folder_is_not() {
+    // GUIDANCE.md 2.4: a working copy is marked as one and names its
+    // provider in the Contents pane; the Folders tree beside it has to say
+    // the same thing, not just the pane a reader happens to be looking at
+    // (#579). Learned from the same listing that marks the Contents row,
+    // so this costs no extra directory read (CLAUDE.md rule 9).
+    let _serial = serially();
+    let root = scratch("tree");
+    checkout(
+        &root,
+        "alpha",
+        "main",
+        Some("https://github.com/owner/alpha.git"),
+        1,
+    );
+    plain_folder(&root, "notes", 3);
+    let (ui, _app) = window_at(&root);
+
+    assert!(
+        drawn_as_a_checkout_in_the_tree(&ui, "alpha"),
+        "a folder with a .git marker should be drawn as a working copy in the tree"
+    );
+    assert!(
+        !drawn_as_a_checkout_in_the_tree(&ui, "notes"),
+        "a folder with no .git marker should not be drawn as a working copy in the tree"
     );
 }
 
