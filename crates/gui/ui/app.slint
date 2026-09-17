@@ -1639,6 +1639,16 @@ export component MainWindow inherits Window {
     // tracking and remote, which used to be sentences `file-text` wrapped
     // across five lines at the pane's default width.
     in property <[FactRow]> file-facts;
+    // The selected working copy's README (#584): its file name, empty when
+    // there is none, which both hides the whole section and is what the
+    // Open README link selects in Contents when clicked. `file-readme-title`
+    // is its first heading, or the bare word "README" when it has none or
+    // could not be read; `file-readme-excerpt` is its opening paragraphs,
+    // empty in that same case.
+    in property <string> file-readme-name;
+    in property <string> file-readme-title;
+    in property <string> file-readme-excerpt;
+    callback file-readme-open-requested();
     // The views the previewed type offers, and which one is showing. A type
     // offering one view gets no switcher, so it looks as it always did.
     in property <[string]> file-views;
@@ -2611,6 +2621,37 @@ export component MainWindow inherits Window {
                                 x: 4px;
                                 y: 4px;
                                 width: view.visible-width - 8px;
+                            }
+                        }
+                        // The README section (#584): the working copy's own
+                        // title and opening excerpt, and the link that opens
+                        // it in full. Below the repository facts and any
+                        // other folder plugin's lines `file-text` already
+                        // drew, per the issue's own ordering - pinned under
+                        // the scrollable text rather than inside it, so it
+                        // is always in view without scrolling down to it.
+                        if !editing-file && file-readme-name != "": Rectangle {
+                            VerticalLayout {
+                                padding: 4px;
+                                spacing: 4px;
+                                Text {
+                                    text: file-readme-title;
+                                    font-weight: 700;
+                                    color: Palette.foreground;
+                                    wrap: word-wrap;
+                                }
+                                if file-readme-excerpt != "": Text {
+                                    text: file-readme-excerpt;
+                                    color: Palette.foreground;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    StatusLink {
+                                        label: "Open README";
+                                        activated => { file-readme-open-requested(); }
+                                    }
+                                }
                             }
                         }
                     }

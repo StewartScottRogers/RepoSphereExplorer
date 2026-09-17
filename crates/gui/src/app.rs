@@ -4163,6 +4163,69 @@ impl App {
         }
     }
 
+    /// The selected working copy's README (#584), read straight from the
+    /// `directory` plugin's own view data rather than through [`facts`] or
+    /// [`present`]: the fact table only ever holds label/value pairs, and
+    /// `directory` always has at least the entry-count fact, so its own
+    /// `present` lines - which do carry the README - never reach the pane
+    /// (`facts(plugin, data).is_empty()` is never true for it).
+    fn readme_excerpt(&self) -> Option<plugin_directory::readme::ReadmeExcerpt> {
+        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
+            return None;
+        };
+        if plugin != "directory" {
+            return None;
+        }
+        serde_json::from_value::<plugin_directory::DirectoryView>(data.clone())
+            .ok()
+            .and_then(|view| view.readme)
+    }
+
+    /// The README's file name, for the File pane's Open README link - empty
+    /// when the selected folder has none, which both hides the section and
+    /// gives [`Self::open_readme`] nothing to act on.
+    #[must_use]
+    pub fn file_readme_name(&self) -> String {
+        self.readme_excerpt()
+            .map(|readme| readme.name)
+            .unwrap_or_default()
+    }
+
+    /// The README section's own title: its first heading, or the literal
+    /// word "README" when it has none (or could not be read - #584
+    /// requirement 5). Empty exactly when [`Self::file_readme_name`] is,
+    /// which is what hides the section.
+    #[must_use]
+    pub fn file_readme_title(&self) -> String {
+        self.readme_excerpt()
+            .map(|readme| readme.title.unwrap_or_else(|| "README".to_owned()))
+            .unwrap_or_default()
+    }
+
+    /// The README's opening excerpt, its paragraphs joined by blank lines
+    /// so the pane's own word-wrap reads it as prose - empty when there is
+    /// none to show (a bare `README`, or one past the read cap).
+    #[must_use]
+    pub fn file_readme_excerpt(&self) -> String {
+        self.readme_excerpt()
+            .map(|readme| readme.excerpt.join("\n\n"))
+            .unwrap_or_default()
+    }
+
+    /// Opens the selected working copy and selects its README once its
+    /// listing arrives, so the README's own plugin shows it in full - the
+    /// File pane's Open README link (#584). The README lives a level below
+    /// what the File pane is previewing: the folder the reader selected,
+    /// not the folder currently on screen in Contents.
+    pub fn open_readme(&mut self) {
+        let name = self.file_readme_name();
+        if name.is_empty() || self.found.is_some() {
+            return;
+        }
+        self.reselect = Some(name);
+        self.open_content(self.content_selected);
+    }
+
     /// Display text for the status bar.
     #[must_use]
     pub fn status_text(&self) -> String {
@@ -4699,6 +4762,7 @@ second", "truncated": false }),
                 tracking: None,
                 status: None,
             }),
+            readme: None,
         })
         .unwrap();
         app.set_file_view("directory", data);

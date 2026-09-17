@@ -20,7 +20,7 @@ it.
 | Image (raster codecs) | `crates/plugins/image` | — | |
 | Archive (zip) | `crates/plugins/archive` | — | Also provides `extract` for the D4 operations |
 | PDF | `crates/plugins/pdf` | — | |
-| Directory-as-file | `crates/plugins/directory` | — | |
+| Directory-as-file | `crates/plugins/directory` | — | A working copy's own README, when it holds one, is read and excerpted alongside its repository facts (#584) |
 | Python source | `crates/plugins/python` | #7 | Sniffs by shebang or top-level `def`/`class`, ahead of `text` in `CORE_PLUGINS` |
 | JavaScript source | `crates/plugins/javascript` | #8 | Sniffs by `node` shebang, top-level `function`/`class`, or CommonJS/ES-module/arrow-function markers, ahead of `text` in `CORE_PLUGINS` |
 | TypeScript source | `crates/plugins/typescript` | #9 | Sniffs by TypeScript-only markers (`interface`/`enum`/type-alias declarations, type annotations, visibility modifiers, `implements`, `import type`), ahead of `javascript` in `CORE_PLUGINS` so it claims TS-specific syntax first |
