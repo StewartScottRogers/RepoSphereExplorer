@@ -1832,6 +1832,7 @@ impl App {
                 .collect(),
         };
         self.pending_operation = Some(spawn_request(request));
+        self.same_folder_reload = true;
         self.status = Some("deleting...".to_owned());
     }
 
@@ -3003,6 +3004,7 @@ impl App {
             return;
         }
         self.pending_operation = Some(spawn_request(Request::Undo));
+        self.same_folder_reload = true;
         self.status = Some("undoing...".to_owned());
     }
 
@@ -7894,6 +7896,58 @@ third",
 
         assert_eq!(app.content_rows().len(), 2);
         assert!(!app.filter_focused());
+    }
+
+    /// An operation that reloads the folder somebody is looking at keeps
+    /// their filter. Delete and undo were left out when the other four
+    /// were wired up (#582's review of #623): filtering to the changed
+    /// repositories and deleting one of them threw the filter away and
+    /// put every row back, which is the opposite of what the rest of the
+    /// operations do.
+    #[test]
+    fn deleting_a_row_keeps_the_filter_it_was_deleted_from() {
+        let mut app = App::new(std::env::temp_dir());
+        let listing = || {
+            Ok(Response::Directory {
+                entries: entries(&[("alpha.txt", false), ("test.txt", false)]),
+            })
+        };
+        app.apply_contents_result(&[], listing());
+        app.begin_filter();
+        app.handle_key_text("a");
+        assert_eq!(app.content_rows().len(), 1);
+
+        app.request_delete();
+        app.confirm_delete();
+        app.apply_contents_result(&[], listing());
+
+        assert_eq!(
+            app.content_rows().len(),
+            1,
+            "deleting a row is the same folder reloaded, so the filter stays"
+        );
+    }
+
+    #[test]
+    fn undoing_an_operation_keeps_the_filter() {
+        let mut app = App::new(std::env::temp_dir());
+        let listing = || {
+            Ok(Response::Directory {
+                entries: entries(&[("alpha.txt", false), ("test.txt", false)]),
+            })
+        };
+        app.apply_contents_result(&[], listing());
+        app.begin_filter();
+        app.handle_key_text("a");
+
+        app.undo();
+        app.apply_contents_result(&[], listing());
+
+        assert_eq!(
+            app.content_rows().len(),
+            1,
+            "undo puts something back into the same folder, so the filter stays"
+        );
     }
 
     #[test]
