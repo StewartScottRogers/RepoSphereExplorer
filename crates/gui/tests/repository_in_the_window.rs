@@ -297,6 +297,14 @@ fn row_of(ui: &MainWindow, name: &str) -> f32 {
     f32::from(index)
 }
 
+/// Where the row named `name` sits in the listing, counting from 0.
+fn index_of(ui: &MainWindow, name: &str) -> usize {
+    listing(ui)
+        .iter()
+        .position(|drawn| drawn == name)
+        .unwrap_or_else(|| panic!("{name} is not in the listing: {:?}", listing(ui)))
+}
+
 /// What the Contents pane's Type column says for the row named `name`.
 fn kind_of(ui: &MainWindow, name: &str) -> String {
     ui.get_content_rows()
@@ -1005,13 +1013,12 @@ fn a_long_name_keeps_its_full_width_beside_a_long_branch_at_the_default_contents
         1,
     );
     let (ui, _app) = window_at(&root);
-    assert_eq!(
-        ui.get_contents_width(),
-        470.0,
+    assert!(
+        (ui.get_contents_width() - 470.0).abs() < f32::EPSILON,
         "the pane should still be at its default width"
     );
 
-    let index = row_of(&ui, "AgenticCliOptions") as usize;
+    let index = index_of(&ui, "AgenticCliOptions");
     let name = nth_drawn(&ui, "ContentsPane::name-text", index);
 
     // Crushed to a letter or two, the bug this reproduces, draws at
@@ -1039,7 +1046,7 @@ fn a_narrower_contents_width_hides_the_branch_while_the_marker_stays_beside_the_
     let (ui, _app) = window_at(&root);
     ui.set_contents_width(250.0);
 
-    let index = row_of(&ui, "AgenticCliOptions") as usize;
+    let index = index_of(&ui, "AgenticCliOptions");
     let marker = nth_drawn(&ui, "ContentsPane::marker-text", index);
 
     // A hidden element is left out of an element search altogether, so the
