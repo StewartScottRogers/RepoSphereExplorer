@@ -297,6 +297,14 @@ fn row_of(ui: &MainWindow, name: &str) -> f32 {
     f32::from(index)
 }
 
+/// Where the row named `name` sits in the listing, counting from 0.
+fn index_of(ui: &MainWindow, name: &str) -> usize {
+    listing(ui)
+        .iter()
+        .position(|drawn| drawn == name)
+        .unwrap_or_else(|| panic!("{name} is not in the listing: {:?}", listing(ui)))
+}
+
 /// What the Contents pane's Type column says for the row named `name`.
 fn kind_of(ui: &MainWindow, name: &str) -> String {
     ui.get_content_rows()
@@ -976,5 +984,87 @@ fn a_checkout_behind_its_remote_says_how_far_in_the_file_pane() {
         pane.contains("Branch: main - 2 behind origin/main (never fetched)"),
         "the pane should say how far behind its upstream the branch is; it \
          reads:\n{pane}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// The name has priority over the branch beside it (#573).
+// ---------------------------------------------------------------------
+
+/// The `nth` element the pane draws with `element_id`, in the order the
+/// per-row `for` loop in `app.slint` instantiates them - the same order
+/// `ui.get_content_rows()` lists the rows in, since both come from one
+/// loop over the same model.
+fn nth_drawn(ui: &MainWindow, element_id: &str, index: usize) -> ElementHandle {
+    ElementHandle::find_by_element_id(ui, element_id)
+        .nth(index)
+        .unwrap_or_else(|| panic!("no {element_id} at position {index}"))
+}
+
+#[test]
+fn a_long_name_keeps_its_full_width_beside_a_long_branch_at_the_default_contents_width() {
+    let _serial = serially();
+    let root = scratch("name-priority-default-width");
+    checkout(
+        &root,
+        "AgenticCliOptions",
+        "chore/solution-drift-model-refresh-agenttools",
+        None,
+        1,
+    );
+    let (ui, _app) = window_at(&root);
+    assert!(
+        (ui.get_contents_width() - 470.0).abs() < f32::EPSILON,
+        "the pane should still be at its default width"
+    );
+
+    let index = index_of(&ui, "AgenticCliOptions");
+    let name = nth_drawn(&ui, "ContentsPane::name-text", index);
+
+    // Crushed to a letter or two, the bug this reproduces, draws at
+    // something close to the 24px floor `min-width` gives it; a name this
+    // short shown in full is well over three times that.
+    assert!(
+        name.size().width > 80.0,
+        "the name should keep its own width even with a long branch beside \
+         it; it drew at {}px",
+        name.size().width
+    );
+}
+
+#[test]
+fn a_narrower_contents_width_hides_the_branch_while_the_marker_stays_beside_the_name() {
+    let _serial = serially();
+    let root = scratch("name-priority-narrow-width");
+    checkout(
+        &root,
+        "AgenticCliOptions",
+        "chore/solution-drift-model-refresh-agenttools",
+        None,
+        1,
+    );
+    let (ui, _app) = window_at(&root);
+    ui.set_contents_width(250.0);
+
+    let index = index_of(&ui, "AgenticCliOptions");
+    let marker = nth_drawn(&ui, "ContentsPane::marker-text", index);
+
+    // A hidden element is left out of an element search altogether, so the
+    // branch is not looked up by position: the only repository row here
+    // must have no branch drawn with any width.
+    let drawn: Vec<f32> = ElementHandle::find_by_element_id(&ui, "ContentsPane::branch-text")
+        .map(|branch| branch.size().width)
+        .filter(|width| *width >= 1.0)
+        .collect();
+    assert!(
+        drawn.is_empty(),
+        "a branch this long has no room left at a 250px contents width and \
+         should disappear rather than sit there as a sliver of ellipsis; it \
+         drew at {drawn:?}px"
+    );
+    assert!(
+        marker.size().width > 0.0,
+        "the uncommitted-changes marker stays attached to the name once the \
+         branch beside it is gone"
     );
 }
