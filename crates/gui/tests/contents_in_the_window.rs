@@ -336,6 +336,38 @@ fn clicking_a_column_header_sorts_the_listing() {
     );
 }
 
+/// The Size column is blank on every row of a listing that holds only
+/// folders, so it is not drawn at all until the listing holds a file (#578).
+#[test]
+fn the_size_column_is_hidden_until_the_listing_holds_a_file() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = scratch("size-column");
+    std::fs::create_dir(directory.join("alpha")).expect("the fixture is written");
+    std::fs::create_dir(directory.join("bravo")).expect("the fixture is written");
+    let (ui, app) = window_on(&directory);
+
+    assert!(
+        ElementHandle::find_by_accessible_label(&ui, "Size")
+            .next()
+            .is_none(),
+        "a listing of only folders should draw no Size column"
+    );
+
+    std::fs::write(directory.join("charlie.txt"), "x").expect("the fixture is written");
+    {
+        let mut app = app.borrow_mut();
+        let entries = service::list_directory(&directory).expect("the directory lists");
+        app.apply_contents_result_for_test(&[], protocol::Response::Directory { entries });
+    }
+    sync_ui(&ui, &app.borrow());
+
+    assert!(
+        ElementHandle::find_by_accessible_label(&ui, "Size")
+            .any(|handle| handle.size().width > 0.0 && handle.size().height > 0.0),
+        "the Size column should come back once the listing holds a file"
+    );
+}
+
 /// Sorting reorders the rows under the reader; the highlight has to come
 /// with the file it was on, not stay on the row number it happened to be.
 #[test]
