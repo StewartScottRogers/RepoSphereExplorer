@@ -92,6 +92,33 @@ else
   failed=1
 fi
 
+echo "== a transcript in the shape the runtime really writes does not crash it =="
+cat > "${work}/mixed.json" <<'JSON'
+[
+  "a bare string line",
+  {"type": "user", "message": {"content": "plain text, not a list of blocks"}},
+  {"type": "assistant", "message": "not even a dict"},
+  {"type": "result", "permission_denials": [
+    {"tool_name": "Bash", "tool_input": {"command": "gh pr review 1 --approve"}}
+  ]}
+]
+JSON
+: > "${work}/out"
+CLAUDE_LOG="${work}/mixed.json" landed 0 > /dev/null
+if grep -q "could not parse" "${work}/log"; then
+  echo "  FAIL  a mixed transcript still crashes the parser"
+  failed=1
+else
+  echo "  ok    a mixed transcript is read, not abandoned"
+fi
+if grep -q "denied: Bash .*gh pr review 1 --approve" "${work}/log"; then
+  echo "  ok    and the runtime's own list of refusals is printed"
+else
+  echo "  FAIL  the permission_denials list was not printed"
+  sed 's/^/        /' "${work}/log"
+  failed=1
+fi
+
 echo "== the workflow wires the retry to it =="
 python3 - "${root}/.github/workflows/independent-review.yml" <<'PY'
 import sys, yaml, io

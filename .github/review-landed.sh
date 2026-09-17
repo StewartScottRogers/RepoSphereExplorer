@@ -55,7 +55,21 @@ if isinstance(entries, dict):
 
 denied = []
 for entry in entries:
-    for block in (entry.get("message", {}) or {}).get("content", []) or []:
+    # The transcript mixes shapes: a line can be a bare string, and a
+    # message's content can be a string rather than a list of blocks.
+    # Reading every line as a dict crashed on #597 and #607, so neither
+    # said what its reviewer was refused.
+    if not isinstance(entry, dict):
+        continue
+    # The runtime's own list of refusals, when the transcript has one.
+    for refusal in entry.get("permission_denials") or []:
+        if isinstance(refusal, dict):
+            print(f"  denied: {refusal.get('tool_name')} {str(refusal.get('tool_input'))[:300]}")
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        continue
+    for block in content:
         if not isinstance(block, dict):
             continue
         if block.get("type") == "tool_use":
