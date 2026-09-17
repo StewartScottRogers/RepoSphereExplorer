@@ -15,9 +15,9 @@ on:
         description: Issue number to build (blank = pick the oldest open work order)
         required: false
       max_turns:
-        description: Turn budget for unusually large work orders (default 150)
+        description: Turn budget for unusually large work orders (default 300)
         required: false
-        default: "150"
+        default: "300"
 
 # Shares its group with claude.yml: only one floor build runs at a time,
 # whether it was triggered by a label or by tonight's shift, so concurrent
@@ -136,8 +136,13 @@ jobs:
           # github-actions[bot]; the action refuses bot-triggered runs unless
           # explicitly allowed.
           allowed_bots: "github-actions[bot]"
+          # 300 turns, retried at 450. At 150, the shifts for #575, #576 and
+          # #577 all ran out mid-build and only finished on the retry: half
+          # an hour and a full run's cost spent every time, to learn the
+          # budget was too small. The work orders are window changes with
+          # window tests, and that is simply what they take.
           claude_args: |
-            --max-turns ${{ inputs.max_turns || '150' }}
+            --max-turns ${{ inputs.max_turns || '300' }}
             --allowedTools "Bash(git *),Bash(cargo *),Bash(gh *),Edit,Write,Read(//home/runner/.cargo/registry/**)"
             --disallowedTools "Bash(git push --force*),Bash(git push -f*),Bash(git reset --hard*),Bash(gh repo delete*)"
           prompt: |
@@ -289,7 +294,7 @@ jobs:
               exit 0
             fi
             echo "Build step failed (outcome: $BUILD_OUTCOME); retrying with a larger turn budget."
-            gh workflow run factory-shift.yml --repo "$REPO" -f max_turns=300
+            gh workflow run factory-shift.yml --repo "$REPO" -f max_turns=450
             exit 0
           fi
 
