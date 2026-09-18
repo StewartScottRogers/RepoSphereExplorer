@@ -184,6 +184,34 @@ pub struct RepositoryInfo {
     /// The address the checkout tracks, as written in its own
     /// configuration.
     pub remote: Option<String>,
+    /// Whether this is an ordinary clone, a linked worktree, or a submodule
+    /// (#587).
+    #[serde(default)]
+    pub kind: RepositoryKind,
+}
+
+/// What kind of working copy a [`RepositoryInfo`] describes. Mirrors
+/// `plugin_directory::repository::Kind`, duplicated here rather than
+/// shared: this crate carries the wire format for both front ends, and
+/// takes no dependency on a plugin crate to describe it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RepositoryKind {
+    /// An ordinary checkout.
+    #[default]
+    Clone,
+    /// A linked worktree (`git worktree add`), sharing a clone's git
+    /// directory.
+    Worktree {
+        /// The clone's working directory, as an absolute path.
+        clone: String,
+        /// Whether `clone` still exists.
+        clone_exists: bool,
+    },
+    /// A submodule, pinned by an outer working copy.
+    Submodule {
+        /// The outer working copy's directory, as an absolute path.
+        outer: String,
+    },
 }
 
 /// One file or folder found by [`Request::FindNames`].
@@ -433,7 +461,8 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 mod tests {
     use super::{
         DirectoryEntry, MAX_MESSAGE_BYTES, NameMatch, PluginView, ReposRoot, RepositoryInfo,
-        Request, Response, VERSION, WorkingTreeSummary, read_message, socket_name, write_message,
+        RepositoryKind, Request, Response, VERSION, WorkingTreeSummary, read_message, socket_name,
+        write_message,
     };
     use std::io::{self, Read, Write};
 
@@ -613,6 +642,7 @@ mod tests {
                     provider: Some("github.com".to_owned()),
                     branch: Some("main".to_owned()),
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
+                    kind: RepositoryKind::Clone,
                 }),
             },
             DirectoryEntry {
@@ -635,6 +665,80 @@ mod tests {
                 assert_eq!(repository.branch.as_deref(), Some("main"));
                 assert!(entries[1].repository.is_none(), "an ordinary folder");
             }
+            other => panic!("expected a listing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_worktree_or_submodule_carries_its_kind_across_the_wire() {
+        let entries = vec![
+            DirectoryEntry {
+                name: "linked".to_owned(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+                repository: Some(RepositoryInfo {
+                    provider: Some("github.com".to_owned()),
+                    branch: Some("side".to_owned()),
+                    remote: Some("https://github.com/owner/name.git".to_owned()),
+                    kind: RepositoryKind::Worktree {
+                        clone: "/repos/clone".to_owned(),
+                        clone_exists: true,
+                    },
+                }),
+            },
+            DirectoryEntry {
+                name: "inner".to_owned(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+                repository: Some(RepositoryInfo {
+                    provider: Some("gitlab.com".to_owned()),
+                    branch: Some("main".to_owned()),
+                    remote: Some("git@gitlab.com:group/inner.git".to_owned()),
+                    kind: RepositoryKind::Submodule {
+                        outer: "/repos/outer".to_owned(),
+                    },
+                }),
+            },
+        ];
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &Response::Directory { entries }).unwrap();
+        let read: Response = read_message(&mut buffer.as_slice()).unwrap();
+
+        let Response::Directory { entries } = read else {
+            panic!("expected a listing");
+        };
+        assert_eq!(
+            entries[0].repository.as_ref().unwrap().kind,
+            RepositoryKind::Worktree {
+                clone: "/repos/clone".to_owned(),
+                clone_exists: true,
+            }
+        );
+        assert_eq!(
+            entries[1].repository.as_ref().unwrap().kind,
+            RepositoryKind::Submodule {
+                outer: "/repos/outer".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_repository_from_before_kind_existed_reads_as_a_clone() {
+        // `kind` is defaulted rather than required, so a front end built
+        // after #587 can still read a `RepositoryInfo` from a service built
+        // before it.
+        let older = r#"{"Directory":{"entries":[{"name":"src","is_dir":true,"size":0,
+            "modified":null,"repository":{"provider":null,"branch":"main","remote":null}}]}}"#;
+        let response: Response = serde_json::from_str(older).unwrap();
+
+        match response {
+            Response::Directory { entries } => assert_eq!(
+                entries[0].repository.as_ref().unwrap().kind,
+                RepositoryKind::Clone
+            ),
             other => panic!("expected a listing, got {other:?}"),
         }
     }
@@ -1063,6 +1167,7 @@ mod tests {
                     provider: None,
                     branch: Some("main".to_owned()),
                     remote: None,
+                    kind: RepositoryKind::Clone,
                 }),
             }],
         };

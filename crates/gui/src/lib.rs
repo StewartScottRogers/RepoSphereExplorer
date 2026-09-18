@@ -707,6 +707,21 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_editor(ui, app);
     wire_zoom(ui, app);
     wire_shortcuts_sheet(ui);
+    wire_related_repository_link(ui, app);
+}
+
+/// Wires the File pane's "Worktree of"/"Submodule of" link (#587), split
+/// out of [`wire_commands`] only to keep that function under its line cap.
+fn wire_related_repository_link(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    let app = app.clone();
+    let ui_weak = ui.as_weak();
+    ui.on_file_related_repository_open_requested(move || {
+        let mut app = app.borrow_mut();
+        app.open_related_repository();
+        if let Some(ui) = ui_weak.upgrade() {
+            sync_ui(&ui, &app);
+        }
+    });
 }
 
 /// Fills in the Help > Keyboard shortcuts sheet's rows (#585). Set once,
@@ -1231,6 +1246,8 @@ fn sync_file_pane(ui: &MainWindow, app: &App) {
     ui.set_file_readme_name(app.file_readme_name().into());
     ui.set_file_readme_title(app.file_readme_title().into());
     ui.set_file_readme_excerpt(app.file_readme_excerpt().into());
+    ui.set_file_related_repository_label(app.file_related_repository_label().into());
+    ui.set_file_related_repository_linked(app.file_related_repository_linked());
 }
 
 /// Copies `app`'s current state into `ui`'s bound properties.

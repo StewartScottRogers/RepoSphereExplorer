@@ -3481,6 +3481,52 @@ public class OrderBook {
     }
 
     #[test]
+    fn a_listing_carries_a_worktrees_kind_and_the_clone_it_shares() {
+        // D10 again: a `commondir` file beside a bare marker is enough to
+        // tell a linked worktree apart from an ordinary clone, and no `git`
+        // command is run to find out.
+        let dir = scratch();
+        let clone_git = dir.join("clone").join(".git");
+        fs::create_dir_all(&clone_git).unwrap();
+        fs::write(clone_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(
+            clone_git.join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/acme/widgets.git\n",
+        )
+        .unwrap();
+
+        let worktree_git = clone_git.join("worktrees").join("side");
+        fs::create_dir_all(&worktree_git).unwrap();
+        fs::write(worktree_git.join("HEAD"), "ref: refs/heads/side\n").unwrap();
+        fs::write(worktree_git.join("commondir"), "../..\n").unwrap();
+
+        let linked = dir.join("linked");
+        fs::create_dir_all(&linked).unwrap();
+        fs::write(
+            linked.join(".git"),
+            format!("gitdir: {}\n", worktree_git.display()),
+        )
+        .unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        let entry = entries.iter().find(|e| e.name == "linked").unwrap();
+        let found = entry
+            .repository
+            .as_ref()
+            .expect("a worktree, by its marker");
+        assert_eq!(
+            found.kind,
+            protocol::RepositoryKind::Worktree {
+                clone: dir.join("clone").to_string_lossy().into_owned(),
+                clone_exists: true,
+            }
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn an_ordinary_folder_is_listed_without_being_called_a_working_copy() {
         let dir = scratch();
         fs::create_dir_all(dir.join("just-a-folder")).unwrap();
