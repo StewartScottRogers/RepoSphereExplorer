@@ -265,6 +265,54 @@ pub fn geometry_on_a_display(
     }
 }
 
+/// Reads the `zoom_percent` field out of `value`, rejecting anything that
+/// is not one of [`crate::zoom::STEPS`] - the same all-or-nothing shape
+/// every other field in this module gives a corrupt value.
+fn zoom_field(value: &serde_json::Value) -> Option<u16> {
+    let percent = value.get("zoom_percent")?.as_u64()?;
+    crate::zoom::valid_step(u16::try_from(percent).ok()?)
+}
+
+/// The remembered zoom step, or `None` for a missing, unreadable or
+/// malformed file, or a level that is not one of [`crate::zoom::STEPS`] -
+/// the caller falls back to [`crate::zoom::DEFAULT`], the same as every
+/// other setting this module reads.
+#[must_use]
+pub fn load_zoom() -> Option<u16> {
+    let text = std::fs::read_to_string(settings_path()?).ok()?;
+    zoom_field(&serde_json::from_str(&text).ok()?)
+}
+
+/// `existing` with its `zoom_percent` field set from `percent`, every other
+/// field left as it was - the zoom counterpart to [`merged_pane_widths`].
+fn merged_zoom(existing: &serde_json::Value, percent: u16) -> serde_json::Value {
+    let mut existing = existing.as_object().cloned().unwrap_or_default();
+    existing.insert("zoom_percent".to_owned(), serde_json::json!(percent));
+    serde_json::Value::Object(existing)
+}
+
+/// Writes `percent` to the settings file, creating its directory if needed.
+/// Best-effort, and reads the file first and changes only the `zoom_percent`
+/// field, for the same reasons [`save_pane_widths`] does.
+pub fn save_zoom(percent: u16) {
+    let Some(path) = settings_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return;
+    }
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let value = merged_zoom(&existing, percent);
+    if let Ok(text) = serde_json::to_string_pretty(&value) {
+        let _ = std::fs::write(&path, text);
+    }
+}
+
 /// Reads the `editor` field out of `value`: the command a folder is handed
 /// to for "Open in editor" (#581). `None` for a missing, non-string or
 /// blank setting, the same as every other field this module reads - the
@@ -288,7 +336,8 @@ mod tests {
     use super::{
         DisplayBounds, MAX_WIDTH, MAX_WINDOW_DIMENSION, MIN_WIDTH, MIN_WINDOW_DIMENSION,
         PaneWidths, WindowGeometry, dimension_field, editor_field, geometry_on_a_display,
-        merged_pane_widths, merged_window_geometry, position_field, width_field,
+        merged_pane_widths, merged_window_geometry, merged_zoom, position_field, width_field,
+        zoom_field,
     };
 
     #[test]
@@ -560,5 +609,34 @@ mod tests {
         assert_eq!(editor_field(&serde_json::json!({})), None);
         assert_eq!(editor_field(&serde_json::json!({ "editor": "   " })), None);
         assert_eq!(editor_field(&serde_json::json!({ "editor": 5 })), None);
+    }
+
+    /// A saved value round-trips (#586's acceptance check).
+    #[test]
+    fn a_saved_zoom_step_is_read_back() {
+        let value = serde_json::json!({ "zoom_percent": 125 });
+        assert_eq!(zoom_field(&value), Some(125));
+    }
+
+    /// An invalid one gives 100% (#586's acceptance check) - read back as
+    /// `None`, so the caller falls back to `zoom::DEFAULT`.
+    #[test]
+    fn an_invalid_zoom_level_is_none() {
+        assert_eq!(zoom_field(&serde_json::json!({ "zoom_percent": 95 })), None);
+        assert_eq!(
+            zoom_field(&serde_json::json!({ "zoom_percent": "big" })),
+            None
+        );
+        assert_eq!(zoom_field(&serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn saving_zoom_keeps_a_hand_edited_editor_key() {
+        let existing = serde_json::json!({ "editor": "subl", "zoom_percent": 100 });
+        let merged = merged_zoom(&existing, 150);
+        assert_eq!(
+            merged,
+            serde_json::json!({ "editor": "subl", "zoom_percent": 150 })
+        );
     }
 }

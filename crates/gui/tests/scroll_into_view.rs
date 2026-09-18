@@ -133,7 +133,12 @@ fn the_rule_puts_a_row_below_the_fold_at_the_bottom_edge() {
     );
 
     let target = ROW_COUNT - 1;
-    ui.set_content_scroll_y(scroll_offset_for(usize::from(target), height, 0.0));
+    ui.set_content_scroll_y(scroll_offset_for(
+        usize::from(target),
+        height,
+        0.0,
+        ROW_HEIGHT,
+    ));
 
     let top = row_top(&ui, target).expect("the target row should be on screen");
     assert!(
@@ -152,9 +157,14 @@ fn the_rule_puts_a_row_above_the_fold_at_the_top_edge() {
     let viewport_top = row_top(&ui, 0).expect("the first row is on screen at rest");
 
     // Scrolled deep into the listing, then the selection jumps back up.
-    let scrolled = scroll_offset_for(usize::from(ROW_COUNT - 1), height, 0.0);
+    let scrolled = scroll_offset_for(usize::from(ROW_COUNT - 1), height, 0.0, ROW_HEIGHT);
     let target: u16 = 40;
-    ui.set_content_scroll_y(scroll_offset_for(usize::from(target), height, scrolled));
+    ui.set_content_scroll_y(scroll_offset_for(
+        usize::from(target),
+        height,
+        scrolled,
+        ROW_HEIGHT,
+    ));
 
     assert_eq!(
         row_top(&ui, target),
@@ -170,7 +180,7 @@ fn a_row_already_on_screen_leaves_the_listing_where_it_was() {
     let height = viewport_height(&ui);
     let before = visible_rows(&ui);
 
-    ui.set_content_scroll_y(scroll_offset_for(1, height, 0.0));
+    ui.set_content_scroll_y(scroll_offset_for(1, height, 0.0, ROW_HEIGHT));
 
     assert_eq!(
         visible_rows(&ui),
