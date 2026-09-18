@@ -272,6 +272,16 @@ The anchor the whole application is arranged around.
 - **The boundary is soft.** The root is home base, not a cage: navigating above
   or outside it is allowed. Soft against hard is one setting in one place
   (D8), so it can be reconsidered without hunting through the code.
+- **All Repositories is additive, not exhaustive (#591).** The rule above
+  always holds: the root's immediate children are read as working
+  directories in the ordinary listing, without a background pass. Some
+  readers keep theirs a folder or two deeper instead -
+  `repos\github\<owner>\<project>` - so the application may also find working
+  copies up to three folder levels below the root, for a separate All
+  Repositories view. The service finds these in the background, never inline
+  with the ordinary listing, and does not look inside a working copy for
+  more of them: a submodule is already reported by its own working copy, not
+  chased by the scan. The depth is a constant, not a setting.
 
 ## 3. File types as plugins
 
