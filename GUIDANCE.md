@@ -20,7 +20,10 @@ says where each one came from.
 It is **not** a general-purpose file explorer. Browsing the whole filesystem is
 not the goal, and no feature is justified by "a file explorer would do this".
 The question a proposal has to answer is whether it helps somebody reach and
-understand the repositories they work in.
+understand the repositories they work in. A tool in the tool slot (§2.6) is
+held to the same question: it earns its place by working on what is *in*
+those repositories. A certificate tool passes - it finds the certificates
+committed to them.
 
 That scope was set on 2026-09-08 and is recorded in
 [DECISIONS.md](DECISIONS.md); §2.5 and decisions D7–D10 below carry the detail.
@@ -204,43 +207,75 @@ Native *feel* per platform — two behaviour profiles, not one averaged one.
 | Modals | dialogs | sheets |
 | Chrome | title bar, menu bar | traffic lights, unified toolbar |
 
-### 2.4 The three panes
+### 2.4 The panes
 
 Windows Explorer-inspired in its handling, mouse-first, keyboard as a peer —
-but pointed at the Repos Directory rather than at the machine:
+but pointed at the Repos Directory rather than at the machine. Each of the
+three below docks in the main window or floats in a window of its own; see
+§2.6 for what popping one out means and what stays true while it is out:
 
 1. **Folders view** — tree, expand/collapse, drag targets. Its root is the
    Repos Directory, not a list of drives: this is a workspace, not a volume
-   browser.
+   browser. A child of the root that is a working copy is marked here too,
+   the same fact the Contents pane marks: a provider-tinted branch badge and
+   the folder's name in the provider's accent, read from the listing the
+   tree already has, with no extra read per row (#579).
 2. **Folder contents view** — list / details / icons, sortable columns, marquee
    select, drag-and-drop, context menus, inline rename. A child of the root
    that is a working copy is marked as one and names its provider; a folder
-   that is not stays visible and looks different.
-3. **File pane** — supplied entirely by the file-type plugin: view, edit, and
-   the operations that type offers. A type may offer more than one view of
-   the same file - its own rendering, and the file's plain text where it has
-   one - which the pane switches between; the plugin names them and decides
-   how many there are. For a repository, the pane reports the provider, the
-   branch checked out, and the remote it tracks.
+   that is not stays visible and looks different. The columns are fitted to a
+   Repos Directory rather than to a filesystem: the Size column is omitted
+   while the listing holds no plain file, Type reads "Git repository ·
+   `<provider>`" for a working copy, and a find's results relabel Type as
+   "Repository" with Size and Modified left blank (#578).
+3. **The tool slot** — in the File pane's place, supplied entirely by the
+   tool that applies to the selection: view, edit, and the operations that
+   tool offers. A picker appears when more than one tool applies to the same
+   selection; the editor (§3.6) is the default tool for a file. A type may
+   offer more than one view of the same file - its own rendering, and the
+   file's plain text where it has one - which the tool switches between; the
+   tool names them and decides how many there are. For a repository, the
+   editor tool reports the provider, the branch checked out and the remote
+   it tracks as a table of label and value, supplied by the plugin through
+   `PluginPresentation::facts`; `present` is left as the sentences the
+   terminal front end draws from the same data (#576).
 
-**The command bar** carries only actions a reader takes on the selected
-repository or folder often enough to want one click away: opening it on the
-web, creating a folder, renaming, deleting, undoing, and refreshing. Clipboard
-actions, extracting an archive, and editing and saving a file's own content
-stay off it - they already live in the menu bar, the Contents pane's
-right-click menu, or a keyboard shortcut, and duplicating them onto the bar
-would only add file-manager buttons unrelated to a repository (#580).
+**The command bar** carries actions in proportion to how often a reader takes
+them on the thing in front of them, not to what the action is about: opening
+it on the web, creating a folder, renaming, deleting, undoing, and
+refreshing are all reached several times in a session and so are one click
+away. Clipboard actions, extracting an archive, and editing and saving a
+file's own content are each reached too, but already sit one level down - the
+menu bar, the Contents pane's right-click menu, or a keyboard shortcut - and
+duplicating them onto the bar would only crowd it for a saving nobody asked
+for (#580).
 
 Splitters are draggable and persisted. Everything reachable by mouse is also
 reachable by keyboard.
 
 A selected folder's right-click menu and the File menu also reach outward,
 to the tools a developer works in once they have found what they were
-looking for: opening a terminal or the configured editor at that folder,
-copying its path or - for a working copy with one - its remote address to
-the clipboard, and revealing it in the platform's own file manager (#581).
-Each hands the folder to a program the user already has, or a fact the
-application has already read, to the clipboard; it never installs or
+looking for: opening a terminal, opening the configured editor at that
+folder, copying its path or - for a working copy with one - its remote
+address to the clipboard, and revealing it in the platform's own file
+manager (#581). This is the one place a front end starts a process of its
+own rather than asking the service, and it belongs to the front end rather
+than the service for that reason: §2's "front ends hold no business rules"
+is about what a repository *is*, which stays the service's call, not about
+which program a reader's own machine already has. §2.1's "never interpolate
+a path into a command" still holds - the folder is always one argument to
+the program, never a shell line built out of it.
+
+The editor comes from the `editor` key in `gui.json`, which can only be
+hand-edited, falling back to Visual Studio Code on the `PATH` when the key
+is absent, and to a disabled menu item when there is neither. The terminal
+is whichever program the platform is known to have: Windows Terminal on
+Windows, falling back to PowerShell; the desktop's configured terminal on
+Linux, by way of `xdg-terminal-exec`, falling back to `x-terminal-emulator`;
+`Terminal.app` on macOS, which is always present.
+
+Each of these hands the folder to a program the user already has, or a fact
+the application has already read, to the clipboard; none of it installs or
 configures that program, and per D10 none of it runs a source control
 command.
 
@@ -282,6 +317,30 @@ The anchor the whole application is arranged around.
   with the ordinary listing, and does not look inside a working copy for
   more of them: a submodule is already reported by its own working copy, not
   chased by the scan. The depth is a constant, not a setting.
+
+### 2.6 Panes and windows
+
+Settled as D15. All three panes of §2.4 - Folders, Contents, and the tool
+slot - dock in the main window or float in one of their own, inside the same
+application: one process, one connection to the service, several windows,
+never a separate program.
+
+- **One shared selection.** Every window, docked or floating, follows the
+  same selection by default. A popped-out tool window can be **pinned** to
+  keep showing what it had when the selection moves on, for comparing two
+  files or two repositories side by side.
+- **Closing a popped-out window** docks its pane back into the main window;
+  it does not lose what it was showing.
+- **The application exits when its last window closes** - there is no
+  window left over once the one holding the application is gone.
+- **Layout is remembered between launches**: which panes are popped out, and
+  each window's position and size. This is arrangement, not location - every
+  launch still opens at the Repos Directory regardless of which panes were
+  floating when it last closed (D7); D7's no-session-restore rule is about
+  *where*, not about which windows are open.
+- **The terminal front end is unchanged.** Docking and floating are a
+  graphical front end concept; the terminal user interface keeps its fixed
+  layout.
 
 ## 3. File types as plugins
 
@@ -369,18 +428,22 @@ manifest the author wrote and never runs the build tool. Resolving a manifest
 into what would actually build needs the registry, the lock file and the
 network, which is a different job from describing a folder.
 
-### 3.6 The File pane is an editor
+### 3.6 The editor tool
 
 A plugin says what a file *is*. It also says what its parts *are*: which
-run of bytes is a keyword, which a string, which a comment. The pane
-paints what it is told and knows nothing about any language, exactly as
-§3 already has it for the icon and the view.
+run of bytes is a keyword, which a string, which a comment. The editor
+tool paints what it is told and knows nothing about any language, exactly
+as §3 already has it for the icon and the view.
 
-That makes the File pane an editor rather than only a reader, and the
+That makes the editor tool an editor rather than only a reader, and the
 step is deliberate (D14). It is the smaller half of a lesson worth
 taking from the Roslyn C# compiler platform: classification belongs to
 the thing that already parses the format, it is layered, and the fast
 lexical answer is never held up by a slower one.
+
+Popping the editor tool out into its own window (§2.6) changes where it is
+drawn and nothing else: the boundary below is unchanged, and it is not
+widened by having a window of its own.
 
 **Included.** Syntax colouring; a caret; selection; undo and redo;
 saving through the service, which stays the only process that touches
@@ -534,12 +597,19 @@ Stated so the factory does not drift into them.
 - **No cloud sync, no remote browsing** of a provider's servers: this reads the
   working copies on this machine, not the repositories on a host.
 - **No third-party binary plugins, no mobile front end, no in-app package
-  management** beyond the updater, and **no telemetry of any kind.**
-- **Not an integrated development environment.** The File pane edits a
+  management** beyond the updater, and **no telemetry of any kind.** Tools
+  in the tool slot (§2.6) are compiled in the same way plugins are (§3.2);
+  there is no loadable third-party tool.
+- **Not an integrated development environment.** The editor tool edits a
   file's text and colours it (§3.6, D14). It does not find and replace,
   match brackets, indent for you, fold code, complete a name, or resolve
   anything across files. §3.6 holds the full list; a feature that is on
   it needs that line changed first.
+- **No certificate lifecycle operations.** The certificate tool (D15) reads:
+  it finds the certificates committed under the Repos Directory and says
+  which are expired or expiring. Issuing, renewing, revoking or deploying a
+  certificate, and handling a private key, are out of scope until a decision
+  says otherwise (§2.1).
 
 ## 7. Decisions
 
