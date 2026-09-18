@@ -1,0 +1,100 @@
+import { Palette } from "std-widgets.slint";
+
+// Every colour comes from the system palette, so the window follows the
+// Windows light/dark setting and its accent colour instead of being dark
+// whatever the user chose. `Palette` reports the scheme the platform is
+// using; the derived shades below are the handful of tones the panes need
+// on top of it, expressed as offsets from the system's own so they stay
+// right in both schemes.
+export global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    // Panels sitting on the window background: toolbar, column header, menus.
+    out property <brush> panel: dark
+        ? Palette.background.brighter(0.35)
+        : Palette.background.darker(0.06);
+    // A sunken field, such as the address bar.
+    out property <brush> field: dark
+        ? Palette.background.darker(0.25)
+        : Palette.background.brighter(0.6);
+    // Hover feedback on a menu item or toolbar button.
+    out property <brush> hover: dark
+        ? Palette.background.brighter(0.7)
+        : Palette.background.darker(0.12);
+    // A selected row in a pane that does not hold the keyboard: a step
+    // past `hover`, so the two panes' selections are told apart at a
+    // glance rather than both reading as the same strong accent (#575).
+    out property <brush> selection-inactive: dark
+        ? Palette.background.brighter(0.85)
+        : Palette.background.darker(0.16);
+    // Secondary text: the size, type and date columns.
+    out property <brush> dim-text: Palette.foreground.transparentize(0.35);
+    // Text on a pane heading that is not focused.
+    out property <brush> heading-text: Palette.foreground.transparentize(0.2);
+    out property <brush> border: Palette.border;
+    // A group divider inside a bar sits on the panel colour, where the
+    // ordinary border is too faint to register at a glance. This is the
+    // same rule a Windows toolbar draws between its groups.
+    out property <brush> divider: dark
+        ? Palette.background.brighter(1.1)
+        : Palette.background.darker(0.30);
+    // The edge under a bar, separating chrome from content.
+    out property <brush> chrome-edge: dark
+        ? Palette.background.brighter(0.9)
+        : Palette.background.darker(0.22);
+    // A button being pressed, which should not look like one being hovered.
+    out property <brush> pressed: dark
+        ? Palette.background.brighter(1.0)
+        : Palette.background.darker(0.20);
+    out property <brush> accent: Palette.accent-background;
+    out property <brush> on-accent: Palette.accent-foreground;
+    // The uncommitted-changes marker's own colour: a warm amber, so it does
+    // not read as one more use of `accent` (already the repository name,
+    // the pane border, the address bar and the selection) and stands out
+    // without depending on colour alone (#574). Fixed per scheme rather
+    // than derived from `Palette`, the way the syntax colours below are,
+    // so it keeps at least 3:1 contrast against `Theme.panel` whatever the
+    // system accent colour is: against this project's representative panel
+    // shades (`#f0f0f0` light, `#2b2b2b` dark) this pair measures about
+    // 5.0:1 light and 8.0:1 dark.
+    out property <brush> warning: dark ? #ffb454 : #935900;
+
+    // Syntax colours, one pair per class, chosen for the two schemes
+    // rather than derived from the palette: a hue that reads as "string"
+    // has to stay that hue, and shifting it with the accent colour would
+    // make the same file look like a different language on two machines.
+    //
+    // class | light      | dark       | why
+    // ------|------------|------------|---------------------------------
+    //     1 | #0000c0    | #569cd6    | keyword: the blue every editor uses
+    //     2 | #267f99    | #4ec9b0    | type: teal, near the keyword but not it
+    //     3 | #795e26    | #dcdcaa    | function: warm, so a call stands out
+    //     4 | #a31515    | #ce9178    | string: red-brown, the oldest convention
+    //     5 | #098658    | #b5cea8    | number: green, quiet
+    //     6 | #008000    | #6a9955    | comment: green, and the one to look past
+    //     7 | dimmed     | dimmed     | punctuation: present, not competing
+    //
+    // The light column is Visual Studio's default, the dark column is
+    // Visual Studio Code's dark+. Both are what a reader has already
+    // spent years looking at, which is the whole argument for them.
+    public pure function syntax-colour(class: int) -> brush {
+        if (class == 1) { return dark ? #569cd6 : #0000c0; }
+        if (class == 2) { return dark ? #4ec9b0 : #267f99; }
+        if (class == 3) { return dark ? #dcdcaa : #795e26; }
+        if (class == 4) { return dark ? #ce9178 : #a31515; }
+        if (class == 5) { return dark ? #b5cea8 : #098658; }
+        if (class == 6) { return dark ? #6a9955 : #008000; }
+        if (class == 7) { return dim-text; }
+        return Palette.foreground;
+    }
+}
+
+// The window's text zoom (#586), a step from `zoom::STEPS`: 80, 90, 100,
+// 110, 125, 150, 175 or 200. A global rather than a `MainWindow` property
+// passed down through every pane, editor and menu that draws text - the
+// same reason `Theme` is one - so a new component that draws text picks up
+// zoom for free just by reading `Zoom.factor`, the way it already reads
+// `Theme.accent`.
+export global Zoom {
+    in-out property <int> percent: 100;
+    out property <float> factor: percent / 100.0;
+}

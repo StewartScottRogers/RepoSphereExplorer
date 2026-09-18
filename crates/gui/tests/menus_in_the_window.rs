@@ -220,7 +220,7 @@ fn right_click_row(ui: &MainWindow, rows_down: f32) {
 
 /// The folders pane's row rectangles, in the order they are drawn.
 fn folder_rows(ui: &MainWindow) -> Vec<ElementHandle> {
-    ElementHandle::find_by_element_id(ui, "Pane::tree-row").collect()
+    ElementHandle::find_by_element_id(ui, "FoldersPane::tree-row").collect()
 }
 
 /// The row index of `name` in the folders tree, as drawn.

@@ -1,0 +1,304 @@
+import { Palette, ScrollView } from "std-widgets.slint";
+import { Theme, Zoom } from "../theme.slint";
+import { FolderRow } from "../types.slint";
+import { ContextMenuItem } from "../widgets.slint";
+import { PaneFrame } from "pane_frame.slint";
+
+export component FoldersPane inherits PaneFrame {
+    in property <[FolderRow]> rows;
+    in property <int> selected;
+    // View > All Repositories (#591): a fixed entry above the tree itself,
+    // since its rows are not part of it - a fresh scan below the Repos
+    // Directory has nothing to do with which folders happen to be expanded.
+    in property <image> all-repositories-icon;
+    in property <bool> all-repositories-selected;
+    callback all-repositories-clicked();
+    // The click carries where it landed, because the chevron and the name
+    // do different things and only Rust knows which is which - see
+    // `app::chevron_hit`.
+    callback row-clicked(int, length);
+    callback row-double-clicked(int);
+    // Handing the right-clicked folder to a program the user already has
+    // (#581): a terminal, the configured editor, the platform's file
+    // manager, or the clipboard, for its path or its remote address.
+    callback open-terminal-requested();
+    callback open-in-editor-requested();
+    callback copy-path-requested();
+    callback copy-remote-address-requested();
+    callback show-in-file-manager-requested();
+    in property <bool> editor-available;
+    in property <bool> remote-address-copyable;
+    in property <string> file-manager-label: "Show in File Explorer";
+    // Where the last right-click landed, and whether its menu is open - see
+    // `ContentsPane`'s identical properties for why an ordinary element is
+    // used here rather than a `PopupWindow`.
+    property <length> menu-x;
+    property <length> menu-y;
+    property <bool> menu-open;
+    property <length> menu-width: 150px * Zoom.factor;
+    property <length> menu-item-height: 24px * Zoom.factor;
+
+    // The scroll offset, and how much of the listing fits. Both surfaced so
+    // the front end can put the selected row on screen: the rule for that is
+    // in Rust (`scroll_offset_for`), because a `changed selected` handler in
+    // here cannot be exercised without an event loop, and untestable
+    // behaviour in this file has cost this project three defects already.
+    in-out property <length> scroll-y;
+    out property <length> viewport-height: scroll.visible-height;
+
+    // A per-row `for`-loop generating `TouchArea` instances leaves every
+    // instance but the first permanently unresponsive to real mouse input
+    // under Slint 1.17.1 (matches upstream issue #6836). So there is one
+    // overlay `TouchArea` for the whole pane, and it derives the row from
+    // `mouse-y` and the chevron from `mouse-x`. Repeated `Rectangle`s are
+    // fine, and are what the contents pane already draws.
+    property <length> row-height: 20px * Zoom.factor;
+
+    // File Explorer's navigation pane geometry. These have to agree with
+    // `app::FOLDER_PADDING`, `FOLDER_INDENT` and `FOLDER_CHEVRON`, which are
+    // what decide whether a click landed on a chevron - `App::click_folder`
+    // scales those three by the same `Zoom.factor` (#586) for exactly that
+    // reason.
+    property <length> pad: 4px * Zoom.factor;
+    property <length> indent: 16px * Zoom.factor;
+    property <length> chevron: 16px * Zoom.factor;
+
+    // The row under the pointer, or -1 when the pointer is elsewhere.
+    property <int> hovered: click-area.has-hover && rows.length > 0
+        ? clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1)
+        : -1;
+
+    // The selected row's colour: the full accent while this pane holds the
+    // keyboard, a muted grey while it does not, so two panes never draw
+    // two equally strong selections at once (#575). Exposed so a window
+    // test can ask what is actually drawn rather than re-deriving it.
+    out property <brush> selection-colour: root.focused ? Theme.accent : Theme.selection-inactive;
+
+    // The width every row would need to show its name in full, for
+    // double-clicking the splitter to fit to (#577). An off-screen copy of
+    // each row rather than a number worked out in Rust: nothing on the
+    // Rust side knows how wide this font renders a string, and
+    // `VerticalLayout` already sizes itself to its widest child.
+    row-measure := VerticalLayout {
+        visible: false;
+        x: -10000px;
+        for row[i] in rows: HorizontalLayout {
+            padding-left: pad + row.depth * indent;
+            padding-right: pad;
+            Rectangle {
+                width: chevron;
+            }
+            Rectangle {
+                width: 16px * Zoom.factor;
+            }
+            Rectangle {
+                width: 5px * Zoom.factor;
+            }
+            Text {
+                text: row.name;
+            }
+        }
+    }
+    out property <length> fit-width: row-measure.preferred-width;
+
+    all-repositories-row := Rectangle {
+        height: row-height;
+        background: all-repositories-selected
+            ? selection-colour
+            : (all-repositories-touch.has-hover ? Theme.hover : transparent);
+        accessible-role: text;
+        accessible-label: "All repositories";
+        HorizontalLayout {
+            padding-left: pad;
+            padding-right: 4px;
+            Rectangle {
+                width: chevron;
+                horizontal-stretch: 0;
+            }
+            Image {
+                source: all-repositories-icon;
+                width: 16px * Zoom.factor;
+                height: 16px * Zoom.factor;
+                image-fit: contain;
+                horizontal-stretch: 0;
+            }
+            Rectangle {
+                width: 5px * Zoom.factor;
+                horizontal-stretch: 0;
+            }
+            Text {
+                text: "All repositories";
+                color: all-repositories-selected && root.focused ? Theme.on-accent : Palette.foreground;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                min-width: 24px * Zoom.factor;
+            }
+        }
+        all-repositories-touch := TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { all-repositories-clicked(); }
+        }
+    }
+    scroll := ScrollView {
+        viewport-y <=> root.scroll-y;
+        // `ScrollView` vertically centers a child shorter than its
+        // viewport rather than pinning it to the top, so the row
+        // container needs an explicit top-aligned layout around it.
+        VerticalLayout {
+            alignment: start;
+            Rectangle {
+                height: max(rows.length * row-height, 1px);
+
+                for row[i] in rows: tree-row := Rectangle {
+                    y: i * row-height;
+                    height: row-height;
+                    width: 100%;
+                    // Selected wins over hovered, as it does in
+                    // Explorer: the pointer passing over the selection
+                    // must not make it look unselected.
+                    background: i == selected
+                        ? selection-colour
+                        : (i == hovered ? Theme.hover : transparent);
+                    // Named and labelled so a test can ask which rows
+                    // the pane is showing, the same way the contents
+                    // pane's rows can be asked.
+                    accessible-role: text;
+                    accessible-label: row.name;
+
+                    HorizontalLayout {
+                        padding-left: pad + row.depth * indent;
+                        padding-right: 4px;
+
+                        // The chevron column is there whether or not the
+                        // row has a chevron, so every name at a given
+                        // depth starts at the same place.
+                        Rectangle {
+                            width: chevron;
+                            horizontal-stretch: 0;
+                            if row.expandable: Path {
+                                width: 7px;
+                                height: 9px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                viewbox-width: 7;
+                                viewbox-height: 9;
+                                stroke: i == selected && root.focused ? Theme.on-accent : Theme.dim-text;
+                                stroke-width: 1.4px;
+                                commands: row.expanded
+                                    ? "M 0.5 2.5 L 3.5 6 L 6.5 2.5"
+                                    : "M 2 1 L 5.5 4.5 L 2 8";
+                            }
+                        }
+                        // Named so a test can measure where it lands:
+                        // the indent drawn here and `app::FOLDER_INDENT`,
+                        // which decides what a click hit, have to be the
+                        // same number.
+                        folder-icon := Image {
+                            source: row.icon;
+                            width: 16px * Zoom.factor;
+                            height: 16px * Zoom.factor;
+                            image-fit: contain;
+                            horizontal-stretch: 0;
+                        }
+                        Rectangle {
+                            width: 5px * Zoom.factor;
+                            horizontal-stretch: 0;
+                        }
+                        Text {
+                            text: row.name;
+                            // A working copy is named in the accent
+                            // colour, matching the Contents pane
+                            // (`name-text` below), so both panes say
+                            // the same thing the same way (#579).
+                            color: i == selected && root.focused
+                                ? Theme.on-accent
+                                : (row.is-repository ? Theme.accent : Palette.foreground);
+                            font-weight: row.is-repository ? 700 : 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            min-width: 24px * Zoom.factor;
+                        }
+                    }
+                }
+
+                click-area := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    double-clicked => {
+                        if (rows.length > 0) {
+                            row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                        }
+                    }
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            // Any press dismisses an open context menu,
+                            // the same as `ContentsPane`.
+                            menu-open = false;
+                        }
+                        if (event.kind == PointerEventKind.down
+                                && rows.length > 0
+                                && click-area.mouse-y < rows.length * row-height) {
+                            if (event.button == PointerEventButton.left) {
+                                row-clicked(
+                                    clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1),
+                                    click-area.mouse-x);
+                            }
+                            if (event.button == PointerEventButton.right) {
+                                row-clicked(
+                                    clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1),
+                                    click-area.mouse-x);
+                                menu-x = click-area.mouse-x;
+                                menu-y = click-area.mouse-y;
+                                menu-open = true;
+                            }
+                        }
+                    }
+                }
+
+                if menu-open: Rectangle {
+                    x: menu-x;
+                    y: menu-y;
+                    width: menu-width;
+                    height: folder-menu-items.preferred-height;
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    folder-menu-items := VerticalLayout {
+                        ContextMenuItem {
+                            label: "Open terminal here";
+                            item-height: menu-item-height;
+                            activated => { menu-open = false; open-terminal-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Open in editor";
+                            item-enabled: editor-available;
+                            item-height: menu-item-height;
+                            tooltip: "Set \"editor\" in the settings file, or install Visual Studio Code";
+                            activated => { menu-open = false; open-in-editor-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Copy path";
+                            item-height: menu-item-height;
+                            activated => { menu-open = false; copy-path-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Copy remote address";
+                            item-enabled: remote-address-copyable;
+                            item-height: menu-item-height;
+                            activated => { menu-open = false; copy-remote-address-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: file-manager-label;
+                            item-height: menu-item-height;
+                            activated => { menu-open = false; show-in-file-manager-requested(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

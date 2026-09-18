@@ -1,0 +1,89 @@
+/// One coloured run of a line in the Text view. `class` is
+/// `plugin_api::Class` as a number, mapped to a colour by
+/// `Theme.syntax-colour`.
+export struct ColouredRun {
+    text: string,
+    class: int,
+}
+
+/// One row of the navigation tree. Mirrors `app::FolderRow`.
+export struct FolderRow {
+    icon: image,
+    name: string,
+    depth: int,
+    expandable: bool,
+    expanded: bool,
+    // Whether this row is a source control working copy, matching the
+    // Contents pane's `ContentRow.is-repository` (#579).
+    is-repository: bool,
+}
+
+/// One row of the File pane's fact table. Mirrors `app::FactRow` (#576).
+export struct FactRow {
+    label: string,
+    display-value: string,
+    full-value: string,
+    dim: bool,
+}
+
+/// One row of the Help > Keyboard shortcuts sheet. Mirrors
+/// `shortcuts::Binding` (#585). `group` is the heading to draw above this
+/// row, or empty to continue the previous row's group - computed in Rust
+/// so the markup does not have to notice when a row's owner changes.
+export struct ShortcutRow {
+    group: string,
+    keys: string,
+    description: string,
+}
+
+export struct ContentRow {
+    icon: image,
+    name: string,
+    size: string,
+    kind: string,
+    modified: string,
+    // A working copy's branch, "detached" when it is on none; empty for any
+    // other row.
+    branch: string,
+    // Beside the branch: "M" for uncommitted changes to tracked files, an
+    // ellipsis until that is known, "?" when it cannot be told, empty for
+    // none.
+    marker: string,
+    // What `marker` means, in words; empty exactly when `marker` is. Shown
+    // in a tooltip on hover and as the marker's accessible label, so colour
+    // and the glyph alone are never the only way to read it.
+    marker-tooltip: string,
+    // Whether `marker` is the uncommitted-changes marker, so it can be
+    // drawn in the warning colour rather than the neutral one the other
+    // markers use.
+    marker-warning: bool,
+    // Whether this row is a source control working copy. The Repos Directory
+    // is a workspace, so which of its folders are checkouts is the first
+    // thing a reader is looking for.
+    is-repository: bool,
+    // Whether this row is part of the selection. With Ctrl and Shift in play
+    // that is no longer "the one row whose index matches".
+    selected: bool,
+    // A clock glyph drawn after the branch and marker when the repository's
+    // last fetch is too old to trust, empty otherwise (#589).
+    stale-marker: string,
+    // What `stale-marker` means, in words; empty exactly when `stale-marker`
+    // is. Shown in a tooltip on hover and as the glyph's accessible label.
+    stale-tooltip: string,
+}
+
+// One match in the Go to Repository switcher (#590).
+export struct SwitcherRow {
+    name: string,
+    // Relative to the Repos Directory, minus the name itself; empty until
+    // #591 lets a result be nested, shown dimmed beside `name` once it
+    // is not.
+    path: string,
+    branch: string,
+    marker: string,
+    marker-tooltip: string,
+    marker-warning: bool,
+    // Whether this is the highlighted result: Up/Down move it, Return
+    // goes to it.
+    selected: bool,
+}

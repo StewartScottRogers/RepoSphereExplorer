@@ -227,10 +227,9 @@ fn click_command(ui: &MainWindow, label: &str) {
 /// asked only for the words would always get the toolbar's and never
 /// learn anything about the row.
 fn click_pane_command(ui: &MainWindow, label: &str) {
-    let pane =
-        i_slint_backend_testing::ElementHandle::find_by_element_id(ui, "MainWindow::file-pane")
-            .next()
-            .expect("the File pane is drawn");
+    let pane = i_slint_backend_testing::ElementHandle::find_by_element_type_name(ui, "FilePane")
+        .next()
+        .expect("the File pane is drawn");
     let left = pane.absolute_position().x;
     let button = i_slint_backend_testing::ElementHandle::find_by_accessible_label(ui, label)
         .find(|element| element.absolute_position().x >= left)

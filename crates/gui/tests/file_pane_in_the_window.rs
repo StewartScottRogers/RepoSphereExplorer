@@ -210,12 +210,12 @@ fn tabs(ui: &MainWindow) -> Vec<String> {
 /// and the first of them is one tab wide, which is not what a click is
 /// measured against.
 fn strip(ui: &MainWindow) -> Option<ElementHandle> {
-    ElementHandle::find_by_element_id(ui, "MainWindow::tab-strip").next()
+    ElementHandle::find_by_element_id(ui, "FilePane::tab-strip").next()
 }
 
 /// The File pane itself, which the strip shares its width with.
 fn pane(ui: &MainWindow) -> ElementHandle {
-    ElementHandle::find_by_element_id(ui, "MainWindow::file-pane")
+    ElementHandle::find_by_element_type_name(ui, "FilePane")
         .next()
         .expect("the window has a File pane")
 }
@@ -788,7 +788,7 @@ fn each_tab_is_its_own_pointer_target() {
     let labels = tabs(&ui);
     assert!(labels.len() > 1, "a text file offers more than one view");
     let targets: Vec<ElementHandle> =
-        ElementHandle::find_by_element_id(&ui, "MainWindow::tab-touch").collect();
+        ElementHandle::find_by_element_id(&ui, "FilePane::tab-touch").collect();
     assert_eq!(
         targets.len(),
         labels.len(),

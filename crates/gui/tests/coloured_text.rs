@@ -33,7 +33,7 @@ fn line(runs: Vec<ColouredRun>) -> ModelRc<ColouredRun> {
 }
 
 fn drawn(ui: &MainWindow) -> Vec<String> {
-    ElementHandle::find_by_element_id(ui, "MainWindow::syntax-run")
+    ElementHandle::find_by_element_id(ui, "FilePane::syntax-run")
         .filter_map(|handle| handle.accessible_label().map(|label| label.to_string()))
         .collect()
 }

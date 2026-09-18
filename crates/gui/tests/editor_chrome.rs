@@ -81,7 +81,7 @@ fn the_caret_readout_says_where_the_caret_is() {
     ui.set_edit_line(4);
     ui.set_edit_column(12);
 
-    let texts: Vec<String> = ElementHandle::find_by_element_id(&ui, "MainWindow::caret-readout")
+    let texts: Vec<String> = ElementHandle::find_by_element_id(&ui, "FilePane::caret-readout")
         .filter_map(|handle| handle.accessible_label().map(|label| label.to_string()))
         .collect();
     assert!(
