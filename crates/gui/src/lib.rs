@@ -849,6 +849,7 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_delta_event!(on_pane_cycled, cycle_focus);
     on_delta_event!(on_content_sort_requested, sort_by_column);
     on_delta_event!(on_breadcrumb_requested, navigate_to_breadcrumb);
+    on_delta_event!(on_message_focus_requested, move_message_focus);
 
     {
         // `edge-requested` carries 0 for Home and 1 for End.
@@ -1256,6 +1257,17 @@ fn sync_filter(ui: &MainWindow, app: &App) {
     ui.set_status_show_clear_link(app.status_show_clear_link());
 }
 
+/// Copies the Contents pane's centred message (#592) into `ui`'s bound
+/// properties.
+fn sync_contents_message(ui: &MainWindow, app: &App) {
+    ui.set_message_title(app.contents_message_title().into());
+    ui.set_message_detail(app.contents_message_detail().into());
+    ui.set_message_show_retry(app.contents_message_show_retry());
+    ui.set_message_show_choose(app.contents_message_show_choose());
+    ui.set_message_show_clear_filter(app.contents_message_show_clear_filter());
+    ui.set_message_focus_index(app.contents_message_focus());
+}
+
 /// Copies the Go to Repository switcher's state (#590) into `ui`'s bound
 /// properties: whether it is open, its typed query, and its matches.
 fn sync_switcher(ui: &MainWindow, app: &App) {
@@ -1381,6 +1393,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.global::<Zoom>()
         .set_percent(i32::from(app.zoom_percent()));
     sync_filter(ui, app);
+    sync_contents_message(ui, app);
     sync_switcher(ui, app);
     ui.set_focus_pane(app.focus_index());
     ui.set_content_is_archive(app.selected_is_archive());

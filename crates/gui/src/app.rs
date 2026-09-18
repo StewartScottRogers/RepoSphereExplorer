@@ -1454,6 +1454,111 @@ struct Filter {
     focused: bool,
 }
 
+/// Why the Repos Directory itself could not be listed (#592): decided by
+/// looking at the path directly rather than at the service's answer,
+/// which only ever sends a stringified `io::Error` with no way to tell
+/// "does not exist" apart from "permission denied" without parsing
+/// English out of it. Only ever computed for the Repos Directory's own
+/// root - a subfolder that fails to list keeps today's status bar
+/// message (issue #592, case 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RootProblem {
+    /// The path, or the drive it names, does not exist.
+    NotThere { cause: NotThereCause },
+    /// The path exists but could not be read - permission denied, or any
+    /// other input/output error. Carries the service's own message,
+    /// which is the detail the pane shows.
+    NotReadable { message: String },
+}
+
+/// The likely reason a Repos Directory path is not there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NotThereCause {
+    /// The path names a drive letter (`Z:\repos`) whose drive itself is
+    /// not connected - a mapped network drive before the VPN is up, or an
+    /// external disk that is unplugged. Carries the drive, e.g. `"Z:"`.
+    DriveNotConnected(String),
+    /// The drive, if any, is there; the folder itself is not.
+    FolderMissing,
+}
+
+impl NotThereCause {
+    /// The second line under "is not available": the likely cause.
+    fn describe(&self) -> String {
+        match self {
+            Self::DriveNotConnected(drive) => format!("Drive {drive} is not connected"),
+            Self::FolderMissing => "The folder does not exist".to_owned(),
+        }
+    }
+}
+
+/// Whether `root` names a Windows drive letter (`Z:\repos`, or a
+/// forward-slash spelling of the same thing), and if so, which one -
+/// `"Z:"`. Read from the path's text rather than
+/// [`std::path::Component::Prefix`], which only Windows' own path parser
+/// ever produces: this way the "drive not connected" case is exercisable
+/// by a unit test on any host, the Linux runner that gates every pull
+/// request included.
+fn drive_letter(root: &Path) -> Option<String> {
+    let text = root.to_string_lossy();
+    let mut chars = text.chars();
+    let letter = chars.next().filter(char::is_ascii_alphabetic)?;
+    (chars.next() == Some(':')).then(|| format!("{letter}:"))
+}
+
+/// Classifies why `root` is not there: whether it names a drive that is
+/// itself missing, or is an ordinary missing folder.
+fn not_there_cause(root: &Path) -> NotThereCause {
+    let Some(drive) = drive_letter(root) else {
+        return NotThereCause::FolderMissing;
+    };
+    let mut drive_root = drive.clone();
+    drive_root.push(std::path::MAIN_SEPARATOR);
+    if std::fs::metadata(drive_root).is_err() {
+        NotThereCause::DriveNotConnected(drive)
+    } else {
+        NotThereCause::FolderMissing
+    }
+}
+
+/// Classifies why the Repos Directory's root listing failed, from the
+/// path itself and the message the failed request already carried.
+fn classify_root_problem(root: &Path, message: &str) -> RootProblem {
+    match std::fs::metadata(root) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => RootProblem::NotThere {
+            cause: not_there_cause(root),
+        },
+        _ => RootProblem::NotReadable {
+            message: message.to_owned(),
+        },
+    }
+}
+
+/// What the Contents pane's centred message (#592) says, and which
+/// buttons it offers - the pane draws its listing normally when this is
+/// `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ContentsMessage {
+    /// The Repos Directory, or the drive it is on, is not there.
+    NotThere { title: String, cause: String },
+    /// The Repos Directory exists but could not be read.
+    NotReadable { title: String, detail: String },
+    /// The Repos Directory lists, but holds nothing.
+    Empty { title: String },
+    /// A filter (#582) has narrowed the listing to nothing - never the
+    /// "no repositories yet" message, which would be wrong and alarming
+    /// over a Repos Directory that is not actually empty.
+    FilterEmpty { title: String },
+}
+
+/// A button [`ContentsMessage`] offers, in the order Tab reaches them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageButton {
+    Retry,
+    Choose,
+    ClearFilter,
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
@@ -1512,6 +1617,20 @@ pub struct App {
     /// The row a Shift range extends from.
     anchor: usize,
     status: Option<String>,
+    /// Why the Repos Directory's own root last failed to list (#592),
+    /// cleared the moment it lists successfully. `None` while it has
+    /// never failed, or last listed fine.
+    root_problem: Option<RootProblem>,
+    /// How many ticks the Contents pane's message (#592) has been
+    /// showing without a fresh listing - one tick is [`Self::tick`]
+    /// called once, effectively 100ms at the front end's own timer.
+    /// Reaching [`LISTING_MESSAGE_RETRY_TICKS`] re-lists in the
+    /// background, so a drive that connects shows its contents without a
+    /// click.
+    listing_message_ticks: u32,
+    /// Which of [`Self::message_buttons`] Tab has highlighted, while the
+    /// Contents pane's message (#592) is showing.
+    message_focus: usize,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
     pending_file: Option<Receiver<io::Result<Response>>>,
@@ -1583,6 +1702,11 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     unwrapped.map_or(path, PathBuf::from)
 }
 
+/// How many ticks the Contents pane's message (#592) shows before the
+/// window re-lists in the background on its own - ten seconds at the
+/// front end's 100ms timer.
+const LISTING_MESSAGE_RETRY_TICKS: u32 = 100;
+
 impl App {
     /// Starts a new explorer rooted at `root`, and kicks off loading its
     /// contents in the background.
@@ -1617,6 +1741,9 @@ impl App {
             selection: std::collections::BTreeSet::new(),
             anchor: 0,
             status: None,
+            root_problem: None,
+            listing_message_ticks: 0,
+            message_focus: 0,
             focus: Pane::Folders,
             pending_contents: None,
             pending_file: None,
@@ -1790,6 +1917,30 @@ impl App {
             });
         for (name, result) in answered {
             self.apply_status_result(&name, result);
+        }
+        // While the Contents pane's message (#592) is showing for the
+        // Repos Directory itself - not there, not readable, or empty -
+        // re-list in the background every ten seconds, so a drive that
+        // connects shows its contents without a click. A filter (#582)
+        // narrowing a real listing to nothing is not this: nothing about
+        // the folder itself changes while a reader is typing into it.
+        if self.pending_contents.is_some()
+            || !matches!(
+                self.contents_message(),
+                Some(
+                    ContentsMessage::NotThere { .. }
+                        | ContentsMessage::NotReadable { .. }
+                        | ContentsMessage::Empty { .. }
+                )
+            )
+        {
+            self.listing_message_ticks = 0;
+        } else {
+            self.listing_message_ticks += 1;
+            if self.listing_message_ticks >= LISTING_MESSAGE_RETRY_TICKS {
+                self.listing_message_ticks = 0;
+                self.refresh();
+            }
         }
     }
 
@@ -2025,6 +2176,10 @@ impl App {
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
         self.status = None;
         let same_folder_reload = std::mem::take(&mut self.same_folder_reload);
+        if indices.is_empty() {
+            self.root_problem = None;
+            self.listing_message_ticks = 0;
+        }
         match result {
             Ok(Response::Directory { entries }) => {
                 if let Some(node) = self.root.node_at_mut(indices) {
@@ -2060,7 +2215,7 @@ impl App {
                 }
                 self.load_file_view();
             }
-            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(Response::Error { message }) => self.fail_contents_listing(indices, message),
             Ok(
                 Response::FileView { .. }
                 | Response::Done
@@ -2071,7 +2226,30 @@ impl App {
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
-            Err(err) => self.status = Some(err.to_string()),
+            Err(err) => {
+                let message = err.to_string();
+                self.fail_contents_listing(indices, message);
+            }
+        }
+    }
+
+    /// A directory listing failed: for the Repos Directory's own root,
+    /// classifies why (#592) and clears what it was showing, so the
+    /// Folders and File panes agree with the Contents pane's message
+    /// (issue #592, case 5). A subfolder keeps today's status bar
+    /// message instead (case 6).
+    fn fail_contents_listing(&mut self, indices: &[usize], message: String) {
+        if indices.is_empty() {
+            self.root.children = None;
+            self.all_contents.clear();
+            self.contents.clear();
+            self.selection.clear();
+            self.content_selected = 0;
+            self.anchor = 0;
+            self.show_file_view(None);
+            self.root_problem = Some(classify_root_problem(&self.root.path, &message));
+        } else {
+            self.status = Some(message);
         }
     }
 
@@ -2413,6 +2591,12 @@ impl App {
             // The filter (#582) already narrows as it is typed; Return
             // just hands the keyboard back to the listing.
             Mode::Normal if self.filter.focused => self.filter.focused = false,
+            // The Contents pane's message (#592) is showing, so Return
+            // activates whichever button Tab highlighted rather than
+            // renaming or opening a row that is not there.
+            Mode::Normal if self.contents_message().is_some() => {
+                self.activate_focused_message_button();
+            }
             // Return renames on macOS, which is that platform's
             // convention and the reason this is parameterised at all.
             Mode::Normal if os == "macos" => self.request_rename(),
@@ -4443,6 +4627,154 @@ impl App {
     #[must_use]
     pub fn status_show_clear_link(&self) -> bool {
         matches!(self.mode, Mode::Normal) && self.status.is_none() && self.filter.changed_only
+    }
+
+    /// The Contents pane's centred message (#592) - what is wrong with
+    /// the Repos Directory itself, that it has nothing in it yet, or
+    /// that a filter (#582) has narrowed a real listing to nothing -
+    /// `None` while the pane is just drawing its listing.
+    fn contents_message(&self) -> Option<ContentsMessage> {
+        if !matches!(self.mode, Mode::Normal)
+            || self.found.is_some()
+            || self.all_repositories.is_some()
+            || !self.contents.is_empty()
+        {
+            return None;
+        }
+        if !self.all_contents.is_empty() {
+            let title = if self.filter.text.is_empty() {
+                "No repositories with uncommitted changes".to_owned()
+            } else {
+                format!("No name matches \"{}\"", self.filter.text)
+            };
+            return Some(ContentsMessage::FilterEmpty { title });
+        }
+        if self.selected_dir_path() != self.root.path {
+            return None;
+        }
+        let path = self.root.path.display();
+        Some(match &self.root_problem {
+            Some(RootProblem::NotThere { cause }) => ContentsMessage::NotThere {
+                title: format!("The Repos Directory {path} is not available"),
+                cause: cause.describe(),
+            },
+            Some(RootProblem::NotReadable { message }) => ContentsMessage::NotReadable {
+                title: format!("Repos Explorer cannot read {path}"),
+                detail: message.clone(),
+            },
+            None => ContentsMessage::Empty {
+                title: format!("{path} has no repositories yet"),
+            },
+        })
+    }
+
+    /// The buttons [`Self::contents_message`] offers, in the order Tab
+    /// reaches them. Empty while no message is showing.
+    fn message_buttons(&self) -> Vec<MessageButton> {
+        match self.contents_message() {
+            Some(ContentsMessage::NotThere { .. } | ContentsMessage::NotReadable { .. }) => {
+                vec![MessageButton::Retry, MessageButton::Choose]
+            }
+            Some(ContentsMessage::Empty { .. }) => vec![MessageButton::Choose],
+            Some(ContentsMessage::FilterEmpty { .. }) => vec![MessageButton::ClearFilter],
+            None => Vec::new(),
+        }
+    }
+
+    /// The Contents pane message's title, or empty while none is
+    /// showing.
+    #[must_use]
+    pub fn contents_message_title(&self) -> String {
+        match self.contents_message() {
+            Some(
+                ContentsMessage::NotThere { title, .. }
+                | ContentsMessage::NotReadable { title, .. }
+                | ContentsMessage::Empty { title }
+                | ContentsMessage::FilterEmpty { title },
+            ) => title,
+            None => String::new(),
+        }
+    }
+
+    /// The second line under the title: the likely cause, the read
+    /// error's own message, what an empty Repos Directory will show once
+    /// something is cloned into it, or empty while no message is
+    /// showing.
+    #[must_use]
+    pub fn contents_message_detail(&self) -> String {
+        match self.contents_message() {
+            Some(ContentsMessage::NotThere { cause, .. }) => cause,
+            Some(ContentsMessage::NotReadable { detail, .. }) => detail,
+            Some(ContentsMessage::Empty { .. }) => {
+                "Working copies cloned into it will appear here.".to_owned()
+            }
+            Some(ContentsMessage::FilterEmpty { .. }) | None => String::new(),
+        }
+    }
+
+    /// Whether the message offers Retry - the "not there" and "not
+    /// readable" cases only.
+    #[must_use]
+    pub fn contents_message_show_retry(&self) -> bool {
+        self.message_buttons().contains(&MessageButton::Retry)
+    }
+
+    /// Whether the message offers "Choose Repos Directory..." - every
+    /// case but the filter narrowing one, which has its own way back.
+    #[must_use]
+    pub fn contents_message_show_choose(&self) -> bool {
+        self.message_buttons().contains(&MessageButton::Choose)
+    }
+
+    /// Whether the message offers a way to clear the filter (#582) that
+    /// narrowed the listing to nothing.
+    #[must_use]
+    pub fn contents_message_show_clear_filter(&self) -> bool {
+        self.message_buttons().contains(&MessageButton::ClearFilter)
+    }
+
+    /// Which button Tab has highlighted, as an index into
+    /// [`Self::message_buttons`] in the order they are drawn - `-1` while
+    /// no message is showing.
+    #[must_use]
+    pub fn contents_message_focus(&self) -> i32 {
+        let count = self.message_buttons().len();
+        if count == 0 {
+            -1
+        } else {
+            i32::try_from(self.message_focus % count).unwrap_or(0)
+        }
+    }
+
+    /// Tab (`delta` 1) or Shift+Tab (`delta` -1) while the Contents
+    /// pane's message (#592) is showing: moves the highlighted button
+    /// among whichever ones the current case offers.
+    pub fn move_message_focus(&mut self, delta: i32) {
+        let count = self.message_buttons().len();
+        if count == 0 {
+            return;
+        }
+        let len = i32::try_from(count).unwrap_or(1);
+        let current = i32::try_from(self.message_focus % count).unwrap_or(0);
+        self.message_focus = usize::try_from((current + delta).rem_euclid(len)).unwrap_or(0);
+    }
+
+    /// Return while the Contents pane's message (#592) is showing:
+    /// activates whichever button Tab last highlighted, the first one
+    /// when nothing has moved it yet.
+    fn activate_focused_message_button(&mut self) {
+        let buttons = self.message_buttons();
+        let Some(button) = buttons.get(self.message_focus).or_else(|| buttons.first()) else {
+            return;
+        };
+        match button {
+            MessageButton::Retry => self.refresh(),
+            MessageButton::Choose => {
+                let current = self.root.path.to_string_lossy().into_owned();
+                self.begin_repos_root_edit(&current);
+            }
+            MessageButton::ClearFilter => self.clear_filters(),
+        }
     }
 
     /// Whether the Contents pane is showing a search's results rather
@@ -9798,5 +10130,214 @@ third",
         app.select_folder(0);
 
         assert!(!app.showing_all_repositories());
+    }
+
+    // ---- #592: what is wrong with the Repos Directory itself ----
+
+    #[test]
+    fn classify_root_problem_reports_a_missing_folder() {
+        let missing = std::env::temp_dir().join("repos-explorer-592-missing-folder");
+        let _ = std::fs::remove_dir_all(&missing);
+
+        let problem = super::classify_root_problem(&missing, "not found");
+
+        assert_eq!(
+            problem,
+            super::RootProblem::NotThere {
+                cause: super::NotThereCause::FolderMissing
+            }
+        );
+    }
+
+    #[test]
+    fn classify_root_problem_reports_a_drive_that_is_not_connected() {
+        // "Z:\repos" parses as a drive-letter path from its text alone
+        // (see `drive_letter`), so this is exercisable on any host - this
+        // Linux test runner included - without a real Windows drive.
+        let problem = super::classify_root_problem(Path::new(r"Z:\repos"), "not found");
+
+        assert_eq!(
+            problem,
+            super::RootProblem::NotThere {
+                cause: super::NotThereCause::DriveNotConnected("Z:".to_owned())
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_root_problem_reports_permission_denied() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = scratch("592-permission-denied");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let err = std::fs::read_dir(&dir).unwrap_err();
+
+        let problem = super::classify_root_problem(&dir, &err.to_string());
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            problem,
+            super::RootProblem::NotReadable {
+                message: err.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_repos_directory_shows_the_not_there_message() {
+        let missing = std::env::temp_dir().join("repos-explorer-592-app-missing");
+        let _ = std::fs::remove_dir_all(&missing);
+        let mut app = App::new(missing);
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+
+        assert!(app.contents_message_title().contains("is not available"));
+        assert_eq!(app.contents_message_detail(), "The folder does not exist");
+        assert!(app.contents_message_show_retry());
+        assert!(app.contents_message_show_choose());
+        assert!(!app.contents_message_show_clear_filter());
+        assert!(app.content_rows().is_empty());
+        assert_eq!(app.folder_rows().len(), 1, "the root, with no children");
+        assert!(app.file_views().is_empty());
+    }
+
+    #[test]
+    fn an_empty_repos_directory_shows_the_empty_message_with_only_choose() {
+        let dir = scratch("592-app-empty");
+        let mut app = App::new(dir.clone());
+
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: vec![] }));
+
+        assert!(
+            app.contents_message_title()
+                .contains("has no repositories yet")
+        );
+        assert!(app.contents_message_detail().contains("will appear here"));
+        assert!(!app.contents_message_show_retry());
+        assert!(app.contents_message_show_choose());
+        assert!(!app.contents_message_show_clear_filter());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_listable_repos_directory_shows_no_message() {
+        let dir = scratch("592-app-listable");
+        let mut app = App::new(dir.clone());
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false)]),
+            }),
+        );
+
+        assert_eq!(app.contents_message_title(), "");
+        assert!(!app.contents_message_show_retry());
+        assert!(!app.contents_message_show_choose());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_filter_matching_nothing_offers_a_way_to_clear_it_not_the_empty_message() {
+        let mut app = app_with_four_rows();
+        app.begin_filter();
+        for c in "zzz".chars() {
+            app.handle_key_text(&c.to_string());
+        }
+
+        assert_eq!(app.contents_message_title(), "No name matches \"zzz\"");
+        assert!(!app.contents_message_show_retry());
+        assert!(!app.contents_message_show_choose());
+        assert!(app.contents_message_show_clear_filter());
+
+        app.clear_filters();
+
+        assert_eq!(app.contents_message_title(), "");
+        assert_eq!(app.content_rows().len(), 4);
+    }
+
+    #[test]
+    fn tab_moves_the_message_focus_between_retry_and_choose() {
+        let missing = std::env::temp_dir().join("repos-explorer-592-tab-focus");
+        let _ = std::fs::remove_dir_all(&missing);
+        let mut app = App::new(missing);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+        assert_eq!(
+            app.contents_message_focus(),
+            0,
+            "Retry is highlighted first"
+        );
+
+        app.move_message_focus(1);
+        assert_eq!(app.contents_message_focus(), 1, "Tab moved to Choose");
+
+        app.handle_return();
+        assert!(
+            app.choosing_repos_root(),
+            "Return activated the highlighted Choose button"
+        );
+    }
+
+    #[test]
+    fn return_with_no_tab_activates_retry_by_default() {
+        let missing = std::env::temp_dir().join("repos-explorer-592-return-default");
+        let _ = std::fs::remove_dir_all(&missing);
+        let mut app = App::new(missing);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+        app.pending_contents = None;
+
+        app.handle_return();
+
+        assert!(
+            app.pending_contents.is_some(),
+            "Retry re-issued the listing request"
+        );
+    }
+
+    #[test]
+    fn the_message_re_lists_automatically_after_ten_seconds_of_ticks() {
+        let missing = std::env::temp_dir().join("repos-explorer-592-auto-retry");
+        let _ = std::fs::remove_dir_all(&missing);
+        let mut app = App::new(missing);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+        app.pending_contents = None;
+
+        for _ in 0..super::LISTING_MESSAGE_RETRY_TICKS - 1 {
+            app.tick();
+        }
+        assert!(
+            app.pending_contents.is_none(),
+            "not yet - fewer than ten seconds of ticks"
+        );
+
+        app.tick();
+        assert!(
+            app.pending_contents.is_some(),
+            "ten seconds of ticks re-listed on its own"
+        );
     }
 }
