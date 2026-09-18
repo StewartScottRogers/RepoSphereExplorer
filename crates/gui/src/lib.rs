@@ -8,8 +8,8 @@ mod generated {
     slint::include_modules!();
 }
 pub use generated::{
-    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, ShortcutRow, Theme,
-    Zoom,
+    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, ShortcutRow,
+    SwitcherRow, Theme, Zoom,
 };
 
 pub mod app;
@@ -17,6 +17,7 @@ pub mod launch;
 pub mod renderer;
 pub mod settings;
 pub mod shortcuts;
+pub mod switcher;
 pub mod zoom;
 
 pub mod document;
@@ -708,6 +709,34 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_zoom(ui, app);
     wire_shortcuts_sheet(ui);
     wire_related_repository_link(ui, app);
+    wire_switcher(ui, app);
+}
+
+/// Wires Ctrl+P / Cmd+P's Go to Repository switcher (#590): opening it, and
+/// clicking one of its results.
+fn wire_switcher(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_switcher_open_requested(move || {
+            let mut app = app.borrow_mut();
+            app.begin_switcher();
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_switcher_row_clicked(move |index| {
+            let mut app = app.borrow_mut();
+            app.activate_switcher_result(usize::try_from(index).unwrap_or(usize::MAX));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
 }
 
 /// Wires the File pane's "Worktree of"/"Submodule of" link (#587), split
@@ -1213,6 +1242,27 @@ fn sync_filter(ui: &MainWindow, app: &App) {
     ui.set_status_show_clear_link(app.status_show_clear_link());
 }
 
+/// Copies the Go to Repository switcher's state (#590) into `ui`'s bound
+/// properties: whether it is open, its typed query, and its matches.
+fn sync_switcher(ui: &MainWindow, app: &App) {
+    ui.set_switcher_open(app.switcher_open());
+    ui.set_switcher_query(app.switcher_query().into());
+    ui.set_switcher_rows(ModelRc::new(VecModel::from(
+        app.switcher_rows()
+            .into_iter()
+            .map(|row| SwitcherRow {
+                name: row.name.into(),
+                path: row.path.into(),
+                branch: row.branch.into(),
+                marker: row.marker.into(),
+                marker_tooltip: row.marker_tooltip.into(),
+                marker_warning: row.marker_warning,
+                selected: row.selected,
+            })
+            .collect::<Vec<_>>(),
+    )));
+}
+
 /// Copies the File pane's own preview of the selected row - its graphic,
 /// views, coloured lines, plain text, fact table and README (#584) - into
 /// `ui`'s bound properties.
@@ -1317,6 +1367,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.global::<Zoom>()
         .set_percent(i32::from(app.zoom_percent()));
     sync_filter(ui, app);
+    sync_switcher(ui, app);
     ui.set_focus_pane(app.focus_index());
     ui.set_content_is_archive(app.selected_is_archive());
     ui.set_content_prompt_text(app.prompt_text().into());

@@ -518,6 +518,22 @@ export struct ContentRow {
     stale-tooltip: string,
 }
 
+// One match in the Go to Repository switcher (#590).
+export struct SwitcherRow {
+    name: string,
+    // Relative to the Repos Directory, minus the name itself; empty until
+    // #591 lets a result be nested, shown dimmed beside `name` once it
+    // is not.
+    path: string,
+    branch: string,
+    marker: string,
+    marker-tooltip: string,
+    marker-warning: bool,
+    // Whether this is the highlighted result: Up/Down move it, Return
+    // goes to it.
+    selected: bool,
+}
+
 // One column heading in the contents pane's details view: clickable to sort,
 // showing the direction arrow when it is the active column.
 // A toolbar button: a square glyph button that greys out when it has nowhere
@@ -1884,6 +1900,17 @@ export component MainWindow inherits Window {
     // `in-out` rather than private, so a test can ask whether F1 opened
     // the sheet and whether Escape closed it (#585's acceptance check 3).
     in-out property <bool> shortcuts-open: false;
+    // Ctrl+P / Cmd+P's Go to Repository switcher (#590): Rust owns every
+    // keystroke that reaches it (rule 14), so unlike `shortcuts-open`
+    // these are `in`, driven by `Mode::Switcher` rather than by the
+    // markup - and `switcher-open-requested` is the one that opens it,
+    // since opening also seeds `App`'s own state, which a plain
+    // `in-out` flag flipped from here could not do.
+    in property <bool> switcher-open;
+    in property <string> switcher-query;
+    in property <[SwitcherRow]> switcher-rows;
+    callback switcher-open-requested();
+    callback switcher-row-clicked(int);
     callback status-clear-filter-clicked();
     in-out property <string> edit-text;
     // The coloured surface's half of the editor. `editing-in-colour` is
@@ -2077,6 +2104,8 @@ export component MainWindow inherits Window {
                 find-requested();
             } else if (event.modifiers.control && (event.text == "f" || event.text == "F")) {
                 filter-focus-requested();
+            } else if (event.modifiers.control && (event.text == "p" || event.text == "P")) {
+                switcher-open-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
                 new-folder-requested();
             } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
@@ -3175,6 +3204,109 @@ export component MainWindow inherits Window {
                                         horizontal-stretch: 1;
                                         wrap: word-wrap;
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ctrl+P / Cmd+P's Go to Repository switcher (#590): a small
+        // overlay near the top of the window, rather than the shortcuts
+        // sheet's centred one above - a reader jumping to a repository is
+        // still watching the panes settle, where a sheet covering them
+        // would hide the very thing that confirms it worked.
+        if switcher-open: Rectangle {
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.35);
+
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => { cancel-requested(); }
+            }
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 64px;
+                width: 480px;
+                height: 300px;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: Theme.accent;
+
+                // Swallows a press anywhere in the switcher, so clicking
+                // its padding does not fall through to the backdrop and
+                // close it.
+                TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { }
+                }
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+
+                    Rectangle {
+                        height: 24px;
+                        background: Theme.field;
+                        border-width: 1px;
+                        border-color: Theme.accent;
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            Text {
+                                text: switcher-query == "" ? "Go to repository" : switcher-query;
+                                color: switcher-query == "" ? Theme.dim-text : Palette.foreground;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                accessible-role: text;
+                                accessible-label: "Go to repository";
+                            }
+                        }
+                    }
+
+                    ScrollView {
+                        VerticalLayout {
+                            alignment: start;
+                            for row[index] in switcher-rows: Rectangle {
+                                height: 22px;
+                                background: row.selected ? Theme.accent : transparent;
+                                HorizontalLayout {
+                                    padding-left: 4px;
+                                    padding-right: 4px;
+                                    spacing: 6px;
+                                    Text {
+                                        text: row.name;
+                                        color: row.selected ? Palette.background : Palette.foreground;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    if row.path != "": Text {
+                                        text: row.path;
+                                        color: row.selected ? Palette.background : Theme.dim-text;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: row.branch;
+                                        color: row.selected ? Palette.background : Theme.dim-text;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: row.marker;
+                                        color: row.marker-warning ? Theme.warning : (row.selected ? Palette.background : Theme.dim-text);
+                                        vertical-alignment: center;
+                                        accessible-label: row.marker-tooltip;
+                                    }
+                                }
+                                TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    clicked => { switcher-row-clicked(index); }
                                 }
                             }
                         }

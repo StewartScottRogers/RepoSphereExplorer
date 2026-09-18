@@ -129,6 +129,8 @@ pub enum Fires {
     FindRequested,
     /// `filter-focus-requested()`.
     FilterFocusRequested,
+    /// `switcher-open-requested()`.
+    SwitcherOpenRequested,
     /// `cancel-requested()`.
     CancelRequested,
     /// `zoom-in-requested()`.
@@ -172,6 +174,7 @@ impl Fires {
             Fires::EditRequested => "edit-requested".to_owned(),
             Fires::FindRequested => "find-requested".to_owned(),
             Fires::FilterFocusRequested => "filter-focus-requested".to_owned(),
+            Fires::SwitcherOpenRequested => "switcher-open-requested".to_owned(),
             Fires::CancelRequested => "cancel-requested".to_owned(),
             Fires::ZoomInRequested => "zoom-in-requested".to_owned(),
             Fires::ZoomOutRequested => "zoom-out-requested".to_owned(),
@@ -310,6 +313,15 @@ pub const BINDINGS: &[Binding] = &[
         key: Physical::Letter('S'),
         description: "Save the open file",
         fires: Fires::SaveRequested,
+    },
+    Binding {
+        owner: Owner::Window,
+        control: true,
+        alt: false,
+        shift: false,
+        key: Physical::Letter('P'),
+        description: "Go to a repository by name",
+        fires: Fires::SwitcherOpenRequested,
     },
     Binding {
         owner: Owner::Window,
