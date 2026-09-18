@@ -326,3 +326,61 @@ still the only process that touches the filesystem, `save_file_edit`
 still sends `Request::WriteFile`, and nothing about the editing surface
 alters D10: it reads and writes the file a reader chose, and runs
 nothing.
+
+## D15 — Panes dock or float; the right-hand pane hosts tools
+
+**Settled 2026-09-17.**
+
+The right-hand pane stops being "the File pane" and becomes a **tool
+slot**: the tool that applies to the selection is shown, a picker appears
+when more than one applies, and the editor (§3.6) is its first tool. A
+certificate tool - read-only, finding the certificates committed under the
+Repos Directory and saying which are expired or expiring - is its second.
+More tools follow as they are discovered.
+
+Every pane - Folders, Contents and the tool slot alike - can pop out into
+its own window and dock back, inside the same application: one process,
+one connection to the service, several windows, never a separate program.
+Windows are linked by default, following one shared selection; a
+popped-out tool window can be pinned to keep what it shows while the
+selection moves on. Closing a popped-out window docks its pane back; the
+application exits when its last window closes. Which panes are popped
+out, and each window's position and size, are remembered between
+launches - window arrangement, not location, so every launch still opens
+at the Repos Directory regardless (D7 is unchanged). Tools are compiled
+in, like plugins (§3.2); there is no loadable third-party tool. The
+terminal front end is unaffected: this is a graphical front end decision.
+
+**Why.** The owner wants the editor, certificate management and whatever
+tool comes after them to be things that stand on their own - inspectable,
+comparable side by side, movable to a second monitor - rather than
+permanently wedged into one third of one window. A certificate tool needs
+exactly the working-copy detection this application already does (D7,
+D10) and nothing it has not already been asked to add.
+
+**What already supports it.** The service / thin front end split in §2
+means a second window is another view onto the same `App`, not a second
+copy of anything: the pane behind each window already goes through the
+same service connection. §3's plugin trait pair - a core half and a
+presentation half - is the shape a tool trait pair also takes, so the
+tool slot is a small extension of a pattern already built, not a new one.
+
+**What it costs.** Multi-window layout: remembering and restoring several
+windows' position and size, and keeping one shared selection consistent
+across however many are open. The certificate tool adds a read of files
+this application did not previously look inside - certificates - though
+never their private keys, and never to issue, renew, revoke or deploy one
+(§2.1, §6).
+
+**What it would take to revisit.** The tool slot is one concept - a
+`Tool` trait pair and a registry, the same shape §3.2 already uses for
+plugins - so adding a third tool means implementing that pair, not
+touching window or pane code. Undoing the docking/floating decision means
+returning the tool slot to a fixed third column and removing the
+per-window remembered layout; the selection stays shared either way since
+nothing else depends on windows being separate.
+
+**What this supersedes.** GUIDANCE.md §2.4's old "three panes" wording,
+which named the third pane "the File pane" and left it fixed in the main
+window. §3.6's old title, "The File pane is an editor", which named the
+pane rather than the tool now living in its slot.
