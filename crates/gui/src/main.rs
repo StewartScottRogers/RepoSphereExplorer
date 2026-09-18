@@ -73,6 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_folders_width(widths.folders);
         ui.set_contents_width(widths.contents);
     }
+    // The zoom step (#586), the same "restore before the window shows"
+    // shape the pane widths above already have. A missing or invalid
+    // saved value leaves `App` at `zoom::DEFAULT`, applied to `ui` by the
+    // `sync_ui` call below.
+    if let Some(percent) = gui::settings::load_zoom() {
+        app.borrow_mut().set_zoom_percent(percent);
+    }
     // Applied before the window is shown, the same as the pane widths
     // above. The wiring is in the library so a window test drives the same
     // code this does (rule 14).
@@ -106,6 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(geometry) = gui::geometry_to_save(&ui, &geometry_tracker) {
         gui::settings::save_window_geometry(geometry);
     }
+    gui::settings::save_zoom(app.borrow().zoom_percent());
     Ok(())
 }
 

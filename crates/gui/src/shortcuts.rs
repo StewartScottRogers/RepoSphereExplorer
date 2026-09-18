@@ -131,6 +131,12 @@ pub enum Fires {
     FilterFocusRequested,
     /// `cancel-requested()`.
     CancelRequested,
+    /// `zoom-in-requested()`.
+    ZoomInRequested,
+    /// `zoom-out-requested()`.
+    ZoomOutRequested,
+    /// `zoom-reset-requested()`.
+    ZoomResetRequested,
 }
 
 impl Fires {
@@ -167,6 +173,9 @@ impl Fires {
             Fires::FindRequested => "find-requested".to_owned(),
             Fires::FilterFocusRequested => "filter-focus-requested".to_owned(),
             Fires::CancelRequested => "cancel-requested".to_owned(),
+            Fires::ZoomInRequested => "zoom-in-requested".to_owned(),
+            Fires::ZoomOutRequested => "zoom-out-requested".to_owned(),
+            Fires::ZoomResetRequested => "zoom-reset-requested".to_owned(),
         }
     }
 }
@@ -301,6 +310,42 @@ pub const BINDINGS: &[Binding] = &[
         key: Physical::Letter('S'),
         description: "Save the open file",
         fires: Fires::SaveRequested,
+    },
+    Binding {
+        owner: Owner::Window,
+        control: true,
+        alt: false,
+        shift: false,
+        key: Physical::Letter('+'),
+        description: "Zoom in",
+        fires: Fires::ZoomInRequested,
+    },
+    Binding {
+        owner: Owner::Window,
+        control: true,
+        alt: false,
+        shift: false,
+        key: Physical::Letter('='),
+        description: "Zoom in",
+        fires: Fires::ZoomInRequested,
+    },
+    Binding {
+        owner: Owner::Window,
+        control: true,
+        alt: false,
+        shift: false,
+        key: Physical::Letter('-'),
+        description: "Zoom out",
+        fires: Fires::ZoomOutRequested,
+    },
+    Binding {
+        owner: Owner::Window,
+        control: true,
+        alt: false,
+        shift: false,
+        key: Physical::Letter('0'),
+        description: "Reset the zoom to 100%",
+        fires: Fires::ZoomResetRequested,
     },
     // Folders and Contents panes: the row navigation both share.
     Binding {

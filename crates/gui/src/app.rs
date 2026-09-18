@@ -864,21 +864,24 @@ pub const FOLDER_CHEVRON: f32 = 16.0;
 pub const FOLDER_PADDING: f32 = 4.0;
 
 /// Whether `x` pixels in from a folders-pane row's left edge falls on the
-/// chevron of a row at `depth`.
+/// chevron of a row at `depth`, drawn at `zoom` (#586) - `app.slint` scales
+/// the padding, indent and chevron column by the same factor, so the hit
+/// test has to move with them or a click would land beside the chevron it
+/// looks like it landed on.
 ///
 /// In Rust rather than in `app.slint` for the reason given on
 /// [`crate::scroll_offset_for`]: a rule written in that file cannot be
 /// exercised without an event loop, and every layout rule this project has
 /// got wrong was one that lived there.
 #[must_use]
-pub fn chevron_hit(x: f32, depth: usize) -> bool {
+pub fn chevron_hit(x: f32, depth: usize, zoom: f32) -> bool {
     // `depth` is a tree level, and a tree deep enough to overflow this has
     // long since run out of pane to indent into.
     let Ok(level) = u16::try_from(depth) else {
         return false;
     };
-    let start = FOLDER_PADDING + f32::from(level) * FOLDER_INDENT;
-    x >= start && x < start + FOLDER_CHEVRON
+    let start = zoom.mul_add(FOLDER_PADDING, f32::from(level) * FOLDER_INDENT * zoom);
+    x >= start && x < start + FOLDER_CHEVRON * zoom
 }
 
 /// A file open in the editor.
@@ -1358,6 +1361,8 @@ pub struct App {
     /// on what happens to be installed on the machine running it.
     editor_setting: Option<String>,
     code_on_path: bool,
+    /// The window's text zoom (#586), one of [`crate::zoom::STEPS`].
+    zoom_percent: u16,
 }
 
 /// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
@@ -1429,6 +1434,7 @@ impl App {
             after_operation: None,
             editor_setting: None,
             code_on_path: false,
+            zoom_percent: crate::zoom::DEFAULT,
         };
         app.load_contents_for_selected();
         app
@@ -3297,6 +3303,58 @@ impl App {
         self.code_on_path = code_on_path;
     }
 
+    /// The window's text zoom (#586), a percentage.
+    #[must_use]
+    pub fn zoom_percent(&self) -> u16 {
+        self.zoom_percent
+    }
+
+    /// [`Self::zoom_percent`] as the multiplier `app.slint` scales text,
+    /// row heights and icon sizes by.
+    #[must_use]
+    pub fn zoom_factor(&self) -> f32 {
+        f32::from(self.zoom_percent) / 100.0
+    }
+
+    /// Sets the zoom to `percent` outright, with no status message - what
+    /// the real window does once at startup with a remembered level
+    /// (`gui::settings::load_zoom`), the same as [`Self::set_editor`] for
+    /// the `editor` setting. A test that wants a status message to go with
+    /// the change calls [`Self::zoom_in`], [`Self::zoom_out`] or
+    /// [`Self::zoom_reset`] instead.
+    pub fn set_zoom_percent(&mut self, percent: u16) {
+        self.zoom_percent = percent;
+    }
+
+    /// Steps the zoom to the level above the current one, stopping at the
+    /// top of `zoom::STEPS`, and says so in the status bar.
+    pub fn zoom_in(&mut self) {
+        self.set_zoom_and_report(crate::zoom::step_in(self.zoom_percent));
+    }
+
+    /// Steps the zoom to the level below the current one, stopping at the
+    /// bottom of `zoom::STEPS`, and says so in the status bar.
+    pub fn zoom_out(&mut self) {
+        self.set_zoom_and_report(crate::zoom::step_out(self.zoom_percent));
+    }
+
+    /// Puts the zoom back to `zoom::DEFAULT`, and says so in the status bar.
+    pub fn zoom_reset(&mut self) {
+        self.set_zoom_and_report(crate::zoom::DEFAULT);
+    }
+
+    /// Moves to `percent`, and flashes it in the status bar - but only when
+    /// it actually moved, the same reasoning `zoom_in` and `zoom_out`
+    /// stopping at the ends of the table already carries: zooming in
+    /// already at 200% should not claim the status bar with a message
+    /// that says nothing happened.
+    fn set_zoom_and_report(&mut self, percent: u16) {
+        if percent != self.zoom_percent {
+            self.zoom_percent = percent;
+            self.status = Some(format!("Zoom {percent}%"));
+        }
+    }
+
     fn report_launch(&mut self, what: &str, result: io::Result<()>) {
         self.status = Some(match result {
             Ok(()) => format!("opened {what}"),
@@ -3576,7 +3634,8 @@ impl App {
     /// come this far in rather than being resolved in `app.slint`.
     pub fn click_folder(&mut self, index: usize, x: f32) {
         let row = self.folder_rows().into_iter().nth(index);
-        if row.is_some_and(|row| row.expandable && chevron_hit(x, row.depth)) {
+        let zoom = self.zoom_factor();
+        if row.is_some_and(|row| row.expandable && chevron_hit(x, row.depth, zoom)) {
             self.toggle_folder(index);
         } else {
             self.select_folder(index);
@@ -6211,20 +6270,79 @@ third",
         // Padding 4, chevron 16, indent 16. Depth 0 owns 4..20, depth 1
         // owns 20..36 - the boundaries are what a misplaced click lands on.
         assert!(
-            !chevron_hit(3.9, 0),
+            !chevron_hit(3.9, 0, 1.0),
             "left of the padding is not the chevron"
         );
         assert!(
-            chevron_hit(4.0, 0),
+            chevron_hit(4.0, 0, 1.0),
             "the chevron starts where the padding ends"
         );
-        assert!(chevron_hit(19.9, 0));
-        assert!(!chevron_hit(20.0, 0), "at 20 the icon has started");
+        assert!(chevron_hit(19.9, 0, 1.0));
+        assert!(!chevron_hit(20.0, 0, 1.0), "at 20 the icon has started");
 
-        assert!(!chevron_hit(19.9, 1), "a child's chevron is one indent in");
-        assert!(chevron_hit(20.0, 1));
-        assert!(chevron_hit(35.9, 1));
-        assert!(!chevron_hit(36.0, 1));
+        assert!(
+            !chevron_hit(19.9, 1, 1.0),
+            "a child's chevron is one indent in"
+        );
+        assert!(chevron_hit(20.0, 1, 1.0));
+        assert!(chevron_hit(35.9, 1, 1.0));
+        assert!(!chevron_hit(36.0, 1, 1.0));
+    }
+
+    /// #586: `app.slint` scales the padding, indent and chevron column by
+    /// the zoom factor, so the same boundaries as
+    /// [`the_chevron_is_the_first_column_and_moves_right_with_the_depth`]
+    /// move with it rather than staying at their 100% pixels.
+    #[test]
+    fn the_chevron_hit_test_scales_with_zoom() {
+        assert!(!chevron_hit(7.9, 0, 2.0), "left of the doubled padding");
+        assert!(chevron_hit(8.0, 0, 2.0), "the doubled padding ends at 8");
+        assert!(chevron_hit(39.9, 0, 2.0));
+        assert!(!chevron_hit(40.0, 0, 2.0), "the doubled icon has started");
+    }
+
+    #[test]
+    fn zooming_in_and_out_reports_the_new_level() {
+        let mut app = App::new(std::env::temp_dir());
+        assert_eq!(app.zoom_percent(), 100);
+
+        app.zoom_in();
+        assert_eq!(app.zoom_percent(), 110);
+        assert_eq!(app.status_text(), "Zoom 110%");
+
+        app.zoom_out();
+        assert_eq!(app.zoom_percent(), 100);
+        assert_eq!(app.status_text(), "Zoom 100%");
+    }
+
+    #[test]
+    fn zooming_out_below_the_lowest_step_stays_there_and_says_nothing() {
+        let mut app = App::new(std::env::temp_dir());
+        for _ in 0..8 {
+            app.zoom_out();
+        }
+        assert_eq!(app.zoom_percent(), 80);
+        let status_at_the_floor = app.status_text();
+
+        app.zoom_out();
+        assert_eq!(app.zoom_percent(), 80);
+        assert_eq!(
+            app.status_text(),
+            status_at_the_floor,
+            "zooming out at the floor should not overwrite the status bar"
+        );
+    }
+
+    #[test]
+    fn resetting_the_zoom_returns_to_100_percent() {
+        let mut app = App::new(std::env::temp_dir());
+        app.zoom_in();
+        app.zoom_in();
+        assert_eq!(app.zoom_percent(), 125);
+
+        app.zoom_reset();
+        assert_eq!(app.zoom_percent(), 100);
+        assert_eq!(app.status_text(), "Zoom 100%");
     }
 
     #[test]

@@ -88,6 +88,17 @@ export global Theme {
     }
 }
 
+// The window's text zoom (#586), a step from `zoom::STEPS`: 80, 90, 100,
+// 110, 125, 150, 175 or 200. A global rather than a `MainWindow` property
+// passed down through every pane, editor and menu that draws text - the
+// same reason `Theme` is one - so a new component that draws text picks up
+// zoom for free just by reading `Zoom.factor`, the way it already reads
+// `Theme.accent`.
+export global Zoom {
+    in-out property <int> percent: 100;
+    out property <float> factor: percent / 100.0;
+}
+
 /// One coloured run of a line in the Text view. `class` is
 /// `plugin_api::Class` as a number, mapped to a colour by
 /// `Theme.syntax-colour`.
@@ -149,7 +160,7 @@ component ContextMenuItem inherits Rectangle {
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
-        spacing: 16px;
+        spacing: 16px * Zoom.factor;
         Text {
             text: label;
             color: item-enabled ? Palette.foreground : Theme.dim-text;
@@ -230,8 +241,8 @@ component Pane inherits Rectangle {
     property <length> menu-x;
     property <length> menu-y;
     property <bool> menu-open;
-    property <length> menu-width: 150px;
-    property <length> menu-item-height: 24px;
+    property <length> menu-width: 150px * Zoom.factor;
+    property <length> menu-item-height: 24px * Zoom.factor;
 
     // The scroll offset, and how much of the listing fits. Both surfaced so
     // the front end can put the selected row on screen: the rule for that is
@@ -247,14 +258,16 @@ component Pane inherits Rectangle {
     // overlay `TouchArea` for the whole pane, and it derives the row from
     // `mouse-y` and the chevron from `mouse-x`. Repeated `Rectangle`s are
     // fine, and are what the contents pane already draws.
-    property <length> row-height: 20px;
+    property <length> row-height: 20px * Zoom.factor;
 
     // File Explorer's navigation pane geometry. These have to agree with
     // `app::FOLDER_PADDING`, `FOLDER_INDENT` and `FOLDER_CHEVRON`, which are
-    // what decide whether a click landed on a chevron.
-    property <length> pad: 4px;
-    property <length> indent: 16px;
-    property <length> chevron: 16px;
+    // what decide whether a click landed on a chevron - `App::click_folder`
+    // scales those three by the same `Zoom.factor` (#586) for exactly that
+    // reason.
+    property <length> pad: 4px * Zoom.factor;
+    property <length> indent: 16px * Zoom.factor;
+    property <length> chevron: 16px * Zoom.factor;
 
     // The row under the pointer, or -1 when the pointer is elsewhere.
     property <int> hovered: click-area.has-hover && rows.length > 0
@@ -282,10 +295,10 @@ component Pane inherits Rectangle {
                 width: chevron;
             }
             Rectangle {
-                width: 16px;
+                width: 16px * Zoom.factor;
             }
             Rectangle {
-                width: 5px;
+                width: 5px * Zoom.factor;
             }
             Text {
                 text: row.name;
@@ -363,13 +376,13 @@ component Pane inherits Rectangle {
                             // same number.
                             folder-icon := Image {
                                 source: row.icon;
-                                width: 16px;
-                                height: 16px;
+                                width: 16px * Zoom.factor;
+                                height: 16px * Zoom.factor;
                                 image-fit: contain;
                                 horizontal-stretch: 0;
                             }
                             Rectangle {
-                                width: 5px;
+                                width: 5px * Zoom.factor;
                                 horizontal-stretch: 0;
                             }
                             Text {
@@ -385,7 +398,7 @@ component Pane inherits Rectangle {
                                 vertical-alignment: center;
                                 overflow: elide;
                                 horizontal-stretch: 1;
-                                min-width: 24px;
+                                min-width: 24px * Zoom.factor;
                             }
                         }
                     }
@@ -828,7 +841,7 @@ component ContentsPane inherits Rectangle {
     in property <bool> filter-focused;
     callback filter-focus-requested();
 
-    property <length> row-height: 20px;
+    property <length> row-height: 20px * Zoom.factor;
     // Where the last right-click landed, which both popups place themselves
     // at: a `PopupWindow` cannot be positioned from its enclosing component,
     // so it has to read the coordinates out of a property instead.
@@ -838,8 +851,8 @@ component ContentsPane inherits Rectangle {
     // still draw - nothing clips them - but hit-testing is bounded by the
     // popup, so every item in it is unclickable. Both menus therefore state
     // their size, which means stating the item height and count here.
-    property <length> menu-width: 150px;
-    property <length> menu-item-height: 24px;
+    property <length> menu-width: 150px * Zoom.factor;
+    property <length> menu-item-height: 24px * Zoom.factor;
     // Which context menu is open: -1 none, 0 on a row, 1 on empty space.
     property <int> open-context: -1;
     // The rubber band, while one is being dragged. `band-from` is where the
@@ -864,10 +877,10 @@ component ContentsPane inherits Rectangle {
     // stretches into the rest, in both the header and every row, so the two
     // line up without either deriving a width from the pane's own width -
     // which would close a layout binding loop.
-    property <length> size-column: show-size-column ? 80px : 0px;
-    property <length> kind-column: 90px;
-    property <length> modified-column: 118px;
-    property <length> header-height: 20px;
+    property <length> size-column: show-size-column ? 80px * Zoom.factor : 0px;
+    property <length> kind-column: 90px * Zoom.factor;
+    property <length> modified-column: 118px * Zoom.factor;
+    property <length> header-height: 20px * Zoom.factor;
     // What is left of `pane-width` for the icon+name+branch+marker line
     // once the fixed columns, the row's own padding and the pane's border
     // are taken out - an approximation of what that line's own layout
@@ -924,7 +937,7 @@ component ContentsPane inherits Rectangle {
                     width: 1px;
                     background: Theme.accent;
                     y: 3px;
-                    height: 16px;
+                    height: 16px * Zoom.factor;
                 }
             }
             filter-touch := TouchArea {
@@ -1026,7 +1039,7 @@ component ContentsPane inherits Rectangle {
                                 padding-bottom: 2px;
                                 Image {
                                     source: row.icon;
-                                    width: 16px;
+                                    width: 16px * Zoom.factor;
                                     image-fit: contain;
                                     horizontal-stretch: 0;
                                 }
@@ -1043,7 +1056,7 @@ component ContentsPane inherits Rectangle {
                                     overflow: elide;
                                     vertical-alignment: center;
                                     horizontal-stretch: 1;
-                                    min-width: 24px;
+                                    min-width: 24px * Zoom.factor;
                                 }
                                 // The branch and its marker share the Name
                                 // column rather than taking one of their own:
@@ -1430,10 +1443,13 @@ component CodeEditor inherits Rectangle {
     // the editor used it; false leaves it for the window behind.
     callback key(string, bool, bool) -> bool;
 
-    property <length> row-height: 16px;
-    property <length> gutter: 4px;
+    property <length> row-height: 16px * Zoom.factor;
+    property <length> gutter: 4px * Zoom.factor;
     property <string> face: "Consolas, Menlo, monospace";
-    property <length> size: 12px;
+    // Explicit rather than inherited: `font-size` set on a `Text` element
+    // never falls back to `default-font-size`, so this multiplies
+    // `Zoom.factor` itself the same as the default does (#586).
+    property <length> size: 12px * Zoom.factor;
 
     forward-focus: keys;
 
@@ -1643,6 +1659,23 @@ export component MainWindow inherits Window {
     // Windows' UI font. Slint falls back to the platform default wherever
     // it is not installed, so this costs nothing on other systems.
     default-font-family: "Segoe UI";
+    // #586: every `Text` below that sets no `font-size` of its own - which
+    // is nearly all of them - inherits this, so `Zoom.factor` scales the
+    // three panes, the address bar, the menus, the command bar and the
+    // status bar in one place. The handful that do set their own size
+    // (the code editor, the coloured preview) multiply it by the same
+    // factor explicitly.
+    default-font-size: 12px * Zoom.factor;
+    // Named so a test can read it back, the same reason `window-icon`
+    // above is: `default-font-size` itself is a built-in `Window`
+    // property with no generated getter.
+    out property <length> zoomed-font-size: root.default-font-size;
+
+    // #586: Ctrl+Plus/Ctrl+=, Ctrl+Minus and Ctrl+0, fired from the View
+    // menu below too.
+    callback zoom-in-requested();
+    callback zoom-out-requested();
+    callback zoom-reset-requested();
 
     in property <[FolderRow]> folder-rows;
     in property <int> folder-selected;
@@ -1678,7 +1711,7 @@ export component MainWindow inherits Window {
     private property <length> tab-w: file-tabs.length > 0
         ? file-pane.width / file-tabs.length
         : 80px;
-    private property <length> tab-h: 24px;
+    private property <length> tab-h: 24px * Zoom.factor;
     callback file-view-selected(int);
     // The strip above the File pane: the plugin's views and then the way
     // in to the editor. Built in Rust so the pane does not have to know
@@ -1839,7 +1872,7 @@ export component MainWindow inherits Window {
     // and the text. Without them a page moved three rows further than
     // the reader could see, every time.
     out property <int> edit-visible-rows:
-        floor((file-pane.height - 22px - (editing-file ? 46px : 0px)) / 16px);
+        floor((file-pane.height - 22px - (editing-file ? 46px : 0px)) / (16px * Zoom.factor));
     // True when the editing surface used the key. A false one falls
     // through to the window's own scope; see `key-scope` below for the
     // short list that still means something while a file is open.
@@ -1883,8 +1916,12 @@ export component MainWindow inherits Window {
     // whatever the other two leave.
     // `in-out` so the widths can be restored at startup and read back when
     // the window closes; the splitters move them in between.
-    in-out property <length> folders-width: 240px;
-    in-out property <length> contents-width: 470px;
+    // #586: the default, un-restored width - once a real width is
+    // restored or dragged, Rust owns it outright and this binding no
+    // longer applies - widens with the zoom so the default layout keeps
+    // showing a whole name at every step rather than only at 100%.
+    in-out property <length> folders-width: 240px * Zoom.factor;
+    in-out property <length> contents-width: 470px * Zoom.factor;
     // The File pane's own floor (#577), and what a splitter drag leaves
     // Folders and Contents down to. Named rather than repeated as literals,
     // so the drag clamps below and Rust's `fit_pane_widths` cannot drift
@@ -1912,7 +1949,7 @@ export component MainWindow inherits Window {
     // property rather than a `PopupWindow` so it can be sized, placed and
     // clicked like any other element.
     property <int> open-menu: -1;
-    property <length> menu-item-h: 24px;
+    property <length> menu-item-h: 24px * Zoom.factor;
     callback edge-requested(int);
 
     forward-focus: key-scope;
@@ -1949,6 +1986,21 @@ export component MainWindow inherits Window {
             }
             if (event.text == Key.F1 || (event.modifiers.control && (event.text == "/"))) {
                 root.shortcuts-open = true;
+                return accept;
+            }
+            // Zoom (#586) works over every pane, editing included, the same
+            // as F1 above - a reader part-way through typing a file should
+            // still be able to make the text bigger.
+            if (event.modifiers.control && (event.text == "+" || event.text == "=")) {
+                zoom-in-requested();
+                return accept;
+            }
+            if (event.modifiers.control && event.text == "-") {
+                zoom-out-requested();
+                return accept;
+            }
+            if (event.modifiers.control && event.text == "0") {
+                zoom-reset-requested();
                 return accept;
             }
             // A key that gets here while the editor has the keyboard is
@@ -2041,7 +2093,7 @@ export component MainWindow inherits Window {
         VerticalLayout {
             // Menu bar.
             Rectangle {
-                height: 24px;
+                height: 24px * Zoom.factor;
                 background: Theme.panel;
                 // The menu bar is its own strip: the command bar below is a
                 // different kind of thing and should not run into it.
@@ -2075,7 +2127,7 @@ export component MainWindow inherits Window {
 
             // Command bar.
             Rectangle {
-                height: 30px;
+                height: 30px * Zoom.factor;
                 background: Theme.panel;
                 // The edge that ends the chrome: everything below this line
                 // is content.
@@ -2200,10 +2252,10 @@ export component MainWindow inherits Window {
                             alignment: start;
                             Image {
                                 source: location-icon;
-                                width: 16px;
-                                height: 16px;
+                                width: 16px * Zoom.factor;
+                                height: 16px * Zoom.factor;
                                 image-fit: contain;
-                                y: (parent.height - 16px) / 2;
+                                y: (parent.height - 16px * Zoom.factor) / 2;
                             }
                             // A path longer than the bar collapses its
                             // leading segments behind this, which expands
@@ -2389,7 +2441,7 @@ export component MainWindow inherits Window {
                         // Where the caret is, which is what every Windows
                         // editor puts at the bottom of its window.
                         if editing-file: Rectangle {
-                            height: 20px;
+                            height: 20px * Zoom.factor;
                             background: Theme.panel;
                             HorizontalLayout {
                                 padding-left: 6px;
@@ -2539,8 +2591,8 @@ export component MainWindow inherits Window {
                         // entry count, total size - that follow, drawn
                         // dim rather than sharing the table's full weight.
                         if !editing-file && file-facts.length > 0: facts-table := Rectangle {
-                            property <length> fact-row-height: 20px;
-                            property <length> fact-label-column: 100px;
+                            property <length> fact-row-height: 20px * Zoom.factor;
+                            property <length> fact-label-column: 100px * Zoom.factor;
                             // The row under the pointer, so a value elided
                             // in the middle can still show in full on
                             // hover (#576 requirement 2) - the same
@@ -2629,7 +2681,7 @@ export component MainWindow inherits Window {
                                 padding: 4px;
                                 for line[row] in file-lines: HorizontalLayout {
                                     alignment: start;
-                                    height: 16px;
+                                    height: 16px * Zoom.factor;
                                     // Named so a test can ask what the pane
                                     // drew: runs computed correctly and
                                     // painted as one string would pass every
@@ -2640,7 +2692,7 @@ export component MainWindow inherits Window {
                                         accessible-label: run.text;
                                         color: Theme.syntax-colour(run.class);
                                         font-family: "Consolas, Menlo, monospace";
-                                        font-size: 12px;
+                                        font-size: 12px * Zoom.factor;
                                         vertical-alignment: center;
                                     }
                                 }
@@ -2730,8 +2782,8 @@ export component MainWindow inherits Window {
 
         if open-menu == 0: Rectangle {
             x: 4px;
-            y: 24px;
-            width: 210px;
+            y: 24px * Zoom.factor;
+            width: 210px * Zoom.factor;
             height: file-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;
@@ -2837,9 +2889,9 @@ export component MainWindow inherits Window {
         }
 
         if open-menu == 1: Rectangle {
-            x: 44px;
-            y: 24px;
-            width: 200px;
+            x: 44px * Zoom.factor;
+            y: 24px * Zoom.factor;
+            width: 200px * Zoom.factor;
             height: edit-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;
@@ -2888,9 +2940,9 @@ export component MainWindow inherits Window {
         }
 
         if open-menu == 2: Rectangle {
-            x: 88px;
-            y: 24px;
-            width: 210px;
+            x: 88px * Zoom.factor;
+            y: 24px * Zoom.factor;
+            width: 210px * Zoom.factor;
             height: view-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;
@@ -2928,13 +2980,31 @@ export component MainWindow inherits Window {
                     item-height: menu-item-h;
                     activated => { open-menu = -1; content-sort-requested(3); }
                 }
+                ContextMenuItem {
+                    label: "Zoom In";
+                    shortcut: "Ctrl++";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; zoom-in-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Zoom Out";
+                    shortcut: "Ctrl+-";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; zoom-out-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Actual Size";
+                    shortcut: "Ctrl+0";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; zoom-reset-requested(); }
+                }
             }
         }
 
         if open-menu == 3: Rectangle {
-            x: 136px;
-            y: 24px;
-            width: 200px;
+            x: 136px * Zoom.factor;
+            y: 24px * Zoom.factor;
+            width: 200px * Zoom.factor;
             height: help-menu-items.preferred-height;
             background: Theme.panel;
             border-width: 1px;

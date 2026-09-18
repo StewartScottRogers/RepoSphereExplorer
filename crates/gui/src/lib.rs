@@ -9,6 +9,7 @@ mod generated {
 }
 pub use generated::{
     CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, ShortcutRow, Theme,
+    Zoom,
 };
 
 pub mod app;
@@ -16,6 +17,7 @@ pub mod launch;
 pub mod renderer;
 pub mod settings;
 pub mod shortcuts;
+pub mod zoom;
 
 pub mod document;
 pub mod editor;
@@ -144,8 +146,10 @@ fn icon_image(icon: Icon, folder: bool, mark: Option<RepositoryMark>) -> Image {
 const ROW_HEIGHT: f32 = 20.0;
 
 /// Where a pane should be scrolled to so that row `selected` is fully
-/// visible, given how much of the listing is on screen and where it is
-/// scrolled now.
+/// visible, given how much of the listing is on screen, where it is
+/// scrolled now, and how tall a row is - `ROW_HEIGHT` scaled by the
+/// window's zoom (#586), so this agrees with what is actually drawn at
+/// every step rather than only at 100%.
 ///
 /// Offsets are what a `ScrollView` uses: zero at the top of the listing, and
 /// negative as it scrolls down.
@@ -161,7 +165,12 @@ const ROW_HEIGHT: f32 = 20.0;
 /// loop, so nothing could test it - and the three defects this project has
 /// already had in that file were all of that kind.
 #[must_use]
-pub fn scroll_offset_for(selected: usize, viewport_height: f32, current: f32) -> f32 {
+pub fn scroll_offset_for(
+    selected: usize,
+    viewport_height: f32,
+    current: f32,
+    row_height: f32,
+) -> f32 {
     // A viewport that has not been laid out yet cannot be reasoned about,
     // and a listing shorter than its pane never scrolls.
     if viewport_height <= 0.0 {
@@ -176,10 +185,10 @@ pub fn scroll_offset_for(selected: usize, viewport_height: f32, current: f32) ->
         // Past that, scroll to the end of what can be addressed and stop:
         // an answer that is off by a row is better than one that is off by
         // a listing.
-        return -(f32::from(u16::MAX) * ROW_HEIGHT);
+        return -(f32::from(u16::MAX) * row_height);
     };
-    let top = f32::from(index) * ROW_HEIGHT;
-    let bottom = top + ROW_HEIGHT;
+    let top = f32::from(index) * row_height;
+    let bottom = top + row_height;
     // `current` is zero or negative; the visible band is what it exposes.
     let visible_top = -current;
     let visible_bottom = visible_top + viewport_height;
@@ -194,7 +203,11 @@ pub fn scroll_offset_for(selected: usize, viewport_height: f32, current: f32) ->
 }
 
 /// The rows of a pane on screen - every row any part of which shows -
-/// given where it is scrolled, how tall it is and how many rows it holds.
+/// given where it is scrolled, how tall it is, how many rows it holds, and
+/// how tall a row is - the same zoom-scaled `row_height` [`scroll_offset_for`]
+/// takes, and for the same reason: at zoom below 100% a row is shorter than
+/// `ROW_HEIGHT`, so more of them fit the same viewport, and this has to ask
+/// for that many or the last few would never be sent to the pane at all.
 ///
 /// Empty before the pane has been laid out, since nothing is on screen yet.
 #[must_use]
@@ -202,6 +215,7 @@ pub fn visible_rows(
     scroll_y: f32,
     viewport_height: f32,
     row_count: usize,
+    row_height: f32,
 ) -> std::ops::Range<usize> {
     if viewport_height <= 0.0 {
         return 0..0;
@@ -212,10 +226,10 @@ pub fn visible_rows(
     // scrolls a listing longer than that.
     let count = u16::try_from(row_count).unwrap_or(u16::MAX);
     let first = (0..count)
-        .find(|&index| (f32::from(index) + 1.0) * ROW_HEIGHT > top)
+        .find(|&index| (f32::from(index) + 1.0) * row_height > top)
         .unwrap_or(count);
     let end = (first..count)
-        .find(|&index| f32::from(index) * ROW_HEIGHT >= bottom)
+        .find(|&index| f32::from(index) * row_height >= bottom)
         .unwrap_or(count);
     usize::from(first)..usize::from(end)
 }
@@ -525,10 +539,12 @@ pub fn settle_window_onto_a_display(ui: &MainWindow) -> Option<settings::WindowG
 /// pane has on screen. `main` calls this on every tick, after drawing, so
 /// scrolling asks for the rows it brings into view.
 pub fn ask_for_visible_statuses(ui: &MainWindow, app: &mut App) {
+    let row_height = ROW_HEIGHT * app.zoom_factor();
     app.ask_for_statuses(visible_rows(
         ui.get_content_scroll_y(),
         ui.get_content_viewport_height(),
         slint::Model::row_count(&ui.get_content_rows()),
+        row_height,
     ));
 }
 
@@ -689,6 +705,7 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_commands(ui, app);
     wire_content_operations(ui, app);
     wire_editor(ui, app);
+    wire_zoom(ui, app);
     wire_shortcuts_sheet(ui);
 }
 
@@ -1136,6 +1153,28 @@ pub fn wire_editor(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     }
 }
 
+/// Wires Ctrl+Plus/Ctrl+=, Ctrl+Minus and Ctrl+0 (#586) - and the matching
+/// View menu items, which fire the same three callbacks - to `App`'s zoom
+/// steps.
+fn wire_zoom(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    macro_rules! on_zoom_command {
+        ($setter:ident, $method:ident) => {{
+            let app = Rc::clone(app);
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.$method();
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
+    }
+    on_zoom_command!(on_zoom_in_requested, zoom_in);
+    on_zoom_command!(on_zoom_out_requested, zoom_out);
+    on_zoom_command!(on_zoom_reset_requested, zoom_reset);
+}
+
 /// A tree row's application state, rendered into the Slint struct the pane
 /// draws: the icon carries the branch mark (#579), and `is_repository`
 /// tells the pane's name text to match it.
@@ -1235,11 +1274,15 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     // drawn, so comparing against it needs no state of its own.
     let content_moved = ui.get_content_selected() != row_index(app.content_selected());
     ui.set_content_selected(row_index(app.content_selected()));
+    // The zoom-scaled row height (#586): scroll math has to agree with what
+    // is actually drawn at the current zoom, not with the 100% row height.
+    let row_height = ROW_HEIGHT * app.zoom_factor();
     if content_moved {
         ui.set_content_scroll_y(scroll_offset_for(
             app.content_selected(),
             ui.get_content_viewport_height(),
             ui.get_content_scroll_y(),
+            row_height,
         ));
     }
     if folder_moved {
@@ -1247,10 +1290,13 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
             app.folder_selected(),
             ui.get_folders_viewport_height(),
             ui.get_folders_scroll_y(),
+            row_height,
         ));
     }
     sync_file_pane(ui, app);
     ui.set_status_text(app.status_text().into());
+    ui.global::<Zoom>()
+        .set_percent(i32::from(app.zoom_percent()));
     sync_filter(ui, app);
     ui.set_focus_pane(app.focus_index());
     ui.set_content_is_archive(app.selected_is_archive());
@@ -1433,15 +1479,36 @@ mod tests {
     #[test]
     fn the_rows_on_screen_are_the_ones_any_part_of_which_shows() {
         let viewport = 5.0 * ROW_HEIGHT;
-        assert_eq!(visible_rows(0.0, viewport, 100), 0..5);
-        assert_eq!(visible_rows(0.0, viewport, 3), 0..3, "a short listing");
+        assert_eq!(visible_rows(0.0, viewport, 100, ROW_HEIGHT), 0..5);
         assert_eq!(
-            visible_rows(-ROW_HEIGHT / 2.0, viewport, 100),
+            visible_rows(0.0, viewport, 3, ROW_HEIGHT),
+            0..3,
+            "a short listing"
+        );
+        assert_eq!(
+            visible_rows(-ROW_HEIGHT / 2.0, viewport, 100, ROW_HEIGHT),
             0..6,
             "half a row scrolled off the top, half of another on at the bottom"
         );
-        assert_eq!(visible_rows(-40.0 * ROW_HEIGHT, viewport, 100), 40..45);
-        assert_eq!(visible_rows(0.0, 0.0, 100), 0..0, "not laid out yet");
+        assert_eq!(
+            visible_rows(-40.0 * ROW_HEIGHT, viewport, 100, ROW_HEIGHT),
+            40..45
+        );
+        assert_eq!(
+            visible_rows(0.0, 0.0, 100, ROW_HEIGHT),
+            0..0,
+            "not laid out yet"
+        );
+    }
+
+    /// #586: at zoom below 100% a row is shorter than `ROW_HEIGHT`, so more
+    /// of them fit the same viewport - the same five rows' worth of pixels
+    /// now hold eight rows at half height.
+    #[test]
+    fn zoomed_out_rows_are_shorter_so_more_of_them_are_visible() {
+        let viewport = 5.0 * ROW_HEIGHT;
+        let half_height = ROW_HEIGHT / 2.0;
+        assert_eq!(visible_rows(0.0, viewport, 100, half_height), 0..10);
     }
 
     /// Offsets are whole multiples of a row height, so anything inside a
@@ -1460,7 +1527,10 @@ mod tests {
         // which is what stops the listing twitching as the reader arrows
         // down it.
         for selected in 0..10 {
-            assert!(same(scroll_offset_for(selected, VIEWPORT, 0.0), 0.0));
+            assert!(same(
+                scroll_offset_for(selected, VIEWPORT, 0.0, ROW_HEIGHT),
+                0.0
+            ));
         }
     }
 
@@ -1468,16 +1538,19 @@ mod tests {
     fn a_row_below_the_fold_comes_to_the_bottom_edge() {
         // Row 10 is one past the last visible row, so the pane moves by
         // exactly one row - not by a page.
-        assert!(same(scroll_offset_for(10, VIEWPORT, 0.0), -ROW_HEIGHT));
         assert!(same(
-            scroll_offset_for(11, VIEWPORT, 0.0),
+            scroll_offset_for(10, VIEWPORT, 0.0, ROW_HEIGHT),
+            -ROW_HEIGHT
+        ));
+        assert!(same(
+            scroll_offset_for(11, VIEWPORT, 0.0, ROW_HEIGHT),
             -2.0 * ROW_HEIGHT
         ));
     }
 
     #[test]
     fn a_row_far_below_puts_that_row_last() {
-        let offset = scroll_offset_for(199, VIEWPORT, 0.0);
+        let offset = scroll_offset_for(199, VIEWPORT, 0.0, ROW_HEIGHT);
 
         // Row 199 occupies the band ending at the bottom edge.
         let visible_top = -offset;
@@ -1491,7 +1564,7 @@ mod tests {
         // Scrolled down to row 100, then the selection jumps back to 40.
         let scrolled = -100.0 * ROW_HEIGHT;
 
-        let offset = scroll_offset_for(40, VIEWPORT, scrolled);
+        let offset = scroll_offset_for(40, VIEWPORT, scrolled, ROW_HEIGHT);
 
         assert!(same(offset, -40.0 * ROW_HEIGHT), "the row sits at the top");
     }
@@ -1499,7 +1572,7 @@ mod tests {
     #[test]
     fn the_first_row_scrolls_the_listing_home() {
         assert!(same(
-            scroll_offset_for(0, VIEWPORT, -100.0 * ROW_HEIGHT),
+            scroll_offset_for(0, VIEWPORT, -100.0 * ROW_HEIGHT, ROW_HEIGHT),
             0.0
         ));
     }
@@ -1508,7 +1581,7 @@ mod tests {
     fn a_pane_that_has_not_been_laid_out_is_left_alone() {
         // Before the first layout the viewport has no height, and an
         // arithmetic answer from that would scroll the listing off screen.
-        assert!(same(scroll_offset_for(50, 0.0, -20.0), -20.0));
+        assert!(same(scroll_offset_for(50, 0.0, -20.0, ROW_HEIGHT), -20.0));
     }
 
     #[test]
@@ -1518,10 +1591,19 @@ mod tests {
         // view jumping ahead of the reader.
         let mut offset = 0.0;
         for selected in 0..30 {
-            offset = scroll_offset_for(selected, VIEWPORT, offset);
+            offset = scroll_offset_for(selected, VIEWPORT, offset, ROW_HEIGHT);
         }
 
         assert!(same(offset, -20.0 * ROW_HEIGHT));
+    }
+
+    /// #586: doubling the row height at 200% zoom halves how many rows fit
+    /// the same viewport - a row 10 rows down the doubled listing is only 5
+    /// rows' worth of pixels below the top.
+    #[test]
+    fn a_zoomed_in_row_below_the_fold_moves_by_its_doubled_height() {
+        let doubled = 2.0 * ROW_HEIGHT;
+        assert!(same(scroll_offset_for(5, VIEWPORT, 0.0, doubled), -doubled));
     }
 
     #[test]
