@@ -8,13 +8,14 @@ mod generated {
     slint::include_modules!();
 }
 pub use generated::{
-    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, Theme,
+    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, ShortcutRow, Theme,
 };
 
 pub mod app;
 pub mod launch;
 pub mod renderer;
 pub mod settings;
+pub mod shortcuts;
 
 pub mod document;
 pub mod editor;
@@ -688,6 +689,16 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_commands(ui, app);
     wire_content_operations(ui, app);
     wire_editor(ui, app);
+    wire_shortcuts_sheet(ui);
+}
+
+/// Fills in the Help > Keyboard shortcuts sheet's rows (#585). Set once,
+/// rather than on every [`sync_ui`], because the table does not change
+/// while the window runs; opening and closing the sheet is markup-only
+/// state, in `shortcuts-open`.
+fn wire_shortcuts_sheet(ui: &MainWindow) {
+    let mac = matches!(launch::Platform::current(), launch::Platform::MacOs);
+    ui.set_shortcut_rows(ModelRc::new(VecModel::from(shortcuts::rows(mac))));
 }
 
 /// Wires the callbacks that carry a row index or a signed delta.
