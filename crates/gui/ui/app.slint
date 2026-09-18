@@ -510,6 +510,12 @@ export struct ContentRow {
     // Whether this row is part of the selection. With Ctrl and Shift in play
     // that is no longer "the one row whose index matches".
     selected: bool,
+    // A clock glyph drawn after the branch and marker when the repository's
+    // last fetch is too old to trust, empty otherwise (#589).
+    stale-marker: string,
+    // What `stale-marker` means, in words; empty exactly when `stale-marker`
+    // is. Shown in a tooltip on hover and as the glyph's accessible label.
+    stale-tooltip: string,
 }
 
 // One column heading in the contents pane's details view: clickable to sort,
@@ -1087,6 +1093,7 @@ component ContentsPane inherits Rectangle {
                                         ? 0px
                                         : content-line-width - 16px - 15px
                                             - marker-text.preferred-width
+                                            - stale-marker-text.preferred-width
                                             - name-text.preferred-width;
                                     width: room < 40px ? 0px : min(room, 120px);
                                     visible: room >= 40px;
@@ -1110,6 +1117,19 @@ component ContentsPane inherits Rectangle {
                                     horizontal-stretch: 0;
                                     accessible-role: text;
                                     accessible-label: row.marker-tooltip;
+                                }
+                                stale-marker-text := Text {
+                                    text: row.stale-marker;
+                                    // Neutral, like the other non-warning
+                                    // markers: an old fetch is worth a
+                                    // glance, not the attention colour the
+                                    // uncommitted-changes marker gets
+                                    // (#589).
+                                    color: row.selected && focused ? Theme.on-accent : Theme.dim-text;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 0;
+                                    accessible-role: text;
+                                    accessible-label: row.stale-tooltip;
                                 }
                             }
                             Text {
@@ -1145,10 +1165,10 @@ component ContentsPane inherits Rectangle {
                     // row itself may have cut or only hinted at: a
                     // repository's full name and branch, which eliding or
                     // hiding the branch can take from view (#573), and what
-                    // its marker means in words, for a mouse user who does
-                    // not know the glyphs (#574). A plain folder or file,
-                    // with nothing cut and no marker, gets none.
-                    if hovered-row >= 0 && (rows[hovered-row].is-repository || rows[hovered-row].marker-tooltip != ""): Rectangle {
+                    // its marker(s) mean in words, for a mouse user who does
+                    // not know the glyphs (#574, #589). A plain folder or
+                    // file, with nothing cut and no marker, gets none.
+                    if hovered-row >= 0 && (rows[hovered-row].is-repository || rows[hovered-row].marker-tooltip != "" || rows[hovered-row].stale-tooltip != ""): Rectangle {
                         x: click-area.mouse-x + 12px;
                         y: click-area.mouse-y + 12px;
                         width: marker-tip-text.preferred-width + 8px;
@@ -1161,7 +1181,8 @@ component ContentsPane inherits Rectangle {
                             y: 3px;
                             text: rows[hovered-row].name
                                 + (rows[hovered-row].branch == "" ? "" : "\n" + rows[hovered-row].branch)
-                                + (rows[hovered-row].marker-tooltip == "" ? "" : "\n" + rows[hovered-row].marker-tooltip);
+                                + (rows[hovered-row].marker-tooltip == "" ? "" : "\n" + rows[hovered-row].marker-tooltip)
+                                + (rows[hovered-row].stale-tooltip == "" ? "" : "\n" + rows[hovered-row].stale-tooltip);
                             color: Palette.foreground;
                         }
                     }

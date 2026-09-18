@@ -400,6 +400,7 @@ mod tests {
                 tracking: None,
                 status: None,
                 last_activity: None,
+                last_fetch: None,
             }),
             readme: None,
         })
@@ -471,6 +472,7 @@ mod tests {
                     partial: false,
                 }),
                 last_activity: None,
+                last_fetch: None,
             }),
             readme: None,
         })
@@ -501,6 +503,7 @@ mod tests {
                     partial: false,
                 }),
                 last_activity: None,
+                last_fetch: None,
             }),
             readme: None,
         })
@@ -646,6 +649,7 @@ mod tests {
             last_activity: Some(
                 std::time::SystemTime::now() - std::time::Duration::from_hours(2 * 24),
             ),
+            last_fetch: None,
         }));
 
         let facts = DirectoryPresentation.facts(&data);
@@ -693,6 +697,7 @@ mod tests {
             }),
             status: None,
             last_activity: None,
+            last_fetch: None,
         }));
 
         let facts = DirectoryPresentation.facts(&data);
@@ -725,6 +730,7 @@ mod tests {
             tracking: None,
             status: None,
             last_activity: None,
+            last_fetch: None,
         }));
 
         let facts = DirectoryPresentation.facts(&data);
@@ -763,6 +769,7 @@ mod tests {
             }),
             status: None,
             last_activity: None,
+            last_fetch: None,
         }));
 
         let facts = DirectoryPresentation.facts(&data);

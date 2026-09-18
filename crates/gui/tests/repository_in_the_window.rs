@@ -1531,3 +1531,85 @@ fn hovering_a_repository_shows_its_full_name_branch_and_marker_and_a_plain_folde
         "a plain folder has nothing cut and no marker, so it gets no tooltip"
     );
 }
+
+// ---------------------------------------------------------------------
+// A last fetch too old to trust marks the row, in the window a reader
+// actually sees (#589).
+// ---------------------------------------------------------------------
+
+/// Sets a file's modification time to `days_ago` days before now, so a
+/// fixture can control a checkout's `FETCH_HEAD` age without depending on
+/// how fast the test itself runs.
+fn set_mtime_days_ago(path: &Path, days_ago: u64) {
+    let at = std::time::SystemTime::now() - Duration::from_secs(days_ago * 24 * 60 * 60);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("the fixture file opens for its mtime to be set")
+        .set_modified(at)
+        .expect("the platform can set a file's modified time");
+}
+
+/// Writes `FETCH_HEAD` into `checkout`'s git directory, dated `days_ago`
+/// days ago - never by running `git fetch`, since only the file's own
+/// modification time is read (CLAUDE.md rule 8).
+fn fetched_days_ago(checkout: &Path, days_ago: u64) {
+    let fetch_head = checkout.join(".git").join("FETCH_HEAD");
+    std::fs::write(&fetch_head, b"").expect("the fixture writes FETCH_HEAD");
+    set_mtime_days_ago(&fetch_head, days_ago);
+}
+
+#[test]
+fn a_stale_repositorys_row_carries_the_clock_glyph_and_a_fresh_ones_does_not() {
+    let _serial = serially();
+    let root = scratch("stale-fetch");
+    let stale = checkout(
+        &root,
+        "stale-repo",
+        "main",
+        Some("https://github.com/acme/stale.git"),
+        1,
+    );
+    fetched_days_ago(&stale, 61);
+    let fresh = checkout(
+        &root,
+        "fresh-repo",
+        "main",
+        Some("https://github.com/acme/fresh.git"),
+        1,
+    );
+    fetched_days_ago(&fresh, 1);
+    let (ui, app) = window_at(&root);
+
+    let stale_marker = nth_drawn(
+        &ui,
+        "ContentsPane::stale-marker-text",
+        index_of(&ui, "stale-repo"),
+    );
+    let fresh_marker = nth_drawn(
+        &ui,
+        "ContentsPane::stale-marker-text",
+        index_of(&ui, "fresh-repo"),
+    );
+
+    assert_eq!(
+        stale_marker
+            .accessible_label()
+            .map(|label| label.to_string()),
+        Some("Last fetched 61 days ago; ahead and behind counts may be out of date".to_owned()),
+        "a fetch over 30 days old should be marked stale"
+    );
+    assert!(
+        fresh_marker
+            .accessible_label()
+            .is_none_or(|label| label.is_empty()),
+        "a fetch from yesterday is not stale, so there is nothing to explain"
+    );
+    assert!(
+        app.borrow()
+            .status_text()
+            .contains(", 1 not fetched in 30 days"),
+        "{}",
+        app.borrow().status_text()
+    );
+}

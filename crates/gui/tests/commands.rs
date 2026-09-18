@@ -32,6 +32,8 @@ fn row(name: &str) -> ContentRow {
         marker: SharedString::new(),
         marker_tooltip: SharedString::new(),
         marker_warning: false,
+        stale_marker: SharedString::new(),
+        stale_tooltip: SharedString::new(),
     }
 }
 

@@ -155,6 +155,10 @@ pub fn describe(path: &Path) -> Option<RepositoryInfo> {
             .last_activity
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|duration| duration.as_secs()),
+        last_fetch: found
+            .last_fetch
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs()),
     })
 }
 

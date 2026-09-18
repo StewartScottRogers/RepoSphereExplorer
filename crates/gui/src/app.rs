@@ -993,6 +993,8 @@ fn found_row(found_match: &protocol::NameMatch) -> ContentRow {
         modified: String::new(),
         is_repository: false,
         mark: None,
+        stale_marker: String::new(),
+        stale_tooltip: String::new(),
     }
 }
 
@@ -1224,6 +1226,54 @@ fn marker_tooltip(marker: &str) -> &'static str {
     }
 }
 
+/// Drawn after a repository row's branch when its last fetch is too old to
+/// trust the ahead/behind counts it was measured against, or it has a
+/// remote and has never been fetched at all (#589). Matches the File
+/// pane's own threshold for the same staleness (#576).
+pub const STALE_FETCH_MARKER: &str = "\u{23F0}";
+
+/// How old a fetch has to be, in seconds, before [`STALE_FETCH_MARKER`] is
+/// drawn - 30 days, the same threshold the File pane already reads
+/// `STALE_FETCH` as (#576).
+const STALE_FETCH_SECONDS: u64 = 30 * 24 * 60 * 60;
+
+/// Whether a repository row's last fetch is too old to trust, or it has a
+/// remote and was never fetched. A repository with no remote is never
+/// stale - there is nothing for it to have fetched (#589). `now` is a
+/// parameter so a test can fix the clock.
+fn fetch_is_stale(last_fetch: Option<u64>, has_remote: bool, now: u64) -> bool {
+    if !has_remote {
+        return false;
+    }
+    match last_fetch {
+        Some(at) => now.saturating_sub(at) > STALE_FETCH_SECONDS,
+        None => true,
+    }
+}
+
+/// [`STALE_FETCH_MARKER`]'s tooltip and accessible label: `Last fetched 61
+/// days ago; ahead and behind counts may be out of date`, or `Never
+/// fetched` for a repository that has a remote but has never fetched it.
+fn stale_fetch_tooltip(last_fetch: Option<u64>, now: u64) -> String {
+    match last_fetch {
+        Some(at) => {
+            let days = now.saturating_sub(at) / 86_400;
+            let noun = if days == 1 { "day" } else { "days" };
+            format!("Last fetched {days} {noun} ago; ahead and behind counts may be out of date")
+        }
+        None => "Never fetched".to_owned(),
+    }
+}
+
+/// Seconds since `UNIX_EPOCH`, for comparing against a repository's
+/// `last_fetch` - `0` on a clock that reads before the epoch, which never
+/// happens on a real machine.
+fn now_epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 /// What the Contents pane knows about one repository row's working tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RowStatus {
@@ -1270,6 +1320,12 @@ pub struct ContentRow {
     /// The branch mark this row's icon carries, or `None` for a plain
     /// folder or a file (#579).
     pub mark: Option<RepositoryMark>,
+    /// [`STALE_FETCH_MARKER`] when the repository's last fetch is too old
+    /// to trust, empty otherwise (#589).
+    pub stale_marker: String,
+    /// What `stale_marker` means, in words: shown in a tooltip and given as
+    /// its accessible label. Empty exactly when `stale_marker` is.
+    pub stale_tooltip: String,
 }
 
 /// One row of the File pane's fact table (#576).
@@ -1706,7 +1762,29 @@ impl App {
         } else {
             format!(" ({not_known} not known)")
         };
-        format!(", {} {noun}{not_known}", markers.len())
+        let stale = self.stale_fetch_count();
+        let stale = if stale == 0 {
+            String::new()
+        } else {
+            format!(", {stale} not fetched in 30 days")
+        };
+        format!(", {} {noun}{not_known}{stale}", markers.len())
+    }
+
+    /// How many listed repositories have a last fetch too old to trust, or
+    /// a remote and no fetch at all - the same test [`STALE_FETCH_MARKER`]
+    /// is drawn from, so this always agrees with the marker beside each
+    /// row's branch (#589).
+    fn stale_fetch_count(&self) -> usize {
+        let now = now_epoch_seconds();
+        self.contents
+            .iter()
+            .filter(|entry| {
+                entry.repository.as_ref().is_some_and(|repository| {
+                    fetch_is_stale(repository.last_fetch, repository.remote.is_some(), now)
+                })
+            })
+            .count()
     }
 
     /// How many listed repositories carry uncommitted changes, by the same
@@ -3810,6 +3888,7 @@ impl App {
         if let Some(found) = &self.found {
             return found.matches.iter().map(found_row).collect();
         }
+        let now = now_epoch_seconds();
         self.contents
             .iter()
             .map(|entry| {
@@ -3817,6 +3896,14 @@ impl App {
                     self.marker_for(&entry.name)
                 } else {
                     ""
+                };
+                let stale = entry.repository.as_ref().is_some_and(|repository| {
+                    fetch_is_stale(repository.last_fetch, repository.remote.is_some(), now)
+                });
+                let stale_tooltip = if stale {
+                    stale_fetch_tooltip(entry.repository.as_ref().and_then(|r| r.last_fetch), now)
+                } else {
+                    String::new()
                 };
                 ContentRow {
                     icon: icon_for(&entry.name, entry.is_dir),
@@ -3853,6 +3940,12 @@ impl App {
                     marker: marker.to_owned(),
                     marker_tooltip: marker_tooltip(marker).to_owned(),
                     marker_warning: marker == CHANGED_MARKER,
+                    stale_marker: if stale {
+                        STALE_FETCH_MARKER.to_owned()
+                    } else {
+                        String::new()
+                    },
+                    stale_tooltip,
                 }
             })
             .collect()
@@ -4603,8 +4696,8 @@ mod tests {
 
     use super::{
         App, CANNOT_TELL_MARKER, CHANGED_MARKER, NOT_KNOWN_YET_MARKER, PathBuf, RepositoryMark,
-        UNKNOWN_ICON, chevron_hit, format_kind, format_kind_of, format_timestamp, icon_for,
-        repository_mark, strip_verbatim_prefix,
+        STALE_FETCH_MARKER, UNKNOWN_ICON, chevron_hit, fetch_is_stale, format_kind, format_kind_of,
+        format_timestamp, icon_for, now_epoch_seconds, repository_mark, strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, RepositoryKind, Response};
@@ -4978,6 +5071,7 @@ second", "truncated": false }),
                 tracking: None,
                 status: None,
                 last_activity: None,
+                last_fetch: None,
             }),
             readme: None,
         })
@@ -5022,6 +5116,7 @@ second", "truncated": false }),
                 tracking: None,
                 status: None,
                 last_activity: None,
+                last_fetch: None,
             }),
             readme: None,
         })
@@ -5534,6 +5629,7 @@ third",
             remote: None,
             kind: RepositoryKind::Clone,
             last_activity: None,
+            last_fetch: None,
         };
         assert_eq!(
             format_kind_of("repo", true, Some(&with_provider)),
@@ -5548,6 +5644,7 @@ third",
             remote: None,
             kind: RepositoryKind::Clone,
             last_activity: None,
+            last_fetch: None,
         };
         assert_eq!(
             format_kind_of("repo", true, Some(&without_provider)),
@@ -5568,6 +5665,7 @@ third",
                 clone_exists: true,
             },
             last_activity: None,
+            last_fetch: None,
         };
         assert_eq!(
             format_kind_of("linked", true, Some(&worktree)),
@@ -5582,6 +5680,7 @@ third",
                 outer: "/repos/outer".to_owned(),
             },
             last_activity: None,
+            last_fetch: None,
         };
         assert_eq!(
             format_kind_of("inner", true, Some(&submodule)),
@@ -5597,6 +5696,7 @@ third",
                 clone_exists: false,
             },
             last_activity: None,
+            last_fetch: None,
         };
         assert_eq!(
             format_kind_of("linked", true, Some(&worktree_with_no_remote)),
@@ -5722,6 +5822,7 @@ third",
                             remote: None,
                             kind: RepositoryKind::Clone,
                             last_activity: Some(900),
+                            last_fetch: None,
                         }),
                     },
                     DirectoryEntry {
@@ -5735,6 +5836,7 @@ third",
                             remote: None,
                             kind: RepositoryKind::Clone,
                             last_activity: Some(200),
+                            last_fetch: None,
                         }),
                     },
                     DirectoryEntry {
@@ -5813,6 +5915,7 @@ third",
                             remote: None,
                             kind: RepositoryKind::Clone,
                             last_activity: None,
+                            last_fetch: None,
                         }),
                     },
                 ],
@@ -6939,6 +7042,7 @@ third",
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
                     kind: RepositoryKind::Clone,
                     last_activity: None,
+                    last_fetch: None,
                 }),
             },
             DirectoryEntry {
@@ -7882,6 +7986,7 @@ third",
                         remote: remote.map(str::to_owned),
                         kind: RepositoryKind::Clone,
                         last_activity: None,
+                        last_fetch: None,
                     }),
                 }],
             }),
@@ -8113,6 +8218,7 @@ third",
                         remote: Some("git@github.com:owner/name.git".to_owned()),
                         kind: RepositoryKind::Clone,
                         last_activity: None,
+                        last_fetch: None,
                     }),
                 }],
             }),
@@ -8360,6 +8466,7 @@ third",
                     remote: None,
                     kind: RepositoryKind::Clone,
                     last_activity: None,
+                    last_fetch: None,
                 }),
             })
             .collect();
@@ -8443,6 +8550,130 @@ third",
             app.status_text()
         );
         assert_eq!(app.status_changed_label(), "1 with uncommitted changes");
+    }
+
+    // ---- a last fetch too old to trust (#589) ---------------------------
+
+    #[test]
+    fn a_fetch_thirty_one_days_old_is_stale_but_twenty_nine_is_not() {
+        const DAY: u64 = 24 * 60 * 60;
+        let now = 1_000_000_000;
+        assert!(
+            fetch_is_stale(Some(now - 31 * DAY), true, now),
+            "31 days old is past the threshold"
+        );
+        assert!(
+            !fetch_is_stale(Some(now - 29 * DAY), true, now),
+            "29 days old is still within it"
+        );
+    }
+
+    #[test]
+    fn a_remote_never_fetched_is_stale_and_no_remote_never_is() {
+        let now = 1_000_000_000;
+        assert!(
+            fetch_is_stale(None, true, now),
+            "a remote configured but never fetched cannot be trusted"
+        );
+        assert!(
+            !fetch_is_stale(None, false, now),
+            "nothing to fetch means nothing to call stale"
+        );
+        assert!(
+            !fetch_is_stale(Some(now - 1_000 * 24 * 60 * 60), false, now),
+            "a repository with no remote is never stale, however old the field"
+        );
+    }
+
+    /// An application listing one checkout with the given `remote` and
+    /// `last_fetch`, for the stale-marker tests below.
+    fn app_listing_one_checkout(remote: Option<&str>, last_fetch: Option<u64>) -> App {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "widgets".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(RepositoryInfo {
+                        provider: None,
+                        branch: Some("main".to_owned()),
+                        remote: remote.map(str::to_owned),
+                        kind: RepositoryKind::Clone,
+                        last_activity: None,
+                        last_fetch,
+                    }),
+                }],
+            }),
+        );
+        app
+    }
+
+    #[test]
+    fn a_stale_repositorys_row_carries_the_marker_and_tooltip() {
+        let now = now_epoch_seconds();
+        let app = app_listing_one_checkout(
+            Some("https://github.com/owner/widgets.git"),
+            Some(now - 61 * 24 * 60 * 60),
+        );
+
+        let row = app
+            .content_rows()
+            .into_iter()
+            .next()
+            .expect("one repository row");
+        assert_eq!(row.stale_marker, STALE_FETCH_MARKER);
+        assert_eq!(
+            row.stale_tooltip,
+            "Last fetched 61 days ago; ahead and behind counts may be out of date"
+        );
+        assert!(
+            app.status_text().contains(", 1 not fetched in 30 days"),
+            "{}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn a_never_fetched_remote_reads_never_fetched_in_its_tooltip() {
+        let app = app_listing_one_checkout(Some("https://github.com/owner/widgets.git"), None);
+
+        let row = app
+            .content_rows()
+            .into_iter()
+            .next()
+            .expect("one repository row");
+        assert_eq!(row.stale_marker, STALE_FETCH_MARKER);
+        assert_eq!(row.stale_tooltip, "Never fetched");
+    }
+
+    #[test]
+    fn a_freshly_fetched_or_remote_less_repository_carries_no_stale_marker() {
+        let now = now_epoch_seconds();
+        let fresh = app_listing_one_checkout(
+            Some("https://github.com/owner/widgets.git"),
+            Some(now - 5 * 24 * 60 * 60),
+        );
+        let row = fresh
+            .content_rows()
+            .into_iter()
+            .next()
+            .expect("one repository row");
+        assert_eq!(row.stale_marker, "", "a recent fetch is not stale");
+        assert!(!fresh.status_text().contains("not fetched in 30 days"));
+
+        let no_remote = app_listing_one_checkout(None, None);
+        let row = no_remote
+            .content_rows()
+            .into_iter()
+            .next()
+            .expect("one repository row");
+        assert_eq!(
+            row.stale_marker, "",
+            "nothing to fetch means nothing to mark stale"
+        );
     }
 
     // ---- status bar filters (#582) ----
@@ -8700,6 +8931,7 @@ third",
                         remote: None,
                         kind: RepositoryKind::Clone,
                         last_activity: None,
+                        last_fetch: None,
                     }),
                 }],
             }),

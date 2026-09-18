@@ -181,7 +181,7 @@ fn upstream_of(config: &gix_config::File, branch: &str) -> Option<(String, Strin
 /// the clone shares. So a linked worktree's comparison is as fresh as the
 /// latest fetch anywhere in the clone: the newer of its own and the
 /// clone's.
-fn last_fetch(git_dir: &Path, common_dir: &Path) -> Option<SystemTime> {
+pub(crate) fn last_fetch(git_dir: &Path, common_dir: &Path) -> Option<SystemTime> {
     [git_dir, common_dir]
         .into_iter()
         .filter_map(|dir| {

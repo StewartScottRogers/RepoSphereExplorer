@@ -3561,13 +3561,46 @@ public class OrderBook {
     }
 
     #[test]
+    fn a_listing_carries_a_repositorys_last_fetch() {
+        // Across a Repos Directory, nothing showed which checkouts had not
+        // been fetched in months without opening each one; the listing
+        // reports FETCH_HEAD's own modification time for every row instead
+        // (#589).
+        let dir = scratch();
+        let checkout = dir.join("widgets");
+        let git = checkout.join(".git");
+        fs::create_dir_all(&git).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(git.join("FETCH_HEAD"), b"").unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        let entry = entries.iter().find(|e| e.name == "widgets").unwrap();
+        let found = entry
+            .repository
+            .as_ref()
+            .expect("a checkout, by its marker");
+        let expected = fs::metadata(git.join("FETCH_HEAD"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(found.last_fetch, Some(expected));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn listing_two_hundred_repositories_stays_a_stat_per_row() {
         // GUIDANCE.md 3.4/3.5: a directory read per row would make a
-        // listing of this size crawl. Reading last activity is a stat of
-        // three named files per repository (CLAUDE.md rule 9), never a
-        // read of the git directory's contents - so 200 of them stays
-        // fast. The actual wall-clock time is reported in the pull
-        // request alongside the same listing's time before this change.
+        // listing of this size crawl. Reading last activity and last fetch
+        // is a stat of a handful of named files per repository (CLAUDE.md
+        // rule 9), never a read of the git directory's contents - so 200 of
+        // them stays fast. The actual wall-clock time is reported in the
+        // pull request alongside the same listing's time before this
+        // change.
         let dir = scratch();
         for n in 0..200 {
             let git = dir.join(format!("repo-{n}")).join(".git");
@@ -3580,6 +3613,7 @@ public class OrderBook {
             .unwrap();
             fs::write(git.join("index"), b"").unwrap();
             fs::write(git.join("logs").join("HEAD"), b"").unwrap();
+            fs::write(git.join("FETCH_HEAD"), b"").unwrap();
         }
 
         let start = std::time::Instant::now();
@@ -3588,12 +3622,18 @@ public class OrderBook {
 
         assert_eq!(entries.len(), 200);
         for entry in &entries {
+            let found = entry
+                .repository
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} should be a working copy", entry.name));
             assert!(
-                entry
-                    .repository
-                    .as_ref()
-                    .is_some_and(|found| found.last_activity.is_some()),
+                found.last_activity.is_some(),
                 "{} should have last activity",
+                entry.name
+            );
+            assert!(
+                found.last_fetch.is_some(),
+                "{} should have a last fetch (#589)",
                 entry.name
             );
         }

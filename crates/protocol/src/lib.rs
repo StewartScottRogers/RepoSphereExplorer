@@ -195,6 +195,12 @@ pub struct RepositoryInfo {
     /// Falls back to the folder's own time when none of the three exist.
     #[serde(default)]
     pub last_activity: Option<u64>,
+    /// `FETCH_HEAD`'s own modification time, in seconds since `UNIX_EPOCH` -
+    /// when the checkout (or, for a worktree, the clone it shares) was last
+    /// fetched, or `None` when it never has (#589). A single stat, like
+    /// `last_activity`, never a directory read.
+    #[serde(default)]
+    pub last_fetch: Option<u64>,
 }
 
 /// What kind of working copy a [`RepositoryInfo`] describes. Mirrors
@@ -651,6 +657,7 @@ mod tests {
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
                     kind: RepositoryKind::Clone,
                     last_activity: None,
+                    last_fetch: None,
                 }),
             },
             DirectoryEntry {
@@ -694,6 +701,7 @@ mod tests {
                         clone_exists: true,
                     },
                     last_activity: None,
+                    last_fetch: None,
                 }),
             },
             DirectoryEntry {
@@ -709,6 +717,7 @@ mod tests {
                         outer: "/repos/outer".to_owned(),
                     },
                     last_activity: None,
+                    last_fetch: None,
                 }),
             },
         ];
@@ -765,6 +774,23 @@ mod tests {
         match response {
             Response::Directory { entries } => {
                 assert_eq!(entries[0].repository.as_ref().unwrap().last_activity, None);
+            }
+            other => panic!("expected a listing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_repository_from_before_last_fetch_existed_reads_as_none() {
+        // `last_fetch` is defaulted rather than required, so a front end
+        // built after #589 can still read a `RepositoryInfo` from a service
+        // built before it.
+        let older = r#"{"Directory":{"entries":[{"name":"src","is_dir":true,"size":0,
+            "modified":null,"repository":{"provider":null,"branch":"main","remote":null}}]}}"#;
+        let response: Response = serde_json::from_str(older).unwrap();
+
+        match response {
+            Response::Directory { entries } => {
+                assert_eq!(entries[0].repository.as_ref().unwrap().last_fetch, None);
             }
             other => panic!("expected a listing, got {other:?}"),
         }
@@ -1196,6 +1222,7 @@ mod tests {
                     remote: None,
                     kind: RepositoryKind::Clone,
                     last_activity: None,
+                    last_fetch: None,
                 }),
             }],
         };
