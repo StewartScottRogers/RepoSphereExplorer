@@ -139,6 +139,21 @@ pub enum Request {
         /// The working copy's own folder.
         path: String,
     },
+    /// The working copies found up to three folder levels below `root`
+    /// (#591), a background scan the service keeps for the session: later
+    /// polls with the same `root` return the same scan's latest progress,
+    /// until [`Response::AllRepositories`] says it is done. `refresh`
+    /// discards that scan and starts again - what F5 (Refresh) does while
+    /// the view is open.
+    ///
+    /// The reply is [`Response::AllRepositories`].
+    AllRepositories {
+        /// The Repos Directory to scan below.
+        root: String,
+        /// Whether to discard any scan already under way, or cached from
+        /// one that finished, and start a new one.
+        refresh: bool,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -225,6 +240,19 @@ pub enum RepositoryKind {
         /// The outer working copy's directory, as an absolute path.
         outer: String,
     },
+}
+
+/// One working copy found by [`Request::AllRepositories`] (#591).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AllRepositoryEntry {
+    /// The repository folder's own name.
+    pub name: String,
+    /// Its parent folder's path relative to the Repos Directory, `/`-joined
+    /// on every platform, empty for a direct child of the root.
+    pub location: String,
+    /// What the application knows about it, read the same way a listing
+    /// row's is.
+    pub repository: RepositoryInfo,
 }
 
 /// One file or folder found by [`Request::FindNames`].
@@ -317,6 +345,15 @@ pub enum Response {
         /// not a working copy or its index could not be read - which is
         /// "cannot tell", never "no changes".
         status: Option<WorkingTreeSummary>,
+    },
+    /// The answer to [`Request::AllRepositories`]: what the background scan
+    /// has found so far.
+    AllRepositories {
+        /// The working copies found so far, in the order the scan met them.
+        entries: Vec<AllRepositoryEntry>,
+        /// Whether the scan has finished. While this is `false`, a later
+        /// poll of the same root returns a longer (or equal) list.
+        done: bool,
     },
 }
 

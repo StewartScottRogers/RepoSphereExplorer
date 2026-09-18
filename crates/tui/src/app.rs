@@ -440,7 +440,8 @@ impl App {
                 | Response::Done
                 | Response::ReposRoots { .. }
                 | Response::Names { .. }
-                | Response::WorkingTree { .. },
+                | Response::WorkingTree { .. }
+                | Response::AllRepositories { .. },
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }

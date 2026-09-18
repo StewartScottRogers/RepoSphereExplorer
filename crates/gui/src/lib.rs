@@ -710,6 +710,20 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_shortcuts_sheet(ui);
     wire_related_repository_link(ui, app);
     wire_switcher(ui, app);
+    wire_all_repositories(ui, app);
+}
+
+/// Wires View > All Repositories and its Folders tree entry (#591).
+fn wire_all_repositories(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    let app = app.clone();
+    let ui_weak = ui.as_weak();
+    ui.on_all_repositories_requested(move || {
+        let mut app = app.borrow_mut();
+        app.open_all_repositories();
+        if let Some(ui) = ui_weak.upgrade() {
+            sync_ui(&ui, &app);
+        }
+    });
 }
 
 /// Wires Ctrl+P / Cmd+P's Go to Repository switcher (#590): opening it, and
@@ -1385,6 +1399,8 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_path_input(app.path_input().into());
     ui.set_editing_path(app.editing_path());
     ui.set_showing_found(app.showing_found());
+    ui.set_showing_all_repositories(app.showing_all_repositories());
+    ui.set_all_repositories_icon(icon_image(app::icon_for("", true), true, None));
     ui.set_content_size_column_visible(app.content_size_column_visible());
     ui.set_content_holds_repository(app.content_holds_repository());
     ui.set_editing_file(app.editing_file());
