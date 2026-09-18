@@ -894,6 +894,31 @@ fn dock(pane: Pane, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) 
     refresh_pane_menus(windows, &app.borrow());
 }
 
+/// Docks every popped-out pane back at once (#618): the empty main
+/// window's own "Dock All" button.
+fn dock_all(windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
+    for pane in [Pane::Folders, Pane::Contents, Pane::File] {
+        dock(pane, windows, app);
+    }
+}
+
+/// Closes the main window on its own (#618), leaving any popped-out window
+/// running: the application exits only once every window, this one
+/// included, has closed - Slint's own default once none of them are
+/// visible any more.
+fn close_main_window(windows: &Rc<RefCell<PaneWindows>>) {
+    let _ = windows.borrow().main.hide();
+}
+
+/// Brings the main window back (#618) after it was closed while panes were
+/// still popped out - "View > Show Main Window" in any popped-out window.
+/// It still holds whatever panes were docked when it closed, at the Repos
+/// Directory's current selection: the timer syncs it on every tick whether
+/// or not it is showing.
+fn show_main_window(windows: &Rc<RefCell<PaneWindows>>) {
+    let _ = windows.borrow().main.show();
+}
+
 /// Wires a window's pop-out/dock button and its View menu's Pop Out and
 /// Dock lists (#617): `own_pane` is the pane this window is dedicated to
 /// popped out into its own window, or `None` for the main window, which
@@ -925,6 +950,19 @@ pub fn wire_pop_out(
             }
         });
     }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        ui.on_dock_all_requested(move || {
+            dock_all(&windows, &app);
+        });
+    }
+    {
+        let windows = windows.clone();
+        ui.on_show_main_window_requested(move || {
+            show_main_window(&windows);
+        });
+    }
     if let Some(pane) = own_pane {
         // Closing a popped-out window from the platform's own decoration
         // docks it back, the same as its own dock button (GUIDANCE.md
@@ -936,18 +974,15 @@ pub fn wire_pop_out(
             slint::CloseRequestResponse::KeepWindowShown
         });
     } else {
-        // The application exits when its last window closes (GUIDANCE.md
-        // §2.6): closing the main window - the one holding it - leaves no
-        // popped-out window dangling behind it.
+        // Closing the main window closes only the main window (#618): any
+        // popped-out window keeps running, linked to every other, and the
+        // application keeps running with it. The application exits once
+        // every window - this one included - has closed, which is Slint's
+        // own default once none of them are visible any more.
         let windows = windows.clone();
         ui.window().on_close_requested(move || {
-            let popped_panes: Vec<Pane> = windows.borrow().popped.keys().copied().collect();
-            for pane in popped_panes {
-                if let Some(popped_ui) = windows.borrow_mut().popped.remove(&pane) {
-                    let _ = popped_ui.hide();
-                }
-            }
-            slint::CloseRequestResponse::HideWindow
+            close_main_window(&windows);
+            slint::CloseRequestResponse::KeepWindowShown
         });
     }
 }

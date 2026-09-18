@@ -91,6 +91,17 @@ fn pane_handle(windows: &Rc<RefCell<PaneWindows>>, pane: Pane) -> MainWindow {
         .expect("the window has not been dropped yet")
 }
 
+/// The same, for the main window itself - `main_handle(&windows)` rather
+/// than `windows.borrow().main()`, for the same reason [`pane_handle`] does.
+fn main_handle(windows: &Rc<RefCell<PaneWindows>>) -> MainWindow {
+    windows
+        .borrow()
+        .main()
+        .as_weak()
+        .upgrade()
+        .expect("the window has not been dropped yet")
+}
+
 thread_local! {
     /// `init_no_event_loop` sets the testing backend for the calling
     /// thread; a second call on the same thread panics rather than being
@@ -268,4 +279,125 @@ fn two_panes_popped_out_at_once_still_share_the_selection() {
             file_window.get_file_text()
         );
     }
+}
+
+/// Closing a popped-out window - a real `CloseRequested` event, the one a
+/// platform's own decoration or Alt+F4 sends - docks its pane back into the
+/// main window, exactly as its own dock button does (#618).
+#[test]
+fn closing_a_popped_out_window_docks_its_pane_back() {
+    let (windows, app) = windows_at(&scratch("close-popped-docks"));
+    pane_handle(&windows, Pane::Contents).invoke_pop_out_requested(pane_index(Pane::Contents));
+    pump(&windows, &app);
+    assert!(windows.borrow().is_popped_out(Pane::Contents));
+
+    pane_handle(&windows, Pane::Contents)
+        .window()
+        .dispatch_event(WindowEvent::CloseRequested);
+    pump(&windows, &app);
+
+    assert!(!windows.borrow().is_popped_out(Pane::Contents));
+    assert!(windows.borrow().main().get_show_contents_pane());
+}
+
+/// Popping every pane out leaves the main window holding none of them: the
+/// empty-main-window message and Dock All button take over, and Dock All
+/// returns all three panes and closes their windows (#618).
+#[test]
+fn popping_out_every_pane_lets_dock_all_return_them() {
+    let (windows, app) = windows_at(&scratch("dock-all"));
+    for pane in [Pane::Folders, Pane::Contents, Pane::File] {
+        pane_handle(&windows, pane).invoke_pop_out_requested(pane_index(pane));
+        pump(&windows, &app);
+    }
+
+    {
+        // The condition the markup shows the empty-main-window message and
+        // Dock All button under: every pane is out, so none of it is drawn.
+        let borrowed = windows.borrow();
+        assert!(!borrowed.main().get_show_folders_pane());
+        assert!(!borrowed.main().get_show_contents_pane());
+        assert!(!borrowed.main().get_show_file_pane());
+        assert!(borrowed.is_popped_out(Pane::Folders));
+        assert!(borrowed.is_popped_out(Pane::Contents));
+        assert!(borrowed.is_popped_out(Pane::File));
+    }
+
+    main_handle(&windows).invoke_dock_all_requested();
+    pump(&windows, &app);
+
+    let borrowed = windows.borrow();
+    assert!(!borrowed.is_popped_out(Pane::Folders));
+    assert!(!borrowed.is_popped_out(Pane::Contents));
+    assert!(!borrowed.is_popped_out(Pane::File));
+    assert!(borrowed.main().get_show_folders_pane());
+    assert!(borrowed.main().get_show_contents_pane());
+    assert!(borrowed.main().get_show_file_pane());
+}
+
+/// Closing the main window while a pane is popped out closes only the main
+/// window: the popped-out one keeps running and still responds to
+/// selection. Closing that last remaining window then leaves nothing
+/// visible, which is what ends the event loop (GUIDANCE.md §2.6's "the
+/// application exits with its last window") (#618).
+#[test]
+fn closing_the_main_window_leaves_a_popped_out_one_running_and_the_last_close_ends_it() {
+    let (windows, app) = windows_at(&scratch("close-main"));
+    pane_handle(&windows, Pane::Contents).invoke_pop_out_requested(pane_index(Pane::Contents));
+    pump(&windows, &app);
+
+    main_handle(&windows)
+        .window()
+        .dispatch_event(WindowEvent::CloseRequested);
+    pump(&windows, &app);
+
+    assert!(!windows.borrow().main().window().is_visible());
+    assert!(
+        windows
+            .borrow()
+            .window_for(Pane::Contents)
+            .window()
+            .is_visible(),
+        "the popped-out window is still there, and the application with it"
+    );
+
+    // Still responds to a real selection, made in the popped-out window.
+    pane_handle(&windows, Pane::Contents).invoke_folder_row_clicked(1, 999.0);
+    pump(&windows, &app);
+    assert_eq!(app.borrow().selection().folder, 1);
+    assert_eq!(
+        windows
+            .borrow()
+            .window_for(Pane::Contents)
+            .get_folder_selected(),
+        1
+    );
+
+    // Closing that popped-out window docks its pane back into the
+    // already-closed main window, leaving no window visible at all.
+    pane_handle(&windows, Pane::Contents)
+        .window()
+        .dispatch_event(WindowEvent::CloseRequested);
+    pump(&windows, &app);
+    assert!(!windows.borrow().is_popped_out(Pane::Contents));
+    assert!(!windows.borrow().main().window().is_visible());
+}
+
+/// "View > Show Main Window", reachable from a popped-out window's own menu,
+/// brings a closed main window back (#618).
+#[test]
+fn show_main_window_brings_a_closed_main_window_back() {
+    let (windows, app) = windows_at(&scratch("show-main"));
+    pane_handle(&windows, Pane::Contents).invoke_pop_out_requested(pane_index(Pane::Contents));
+    pump(&windows, &app);
+
+    main_handle(&windows)
+        .window()
+        .dispatch_event(WindowEvent::CloseRequested);
+    pump(&windows, &app);
+    assert!(!windows.borrow().main().window().is_visible());
+
+    pane_handle(&windows, Pane::Contents).invoke_show_main_window_requested();
+    pump(&windows, &app);
+    assert!(windows.borrow().main().window().is_visible());
 }
