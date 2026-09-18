@@ -22,11 +22,13 @@
 //!   that disagrees with the layout passes whatever it is pointed at.
 
 use gui::app::App;
+use gui::shortcuts::{self, Fires};
 use gui::{MainWindow, sync_ui};
 use i_slint_backend_testing::ElementHandle;
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model as _};
 use std::cell::RefCell;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Mutex, MutexGuard};
@@ -548,6 +550,68 @@ fn help_about_names_the_application() {
         "Help > About should name the application; the status bar says {:?}",
         ui.get_status_text()
     );
+}
+
+#[test]
+fn help_keyboard_shortcuts_opens_from_the_menu() {
+    let _serial = serially();
+    let dir = scratch("help-shortcuts-menu");
+    let (ui, _app) = window_at(&dir);
+
+    from_menu(&ui, "Help", "Keyboard Shortcuts");
+
+    assert!(
+        ui.get_shortcuts_open(),
+        "Help > Keyboard Shortcuts should open the sheet"
+    );
+}
+
+#[test]
+fn f1_opens_the_keyboard_shortcuts_sheet_and_escape_closes_it() {
+    let _serial = serially();
+    let dir = scratch("help-shortcuts-f1");
+    let (ui, _app) = window_at(&dir);
+
+    press_key(&ui, Key::F1);
+    assert!(
+        ui.get_shortcuts_open(),
+        "F1 should open the keyboard shortcuts sheet"
+    );
+
+    press_key(&ui, Key::Escape);
+    assert!(
+        !ui.get_shortcuts_open(),
+        "Escape should close the keyboard shortcuts sheet"
+    );
+}
+
+#[test]
+fn the_sheet_lists_a_row_from_each_group_the_correction_asks_for() {
+    let _serial = serially();
+    let dir = scratch("help-shortcuts-rows");
+    let (ui, _app) = window_at(&dir);
+
+    press_key(&ui, Key::F1);
+
+    let rows = ui.get_shortcut_rows();
+    let groups: Vec<String> = (0..rows.row_count())
+        .map(|i| rows.row_data(i).expect("a row").group.to_string())
+        .filter(|group| !group.is_empty())
+        .collect();
+
+    for expected in [
+        "Window",
+        "Folders and Contents panes",
+        "Contents pane",
+        "Address bar",
+        "File pane and editor",
+        "Find",
+    ] {
+        assert!(
+            groups.iter().any(|group| group == expected),
+            "the sheet's groups {groups:?} should include {expected:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -1376,4 +1440,109 @@ fn every_menu_item_sits_inside_its_menus_box() {
 
     open_menu(&ui, "File");
     assert_contained(&ui, "MainWindow::file-menu-items");
+}
+
+// ---------------------------------------------------------------------
+// Shortcuts: a menu item's printed shortcut matches the table (#585).
+// ---------------------------------------------------------------------
+
+/// Closes the open menu titled `title`, by clicking its title again - a
+/// bar title toggles its own menu, so this is `open_menu`'s inverse. Used
+/// between two menus sharing an item's label with one of the bar's own
+/// titles (File holds an "Edit" item; the bar also has an "Edit" title),
+/// so the leftover item is never mistaken for the next title clicked.
+fn close_menu(ui: &MainWindow, title: &str) {
+    let mut titles: Vec<ElementHandle> =
+        ElementHandle::find_by_accessible_label(ui, title).collect();
+    titles.sort_by(|a, b| {
+        a.absolute_position()
+            .y
+            .partial_cmp(&b.absolute_position().y)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    titles
+        .first()
+        .unwrap_or_else(|| panic!("the open menu's title {title:?} is still there"))
+        .mock_single_click(PointerEventButton::Left);
+}
+
+/// The shortcut text drawn beside `item_label` in whichever menu is open,
+/// found by descending into the item rather than by position - so this
+/// keeps working if `ContextMenuItem`'s two `Text`s are ever reordered.
+fn shortcut_text(ui: &MainWindow, item_label: &str) -> String {
+    item(ui, item_label)
+        .visit_descendants(|element| match element.accessible_label() {
+            // The item's own label reappears among its "descendants" once
+            // Slint folds the item's Rectangle and its label Text into one
+            // rendering item; skip it to reach the shortcut Text beside it.
+            Some(label) if !label.is_empty() && label != item_label => {
+                ControlFlow::Break(label.to_string())
+            }
+            _ => ControlFlow::Continue(()),
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn menu_items_show_the_shortcut_tables_label() {
+    let _serial = serially();
+    let dir = scratch("shortcut-labels");
+    file(&dir, "notes.txt", "x\n");
+    let (ui, app) = window_at(&dir);
+    click_row(&ui, row_of(&ui, "notes.txt"));
+    pump(&ui, &app);
+
+    let binding_for = |fires: Fires| {
+        shortcuts::BINDINGS
+            .iter()
+            .find(|binding| binding.fires == fires)
+            .unwrap_or_else(|| panic!("{fires:?} is not in the shortcut table"))
+    };
+
+    // A menu bar title toggles its menu, so opening the same one twice in a
+    // row would close it again - the menu is opened once per group here,
+    // relying on the list below staying grouped by which menu owns it.
+    let mut open: Option<&str> = None;
+    for (menu, label, fires) in [
+        ("File", "New Folder", Fires::NewFolderRequested),
+        ("File", "New File", Fires::NewFileRequested),
+        ("File", "Edit", Fires::EditRequested),
+        ("File", "Save", Fires::SaveRequested),
+        ("File", "Rename", Fires::ContentRenameRequested),
+        ("File", "Delete", Fires::DeleteRequested),
+        ("Edit", "Undo", Fires::UndoRequested),
+        ("Edit", "Cut", Fires::ClipboardCutRequested),
+        ("Edit", "Copy", Fires::ClipboardCopyRequested),
+        ("Edit", "Paste", Fires::ClipboardPasteRequested),
+        ("Edit", "Select All", Fires::SelectAllRequested),
+        ("Edit", "Find", Fires::FindRequested),
+        ("View", "Refresh", Fires::RefreshRequested),
+        ("View", "Up One Level", Fires::ParentRequested),
+    ] {
+        if open != Some(menu) {
+            if let Some(previous) = open {
+                close_menu(&ui, previous);
+            }
+            open_menu(&ui, menu);
+            open = Some(menu);
+        }
+        assert_eq!(
+            shortcut_text(&ui, label),
+            binding_for(fires).label(false),
+            "{menu} > {label} should show the table's shortcut label"
+        );
+    }
+
+    // Help > Keyboard Shortcuts toggles markup state rather than firing a
+    // table callback, so its expected label (F1) is not looked up in the
+    // table the way the others above are.
+    if let Some(previous) = open {
+        close_menu(&ui, previous);
+    }
+    open_menu(&ui, "Help");
+    assert_eq!(
+        shortcut_text(&ui, "Keyboard Shortcuts"),
+        "F1",
+        "Help > Keyboard Shortcuts should show F1"
+    );
 }
