@@ -305,6 +305,32 @@ pub(crate) fn render_with_block(
                 .to_owned();
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
+        // Nor does it list the working copies nested below the Repos
+        // Directory (#591); a reply is shown as the paths it found, with
+        // a line saying whether the scan had finished.
+        Response::AllRepositories { entries, done } => {
+            let mut text = entries
+                .iter()
+                .map(|entry| {
+                    if entry.location.is_empty() {
+                        entry.name.clone()
+                    } else {
+                        format!("{}/{}", entry.location, entry.name)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                );
+            if !done {
+                text.push_str(
+                    "
+still looking...",
+                );
+            }
+            frame.render_widget(Paragraph::new(text).block(block), area);
+        }
         // The terminal front end does not search yet; a reply that somehow
         // arrives is shown as the paths it names.
         Response::Names { matches, .. } => {
