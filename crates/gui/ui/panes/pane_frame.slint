@@ -21,6 +21,12 @@ export component PaneFrame inherits Rectangle {
     in property <int> tool-index;
     callback tool-selected(int);
     property <bool> picker-open: false;
+    // Whether this pane is showing in a window of its own (#617): the
+    // frame draws a dock button in place of the pop-out one, and titles
+    // the button the other way round.
+    in property <bool> popped-out: false;
+    callback pop-out-clicked();
+    callback dock-clicked();
 
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
@@ -44,11 +50,61 @@ export component PaneFrame inherits Rectangle {
                 mouse-cursor: pointer;
                 clicked => { picker-open = !picker-open; }
             }
-            // Reserved for #617's pop-out button: empty until that work
-            // order fills it in.
+            // #617: pops this pane out into a window of its own, or - once
+            // it is out - docks it back.
             pop-out-slot := HorizontalLayout {
                 x: parent.width - self.width;
                 alignment: end;
+                padding-right: 4px;
+                Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    background: pop-out-touch.has-hover ? Theme.hover : transparent;
+                    border-radius: 3px;
+                    accessible-role: button;
+                    accessible-label: popped-out ? "Dock into the main window" : "Pop out into its own window";
+                    Text {
+                        // U+2197 (north-east arrow) to pop out, U+2199
+                        // (south-west arrow) to dock back.
+                        text: popped-out ? "\u{2199}" : "\u{2197}";
+                        width: 100%;
+                        height: 100%;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: Theme.dim-text;
+                    }
+                    pop-out-touch := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (popped-out) {
+                                dock-clicked();
+                            } else {
+                                pop-out-clicked();
+                            }
+                        }
+                    }
+                    // The same tooltip shape `ContextMenuItem` draws for a
+                    // disabled item's reason, reused here for a plain
+                    // hover hint since this button carries no label of
+                    // its own.
+                    if pop-out-touch.has-hover: Rectangle {
+                        x: -tip-text.preferred-width - 12px;
+                        y: 0px;
+                        width: tip-text.preferred-width + 8px;
+                        height: tip-text.preferred-height + 6px;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        tip-text := Text {
+                            x: 4px;
+                            y: 3px;
+                            text: popped-out ? "Dock into the main window" : "Pop out into its own window";
+                            color: Palette.foreground;
+                        }
+                    }
+                }
             }
         }
         @children

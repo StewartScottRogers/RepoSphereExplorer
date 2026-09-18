@@ -1,8 +1,8 @@
 import { ScrollView, Palette } from "std-widgets.slint";
 import { Theme, Zoom } from "theme.slint";
 export { Theme, Zoom }
-import { ColouredRun, ContentRow, FactRow, FolderRow, ShortcutRow, SwitcherRow } from "types.slint";
-export { ColouredRun, ContentRow, FactRow, FolderRow, ShortcutRow, SwitcherRow }
+import { ColouredRun, ContentRow, FactRow, FolderRow, PaneMenuRow, ShortcutRow, SwitcherRow } from "types.slint";
+export { ColouredRun, ContentRow, FactRow, FolderRow, PaneMenuRow, ShortcutRow, SwitcherRow }
 export { CodeEditorHarness } from "code_editor.slint";
 import {
     ChromeEdge, CommandButton, CommandSeparator, ContextMenuItem, Crumb, MenuTitle, NavButton,
@@ -14,7 +14,11 @@ import { ToolSlot } from "panes/tool_slot.slint";
 
 
 export component MainWindow inherits Window {
-    title: "Repos Explorer";
+    // #617: the main window is titled plainly; a popped-out one is titled
+    // for the one pane it holds, so it is usable found on its own in
+    // Alt+Tab or the taskbar.
+    in property <string> window-title: "Repos Explorer";
+    title: root.window-title;
     // The window icon: the title bar, the taskbar and Alt+Tab. The same
     // drawing the Windows binaries carry as a resource, so a window and a
     // shortcut to it show one picture.
@@ -124,6 +128,25 @@ export component MainWindow inherits Window {
     in property <bool> file-has-graphic;
     in property <string> status-text;
     in property <int> focus-pane;
+    // #617: which panes this window holds. All three for the main window;
+    // exactly one for a window a pane has popped out into - the other two
+    // are hidden here rather than drawn empty, so the remaining pane(s)
+    // and splitter(s) close the gap.
+    in property <bool> show-folders-pane: true;
+    in property <bool> show-contents-pane: true;
+    in property <bool> show-file-pane: true;
+    // Whether this window is the main one, rather than a pane's own
+    // popped-out window - each pane's frame reads this to decide whether
+    // it offers to pop out or to dock back.
+    in property <bool> is-main-window: true;
+    // 0 Folders, 1 Contents, 2 File - the pane a pop-out or dock button,
+    // or a View menu row below, names.
+    callback pop-out-requested(int);
+    callback dock-requested(int);
+    // The View menu's Pop Out and Dock lists: every docked pane, and every
+    // popped-out one, built in Rust from which panes are currently out.
+    in property <[PaneMenuRow]> pop-out-rows;
+    in property <[PaneMenuRow]> dock-rows;
 
     callback folder-row-clicked(int, length);
     callback folder-row-double-clicked(int);
@@ -726,13 +749,17 @@ export component MainWindow inherits Window {
                 folders-pane := FoldersPane {
                     title: "Folders";
                     focused: focus-pane == 0;
+                    popped-out: !root.is-main-window;
+                    pop-out-clicked => { pop-out-requested(0); }
+                    dock-clicked => { dock-requested(0); }
                     rows: folder-rows;
                     selected: showing-all-repositories ? -1 : folder-selected;
                     all-repositories-icon: all-repositories-icon;
                     all-repositories-selected: showing-all-repositories;
                     all-repositories-clicked => { all-repositories-requested(); }
                     scroll-y <=> folders-scroll-y;
-                    width: folders-width;
+                    visible: show-folders-pane;
+                    width: show-folders-pane ? folders-width : 0px;
                     horizontal-stretch: 0;
                     row-clicked(i, x) => { folder-row-clicked(i, x); }
                     row-double-clicked(i) => { folder-row-double-clicked(i); }
@@ -746,6 +773,8 @@ export component MainWindow inherits Window {
                     show-in-file-manager-requested => { folder-show-in-file-manager-requested(); }
                 }
                 folders-splitter := Splitter {
+                    visible: show-folders-pane;
+                    width: show-folders-pane ? 5px : 0px;
                     dragged(delta) => {
                         folders-width = clamp(
                             folders-width + delta,
@@ -762,10 +791,14 @@ export component MainWindow inherits Window {
                 contents-pane := ContentsPane {
                     title: "Contents";
                     focused: focus-pane == 1;
+                    popped-out: !root.is-main-window;
+                    pop-out-clicked => { pop-out-requested(1); }
+                    dock-clicked => { dock-requested(1); }
                     rows: content-rows;
                     selected: content-selected;
                     scroll-y <=> content-scroll-y;
-                    width: contents-width;
+                    visible: show-contents-pane;
+                    width: show-contents-pane ? contents-width : 0px;
                     pane-width: contents-width;
                     horizontal-stretch: 0;
                     row-clicked(i) => { content-row-clicked(i); }
@@ -816,7 +849,9 @@ export component MainWindow inherits Window {
                     message-choose-requested => { repos-root-requested(); }
                     message-clear-filter-requested => { status-clear-filter-clicked(); }
                 }
-                Splitter {
+                contents-splitter := Splitter {
+                    visible: show-contents-pane;
+                    width: show-contents-pane ? 5px : 0px;
                     dragged(delta) => {
                         contents-width = clamp(
                             contents-width + delta,
@@ -825,14 +860,18 @@ export component MainWindow inherits Window {
                     }
                 }
                 file-pane := ToolSlot {
-                    horizontal-stretch: 1;
-                    min-width: min-file-pane-width;
+                    visible: show-file-pane;
+                    horizontal-stretch: show-file-pane ? 1 : 0;
+                    min-width: show-file-pane ? min-file-pane-width : 0px;
                     title: active-tool-title;
                     tool-titles: tool-titles;
                     tool-index: tool-index;
                     tool-selected(i) => { tool-selected(i); }
                     tool-showing-editor: tool-showing-editor;
                     focused: focus-pane == 2;
+                    popped-out: !root.is-main-window;
+                    pop-out-clicked => { pop-out-requested(2); }
+                    dock-clicked => { dock-requested(2); }
                     editing-file: editing-file;
                     edit-modified: edit-modified;
                     edit-can-undo: edit-can-undo;
@@ -1136,6 +1175,18 @@ export component MainWindow inherits Window {
                     shortcut: "Ctrl+0";
                     item-height: menu-item-h;
                     activated => { open-menu = -1; zoom-reset-requested(); }
+                }
+                // #617: pop a docked pane out into its own window, or dock
+                // one that is already out back into this one.
+                for row in pop-out-rows: ContextMenuItem {
+                    label: "Pop Out " + row.label;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; pop-out-requested(row.pane); }
+                }
+                for row in dock-rows: ContextMenuItem {
+                    label: "Dock " + row.label;
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; dock-requested(row.pane); }
                 }
             }
         }
