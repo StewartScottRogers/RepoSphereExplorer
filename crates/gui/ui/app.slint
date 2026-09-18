@@ -2167,25 +2167,33 @@ export component MainWindow inherits Window {
                 }
                 HorizontalLayout {
                     alignment: start;
-                    MenuTitle {
+                    file-title := MenuTitle {
                         label: "File";
                         open: open-menu == 0;
                         activated => { open-menu = open-menu == 0 ? -1 : 0; }
                     }
-                    MenuTitle {
+                    edit-title := MenuTitle {
                         label: "Edit";
                         open: open-menu == 1;
                         activated => { open-menu = open-menu == 1 ? -1 : 1; }
                     }
-                    MenuTitle {
+                    view-title := MenuTitle {
                         label: "View";
                         open: open-menu == 2;
                         activated => { open-menu = open-menu == 2 ? -1 : 2; }
                     }
-                    MenuTitle {
-                        label: "Help";
+                    // Go to Repository, the switcher's menu path (#590).
+                    // Its own menu rather than an item under View: it is
+                    // the one action that moves the reader somewhere else.
+                    go-title := MenuTitle {
+                        label: "Go";
                         open: open-menu == 3;
                         activated => { open-menu = open-menu == 3 ? -1 : 3; }
+                    }
+                    help-title := MenuTitle {
+                        label: "Help";
+                        open: open-menu == 4;
+                        activated => { open-menu = open-menu == 4 ? -1 : 4; }
                     }
                 }
             }
@@ -2868,7 +2876,11 @@ export component MainWindow inherits Window {
         }
 
         if open-menu == 0: Rectangle {
-            x: 4px;
+            // Under the title it belongs to, rather than at a measured
+            // offset: adding the Go menu moved every title to its right,
+            // and hand-written offsets would have pointed at the wrong one
+            // (#590's review).
+            x: file-title.x;
             y: 24px * Zoom.factor;
             width: 210px * Zoom.factor;
             height: file-menu-items.preferred-height;
@@ -2976,7 +2988,7 @@ export component MainWindow inherits Window {
         }
 
         if open-menu == 1: Rectangle {
-            x: 44px * Zoom.factor;
+            x: edit-title.x;
             y: 24px * Zoom.factor;
             width: 200px * Zoom.factor;
             height: edit-menu-items.preferred-height;
@@ -3027,7 +3039,7 @@ export component MainWindow inherits Window {
         }
 
         if open-menu == 2: Rectangle {
-            x: 88px * Zoom.factor;
+            x: view-title.x;
             y: 24px * Zoom.factor;
             width: 210px * Zoom.factor;
             height: view-menu-items.preferred-height;
@@ -3089,7 +3101,25 @@ export component MainWindow inherits Window {
         }
 
         if open-menu == 3: Rectangle {
-            x: 136px * Zoom.factor;
+            x: go-title.x;
+            y: 24px * Zoom.factor;
+            width: 230px * Zoom.factor;
+            height: go-menu-items.preferred-height;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            go-menu-items := VerticalLayout {
+                ContextMenuItem {
+                    label: "Go to Repository...";
+                    shortcut: "Ctrl+P";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; switcher-open-requested(); }
+                }
+            }
+        }
+
+        if open-menu == 4: Rectangle {
+            x: help-title.x;
             y: 24px * Zoom.factor;
             width: 200px * Zoom.factor;
             height: help-menu-items.preferred-height;

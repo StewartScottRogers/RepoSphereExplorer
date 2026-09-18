@@ -4082,8 +4082,21 @@ impl App {
             .flatten()
             .filter(|node| node.is_repository);
         if query.is_empty() {
+            // The Contents pane's order, as far as a repository has the
+            // fields for it: they are all folders, so they have no size and
+            // one kind between them, and the tree the switcher reads knows
+            // no modified time. What is left is the name - and the
+            // direction, which the reader did choose and which the pane is
+            // showing right now.
             let mut repositories: Vec<&FolderNode> = repositories.collect();
-            repositories.sort_by_key(|node| node.name.to_lowercase());
+            repositories.sort_by(|a, b| {
+                let ordering = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+                if self.sort_ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                }
+            });
             return repositories;
         }
         let mut scored: Vec<(i32, &FolderNode)> = repositories
@@ -8937,6 +8950,38 @@ third",
 
         app.clear_filters();
         assert_eq!(app.content_rows().len(), 3);
+    }
+
+    #[test]
+    fn the_switchers_own_order_follows_the_way_contents_is_sorted() {
+        // #590 asks for "Contents' current sort order". Sorting the pane
+        // the other way round turns the switcher's list round with it; the
+        // review of #634 found it always alphabetical.
+        let mut app = app_listing_checkouts(&["alpha", "beta", "gamma"]);
+
+        app.begin_switcher();
+        let ascending: Vec<String> = app
+            .switcher_rows()
+            .into_iter()
+            .map(|row| row.name)
+            .collect();
+        assert_eq!(ascending, vec!["alpha", "beta", "gamma"]);
+        app.cancel_pending();
+
+        // Column 0 is Name: clicking it again reverses the direction.
+        app.sort_by_column(0);
+        app.begin_switcher();
+        let descending: Vec<String> = app
+            .switcher_rows()
+            .into_iter()
+            .map(|row| row.name)
+            .collect();
+
+        assert_eq!(
+            descending,
+            vec!["gamma", "beta", "alpha"],
+            "the switcher should list them the way the pane is listing them"
+        );
     }
 
     #[test]

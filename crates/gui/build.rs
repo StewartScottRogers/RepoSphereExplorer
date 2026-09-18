@@ -6,8 +6,22 @@ fn main() {
     // Slint's testing API. It is only emitted for debug builds - which is
     // every build `cargo test` makes - so the release binary keeps none of it.
     let debug_info = std::env::var("PROFILE").is_ok_and(|profile| profile == "debug");
-    let config = slint_build::CompilerConfiguration::new().with_debug_info(debug_info);
-    slint_build::compile_with_config("ui/app.slint", config).unwrap();
+    // On a thread with a stack of its own, because Slint's compiler walks
+    // the markup recursively and `ui/app.slint` is now deep enough to
+    // overflow the megabyte a Windows build script's main thread gets:
+    // every build on Windows failed with STATUS_STACK_OVERFLOW while the
+    // Linux runners, which get eight megabytes, saw nothing wrong.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            // The configuration is built here rather than passed in: it
+            // holds reference-counted callbacks and cannot cross threads.
+            let config = slint_build::CompilerConfiguration::new().with_debug_info(debug_info);
+            slint_build::compile_with_config("ui/app.slint", config).unwrap();
+        })
+        .expect("a thread to compile the markup on")
+        .join()
+        .expect("the markup should compile");
     embed_icon();
 }
 
