@@ -392,6 +392,7 @@ mod tests {
                 provider: Some("github.com".to_owned()),
                 branch: Some("main".to_owned()),
                 remote: Some("https://github.com/owner/name.git".to_owned()),
+                kind: super::repository::Kind::Clone,
                 tracking: None,
                 status: None,
             }),
@@ -457,6 +458,7 @@ mod tests {
                 provider: Some("github.com".to_owned()),
                 branch: Some("main".to_owned()),
                 remote: None,
+                kind: super::repository::Kind::Clone,
                 tracking: None,
                 status: Some(super::status::WorkingTree {
                     changed: 2,
@@ -485,6 +487,7 @@ mod tests {
                 provider: None,
                 branch: None,
                 remote: None,
+                kind: super::repository::Kind::Clone,
                 tracking: None,
                 status: Some(super::status::WorkingTree {
                     changed: 0,
@@ -617,6 +620,7 @@ mod tests {
             provider: Some("github.com".to_owned()),
             branch: Some("main".to_owned()),
             remote: Some("https://github.com/owner/name.git".to_owned()),
+            kind: super::repository::Kind::Clone,
             tracking: Some(super::tracking::Tracking {
                 branch: "main".to_owned(),
                 upstream: compared(
@@ -670,6 +674,7 @@ mod tests {
             provider: None,
             branch: Some("trunk".to_owned()),
             remote: None,
+            kind: super::repository::Kind::Clone,
             tracking: Some(super::tracking::Tracking {
                 branch: "trunk".to_owned(),
                 upstream: super::tracking::Upstream::None,
@@ -704,6 +709,7 @@ mod tests {
             provider: Some("gitlab.com".to_owned()),
             branch: None,
             remote: Some("git@gitlab.com:group/project.git".to_owned()),
+            kind: super::repository::Kind::Clone,
             tracking: None,
             status: None,
         }));
@@ -727,6 +733,7 @@ mod tests {
             provider: None,
             branch: Some("main".to_owned()),
             remote: None,
+            kind: super::repository::Kind::Clone,
             tracking: Some(super::tracking::Tracking {
                 branch: "main".to_owned(),
                 upstream: compared(

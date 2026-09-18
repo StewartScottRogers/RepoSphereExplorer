@@ -11,7 +11,7 @@ use plugin_api::{
     Class, Fact, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span,
     TEXT_VIEW, UNKNOWN_ICON,
 };
-use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, Request, Response};
+use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, RepositoryKind, Request, Response};
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -726,24 +726,36 @@ const KIND_COLUMN_BUDGET: usize = 22;
 /// (GUIDANCE.md 2.5).
 fn format_kind_of(name: &str, is_dir: bool, repository: Option<&RepositoryInfo>) -> String {
     if let Some(repository) = repository {
-        return match &repository.provider {
-            // "Git repository · github.com" names both halves of the fact,
-            // but a long provider address can still overrun the column
-            // that "Repository (github.com)" already overran (#578) - so
-            // it gives way to the shorter "Repository · github.com",
-            // which keeps the provider and drops only the word that was
-            // already said by the row's own accent colour and bold name.
-            Some(provider) => {
-                let named = format!("Git repository · {provider}");
-                if named.chars().count() <= KIND_COLUMN_BUDGET {
-                    named
-                } else {
-                    format!("Repository · {provider}")
-                }
+        // A worktree or submodule says so instead of the generic "Git
+        // repository" - the distinction from an ordinary clone is the
+        // fact somebody scanning the column is looking for (#587).
+        return match &repository.kind {
+            RepositoryKind::Worktree { .. } => {
+                with_provider("Worktree", repository.provider.as_deref())
             }
-            // A checkout with no remote has no provider to name, and says
-            // what it is instead.
-            None => "Git repository".to_owned(),
+            RepositoryKind::Submodule { .. } => {
+                with_provider("Submodule", repository.provider.as_deref())
+            }
+            RepositoryKind::Clone => match &repository.provider {
+                // "Git repository · github.com" names both halves of the
+                // fact, but a long provider address can still overrun the
+                // column that "Repository (github.com)" already overran
+                // (#578) - so it gives way to the shorter
+                // "Repository · github.com", which keeps the provider and
+                // drops only the word that was already said by the row's
+                // own accent colour and bold name.
+                Some(provider) => {
+                    let named = format!("Git repository · {provider}");
+                    if named.chars().count() <= KIND_COLUMN_BUDGET {
+                        named
+                    } else {
+                        format!("Repository · {provider}")
+                    }
+                }
+                // A checkout with no remote has no provider to name, and
+                // says what it is instead.
+                None => "Git repository".to_owned(),
+            },
         };
     }
     if is_dir {
@@ -757,6 +769,16 @@ fn format_kind_of(name: &str, is_dir: bool, repository: Option<&RepositoryInfo>)
             || "File".to_owned(),
             |extension| format!("{} file", extension.to_uppercase()),
         )
+}
+
+/// `noun`, with the provider appended after a middle dot when there is
+/// one: `"Worktree · github.com"`, or plain `"Worktree"` for a checkout
+/// with no remote configured (#587).
+fn with_provider(noun: &str, provider: Option<&str>) -> String {
+    match provider {
+        Some(provider) => format!("{noun} · {provider}"),
+        None => noun.to_owned(),
+    }
 }
 
 /// A modified time as `YYYY-MM-DD HH:MM`, from seconds since the Unix epoch.
@@ -1253,6 +1275,17 @@ pub struct FactRow {
     pub full_value: String,
     /// Drawn in the secondary-text colour rather than the foreground.
     pub dim: bool,
+}
+
+/// The File pane's "Worktree of"/"Submodule of" line (#587): the clone a
+/// worktree shares, or the outer working copy pinning a submodule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RelatedRepository {
+    /// The other working copy is still there - a link to it.
+    Link { label: String, path: PathBuf },
+    /// A worktree's clone has been removed: nowhere to link to, so the
+    /// line says so instead.
+    Gone { label: String },
 }
 
 /// The Contents pane's filter state (#582): a name typed into its field,
@@ -4285,6 +4318,109 @@ impl App {
         self.open_content(self.content_selected);
     }
 
+    /// What the File pane's "Worktree of"/"Submodule of" line (#587) should
+    /// say, and whether it is a link - read the same way [`Self::readme_excerpt`]
+    /// reads the README, straight from the `directory` plugin's own view
+    /// data. `None` for an ordinary clone, which has no such thing to say.
+    fn related_repository(&self) -> Option<RelatedRepository> {
+        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
+            return None;
+        };
+        if plugin != "directory" {
+            return None;
+        }
+        let view = serde_json::from_value::<plugin_directory::DirectoryView>(data.clone()).ok()?;
+        let repository = view.repository?;
+        match repository.kind {
+            plugin_directory::repository::Kind::Clone => None,
+            plugin_directory::repository::Kind::Worktree {
+                clone,
+                clone_exists,
+            } => Some(if clone_exists {
+                RelatedRepository::Link {
+                    label: format!("Worktree of {}", self.related_repository_name(&clone)),
+                    path: clone,
+                }
+            } else {
+                RelatedRepository::Gone {
+                    label: format!(
+                        "Worktree of a clone that is no longer at {}",
+                        clone.display()
+                    ),
+                }
+            }),
+            plugin_directory::repository::Kind::Submodule { outer } => {
+                Some(RelatedRepository::Link {
+                    label: format!("Submodule of {}", self.related_repository_name(&outer)),
+                    path: outer,
+                })
+            }
+        }
+    }
+
+    /// `path`'s folder name, with where it is in parentheses when that says
+    /// more than the name alone does: its path relative to the Repos
+    /// Directory when it is inside `self.root`, the full path otherwise -
+    /// left off when `path` is a direct child of the Repos Directory, where
+    /// the name already says where it is (#587).
+    fn related_repository_name(&self, path: &Path) -> String {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let located = path.strip_prefix(&self.root.path).map_or_else(
+            |_| path.display().to_string(),
+            |relative| relative.to_string_lossy().replace('\\', "/"),
+        );
+        if located == name {
+            name
+        } else {
+            format!("{name} (at {located})")
+        }
+    }
+
+    /// The File pane's "Worktree of"/"Submodule of" line (#587), or empty
+    /// when the selected folder is not one - which hides the line.
+    #[must_use]
+    pub fn file_related_repository_label(&self) -> String {
+        match self.related_repository() {
+            Some(RelatedRepository::Link { label, .. } | RelatedRepository::Gone { label }) => {
+                label
+            }
+            None => String::new(),
+        }
+    }
+
+    /// Whether [`Self::file_related_repository_label`] is a link: true for
+    /// a worktree whose clone is still there, or a submodule, and false
+    /// for a worktree whose clone is gone or an ordinary clone with
+    /// nothing to say.
+    #[must_use]
+    pub fn file_related_repository_linked(&self) -> bool {
+        matches!(
+            self.related_repository(),
+            Some(RelatedRepository::Link { .. })
+        )
+    }
+
+    /// Follows the File pane's "Worktree of"/"Submodule of" link (#587):
+    /// goes to the folder holding the clone or outer working copy, with it
+    /// selected - matching [`Self::open_found`]'s own shape, since the
+    /// target is not guaranteed to be inside the folder on screen.
+    pub fn open_related_repository(&mut self) {
+        let Some(RelatedRepository::Link { path, .. }) = self.related_repository() else {
+            return;
+        };
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let (folder, name) = (folder.to_path_buf(), name.to_string_lossy().into_owned());
+        self.remember_current();
+        self.push_history(folder.clone());
+        self.reselect = Some(name);
+        self.browse(folder);
+    }
+
     /// Display text for the status bar.
     #[must_use]
     pub fn status_text(&self) -> String {
@@ -4451,7 +4587,7 @@ mod tests {
         repository_mark, strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
-    use protocol::{DirectoryEntry, RepositoryInfo, Response};
+    use protocol::{DirectoryEntry, RepositoryInfo, RepositoryKind, Response};
 
     fn entries(names: &[(&str, bool)]) -> Vec<DirectoryEntry> {
         names
@@ -4818,6 +4954,7 @@ second", "truncated": false }),
                 provider: Some("github.com".to_owned()),
                 branch: Some(long_branch.to_owned()),
                 remote: None,
+                kind: plugin_directory::repository::Kind::Clone,
                 tracking: None,
                 status: None,
             }),
@@ -4848,6 +4985,137 @@ second", "truncated": false }),
             "the table already says everything the plain text used to; \
              showing both would say it twice"
         );
+    }
+
+    // ---- the "Worktree of"/"Submodule of" line (#587) -------------------
+
+    fn repository_view(kind: plugin_directory::repository::Kind) -> serde_json::Value {
+        serde_json::to_value(plugin_directory::DirectoryView {
+            entry_count: 1,
+            total_size: 0,
+            repository: Some(plugin_directory::repository::Repository {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: None,
+                kind,
+                tracking: None,
+                status: None,
+            }),
+            readme: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn an_ordinary_clone_has_no_related_repository_line() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "directory",
+            repository_view(plugin_directory::repository::Kind::Clone),
+        );
+
+        assert_eq!(app.file_related_repository_label(), "");
+        assert!(!app.file_related_repository_linked());
+    }
+
+    #[test]
+    fn a_worktree_beside_its_clone_names_it_without_repeating_the_path() {
+        let root = std::env::temp_dir().join("rse-related-repository-sibling");
+        let mut app = App::new(root.clone());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: Vec::new(),
+            }),
+        );
+        app.set_file_view(
+            "directory",
+            repository_view(plugin_directory::repository::Kind::Worktree {
+                clone: root.join("clone"),
+                clone_exists: true,
+            }),
+        );
+
+        assert_eq!(app.file_related_repository_label(), "Worktree of clone");
+        assert!(app.file_related_repository_linked());
+    }
+
+    #[test]
+    fn a_submodule_nested_deeper_names_its_path_too() {
+        let root = std::env::temp_dir().join("rse-related-repository-nested");
+        let mut app = App::new(root.clone());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: Vec::new(),
+            }),
+        );
+        app.set_file_view(
+            "directory",
+            repository_view(plugin_directory::repository::Kind::Submodule {
+                outer: root.join("vendor").join("forge"),
+            }),
+        );
+
+        assert_eq!(
+            app.file_related_repository_label(),
+            "Submodule of forge (at vendor/forge)"
+        );
+        assert!(app.file_related_repository_linked());
+    }
+
+    #[test]
+    fn a_worktree_whose_clone_is_gone_names_where_it_was_and_is_not_a_link() {
+        let root = std::env::temp_dir().join("rse-related-repository-gone");
+        let clone = root.join("clone");
+        let mut app = App::new(root.clone());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: Vec::new(),
+            }),
+        );
+        app.set_file_view(
+            "directory",
+            repository_view(plugin_directory::repository::Kind::Worktree {
+                clone: clone.clone(),
+                clone_exists: false,
+            }),
+        );
+
+        assert_eq!(
+            app.file_related_repository_label(),
+            format!(
+                "Worktree of a clone that is no longer at {}",
+                clone.display()
+            )
+        );
+        assert!(!app.file_related_repository_linked());
+    }
+
+    #[test]
+    fn following_the_related_repository_link_goes_to_the_clone_and_selects_it() {
+        let root = std::env::temp_dir().join("rse-related-repository-follow");
+        let mut app = App::new(root.clone());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: Vec::new(),
+            }),
+        );
+        app.set_file_view(
+            "directory",
+            repository_view(plugin_directory::repository::Kind::Worktree {
+                clone: root.join("clone"),
+                clone_exists: true,
+            }),
+        );
+
+        app.open_related_repository();
+
+        assert_eq!(app.root.path, root, "the clone's parent is the new root");
+        assert_eq!(app.reselect.as_deref(), Some("clone"));
     }
 
     #[test]
@@ -5242,6 +5510,7 @@ third",
             provider: Some("github.com".to_owned()),
             branch: None,
             remote: None,
+            kind: RepositoryKind::Clone,
         };
         assert_eq!(
             format_kind_of("repo", true, Some(&with_provider)),
@@ -5254,6 +5523,7 @@ third",
             provider: None,
             branch: None,
             remote: None,
+            kind: RepositoryKind::Clone,
         };
         assert_eq!(
             format_kind_of("repo", true, Some(&without_provider)),
@@ -5261,6 +5531,50 @@ third",
         );
 
         assert_eq!(format_kind_of("plain", true, None), "File folder");
+    }
+
+    #[test]
+    fn the_type_column_names_a_worktree_and_a_submodule_apart_from_a_clone() {
+        let worktree = RepositoryInfo {
+            provider: Some("github.com".to_owned()),
+            branch: None,
+            remote: None,
+            kind: RepositoryKind::Worktree {
+                clone: "/repos/clone".to_owned(),
+                clone_exists: true,
+            },
+        };
+        assert_eq!(
+            format_kind_of("linked", true, Some(&worktree)),
+            "Worktree · github.com"
+        );
+
+        let submodule = RepositoryInfo {
+            provider: Some("gitlab.com".to_owned()),
+            branch: None,
+            remote: None,
+            kind: RepositoryKind::Submodule {
+                outer: "/repos/outer".to_owned(),
+            },
+        };
+        assert_eq!(
+            format_kind_of("inner", true, Some(&submodule)),
+            "Submodule · gitlab.com"
+        );
+
+        let worktree_with_no_remote = RepositoryInfo {
+            provider: None,
+            branch: None,
+            remote: None,
+            kind: RepositoryKind::Worktree {
+                clone: "/repos/clone".to_owned(),
+                clone_exists: false,
+            },
+        };
+        assert_eq!(
+            format_kind_of("linked", true, Some(&worktree_with_no_remote)),
+            "Worktree"
+        );
     }
 
     #[test]
@@ -6475,6 +6789,7 @@ third",
                     provider: Some("github.com".to_owned()),
                     branch: Some("main".to_owned()),
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
+                    kind: RepositoryKind::Clone,
                 }),
             },
             DirectoryEntry {
@@ -7416,6 +7731,7 @@ third",
                         provider: remote.map(|_| "github.com".to_owned()),
                         branch: branch.map(str::to_owned),
                         remote: remote.map(str::to_owned),
+                        kind: RepositoryKind::Clone,
                     }),
                 }],
             }),
@@ -7645,6 +7961,7 @@ third",
                         provider: Some("github.com".to_owned()),
                         branch: Some("main".to_owned()),
                         remote: Some("git@github.com:owner/name.git".to_owned()),
+                        kind: RepositoryKind::Clone,
                     }),
                 }],
             }),
@@ -7890,6 +8207,7 @@ third",
                     provider: None,
                     branch: Some("main".to_owned()),
                     remote: None,
+                    kind: RepositoryKind::Clone,
                 }),
             })
             .collect();
@@ -8228,6 +8546,7 @@ third",
                         provider: None,
                         branch: None,
                         remote: None,
+                        kind: RepositoryKind::Clone,
                     }),
                 }],
             }),

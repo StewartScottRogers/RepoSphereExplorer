@@ -692,10 +692,137 @@ fn the_type_column_names_the_provider_of_a_worktree() {
 
     assert_eq!(
         kind_of(&ui, "linked"),
-        "Repository · github.com",
-        "the clone beside it reads {:?}: two checkouts of the same GitHub \
-         repository, and only one of them names the provider",
+        "Worktree · github.com",
+        "a worktree says so apart from an ordinary clone (#587); the clone \
+         beside it reads {:?}",
         kind_of(&ui, "clone")
+    );
+    assert_eq!(
+        kind_of(&ui, "clone"),
+        "Repository · github.com",
+        "the clone beside it is still an ordinary clone"
+    );
+}
+
+// ---------------------------------------------------------------------
+// The File pane's "Worktree of"/"Submodule of" line, and its link (#587).
+// ---------------------------------------------------------------------
+
+/// A clone at `root/clone` tracking `remote`, holding a submodule at
+/// `clone/vendor/forge`: a second, independent clone built at
+/// `root/forge-origin`, added the way `git submodule add` does. The
+/// submodule's `.git` is a *file* pointing at
+/// `clone/.git/modules/vendor/forge`.
+fn clone_with_submodule(root: &Path, remote: &str) {
+    let origin = checkout(root, "forge-origin", "main", None, 1);
+    let clone = checkout(root, "clone", "main", Some(remote), 1);
+    git(
+        &clone,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--quiet",
+            &origin.to_string_lossy(),
+            "vendor/forge",
+        ],
+    );
+}
+
+/// Opens the folder named `name`, currently on screen, and waits for its
+/// own listing.
+fn open_folder(ui: &MainWindow, app: &Rc<RefCell<App>>, name: &str) {
+    click_row(ui, row_of(ui, name));
+    press_key(ui, Key::Return);
+    settle(ui, app);
+}
+
+/// The File pane's one related-repository link on screen - the worktree or
+/// submodule case of [`the_status_links_link`], which this file's other
+/// `StatusLink` (the status bar's changed-count/clear pair) never draws at
+/// the same time as: neither fixture here narrows the Contents pane.
+fn the_related_repository_link(ui: &MainWindow) -> ElementHandle {
+    ElementHandle::find_by_element_id(ui, "StatusLink::link-touch")
+        .next()
+        .expect("the related repository link is drawn")
+}
+
+#[test]
+fn the_file_pane_names_the_clone_a_worktree_shares() {
+    let _serial = serially();
+    let root = scratch("worktree-related-line");
+    clone_with_linked_worktree(root.as_path(), "https://github.com/owner/clone.git");
+    let (ui, app) = window_at(&root);
+
+    select_and_wait(&ui, &app, "linked", "3 entries");
+
+    assert_eq!(
+        ui.get_file_related_repository_label(),
+        "Worktree of clone",
+        "the clone sits right beside it in the Repos Directory, so its \
+         name alone already says where it is"
+    );
+    assert!(ui.get_file_related_repository_linked());
+}
+
+#[test]
+fn following_the_worktrees_clone_link_selects_the_clone() {
+    let _serial = serially();
+    let root = scratch("worktree-follow-link");
+    clone_with_linked_worktree(root.as_path(), "https://github.com/owner/clone.git");
+    let (ui, app) = window_at(&root);
+
+    select_and_wait(&ui, &app, "linked", "3 entries");
+    assert_ne!(
+        listing(&ui)[usize::try_from(ui.get_content_selected()).unwrap()],
+        "clone",
+        "the worktree itself, not its clone, should be selected to start with"
+    );
+
+    click_element(&ui, &the_related_repository_link(&ui));
+    settle(&ui, &app);
+
+    let selected = listing(&ui)[usize::try_from(ui.get_content_selected()).unwrap()].clone();
+    assert_eq!(
+        selected, "clone",
+        "following the link should select the clone in Contents"
+    );
+}
+
+#[test]
+fn the_file_pane_names_the_outer_working_copy_of_a_submodule() {
+    let _serial = serially();
+    let root = scratch("submodule-related-line");
+    clone_with_submodule(root.as_path(), "https://github.com/owner/clone.git");
+    let (ui, app) = window_at(&root);
+
+    open_folder(&ui, &app, "clone");
+    open_folder(&ui, &app, "vendor");
+    select_and_wait(&ui, &app, "forge", "Branch: main");
+
+    assert_eq!(ui.get_file_related_repository_label(), "Submodule of clone");
+    assert!(ui.get_file_related_repository_linked());
+}
+
+#[test]
+fn following_the_submodules_outer_link_selects_it() {
+    let _serial = serially();
+    let root = scratch("submodule-follow-link");
+    clone_with_submodule(root.as_path(), "https://github.com/owner/clone.git");
+    let (ui, app) = window_at(&root);
+
+    open_folder(&ui, &app, "clone");
+    open_folder(&ui, &app, "vendor");
+    select_and_wait(&ui, &app, "forge", "Branch: main");
+
+    click_element(&ui, &the_related_repository_link(&ui));
+    settle(&ui, &app);
+
+    let selected = listing(&ui)[usize::try_from(ui.get_content_selected()).unwrap()].clone();
+    assert_eq!(
+        selected, "clone",
+        "following the link should select the outer working copy in Contents"
     );
 }
 

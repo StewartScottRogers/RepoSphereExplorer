@@ -16,6 +16,36 @@ use std::path::{Path, PathBuf};
 /// small, and this only wants the remote's address out of it.
 const MAX_GIT_CONFIG_BYTES: u64 = 1024 * 1024;
 
+/// What kind of working copy a [`Repository`] describes: an ordinary clone,
+/// a linked worktree of one, or a submodule pinned by one (#587).
+///
+/// Detection only (D10): each variant's path comes from a marker already
+/// being read to answer `describe`, never from running `git`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Kind {
+    /// An ordinary checkout: `.git` is its own directory.
+    #[default]
+    Clone,
+    /// A linked worktree (`git worktree add`), sharing a clone's git
+    /// directory. `clone` is that clone's working directory, taken from the
+    /// worktree's `commondir` and the `gitdir` file that led to it -
+    /// present whether or not it still exists, so a reader can be told when
+    /// it is gone (`clone_exists`).
+    Worktree {
+        /// The clone's working directory.
+        clone: PathBuf,
+        /// Whether `clone` still exists.
+        clone_exists: bool,
+    },
+    /// A submodule, pinned by an outer working copy. `outer` is that outer
+    /// copy's own directory, from the `.git/modules/<name>` location the
+    /// submodule's `.git` file points at.
+    Submodule {
+        /// The outer working copy's directory.
+        outer: PathBuf,
+    },
+}
+
 /// What the application knows about a source control working directory,
 /// read from the checkout itself rather than guessed from its name.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +59,10 @@ pub struct Repository {
     pub branch: Option<String>,
     /// The address the checkout tracks, as written in its own configuration.
     pub remote: Option<String>,
+    /// Whether this is an ordinary clone, a linked worktree, or a submodule
+    /// (#587).
+    #[serde(default)]
+    pub kind: Kind,
     /// What the working tree looks like against what was last staged.
     /// `None` when nothing asked - a listing does not, since the answer
     /// costs a pass over every tracked file - or when the checkout's index
@@ -60,12 +94,91 @@ pub fn describe(path: &Path) -> Option<Repository> {
         provider: remote.as_deref().and_then(provider_of),
         branch: branch_at(&git_dir),
         remote,
+        kind: kind_of(path, &git_dir),
         // The listing asks about forty folders at once and can afford none
         // of this; `describe_with_status` answers it for the one the reader
         // selected.
         status: None,
         tracking: None,
     })
+}
+
+/// Whether `path` is an ordinary clone, a linked worktree, or a submodule.
+///
+/// The marker tells clone from the other two: a directory is a clone's own.
+/// Among the other two, only a worktree's own git directory carries a
+/// `commondir` file (#587); a submodule's carries a real `config` of its
+/// own instead, as [`common_dir_of`]'s own documentation explains.
+fn kind_of(path: &Path, git_dir: &Path) -> Kind {
+    if path.join(".git").is_dir() {
+        return Kind::Clone;
+    }
+    // Real git writes `gitdir:`/`commondir` targets with `..` segments
+    // rather than resolving them, and the OS follows those fine for a
+    // file read - but a search for the `.git` path component needs them
+    // resolved first, or it finds the literal `..` sitting in front of it.
+    let git_dir = normalize(git_dir);
+    if let Some(clone_git_dir) = commondir_target(&git_dir) {
+        let clone_git_dir = normalize(&clone_git_dir);
+        let clone = clone_git_dir
+            .parent()
+            .map_or_else(|| clone_git_dir.clone(), Path::to_path_buf);
+        return Kind::Worktree {
+            clone_exists: clone.is_dir(),
+            clone,
+        };
+    }
+    match submodule_outer_of(&git_dir) {
+        Some(outer) => Kind::Submodule { outer },
+        None => Kind::Clone,
+    }
+}
+
+/// The clone's git directory a worktree's `commondir` names, whether or not
+/// it still exists - unlike [`common_dir_of`], which falls back to
+/// `git_dir` itself so the remote can still be attempted at the worktree's
+/// own directory. Kept separate so a clone that has been removed can still
+/// be named, rather than looking like no `commondir` was ever there.
+fn commondir_target(git_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let target = PathBuf::from(text.trim());
+    if target.as_os_str().is_empty() {
+        return None;
+    }
+    Some(if target.is_absolute() {
+        target
+    } else {
+        git_dir.join(target)
+    })
+}
+
+/// The outer working copy holding `git_dir`, from everything before the
+/// `.git` component of `<outer>/.git/modules/<name>`. `None` when `git_dir`
+/// has no `.git` component, which does not happen for a real submodule.
+fn submodule_outer_of(git_dir: &Path) -> Option<PathBuf> {
+    let components: Vec<_> = git_dir.components().collect();
+    let index = components
+        .iter()
+        .position(|component| component.as_os_str() == std::ffi::OsStr::new(".git"))?;
+    Some(components[..index].iter().collect())
+}
+
+/// `path` with `.` and `..` components resolved lexically, without touching
+/// the filesystem - so a `commondir` written as `../..` still yields a real
+/// directory to take the parent of, even one that no longer exists to
+/// canonicalize.
+fn normalize(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => result.push(other),
+        }
+    }
+    result
 }
 
 /// As [`describe`], and also whether the working tree has uncommitted
@@ -352,7 +465,7 @@ fn percent_encode_branch(branch: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{describe, describe_with_status, provider_of};
+    use super::{Kind, describe, describe_with_status, provider_of};
     use std::path::Path;
 
     /// A directory holding a `.git` directory with the files a clone has.
@@ -568,6 +681,14 @@ mod tests {
             "the remote is the clone's, shared by every checkout of it"
         );
         assert_eq!(found.provider.as_deref(), Some("github.com"));
+        assert_eq!(
+            found.kind,
+            Kind::Worktree {
+                clone: dir.join("clone"),
+                clone_exists: true,
+            },
+            "the clone beside it is right there"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -605,6 +726,115 @@ mod tests {
             "a submodule's own config is the one that names its remote"
         );
         assert_eq!(found.provider.as_deref(), Some("gitlab.com"));
+        assert_eq!(
+            found.kind,
+            Kind::Submodule {
+                outer: dir.join("outer"),
+            }
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---- kind (#587) -----------------------------------------------------
+
+    /// Real `git submodule add` writes `gitdir:` with `..` segments rather
+    /// than resolving them - `../../.git/modules/vendor/forge` from a
+    /// submodule two levels below its outer copy - and the OS follows that
+    /// fine for the file reads `describe` already does. Finding the outer
+    /// copy needs the `.git` path component itself, and a search over the
+    /// unresolved path found the literal `..` sitting in front of it,
+    /// naming an outer copy of `clone/vendor/forge/../..` instead of
+    /// `clone`.
+    #[test]
+    fn a_submodules_outer_copy_is_found_through_an_unresolved_gitdir() {
+        let dir = temp_dir("submodule-dotdot");
+
+        let module_git = dir
+            .join("clone")
+            .join(".git")
+            .join("modules")
+            .join("vendor")
+            .join("forge");
+        std::fs::create_dir_all(&module_git).unwrap();
+        std::fs::write(module_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let checkout = dir.join("clone").join("vendor").join("forge");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            "gitdir: ../../.git/modules/vendor/forge\n",
+        )
+        .unwrap();
+
+        let found = describe(&checkout).expect("a submodule is a working copy");
+
+        assert_eq!(
+            found.kind,
+            Kind::Submodule {
+                outer: dir.join("clone"),
+            }
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_ordinary_clone_is_kind_clone() {
+        let dir = temp_dir("kind-clone");
+        write_checkout(
+            &dir,
+            "ref: refs/heads/main\n",
+            "[remote \"origin\"]\n\turl = https://github.com/owner/name.git\n",
+        );
+
+        let found = describe(&dir).expect("a directory .git marker is a clone");
+
+        assert_eq!(found.kind, Kind::Clone);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A worktree whose clone has been removed still names where it was, so
+    /// the File pane can say so rather than silently losing the fact.
+    #[test]
+    fn a_worktree_whose_clone_no_longer_exists_still_names_where_it_was() {
+        let dir = temp_dir("worktree-orphan");
+
+        // The worktree's own git directory - it still exists, and still
+        // names the clone's, but the clone itself never does.
+        let worktree_git = dir.join("worktree-git");
+        std::fs::create_dir_all(&worktree_git).unwrap();
+        std::fs::write(worktree_git.join("HEAD"), "ref: refs/heads/side\n").unwrap();
+        let clone_git = dir.join("clone").join(".git");
+        std::fs::write(
+            worktree_git.join("commondir"),
+            format!("{}\n", clone_git.display()),
+        )
+        .unwrap();
+        assert!(
+            !clone_git.exists(),
+            "the fixture is only honest if the clone is really gone"
+        );
+
+        let checkout = dir.join("standalone");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", worktree_git.display()),
+        )
+        .unwrap();
+
+        let found = describe(&checkout).expect("a worktree is a working copy even orphaned");
+
+        assert_eq!(
+            found.kind,
+            Kind::Worktree {
+                clone: dir.join("clone"),
+                clone_exists: false,
+            },
+            "the clone's path survives even though it is gone"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -11,7 +11,7 @@
 //!    of it read out of the checkout's own files; nothing here runs a
 //!    source control command, and nothing here writes to a working copy.
 
-use protocol::{ReposRoot, RepositoryInfo};
+use protocol::{ReposRoot, RepositoryInfo, RepositoryKind};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -138,6 +138,19 @@ pub fn describe(path: &Path) -> Option<RepositoryInfo> {
         provider: found.provider,
         branch: found.branch,
         remote: found.remote,
+        kind: match found.kind {
+            plugin_directory::repository::Kind::Clone => RepositoryKind::Clone,
+            plugin_directory::repository::Kind::Worktree {
+                clone,
+                clone_exists,
+            } => RepositoryKind::Worktree {
+                clone: clone.to_string_lossy().into_owned(),
+                clone_exists,
+            },
+            plugin_directory::repository::Kind::Submodule { outer } => RepositoryKind::Submodule {
+                outer: outer.to_string_lossy().into_owned(),
+            },
+        },
     })
 }
 
