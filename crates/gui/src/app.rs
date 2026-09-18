@@ -486,6 +486,32 @@ pub enum Pane {
     File,
 }
 
+/// Everything that says what the reader is looking at, gathered into one
+/// read-only value. [`App::selection`] is the only way to get one; no pane
+/// may write any of these fields directly, only ask for a change through an
+/// intent method such as [`App::select_folder`] or
+/// [`App::extend_selection_to`], which updates `App`'s own state and is
+/// then reflected here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection {
+    /// The selected row in the Folders tree.
+    pub folder: usize,
+    /// The lead Contents row - the one the preview and the rename/copy
+    /// prompts act on.
+    pub content: usize,
+    /// Every selected Contents row, `content` among them whenever this is
+    /// non-empty.
+    pub contents: std::collections::BTreeSet<usize>,
+    /// The row a Shift range extends from.
+    pub anchor: usize,
+    /// Which of the previewed type's views the File pane is showing.
+    pub file_view_index: usize,
+    /// Whether the File pane is editing rather than previewing.
+    pub editing: bool,
+    /// Which pane last received user interaction.
+    pub focus: Pane,
+}
+
 /// Whether the app is idling, waiting on a delete confirmation, or editing
 /// a name for a rename/copy/extract operation.
 #[derive(Debug)]
@@ -5537,6 +5563,24 @@ impl App {
             Pane::File => 2,
         }
     }
+
+    /// Everything that says what the reader is looking at, in one value.
+    /// `sync_ui` reads the same state through the narrower accessors above;
+    /// this exists for what wants it as a whole - a test proving that an
+    /// intent method left every part of the selection consistent, and a
+    /// window test proving that every pane agrees with it.
+    #[must_use]
+    pub fn selection(&self) -> Selection {
+        Selection {
+            folder: self.folder_selected,
+            content: self.content_selected,
+            contents: self.selection.clone(),
+            anchor: self.anchor,
+            file_view_index: self.file_view_index,
+            editing: self.editing_file.is_some(),
+            focus: self.focus,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -5544,14 +5588,15 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        Class, ColouredRun, EditCommand, colour_summary_line, file_starts_in_preview, middle_elide,
-        summary_label,
+        Class, ColouredRun, EditCommand, Pane, colour_summary_line, file_starts_in_preview,
+        middle_elide, summary_label,
     };
 
     use super::{
         App, CANNOT_TELL_MARKER, CHANGED_MARKER, NOT_KNOWN_YET_MARKER, PathBuf, RepositoryMark,
-        STALE_FETCH_MARKER, UNKNOWN_ICON, chevron_hit, fetch_is_stale, format_kind, format_kind_of,
-        format_timestamp, icon_for, now_epoch_seconds, repository_mark, strip_verbatim_prefix,
+        STALE_FETCH_MARKER, Selection, UNKNOWN_ICON, chevron_hit, fetch_is_stale, format_kind,
+        format_kind_of, format_timestamp, icon_for, now_epoch_seconds, repository_mark,
+        strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, RepositoryKind, Response};
@@ -5712,6 +5757,179 @@ mod tests {
             app.status_text().ends_with("4 selected"),
             "{}",
             app.status_text()
+        );
+    }
+
+    // Each intent method below is asserted against the whole `Selection`
+    // it leaves behind (#614), rather than one getter at a time - what a
+    // pane reads through `App::selection()` is exactly this value, so a
+    // method that gets one field right and another wrong would pass a
+    // narrower test and still leave two panes disagreeing.
+
+    #[test]
+    fn select_folder_moves_the_folder_and_gives_the_tree_focus() {
+        let mut app = App::new(std::env::temp_dir().join("repos"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("src", true)]),
+            }),
+        );
+
+        app.select_folder(1);
+
+        assert_eq!(
+            app.selection(),
+            Selection {
+                folder: 1,
+                // The listing this kicks off never lands in a unit test,
+                // so Contents keeps showing the root's own single row.
+                content: 0,
+                contents: [0].into_iter().collect(),
+                anchor: 0,
+                file_view_index: 0,
+                editing: false,
+                focus: Pane::Folders,
+            }
+        );
+    }
+
+    #[test]
+    fn select_content_replaces_the_selection_with_one_row_and_gives_contents_focus() {
+        let mut app = app_with_four_rows();
+
+        app.select_content(2);
+
+        assert_eq!(
+            app.selection(),
+            Selection {
+                folder: 0,
+                content: 2,
+                contents: [2].into_iter().collect(),
+                anchor: 2,
+                file_view_index: 0,
+                editing: false,
+                focus: Pane::Contents,
+            }
+        );
+    }
+
+    #[test]
+    fn toggle_content_adds_to_the_selection_without_moving_the_anchor() {
+        let mut app = app_with_four_rows(); // row 1 already selected.
+
+        app.toggle_content(3);
+
+        let selection = app.selection();
+        assert_eq!(selection.contents, [1, 3].into_iter().collect());
+        assert_eq!(selection.content, 3, "the row just clicked leads");
+        assert_eq!(selection.anchor, 3);
+        assert_eq!(selection.focus, Pane::Contents);
+    }
+
+    #[test]
+    fn extend_selection_to_grows_the_range_from_the_anchor() {
+        let mut app = app_with_four_rows(); // anchor is row 1.
+
+        app.extend_selection_to(3);
+
+        assert_eq!(
+            app.selection(),
+            Selection {
+                folder: 0,
+                content: 3,
+                contents: [1, 2, 3].into_iter().collect(),
+                anchor: 1,
+                file_view_index: 0,
+                editing: false,
+                focus: Pane::Contents,
+            }
+        );
+    }
+
+    #[test]
+    fn select_range_selects_the_marqueed_rows_and_leads_from_where_it_ended() {
+        let mut app = app_with_four_rows();
+
+        app.select_range(3, 1);
+
+        assert_eq!(
+            app.selection(),
+            Selection {
+                folder: 0,
+                content: 1,
+                contents: [1, 2, 3].into_iter().collect(),
+                anchor: 3,
+                file_view_index: 0,
+                editing: false,
+                focus: Pane::Contents,
+            }
+        );
+    }
+
+    #[test]
+    fn select_all_selects_every_row_without_moving_the_lead() {
+        let mut app = app_with_four_rows(); // row 1 is the lead.
+
+        app.select_all();
+
+        let selection = app.selection();
+        assert_eq!(selection.contents, (0..4).collect());
+        assert_eq!(selection.content, 1, "select_all does not move the lead");
+        assert_eq!(selection.focus, Pane::Contents);
+    }
+
+    #[test]
+    fn select_file_view_updates_only_the_file_view_index() {
+        let mut app = app_with_one_content_entry();
+        app.select_content(0);
+        app.set_file_view(
+            "rust",
+            serde_json::json!({
+                "content": "fn main() {}",
+                "truncated": false,
+                "functions": ["main"],
+                "structs": [],
+                "traits": [],
+            }),
+        );
+        let before = app.selection();
+
+        app.select_file_view(1);
+
+        assert_eq!(
+            app.selection(),
+            Selection {
+                file_view_index: 1,
+                ..before
+            }
+        );
+    }
+
+    #[test]
+    fn begin_file_edit_marks_the_selection_as_editing() {
+        let mut app = app_with_editable_file();
+        let before = app.selection();
+
+        app.begin_file_edit();
+
+        assert_eq!(
+            app.selection(),
+            Selection {
+                editing: true,
+                focus: Pane::File,
+                ..before.clone()
+            }
+        );
+
+        app.cancel_file_edit();
+
+        assert_eq!(
+            app.selection(),
+            Selection {
+                focus: Pane::File,
+                ..before
+            }
         );
     }
 
