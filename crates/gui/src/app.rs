@@ -8,6 +8,7 @@ use crate::document::Document;
 use crate::editor;
 use crate::launch::{self, Launch, Platform};
 use crate::switcher;
+use crate::tools;
 use plugin_api::{
     Class, Fact, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span,
     TEXT_VIEW, UNKNOWN_ICON,
@@ -510,6 +511,25 @@ pub struct Selection {
     pub editing: bool,
     /// Which pane last received user interaction.
     pub focus: Pane,
+    /// What the lead Contents row is - a file (with its name), a folder, or
+    /// nothing at all - what a [`crate::tools::Tool`] decides `applies_to`
+    /// from (#616).
+    pub target: Option<Target>,
+}
+
+/// A selection's target, for [`crate::tools::Tool::applies_to`]: which of
+/// the two kinds of row is selected, or (as [`Selection::target`]'s `None`)
+/// neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// The lead row is a file, named `name` - its extension is what a tool
+    /// that only serves one kind of file tells apart.
+    File {
+        /// The file's name, as the Contents pane shows it.
+        name: String,
+    },
+    /// The lead row is a folder.
+    Folder,
 }
 
 /// Whether the app is idling, waiting on a delete confirmation, or editing
@@ -1704,6 +1724,12 @@ pub struct App {
     code_on_path: bool,
     /// The window's text zoom (#586), one of [`crate::zoom::STEPS`].
     zoom_percent: u16,
+    /// The compiled-in tools the right-hand slot chooses among (#616).
+    tool_registry: tools::ToolRegistry,
+    /// The tool the picker was last asked for, kept for as long as it still
+    /// applies to the selection - [`Self::active_tool_index`] is what falls
+    /// back to the registry's default once it stops.
+    chosen_tool: Option<usize>,
 }
 
 /// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
@@ -1787,6 +1813,8 @@ impl App {
             editor_setting: None,
             code_on_path: false,
             zoom_percent: crate::zoom::DEFAULT,
+            tool_registry: tools::ToolRegistry::default(),
+            chosen_tool: None,
         };
         app.load_contents_for_selected();
         app
@@ -5579,6 +5607,96 @@ impl App {
             file_view_index: self.file_view_index,
             editing: self.editing_file.is_some(),
             focus: self.focus,
+            target: self.selection_target(),
+        }
+    }
+
+    /// The lead Contents row's [`Target`], for [`Self::selection`].
+    fn selection_target(&self) -> Option<Target> {
+        self.contents.get(self.content_selected).map(|entry| {
+            if entry.is_dir {
+                Target::Folder
+            } else {
+                Target::File {
+                    name: entry.name.clone(),
+                }
+            }
+        })
+    }
+
+    /// Adds `tool` to the registry the slot chooses among, after the
+    /// compiled-in ones. Test-only: a real window's registry is exactly
+    /// [`tools::ToolRegistry::default`], so a second tool can only ever
+    /// appear here.
+    pub fn register_tool_for_test(&mut self, tool: Box<dyn tools::Tool>) {
+        self.tool_registry.register(tool);
+    }
+
+    /// The tool the slot is showing now: whichever the picker last chose,
+    /// for as long as it still applies to the selection, otherwise the
+    /// registry's default (#616 requirement 5's "hands back to the
+    /// default").
+    fn active_tool_index(&self) -> usize {
+        let selection = self.selection();
+        self.chosen_tool.map_or_else(
+            || self.tool_registry.default_index(&selection),
+            |chosen| self.tool_registry.active_index(chosen, &selection),
+        )
+    }
+
+    /// The active tool's frame title - the right-hand pane's own title,
+    /// once #616 replaces `FilePane` with `ToolSlot`.
+    #[must_use]
+    pub fn active_tool_title(&self) -> String {
+        self.tool_registry.tools()[self.active_tool_index()]
+            .title()
+            .to_owned()
+    }
+
+    /// Whether the active tool is the editor - the slot draws today's File
+    /// pane content only then; any other tool draws in its place.
+    #[must_use]
+    pub fn active_tool_is_editor(&self) -> bool {
+        self.tool_registry.tools()[self.active_tool_index()].id() == "editor"
+    }
+
+    /// The titles of every tool that applies to the current selection, in
+    /// the slot's picker order - empty unless more than one does, which is
+    /// what keeps the picker hidden while only the editor is registered
+    /// (#616 requirement 5).
+    #[must_use]
+    pub fn tool_titles(&self) -> Vec<String> {
+        let selection = self.selection();
+        let applicable = self.tool_registry.applicable(&selection);
+        if applicable.len() < 2 {
+            return Vec::new();
+        }
+        applicable
+            .into_iter()
+            .map(|index| self.tool_registry.tools()[index].title().to_owned())
+            .collect()
+    }
+
+    /// Where the active tool sits within [`Self::tool_titles`], for the
+    /// picker to highlight - meaningless, and unused, while that list is
+    /// empty.
+    #[must_use]
+    pub fn tool_index(&self) -> usize {
+        let selection = self.selection();
+        let active = self.active_tool_index();
+        self.tool_registry
+            .applicable(&selection)
+            .iter()
+            .position(|&index| index == active)
+            .unwrap_or(0)
+    }
+
+    /// Chooses the tool at `visible_index` within [`Self::tool_titles`] -
+    /// what the picker's click reports.
+    pub fn choose_tool(&mut self, visible_index: usize) {
+        let selection = self.selection();
+        if let Some(&index) = self.tool_registry.applicable(&selection).get(visible_index) {
+            self.chosen_tool = Some(index);
         }
     }
 }
@@ -5594,9 +5712,9 @@ mod tests {
 
     use super::{
         App, CANNOT_TELL_MARKER, CHANGED_MARKER, NOT_KNOWN_YET_MARKER, PathBuf, RepositoryMark,
-        STALE_FETCH_MARKER, Selection, UNKNOWN_ICON, chevron_hit, fetch_is_stale, format_kind,
-        format_kind_of, format_timestamp, icon_for, now_epoch_seconds, repository_mark,
-        strip_verbatim_prefix,
+        STALE_FETCH_MARKER, Selection, Target, UNKNOWN_ICON, chevron_hit, fetch_is_stale,
+        format_kind, format_kind_of, format_timestamp, icon_for, now_epoch_seconds,
+        repository_mark, strip_verbatim_prefix,
     };
     use plugin_api::{PREVIEW_VIEW, TEXT_VIEW};
     use protocol::{DirectoryEntry, RepositoryInfo, RepositoryKind, Response};
@@ -5790,6 +5908,7 @@ mod tests {
                 file_view_index: 0,
                 editing: false,
                 focus: Pane::Folders,
+                target: Some(Target::Folder),
             }
         );
     }
@@ -5810,6 +5929,9 @@ mod tests {
                 file_view_index: 0,
                 editing: false,
                 focus: Pane::Contents,
+                target: Some(Target::File {
+                    name: "c.txt".to_owned(),
+                }),
             }
         );
     }
@@ -5843,6 +5965,9 @@ mod tests {
                 file_view_index: 0,
                 editing: false,
                 focus: Pane::Contents,
+                target: Some(Target::File {
+                    name: "d.txt".to_owned(),
+                }),
             }
         );
     }
@@ -5863,6 +5988,9 @@ mod tests {
                 file_view_index: 0,
                 editing: false,
                 focus: Pane::Contents,
+                target: Some(Target::File {
+                    name: "b.txt".to_owned(),
+                }),
             }
         );
     }

@@ -22,6 +22,7 @@ pub mod zoom;
 
 pub mod document;
 pub mod editor;
+pub mod tools;
 
 pub use app::PRESENTATION_PLUGINS;
 
@@ -711,6 +712,20 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_related_repository_link(ui, app);
     wire_switcher(ui, app);
     wire_all_repositories(ui, app);
+    wire_tools(ui, app);
+}
+
+/// Wires the tool slot's picker (#616): choosing a tool from it.
+fn wire_tools(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    let app = app.clone();
+    let ui_weak = ui.as_weak();
+    ui.on_tool_selected(move |index| {
+        let mut app = app.borrow_mut();
+        app.choose_tool(usize::try_from(index).unwrap_or(usize::MAX));
+        if let Some(ui) = ui_weak.upgrade() {
+            sync_ui(&ui, &app);
+        }
+    });
 }
 
 /// Wires View > All Repositories and its Folders tree entry (#591).
@@ -1428,6 +1443,18 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_file_manager_label(app.file_manager_label().into());
     sync_editor(ui, app);
     ui.set_location_icon(icon_image(app::icon_for("", true), true, None));
+    sync_tools(ui, app);
+}
+
+/// Copies the tool slot's picker state (#616) into `ui`'s bound properties:
+/// the active tool's title, which its markup draws, and the titles the
+/// picker offers - empty unless more than one tool applies, which is what
+/// keeps it hidden while only the editor is registered.
+fn sync_tools(ui: &MainWindow, app: &App) {
+    ui.set_active_tool_title(app.active_tool_title().into());
+    ui.set_tool_showing_editor(app.active_tool_is_editor());
+    ui.set_tool_titles(string_model(app.tool_titles()));
+    ui.set_tool_index(row_index(app.tool_index()));
 }
 
 /// The File pane's fact table rows, converted from `app`'s own

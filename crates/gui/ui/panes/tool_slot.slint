@@ -1,0 +1,24 @@
+import { Palette } from "std-widgets.slint";
+import { FilePane } from "file_pane.slint";
+
+// The right-hand pane's tool slot (#616): the editor - today's `FilePane`,
+// unchanged - is the first tool, so `ToolSlot` inherits it directly rather
+// than repeating its properties. `tool-showing-editor` is false only while
+// a different tool is active; none exists yet beyond a window test's own,
+// so this is the one place that stands in for a tool's own view until one
+// is built - #622's certificate tool among them.
+export component ToolSlot inherits FilePane {
+    in property <bool> tool-showing-editor: true;
+
+    if !tool-showing-editor: Rectangle {
+        VerticalLayout {
+            padding: 8px;
+            alignment: start;
+            Text {
+                text: root.title;
+                font-weight: 700;
+                color: Palette.foreground;
+            }
+        }
+    }
+}

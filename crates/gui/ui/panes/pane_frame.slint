@@ -1,3 +1,4 @@
+import { Palette } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 
 // The frame every pane sits in: the border that says which pane holds the
@@ -6,6 +7,20 @@ import { Theme } from "../theme.slint";
 export component PaneFrame inherits Rectangle {
     in property <string> title;
     in property <bool> focused;
+    // The tool slot's picker (#616): every tool that applies to the
+    // current selection, in the order it offers them. Left empty by every
+    // pane but the slot, and by the slot itself whenever one tool or none
+    // applies - which is when the title below draws exactly as it always
+    // did, with nothing to choose among.
+    //
+    // The choice among tools lives on the title itself rather than in a
+    // second tab strip: the File pane already has one, for a file's own
+    // views (#564), and stacking a second strip above it for this read as
+    // clutter rather than as two different questions.
+    in property <[string]> tool-titles;
+    in property <int> tool-index;
+    callback tool-selected(int);
+    property <bool> picker-open: false;
 
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
@@ -23,6 +38,12 @@ export component PaneFrame inherits Rectangle {
                 height: 100%;
                 horizontal-alignment: center;
             }
+            if tool-titles.length > 1: TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: pointer;
+                clicked => { picker-open = !picker-open; }
+            }
             // Reserved for #617's pop-out button: empty until that work
             // order fills it in.
             pop-out-slot := HorizontalLayout {
@@ -31,5 +52,37 @@ export component PaneFrame inherits Rectangle {
             }
         }
         @children
+    }
+
+    if picker-open: Rectangle {
+        x: 0;
+        y: 22px;
+        width: 160px;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            for name[i] in tool-titles: Rectangle {
+                height: 22px;
+                background: i == tool-index ? Theme.hover : transparent;
+                Text {
+                    text: name;
+                    width: 100%;
+                    height: 100%;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    color: Palette.foreground;
+                }
+                TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        tool-selected(i);
+                        picker-open = false;
+                    }
+                }
+            }
+        }
     }
 }
