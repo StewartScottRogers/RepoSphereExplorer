@@ -1,0 +1,450 @@
+import { Palette, ScrollView, TextEdit } from "std-widgets.slint";
+import { Theme, Zoom } from "../theme.slint";
+import { ColouredRun, FactRow } from "../types.slint";
+import { CommandButton, CommandSeparator, StatusLink } from "../widgets.slint";
+import { CodeEditor } from "../code_editor.slint";
+import { PaneFrame } from "pane_frame.slint";
+
+export component FilePane inherits PaneFrame {
+    in property <string> file-text;
+    // The File pane's fact table (#576), drawn in place of `file-text`
+    // whenever a plugin offers one - a working copy's provider, branch,
+    // tracking and remote, which used to be sentences `file-text` wrapped
+    // across five lines at the pane's default width.
+    in property <[FactRow]> file-facts;
+    // The selected working copy's README (#584): its file name, empty when
+    // there is none, which both hides the whole section and is what the
+    // Open README link selects in Contents when clicked. `file-readme-title`
+    // is its first heading, or the bare word "README" when it has none or
+    // could not be read; `file-readme-excerpt` is its opening paragraphs,
+    // empty in that same case.
+    in property <string> file-readme-name;
+    in property <string> file-readme-title;
+    in property <string> file-readme-excerpt;
+    callback file-readme-open-requested();
+    // The File pane's "Worktree of"/"Submodule of" line (#587): the clone a
+    // worktree shares, or the outer working copy pinning a submodule.
+    // Empty when the selection has neither, which hides the line.
+    // `file-related-repository-linked` is false only for a worktree whose
+    // clone is gone, where there is nowhere to send the click.
+    in property <string> file-related-repository-label;
+    in property <bool> file-related-repository-linked;
+    callback file-related-repository-open-requested();
+    // The strip above the editor: the plugin's views and then the way in
+    // to the editor. Built in Rust so the pane does not have to know
+    // which is which.
+    in property <[string]> file-tabs;
+    in property <int> file-tab-index;
+    callback file-tab-selected(int);
+    // The editor's own commands, shown in the File pane while it is
+    // open. The window's toolbar is about managing files, which is not
+    // where anybody looks while typing into one.
+    in property <bool> edit-modified;
+    in property <bool> edit-can-undo;
+    in property <bool> edit-can-redo;
+    in property <bool> edit-has-selection;
+    in property <int> edit-line;
+    in property <int> edit-column;
+    callback edit-undo-requested();
+    callback edit-redo-requested();
+    callback edit-cut-requested();
+    callback edit-copy-requested();
+    callback edit-paste-requested();
+    callback save-requested();
+    // Escape / Close: leaves the editor without saving. Named for what it
+    // does here rather than reusing the window's own `cancel-requested`,
+    // which the caller forwards this to.
+    callback cancel-requested();
+    // A picture for the previewed file, when its type is one.
+    in property <image> file-graphic;
+    in property <bool> file-has-graphic;
+    in property <bool> editing-file;
+    // The Text view's lines, each split into coloured runs. Empty when
+    // there is nothing to colour - the Preview is showing, the plugin
+    // describes no language, or the file carries no text - and the plain
+    // `Text` below is drawn instead.
+    in property <[[ColouredRun]]> file-lines;
+    in-out property <string> edit-text;
+    // The coloured surface's half of the editor. `editing-in-colour` is
+    // false for a file it cannot serve - see `editor::code_editor_suits`
+    // - and the plain box below takes it instead.
+    in property <bool> editing-in-colour;
+    in property <[[ColouredRun]]> edit-lines;
+    in property <int> edit-caret-line;
+    in property <int> edit-caret-column;
+    in property <int> edit-selection-start-line: -1;
+    in property <int> edit-selection-start-column;
+    in property <int> edit-selection-end-line;
+    in property <int> edit-selection-end-column;
+    in property <int> edit-longest-line;
+    // True when the editing surface used the key. A false one falls
+    // through to the window's own scope.
+    callback edit-key(string, bool, bool) -> bool;
+    callback edit-pressed(int, int);
+
+    // Tabs share the strip rather than taking a fixed width each. At
+    // 80px apiece a third tab fell off the right-hand edge of a
+    // default-width File pane - so #495's Edit tab, the only sign the
+    // pane gives that an editor exists, was invisible until somebody
+    // widened the pane.
+    private property <length> tab-w: file-tabs.length > 0
+        ? root.width / file-tabs.length
+        : 80px;
+    private property <length> tab-h: 24px * Zoom.factor;
+
+    // The editor's own commands, laid out the way a Windows editor lays
+    // them out: what is done to the text, then the clipboard, then the
+    // way out. Greyed when they do not apply, like the window's toolbar.
+    if editing-file: Rectangle {
+        height: 26px;
+        background: Theme.panel;
+        HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            spacing: 2px;
+            alignment: start;
+            CommandButton {
+                label: edit-modified ? "Save *" : "Save";
+                button-enabled: edit-modified;
+                activated => { save-requested(); }
+            }
+            CommandSeparator { }
+            CommandButton {
+                label: "Undo";
+                button-enabled: edit-can-undo;
+                activated => { edit-undo-requested(); }
+            }
+            CommandButton {
+                label: "Redo";
+                button-enabled: edit-can-redo;
+                activated => { edit-redo-requested(); }
+            }
+            CommandSeparator { }
+            CommandButton {
+                label: "Cut";
+                button-enabled: edit-has-selection;
+                activated => { edit-cut-requested(); }
+            }
+            CommandButton {
+                label: "Copy";
+                button-enabled: edit-has-selection;
+                activated => { edit-copy-requested(); }
+            }
+            CommandButton {
+                label: "Paste";
+                activated => { edit-paste-requested(); }
+            }
+            CommandSeparator { }
+            CommandButton {
+                label: "Close";
+                activated => { cancel-requested(); }
+            }
+        }
+    }
+    // Where the caret is, which is what every Windows editor puts at
+    // the bottom of its window.
+    if editing-file: Rectangle {
+        height: 20px * Zoom.factor;
+        background: Theme.panel;
+        HorizontalLayout {
+            padding-left: 6px;
+            alignment: start;
+            caret-readout := Text {
+                text: "Ln " + edit-line + ", Col " + edit-column;
+                color: Theme.dim-text;
+                vertical-alignment: center;
+                accessible-role: text;
+                accessible-label: self.text;
+            }
+        }
+    }
+    // Both editors live in here rather than beside each other, so that
+    // how many rows a page is can be measured. An element inside an `if`
+    // cannot be named from outside it, and a page that was a fixed
+    // number of rows would be a different distance in every window size.
+    if editing-file: Rectangle {
+        if editing-in-colour: CodeEditor {
+            width: 100%;
+            height: 100%;
+            lines: edit-lines;
+            caret-line: edit-caret-line;
+            caret-column: edit-caret-column;
+            selection-start-line: edit-selection-start-line;
+            selection-start-column: edit-selection-start-column;
+            selection-end-line: edit-selection-end-line;
+            selection-end-column: edit-selection-end-column;
+            longest-line: edit-longest-line;
+            focused: root.focused;
+            key(text, shift, control) => { return edit-key(text, shift, control); }
+            pressed(line, column) => { edit-pressed(line, column); }
+        }
+        // The file the coloured surface cannot serve gets Slint's own
+        // box, which can: it has the input method and the bidirectional
+        // layout that the hand-written one does not.
+        if !editing-in-colour: TextEdit {
+            width: 100%;
+            height: 100%;
+            text <=> edit-text;
+            wrap: no-wrap;
+        }
+    }
+
+    // The type's own views, when it offers more than one. A tab per
+    // view, in the plugin's order, at a fixed width - one TouchArea
+    // over the strip maps a click back to its tab, for the same Slint
+    // for-loop bug the row panes work around: a TouchArea created
+    // inside a for loop never reports a click.
+    // Shown whenever there is more than one thing to choose, which now
+    // includes a single-view file that can be edited - that Edit tab
+    // is the only sign the pane gives that an editor exists.
+    // A tab strip, drawn as one: the strip is a panel with a line under
+    // it, and the chosen tab breaks that line to sit in front of the
+    // content below.
+    if file-tabs.length > 1: tab-strip := Rectangle {
+        height: tab-h;
+        background: Theme.panel;
+        // The line under the whole strip. Each tab draws over its own
+        // stretch of it: an unselected tab leaves it, the selected one
+        // paints it out.
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            width: 100%;
+            background: Theme.border;
+        }
+        for name[i] in file-tabs: Rectangle {
+            x: i * tab-w;
+            y: 0;
+            width: tab-w;
+            height: tab-h;
+            background: i == file-tab-index
+                ? Palette.background
+                : (tab-touch.has-hover ? Theme.hover : Theme.panel);
+            // The accent along the top edge, which is what says "this
+            // one" now that the tab itself is the colour of the content.
+            Rectangle {
+                y: 0;
+                height: 2px;
+                width: 100%;
+                background: Theme.accent;
+                visible: i == file-tab-index;
+            }
+            // Its own stretch of the line below, painted out when this
+            // is the tab in front.
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                width: 100%;
+                background: i == file-tab-index
+                    ? Palette.background
+                    : Theme.border;
+            }
+            // A divider between neighbours, short of the full height so
+            // it reads as a seam rather than a wall. Not drawn beside
+            // the selected tab, whose own edges already separate it.
+            Rectangle {
+                x: parent.width - 1px;
+                y: 5px;
+                width: 1px;
+                height: parent.height - 10px;
+                background: Theme.divider;
+                visible: i < file-tabs.length - 1
+                    && i != file-tab-index
+                    && i + 1 != file-tab-index;
+            }
+            Text {
+                text: name;
+                width: 100%;
+                height: 100%;
+                color: i == file-tab-index
+                    ? Palette.foreground
+                    : Theme.dim-text;
+                font-weight: i == file-tab-index ? 600 : 400;
+                overflow: elide;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+            tab-touch := TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: pointer;
+                clicked => {
+                    file-tab-selected(i);
+                }
+            }
+        }
+    }
+
+    // The File pane's fact table (#576): a working copy's provider,
+    // branch, tracking and remote as a right-aligned label beside its
+    // value, in place of the sentences a narrow pane used to wrap
+    // across five lines. A blank row (empty label and value) separates
+    // them from the folder facts - entry count, total size - that
+    // follow, drawn dim rather than sharing the table's full weight.
+    if !editing-file && file-facts.length > 0: facts-table := Rectangle {
+        property <length> fact-row-height: 20px * Zoom.factor;
+        property <length> fact-label-column: 100px * Zoom.factor;
+        // The row under the pointer, so a value elided in the middle
+        // can still show in full on hover (#576 requirement 2) - the
+        // same mouse-y-over-row-height shape the Contents pane's own
+        // hover tooltip uses.
+        property <int> hovered-fact: (facts-touch.has-hover
+                && facts-touch.mouse-y < file-facts.length * fact-row-height)
+            ? clamp(floor(facts-touch.mouse-y / fact-row-height), 0, file-facts.length - 1)
+            : -1;
+        height: file-facts.length * fact-row-height + 8px;
+
+        for fact[i] in file-facts: Rectangle {
+            y: 4px + i * fact-row-height;
+            height: fact-row-height;
+            width: 100%;
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                spacing: 8px;
+                Text {
+                    text: fact.label;
+                    width: fact-label-column;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    color: Theme.dim-text;
+                    horizontal-stretch: 0;
+                }
+                Text {
+                    text: fact.display-value;
+                    vertical-alignment: center;
+                    color: fact.dim ? Theme.dim-text : Palette.foreground;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        facts-touch := TouchArea {
+            width: 100%;
+            height: 100%;
+        }
+
+        // Shown only when the row's value was actually elided: a short
+        // value that already fits has nothing more to say on hover.
+        if hovered-fact >= 0
+                && file-facts[hovered-fact].display-value != file-facts[hovered-fact].full-value: Rectangle {
+            x: facts-touch.mouse-x + 12px;
+            y: facts-touch.mouse-y + 12px;
+            width: fact-tip-text.preferred-width + 8px;
+            height: fact-tip-text.preferred-height + 6px;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            fact-tip-text := Text {
+                x: 4px;
+                y: 3px;
+                text: file-facts[hovered-fact].full-value;
+                color: Palette.foreground;
+            }
+        }
+    }
+
+    // The "Worktree of"/"Submodule of" line (#587), drawn right under
+    // the fact table Provider leads - a link when the clone or outer
+    // working copy is still there, plain text when a worktree's clone
+    // is gone and there is nowhere to send the click.
+    if !editing-file && file-related-repository-label != "": Rectangle {
+        HorizontalLayout {
+            padding: 4px;
+            alignment: start;
+            if file-related-repository-linked: related-repository-link := StatusLink {
+                label: file-related-repository-label;
+                activated => { file-related-repository-open-requested(); }
+            }
+            if !file-related-repository-linked: Text {
+                text: file-related-repository-label;
+                color: Theme.dim-text;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    // A picture, for the types that are one, above the text the plugin
+    // also supplies.
+    if !editing-file && file-has-graphic: Rectangle {
+        // A fixed band rather than a share of the pane: deriving it
+        // from the parent closes a layout binding loop, since the
+        // parent sizes to its children.
+        height: 220px;
+        Image {
+            source: file-graphic;
+            image-fit: contain;
+            width: parent.width - 8px;
+            height: 212px;
+        }
+    }
+    // Coloured: fixed-width, and no wrapping, because a wrapped line of
+    // code puts the second half under a column it has nothing to do
+    // with. Scrolls sideways instead, which is what an editor does.
+    if !editing-file && file-lines.length > 0: coloured := ScrollView {
+        VerticalLayout {
+            alignment: start;
+            padding: 4px;
+            for line[row] in file-lines: HorizontalLayout {
+                alignment: start;
+                height: 16px * Zoom.factor;
+                // Named so a test can ask what the pane drew: runs
+                // computed correctly and painted as one string would
+                // pass every other test in the sequence.
+                for run in line: syntax-run := Text {
+                    text: run.text;
+                    accessible-role: text;
+                    accessible-label: run.text;
+                    color: Theme.syntax-colour(run.class);
+                    font-family: "Consolas, Menlo, monospace";
+                    font-size: 12px * Zoom.factor;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+    if !editing-file && file-lines.length == 0: view := ScrollView {
+        Text {
+            text: file-text;
+            color: Palette.foreground;
+            wrap: word-wrap;
+            // Both needed: an element with no `x`/`y` is centred in its
+            // parent, so without these a short preview floats in the
+            // middle of the pane instead of starting at the top.
+            x: 4px;
+            y: 4px;
+            width: view.visible-width - 8px;
+        }
+    }
+    // The README section (#584): the working copy's own title and
+    // opening excerpt, and the link that opens it in full. Below the
+    // repository facts and any other folder plugin's lines `file-text`
+    // already drew, per the issue's own ordering - pinned under the
+    // scrollable text rather than inside it, so it is always in view
+    // without scrolling down to it.
+    if !editing-file && file-readme-name != "": Rectangle {
+        VerticalLayout {
+            padding: 4px;
+            spacing: 4px;
+            Text {
+                text: file-readme-title;
+                font-weight: 700;
+                color: Palette.foreground;
+                wrap: word-wrap;
+            }
+            if file-readme-excerpt != "": Text {
+                text: file-readme-excerpt;
+                color: Palette.foreground;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: start;
+                StatusLink {
+                    label: "Open README";
+                    activated => { file-readme-open-requested(); }
+                }
+            }
+        }
+    }
+}

@@ -61,7 +61,7 @@ fn pump(ui: &MainWindow, app: &Rc<RefCell<App>>, done: impl Fn(&App) -> bool) {
 
 /// The File pane, as it is actually drawn.
 fn file_pane(ui: &MainWindow) -> ElementHandle {
-    ElementHandle::find_by_element_id(ui, "MainWindow::file-pane")
+    ElementHandle::find_by_element_type_name(ui, "FilePane")
         .next()
         .expect("the window has a File pane")
 }

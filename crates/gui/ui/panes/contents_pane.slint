@@ -1,0 +1,714 @@
+import { Palette, ScrollView } from "std-widgets.slint";
+import { Theme, Zoom } from "../theme.slint";
+import { ContentRow } from "../types.slint";
+import { ColumnHeader, CommandButton, ContextMenuItem } from "../widgets.slint";
+import { PaneFrame } from "pane_frame.slint";
+
+// The contents pane's own variant of a pane, with a right-click context menu
+// added on top of the same row rendering. Uses the same Text-row / single
+// overlay TouchArea workaround as the folders pane (see its comment) for
+// the Slint for-loop TouchArea bug - a per-row TouchArea here would also
+// lose right-click delivery on every row past the first, not just left-click.
+export component ContentsPane inherits PaneFrame {
+    // A repeat of the width the caller gives this pane, threaded in as a
+    // plain value rather than read back from `width` here: `width` is
+    // itself resolved by this component's own layout, and a row that used
+    // it to size the branch beside a repository's name would close the
+    // same binding loop the columns below are worded to avoid.
+    in property <length> pane-width: 470px;
+    in property <[ContentRow]> rows;
+    in property <int> selected;
+    // Which column the list is sorted by, and which way, so the header can
+    // show the indicator Explorer shows.
+    in property <int> sort-column;
+    // While a search's results fill the pane, its columns hold a result's
+    // repository and folder rather than a size, type and date.
+    in property <bool> showing-found;
+    // While the All Repositories view (#591) fills the pane, its Type
+    // column holds a Location instead.
+    in property <bool> showing-all-repositories;
+    // Whether the Size column is worth drawing: a search's results keep
+    // their own columns regardless of this, and an ordinary listing hides
+    // it, giving its width to Name, until it holds a file (#578).
+    in property <bool> show-size-column: true;
+    // Whether the listing holds a repository row, so the Modified column's
+    // header reads "Last activity" instead - what that column shows for a
+    // repository row (#588).
+    in property <bool> holds-repository;
+    in property <bool> sort-ascending;
+    callback sort-requested(int);
+    // Whether the selected row previewed as an archive; Extract is greyed
+    // out otherwise, since extracting anything else only ever errors.
+    in property <bool> extract-enabled;
+    // The prompt a pending operation is waiting on, drawn over the row it
+    // applies to. Without it the only sign that a menu action did anything
+    // is one line at the very bottom of the window.
+    in property <string> prompt-text;
+    in property <int> prompt-row;
+    in property <bool> prompt-editable;
+    callback row-clicked(int);
+    callback row-ctrl-clicked(int);
+    callback row-shift-clicked(int);
+    // A rubber-band drag, reported once on release as the row range it
+    // covered.
+    callback rows-marqueed(int, int);
+    callback row-double-clicked(int);
+    callback open-requested();
+    callback rename-requested();
+    in property <bool> can-open;
+    // Where the selected repository's web page is hosted, or empty when it
+    // has none to open: a plain folder, a file, a checkout with no remote.
+    in property <string> web-provider;
+    callback open-web-requested();
+    // Duplicating a file under a new name, which is what the "Copy to..."
+    // item does. Distinct from the clipboard's Copy, which is what the
+    // Ctrl+C beside that item means.
+    callback copy-requested();
+    callback clipboard-copy-requested();
+    callback delete-requested();
+    callback extract-requested();
+    callback new-folder-requested();
+    callback new-file-requested();
+    // Handing the selected folder to a program the user already has
+    // (#581): a terminal, the configured editor, the platform's file
+    // manager, or the clipboard, for its path or its remote address.
+    callback open-terminal-requested();
+    callback open-in-editor-requested();
+    callback copy-path-requested();
+    callback copy-remote-address-requested();
+    callback show-in-file-manager-requested();
+    in property <bool> editor-available;
+    in property <bool> remote-address-copyable;
+    in property <string> file-manager-label: "Show in File Explorer";
+    // The filter field at the top of the pane (#582): drawn like the
+    // rename/copy/extract prompt over a row, since Rust owns every
+    // keystroke here the same way it owns theirs.
+    in property <string> filter-text;
+    in property <bool> filter-focused;
+    callback filter-focus-requested();
+    // The pane's centred message (#592), in place of the listing: what is
+    // wrong with the Repos Directory itself, that it has nothing in it
+    // yet, or that a filter above has narrowed it to nothing. Empty
+    // `message-title` means the pane draws its listing normally.
+    in property <string> message-title;
+    in property <string> message-detail;
+    in property <bool> message-show-retry;
+    in property <bool> message-show-choose;
+    in property <bool> message-show-clear-filter;
+    // Which button Tab has highlighted (#592), in the order they are
+    // drawn below - `-1` highlights none.
+    in property <int> message-focus-index: -1;
+    callback message-retry-requested();
+    callback message-choose-requested();
+    callback message-clear-filter-requested();
+
+    property <length> row-height: 20px * Zoom.factor;
+    // Where the last right-click landed, which both popups place themselves
+    // at: a `PopupWindow` cannot be positioned from its enclosing component,
+    // so it has to read the coordinates out of a property instead.
+    property <length> menu-x;
+    property <length> menu-y;
+    // A `PopupWindow` with no size of its own is laid out 0x0. Its contents
+    // still draw - nothing clips them - but hit-testing is bounded by the
+    // popup, so every item in it is unclickable. Both menus therefore state
+    // their size, which means stating the item height and count here.
+    property <length> menu-width: 150px * Zoom.factor;
+    property <length> menu-item-height: 24px * Zoom.factor;
+    // Which context menu is open: -1 none, 0 on a row, 1 on empty space.
+    property <int> open-context: -1;
+    // The rubber band, while one is being dragged. `band-from` is where the
+    // press landed and `band-to` follows the pointer; a drag shorter than a
+    // row is treated as a click, not a marquee.
+    property <bool> banding;
+    property <length> band-from;
+    property <length> band-to;
+    // The row under the pointer, or -1 when there is none to show a
+    // tooltip for: no rows, a marquee under way, a context menu open, or
+    // the pointer past the last row. Hovering the marker or anywhere else
+    // on a repository row's line says what its marker means, in words
+    // (#574).
+    property <int> hovered-row: (click-area.has-hover
+            && !banding
+            && open-context == -1
+            && rows.length > 0
+            && click-area.mouse-y < rows.length * row-height)
+        ? clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1)
+        : -1;
+    // Details-view columns. The three trailing ones are fixed and Name
+    // stretches into the rest, in both the header and every row, so the two
+    // line up without either deriving a width from the pane's own width -
+    // which would close a layout binding loop.
+    property <length> size-column: show-size-column ? 80px * Zoom.factor : 0px;
+    property <length> kind-column: 90px * Zoom.factor;
+    property <length> modified-column: 118px * Zoom.factor;
+    property <length> header-height: 20px * Zoom.factor;
+    // What is left of `pane-width` for the icon+name+branch+marker line
+    // once the fixed columns, the row's own padding and the pane's border
+    // are taken out - an approximation of what that line's own layout
+    // resolves to, kept independent of it so the branch's width (below)
+    // can be computed from the name's rather than fought over through
+    // stretch, which is what let a long branch crush a name to a letter
+    // or two (#573).
+    property <length> content-line-width: pane-width - 2px - 8px - size-column - kind-column - modified-column;
+
+    // As the folders pane: the offset and the visible height, so the front
+    // end can scroll the selected row into view from Rust.
+    in-out property <length> scroll-y;
+    out property <length> viewport-height: scroll.visible-height;
+
+    // As the folders pane: exposed so a window test can ask what colour
+    // the selection is actually drawn in (#575).
+    out property <brush> selection-colour: root.focused ? Theme.accent : Theme.selection-inactive;
+
+    // The name filter (#582): narrows the listing as it is typed,
+    // rather than opening a modal prompt the way Find does - drawn the
+    // same way the rename/copy/extract prompt over a row is, since
+    // Rust owns every keystroke either way (rule 14).
+    filter-field := Rectangle {
+        height: 22px;
+        background: Theme.field;
+        border-width: 1px;
+        border-color: filter-focused ? Theme.accent : Theme.border;
+        HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            spacing: 2px;
+            Text {
+                text: filter-text == "" ? "Filter by name" : filter-text;
+                color: filter-text == "" ? Theme.dim-text : Palette.foreground;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                accessible-role: text;
+                accessible-label: "Filter by name";
+            }
+            if filter-focused: Rectangle {
+                width: 1px;
+                background: Theme.accent;
+                y: 3px;
+                height: 16px * Zoom.factor;
+            }
+        }
+        filter-touch := TouchArea {
+            width: 100%;
+            height: 100%;
+            mouse-cursor: text;
+            clicked => { filter-focus-requested(); }
+        }
+    }
+    Rectangle {
+        height: header-height;
+        background: Theme.panel;
+        HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            ColumnHeader {
+                horizontal-stretch: 1;
+                min-width: 40px;
+                label: "Name";
+                active: sort-column == 0;
+                ascending: sort-ascending;
+                activated => { sort-requested(0); }
+            }
+            ColumnHeader {
+                width: size-column;
+                horizontal-stretch: 0;
+                label: showing-found || !show-size-column ? "" : "Size";
+                align-right: true;
+                active: sort-column == 1;
+                ascending: sort-ascending;
+                activated => { sort-requested(1); }
+            }
+            ColumnHeader {
+                width: kind-column;
+                horizontal-stretch: 0;
+                align-right: true;
+                label: showing-found ? "Repository" : (showing-all-repositories ? "Location" : "Type");
+                active: sort-column == 2;
+                ascending: sort-ascending;
+                activated => { sort-requested(2); }
+            }
+            ColumnHeader {
+                width: modified-column;
+                horizontal-stretch: 0;
+                align-right: true;
+                label: showing-found || showing-all-repositories ? "" : (holds-repository ? "Last activity" : "Modified");
+                active: sort-column == 3;
+                ascending: sort-ascending;
+                activated => { sort-requested(3); }
+            }
+        }
+    }
+    scroll := ScrollView {
+        viewport-y <=> root.scroll-y;
+        // The same top-aligned layout the folders pane has, and needed
+        // for the same reason: a `ScrollView` lays a bare child out at
+        // its own height rather than the child's, so the listing was
+        // 452px tall however many rows it held. There was nothing to
+        // scroll, and the offset Rust writes to bring the selected row
+        // into view was back to zero by the next frame.
+        //
+        // The rows are drawn at `i * row-height` whether or not the
+        // viewport is tall enough to hold them, so the pane looked
+        // right until the selection went past the fold - and then it
+        // stopped following, with no row highlighted anywhere.
+        VerticalLayout {
+            alignment: start;
+            body := Rectangle {
+                width: 100%;
+                // The second term keeps a short listing filling the pane,
+                // so a click below the last row still lands on the pane
+                // rather than falling through.
+                min-height: max(rows.length * row-height, root.height - 22px - header-height);
+
+                for row[i] in rows: Rectangle {
+                    y: i * row-height;
+                    height: row.selected ? row-height : 0px;
+                    width: 100%;
+                    background: selection-colour;
+                }
+
+                for row[i] in rows: listing-row := Rectangle {
+                    y: i * row-height;
+                    height: row-height;
+                    width: 100%;
+                    // Named so a test can ask which rows are on screen: the
+                    // element search returns the visible ones, which is
+                    // exactly the question "did the pane scroll far enough,
+                    // and no further".
+                    accessible-role: text;
+                    accessible-label: row.name;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        HorizontalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 5px;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+                            Image {
+                                source: row.icon;
+                                width: 16px * Zoom.factor;
+                                image-fit: contain;
+                                horizontal-stretch: 0;
+                            }
+                            name-text := Text {
+                                text: row.name;
+                                // A working copy is named in the accent
+                                // colour and in bold: distinguishable at a
+                                // glance from an ordinary folder, which
+                                // stays listed and stays plain.
+                                color: row.selected && root.focused
+                                    ? Theme.on-accent
+                                    : (row.is-repository ? Theme.accent : Palette.foreground);
+                                font-weight: row.is-repository ? 700 : 400;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                min-width: 24px * Zoom.factor;
+                            }
+                            // The branch and its marker share the Name
+                            // column rather than taking one of their own:
+                            // the pane is narrow, and a fixed Branch
+                            // column would cut every repository name to a
+                            // few letters to leave room for a word most
+                            // rows would repeat (#573). The name has
+                            // priority: `room` is what is left over once
+                            // the name has its natural width, so the
+                            // branch is the one that gives way, eliding
+                            // as the pane narrows and disappearing under
+                            // about 40px rather than sitting there as a
+                            // sliver of ellipsis. `name-text` is left as
+                            // the line's only stretched child, so it is
+                            // only the name that ever falls back to its
+                            // own `min-width`, and only once the branch
+                            // has already given up all of its room.
+                            branch-text := Text {
+                                text: row.branch;
+                                color: row.selected && root.focused ? Theme.on-accent : Theme.dim-text;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                property <length> room: row.branch == ""
+                                    ? 0px
+                                    : content-line-width - 16px - 15px
+                                        - marker-text.preferred-width
+                                        - stale-marker-text.preferred-width
+                                        - name-text.preferred-width;
+                                width: room < 40px ? 0px : min(room, 120px);
+                                visible: room >= 40px;
+                            }
+                            marker-text := Text {
+                                text: row.marker;
+                                // Selected wins, for the same legibility
+                                // reason the name and branch above give
+                                // it. Otherwise the changed marker gets
+                                // its own warning colour rather than
+                                // `Theme.accent`, which already names
+                                // the repository itself and would leave
+                                // the two told apart by nothing but a
+                                // few pixels (#574); the other markers
+                                // stay neutral, since they are not an
+                                // attention state.
+                                color: row.selected && root.focused
+                                    ? Theme.on-accent
+                                    : (row.marker-warning ? Theme.warning : Theme.dim-text);
+                                vertical-alignment: center;
+                                horizontal-stretch: 0;
+                                accessible-role: text;
+                                accessible-label: row.marker-tooltip;
+                            }
+                            stale-marker-text := Text {
+                                text: row.stale-marker;
+                                // Neutral, like the other non-warning
+                                // markers: an old fetch is worth a
+                                // glance, not the attention colour the
+                                // uncommitted-changes marker gets
+                                // (#589).
+                                color: row.selected && root.focused ? Theme.on-accent : Theme.dim-text;
+                                vertical-alignment: center;
+                                horizontal-stretch: 0;
+                                accessible-role: text;
+                                accessible-label: row.stale-tooltip;
+                            }
+                        }
+                        Text {
+                            text: row.size;
+                            color: row.selected && root.focused ? Theme.on-accent : Theme.dim-text;
+                            width: size-column;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                        Text {
+                            text: row.kind;
+                            color: row.selected && root.focused ? Theme.on-accent : Theme.dim-text;
+                            width: kind-column;
+                            overflow: elide;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                        Text {
+                            text: row.modified;
+                            color: row.selected && root.focused ? Theme.on-accent : Theme.dim-text;
+                            width: modified-column;
+                            overflow: elide;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                    }
+                }
+
+                // The pane's centred message (#592), in place of an
+                // empty listing: what is wrong with the Repos
+                // Directory itself, that it has nothing in it yet, or
+                // that a filter above has narrowed it to nothing.
+                // Keyboard reachable: Tab moves `message-focus-index`
+                // between whichever buttons this case offers, and
+                // Return activates the one it lands on (rule 14 -
+                // Rust owns this the same way it owns every other
+                // keystroke here).
+                if message-title != "": Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: 100%;
+                    height: 100%;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: message-title;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            color: Palette.foreground;
+                            accessible-role: text;
+                            accessible-label: message-title;
+                        }
+                        if message-detail != "": Text {
+                            text: message-detail;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            color: Theme.dim-text;
+                            accessible-role: text;
+                            accessible-label: message-detail;
+                        }
+                        if message-show-retry || message-show-choose || message-show-clear-filter: HorizontalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            if message-show-retry: CommandButton {
+                                label: "Retry";
+                                highlighted: message-focus-index == 0;
+                                activated => { message-retry-requested(); }
+                            }
+                            if message-show-choose: CommandButton {
+                                label: "Choose Repos Directory...";
+                                highlighted: message-focus-index == (message-show-retry ? 1 : 0);
+                                activated => { message-choose-requested(); }
+                            }
+                            if message-show-clear-filter: CommandButton {
+                                label: "Clear filter";
+                                highlighted: message-focus-index == 0;
+                                activated => { message-clear-filter-requested(); }
+                            }
+                        }
+                    }
+                }
+
+                // One tooltip for the hovered row, holding what the
+                // row itself may have cut or only hinted at: a
+                // repository's full name and branch, which eliding or
+                // hiding the branch can take from view (#573), and what
+                // its marker(s) mean in words, for a mouse user who does
+                // not know the glyphs (#574, #589). A plain folder or
+                // file, with nothing cut and no marker, gets none.
+                if hovered-row >= 0 && (rows[hovered-row].is-repository || rows[hovered-row].marker-tooltip != "" || rows[hovered-row].stale-tooltip != ""): Rectangle {
+                    x: click-area.mouse-x + 12px;
+                    y: click-area.mouse-y + 12px;
+                    width: marker-tip-text.preferred-width + 8px;
+                    height: marker-tip-text.preferred-height + 6px;
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    marker-tip-text := Text {
+                        x: 4px;
+                        y: 3px;
+                        text: rows[hovered-row].name
+                            + (rows[hovered-row].branch == "" ? "" : "\n" + rows[hovered-row].branch)
+                            + (rows[hovered-row].marker-tooltip == "" ? "" : "\n" + rows[hovered-row].marker-tooltip)
+                            + (rows[hovered-row].stale-tooltip == "" ? "" : "\n" + rows[hovered-row].stale-tooltip);
+                        color: Palette.foreground;
+                    }
+                }
+
+                if prompt-row >= 0: Rectangle {
+                    y: prompt-row * row-height;
+                    height: row-height;
+                    width: 100%;
+                    background: Theme.field;
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        spacing: 2px;
+                        alignment: start;
+                        Text {
+                            text: prompt-text;
+                            color: Theme.accent;
+                            vertical-alignment: center;
+                        }
+                        // A caret, so a text prompt reads as one waiting for
+                        // typing rather than as a label.
+                        Rectangle {
+                            width: prompt-editable ? 1px : 0px;
+                            background: Theme.accent;
+                            y: 3px;
+                            height: row-height - 6px;
+                        }
+                        Text {
+                            text: prompt-editable ? "  (Enter / Esc)" : "";
+                            color: Theme.dim-text;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if banding: Rectangle {
+                    y: min(band-from, band-to);
+                    height: abs(band-to - band-from);
+                    width: 100%;
+                    background: Theme.accent.transparentize(0.75);
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                }
+
+                click-area := TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    moved => {
+                        if (click-area.pressed) {
+                            band-to = click-area.mouse-y;
+                            // A press that has not travelled a row's height
+                            // is still a click; only past that is it a drag.
+                            if (abs(band-to - band-from) >= row-height) {
+                                banding = true;
+                            }
+                        }
+                    }
+                    double-clicked => {
+                        if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                            row-double-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                        }
+                    }
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            // Any press dismisses an open context menu; the
+                            // item's own handler runs first when the press
+                            // landed on one.
+                            open-context = -1;
+                            band-from = click-area.mouse-y;
+                            band-to = click-area.mouse-y;
+                        }
+                        if (event.kind == PointerEventKind.up && banding) {
+                            banding = false;
+                            if (rows.length > 0) {
+                                rows-marqueed(
+                                    clamp(floor(min(band-from, band-to) / row-height), 0, rows.length - 1),
+                                    clamp(floor(max(band-from, band-to) / row-height), 0, rows.length - 1));
+                            }
+                        }
+                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left && !banding) {
+                            if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                                if (event.modifiers.control) {
+                                    row-ctrl-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                } else if (event.modifiers.shift) {
+                                    row-shift-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                } else {
+                                    row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                }
+                            }
+                        }
+                        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                            if (rows.length > 0 && click-area.mouse-y < rows.length * row-height) {
+                                row-clicked(clamp(floor(click-area.mouse-y / row-height), 0, rows.length - 1));
+                                // Open at the pointer: a `PopupWindow` with no
+                                // placement of its own lands at the pane's
+                                // top-left corner, half over the folders pane.
+                                menu-x = click-area.mouse-x;
+                                menu-y = click-area.mouse-y;
+                                open-context = 0;
+                            } else {
+                                menu-x = click-area.mouse-x;
+                                menu-y = click-area.mouse-y;
+                                open-context = 1;
+                            }
+                        }
+                    }
+                }
+
+                // Each menu box takes its height from the items in it. They
+                // were sized by hand, as a count times the item height, and
+                // the counts drifted: the row menu held six items in a box
+                // for five, so Extract hung below its border, and the View
+                // menu drew two empty rows under its last item.
+                //
+                // The context menus are ordinary elements rather than
+                // `PopupWindow`s: a popup cannot be positioned from its
+                // enclosing component, has to be sized by hand or it is laid
+                // out 0x0 with its contents unhittable, and its default close
+                // policy eats the click that chooses an item. An element in
+                // the pane has none of those problems.
+                if open-context == 1: Rectangle {
+                    x: menu-x;
+                    y: menu-y;
+                    width: menu-width;
+                    height: empty-menu-items.preferred-height;
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    empty-menu-items := VerticalLayout {
+                        ContextMenuItem {
+                            label: "New Folder";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; new-folder-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "New File";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; new-file-requested(); }
+                        }
+                    }
+                }
+
+                if open-context == 0: Rectangle {
+                    x: menu-x;
+                    y: menu-y;
+                    width: menu-width;
+                    height: row-menu-items.preferred-height;
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    row-menu-items := VerticalLayout {
+                        ContextMenuItem {
+                            label: "Open";
+                            item-enabled: can-open;
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; open-requested(); }
+                        }
+                        ContextMenuItem {
+                            // Named for where it goes, so the reader knows
+                            // before they click.
+                            label: web-provider == "" ? "Open on the web" : "Open on " + web-provider;
+                            item-enabled: web-provider != "";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; open-web-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Rename";
+                            shortcut: "F2";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; rename-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Copy";
+                            shortcut: "Ctrl+C";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; clipboard-copy-requested(); }
+                        }
+                        ContextMenuItem {
+                            // The other Copy: duplicate this file here
+                            // under a name you type. It carried the
+                            // Ctrl+C label above until that shortcut
+                            // turned out to mean something else.
+                            label: "Copy to...";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; copy-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Delete";
+                            shortcut: "Del";
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; delete-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Extract";
+                            item-height: menu-item-height;
+                            item-enabled: extract-enabled;
+                            activated => { open-context = -1; extract-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Open terminal here";
+                            item-enabled: can-open;
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; open-terminal-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Open in editor";
+                            item-enabled: editor-available;
+                            item-height: menu-item-height;
+                            tooltip: "Set \"editor\" in the settings file, or install Visual Studio Code";
+                            activated => { open-context = -1; open-in-editor-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Copy path";
+                            item-enabled: can-open;
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; copy-path-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: "Copy remote address";
+                            item-enabled: remote-address-copyable;
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; copy-remote-address-requested(); }
+                        }
+                        ContextMenuItem {
+                            label: file-manager-label;
+                            item-enabled: can-open;
+                            item-height: menu-item-height;
+                            activated => { open-context = -1; show-in-file-manager-requested(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

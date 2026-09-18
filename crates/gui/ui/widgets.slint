@@ -1,0 +1,334 @@
+import { Palette } from "std-widgets.slint";
+import { Theme, Zoom } from "theme.slint";
+
+export component ContextMenuItem inherits Rectangle {
+    in property <string> label;
+    in property <string> shortcut;
+    in property <bool> item-enabled: true;
+    in property <length> item-height;
+    // Said only while the item is disabled, so a reader who hovers "Open in
+    // editor" with nothing configured is told what to set rather than left
+    // guessing (#581).
+    in property <string> tooltip;
+    callback activated();
+
+    height: item-height;
+    background: touch.has-hover && item-enabled ? Theme.accent : transparent;
+    // Named for assistive technology, and so a test can find the item by
+    // the label the user reads rather than by its position in the menu.
+    accessible-role: button;
+    accessible-label: label;
+    accessible-enabled: item-enabled;
+    accessible-description: item-enabled ? "" : tooltip;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 16px * Zoom.factor;
+        Text {
+            text: label;
+            color: item-enabled ? Palette.foreground : Theme.dim-text;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: shortcut;
+            color: Theme.dim-text;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+            // Named so a test can read the shortcut a reader sees beside
+            // an item, and check it against `shortcuts::BINDINGS` (#585),
+            // rather than trusting a hand-typed string never to drift.
+            accessible-role: text;
+            accessible-label: shortcut;
+        }
+    }
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        // Always enabled, so a greyed item swallows the press rather than
+        // letting it through. A disabled TouchArea is transparent to the
+        // pointer, and the row menu sits directly over the Contents
+        // pane's own overlay area - so pressing a greyed item selected
+        // whatever row happened to be behind it.
+        clicked => {
+            if (item-enabled) {
+                activated();
+            }
+        }
+    }
+
+    // Drawn beside the item rather than below it, so it never overlaps the
+    // menu items that follow this one in the same list.
+    if !item-enabled && tooltip != "" && touch.has-hover: Rectangle {
+        x: parent.width + 4px;
+        y: 0px;
+        width: tip-text.preferred-width + 8px;
+        height: tip-text.preferred-height + 6px;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        tip-text := Text {
+            x: 4px;
+            y: 3px;
+            text: tooltip;
+            color: Palette.foreground;
+        }
+    }
+}
+
+// A toolbar button: a square glyph button that greys out when it has nowhere
+// to go, the way Explorer's back and forward arrows do.
+export component NavButton inherits Rectangle {
+    in property <string> glyph;
+    in property <bool> button-enabled: true;
+    callback activated();
+
+    width: 28px;
+    background: !button-enabled
+        ? transparent
+        : (nav-touch.pressed
+            ? Theme.pressed
+            : (nav-touch.has-hover ? Theme.hover : transparent));
+    border-radius: 3px;
+    border-width: button-enabled && nav-touch.has-hover ? 1px : 0px;
+    border-color: Theme.divider;
+
+    Text {
+        text: glyph;
+        color: button-enabled ? Palette.foreground : Theme.dim-text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    nav-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: button-enabled;
+        clicked => { activated(); }
+    }
+}
+
+// One segment of the address bar's path, clickable to jump to that folder.
+export component Crumb inherits Rectangle {
+    in property <string> label;
+    in property <bool> last;
+    callback activated();
+
+    background: crumb-touch.has-hover && !last ? Theme.hover : transparent;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        Text {
+            text: label;
+            color: last ? Theme.accent : Palette.foreground;
+            vertical-alignment: center;
+        }
+    }
+
+    crumb-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: !last;
+        clicked => { activated(); }
+    }
+}
+
+// A clickable word in the status bar (#582): the changed count and
+// "clear", styled and hit-tested the way a breadcrumb already is.
+export component StatusLink inherits Rectangle {
+    in property <string> label;
+    callback activated();
+
+    background: link-touch.has-hover ? Theme.hover : transparent;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        Text {
+            text: label;
+            color: Theme.accent;
+            vertical-alignment: center;
+            accessible-role: text;
+            accessible-label: label;
+        }
+    }
+
+    link-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { activated(); }
+    }
+}
+
+// One column heading in the contents pane's details view: clickable to sort,
+// showing the direction arrow when it is the active column.
+export component ColumnHeader inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    in property <bool> ascending;
+    in property <bool> align-right;
+    callback activated();
+
+    background: heading-touch.has-hover ? Theme.hover : transparent;
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        alignment: align-right ? end : start;
+        spacing: 2px;
+        Text {
+            text: label;
+            color: active ? Theme.accent : Theme.heading-text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            // U+25B2 / U+25BC. The smaller U+25B4 / U+25BE render as tofu
+            // in the default font here.
+            text: active ? (ascending ? "\u{25B2}" : "\u{25BC}") : "";
+            color: Theme.accent;
+            vertical-alignment: center;
+        }
+    }
+
+    heading-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { activated(); }
+    }
+}
+
+// A draggable divider between two panes. Reports how far it was dragged so
+// the window can widen one pane and narrow the next.
+export component Splitter inherits Rectangle {
+    callback dragged(length);
+    callback double-clicked();
+
+    width: 5px;
+    background: split-touch.has-hover || split-touch.pressed ? Theme.accent : Theme.border;
+
+    split-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: ew-resize;
+        moved => {
+            if (self.pressed) {
+                dragged(self.mouse-x - self.pressed-x);
+            }
+        }
+        double-clicked => {
+            double-clicked();
+        }
+    }
+}
+
+// One title in the menu bar. Opening a menu is a property change rather
+// than a `PopupWindow`, so the dropdown is an ordinary element of the window
+// that can be sized, positioned and clicked like any other.
+export component MenuTitle inherits Rectangle {
+    in property <string> label;
+    in property <bool> open;
+    callback activated();
+
+    width: title-text.preferred-width + 20px;
+    background: open ? Theme.accent : (title-touch.has-hover ? Theme.hover : transparent);
+
+    title-text := Text {
+        text: label;
+        color: open ? Theme.on-accent : Palette.foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    title-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { activated(); }
+    }
+}
+
+// A labelled button on the command bar, greyed out when its command has
+// nothing to act on.
+export component CommandButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> button-enabled: true;
+    // Drawn with a stronger edge, for a button Tab has reached (#592) -
+    // this application's own keyboard focus, since nothing here uses
+    // Slint's.
+    in property <bool> highlighted: false;
+    callback activated();
+
+    width: command-text.preferred-width + 20px;
+    border-radius: 3px;
+    // Three states, told apart: at rest, hovered (a fill and an edge, so the
+    // button has a shape), and pressed (a deeper fill). A press that looks
+    // like a hover is a button that never confirms it was clicked.
+    background: !button-enabled
+        ? transparent
+        : (command-touch.pressed
+            ? Theme.pressed
+            : (command-touch.has-hover ? Theme.hover : transparent));
+    border-width: highlighted ? 2px : (button-enabled && command-touch.has-hover ? 1px : 0px);
+    border-color: highlighted ? Theme.accent : Theme.divider;
+
+    command-text := Text {
+        text: label;
+        // Reported so a test can ask what the toolbars are offering,
+        // which is the only way to check a row of buttons from outside.
+        accessible-role: text;
+        accessible-label: label;
+        accessible-enabled: button-enabled;
+        color: button-enabled ? Palette.foreground : Theme.dim-text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    command-touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: button-enabled;
+        clicked => { activated(); }
+    }
+}
+
+// The hairline that ends a bar, so the chrome reads as chrome and the panes
+// start where it stops. Its own component because a Windows title area is
+// several strips, each with an edge, and an element id has to be unique
+// inside the component that holds it.
+export component ChromeEdge inherits Rectangle {
+    // Positioned by whoever places it: a component cannot reach its parent,
+    // and the bars know their own height.
+    height: 1px;
+    rule := Rectangle {
+        width: 100%;
+        height: 1px;
+        background: Theme.chrome-edge;
+    }
+}
+
+// The rule between two groups of commands, with the room around it that
+// makes the grouping read as grouping. Named so a test can find it and
+// check the divisions are there and visible.
+export component CommandSeparator inherits Rectangle {
+    width: 15px;
+    accessible-role: none;
+    rule := Rectangle {
+        width: 1px;
+        height: 70%;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.divider;
+    }
+}

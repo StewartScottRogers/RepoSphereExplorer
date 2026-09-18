@@ -43,7 +43,7 @@ fn window_with_views(views: &[&str]) -> MainWindow {
 /// one tab wide - which is not what a click across the strip is measured
 /// against.
 fn switcher(ui: &MainWindow) -> Option<ElementHandle> {
-    ElementHandle::find_by_element_id(ui, "MainWindow::tab-strip").next()
+    ElementHandle::find_by_element_id(ui, "FilePane::tab-strip").next()
 }
 
 /// Clicks the middle of tab `index`, as it is drawn.

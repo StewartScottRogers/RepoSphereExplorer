@@ -39,7 +39,7 @@ fn shown_window() -> MainWindow {
 }
 
 fn labels(ui: &MainWindow) -> Vec<String> {
-    ElementHandle::find_by_element_id(ui, "Pane::tree-row")
+    ElementHandle::find_by_element_id(ui, "FoldersPane::tree-row")
         .filter_map(|handle| handle.accessible_label().map(|label| label.to_string()))
         .collect()
 }
@@ -57,7 +57,7 @@ fn each_level_of_the_tree_indents_by_what_the_click_rule_measures() {
     i_slint_backend_testing::init_no_event_loop();
     let ui = shown_window();
 
-    let left_edges: Vec<f32> = ElementHandle::find_by_element_id(&ui, "Pane::folder-icon")
+    let left_edges: Vec<f32> = ElementHandle::find_by_element_id(&ui, "FoldersPane::folder-icon")
         .map(|handle| handle.absolute_position().x)
         .collect();
     assert_eq!(left_edges.len(), 3, "one icon per row");
