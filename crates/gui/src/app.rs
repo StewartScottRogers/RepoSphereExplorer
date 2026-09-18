@@ -10369,15 +10369,35 @@ third",
 
     #[test]
     fn classify_root_problem_reports_a_drive_that_is_not_connected() {
-        // "Z:\repos" parses as a drive-letter path from its text alone
-        // (see `drive_letter`), so this is exercisable on any host - this
-        // Linux test runner included - without a real Windows drive.
-        let problem = super::classify_root_problem(Path::new(r"Z:\repos"), "not found");
+        // A drive-letter path parses from its text alone (see
+        // `drive_letter`), so this runs on any host - but the letter has to
+        // be one this host has *not* got, or the classifier rightly reports
+        // something else. It was written as "Z:\repos", which on a Windows
+        // machine with a Z: drive is a real folder: the test passed on the
+        // Linux runner and failed on the developer's own machine.
+        // Not merely "cannot read": a drive that is there but not ready,
+        // such as an empty optical drive, answers with something else and
+        // is classified as unreadable rather than missing, correctly.
+        let absent = |path: String| {
+            std::fs::metadata(path)
+                .err()
+                .is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound)
+        };
+        let Some(letter) = ('D'..='Z')
+            .map(|letter| format!("{letter}:"))
+            .find(|drive| absent(format!("{drive}\\")) && absent(format!("{drive}\\repos")))
+        else {
+            // Every drive letter answers: nothing to tell apart here.
+            return;
+        };
+
+        let problem =
+            super::classify_root_problem(Path::new(&format!("{letter}\\repos")), "not found");
 
         assert_eq!(
             problem,
             super::RootProblem::NotThere {
-                cause: super::NotThereCause::DriveNotConnected("Z:".to_owned())
+                cause: super::NotThereCause::DriveNotConnected(letter)
             }
         );
     }

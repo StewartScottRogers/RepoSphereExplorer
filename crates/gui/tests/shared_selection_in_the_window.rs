@@ -51,12 +51,20 @@ fn pump(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut quiet = 0u32;
     while Instant::now() < deadline {
-        {
+        let busy = {
             let mut app = app.borrow_mut();
             app.tick();
             sync_ui(ui, &app);
-        }
-        if still_working(&ui.get_status_text()) {
+            // A file preview is asked for without putting a line in the
+            // status bar, so the status alone says "settled" while one is
+            // still in flight - and the assertion below about how many
+            // views a Rust file offers then reads the view before it. On a
+            // loaded continuous integration runner that is the difference
+            // between passing and failing, as it was for the other window
+            // tests that already ask this.
+            app.is_busy()
+        };
+        if busy || still_working(&ui.get_status_text()) {
             quiet = 0;
         } else {
             quiet += 1;
