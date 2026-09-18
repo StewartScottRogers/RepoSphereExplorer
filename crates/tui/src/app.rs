@@ -1265,6 +1265,7 @@ mod tests {
                 remote: Some("https://github.com/owner/explorer.git".to_owned()),
                 kind: protocol::RepositoryKind::Clone,
                 last_activity: None,
+                last_fetch: None,
             }),
         };
         let folder = DirectoryEntry {

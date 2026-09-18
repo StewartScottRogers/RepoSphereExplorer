@@ -81,6 +81,12 @@ pub struct Repository {
     /// none of the three exist.
     #[serde(default)]
     pub last_activity: Option<SystemTime>,
+    /// When the checkout last fetched - the modification time of
+    /// `FETCH_HEAD`, the newer of its own and the clone it shares for a
+    /// worktree - or `None` when it never has (#589). A single stat, like
+    /// `last_activity`, affordable for every row of a listing.
+    #[serde(default)]
+    pub last_fetch: Option<SystemTime>,
 }
 
 /// What `path` is as a working copy, or `None` if it is not one.
@@ -97,7 +103,8 @@ pub struct Repository {
 #[must_use]
 pub fn describe(path: &Path) -> Option<Repository> {
     let git_dir = git_dir_of(path)?;
-    let remote = remote_url(&common_dir_of(&git_dir));
+    let common_dir = common_dir_of(&git_dir);
+    let remote = remote_url(&common_dir);
     Some(Repository {
         provider: remote.as_deref().and_then(provider_of),
         branch: branch_at(&git_dir),
@@ -109,6 +116,7 @@ pub fn describe(path: &Path) -> Option<Repository> {
         status: None,
         tracking: None,
         last_activity: last_activity_of(&git_dir, path),
+        last_fetch: crate::tracking::last_fetch(&git_dir, &common_dir),
     })
 }
 
@@ -1058,6 +1066,85 @@ mod tests {
             found.last_activity,
             Some(expected),
             "falls back to the folder's own modification time"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---- last_fetch (#589) ----------------------------------------------
+
+    #[test]
+    fn last_fetch_is_the_modification_time_of_fetch_head() {
+        let dir = temp_dir("last-fetch-present");
+        write_checkout(&dir, "ref: refs/heads/main\n", "[core]\n");
+        let git = dir.join(".git");
+        std::fs::write(git.join("FETCH_HEAD"), b"").unwrap();
+
+        let found = describe(&dir).expect("a working copy");
+
+        let expected = std::fs::metadata(git.join("FETCH_HEAD"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(found.last_fetch, Some(expected));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_checkout_never_fetched_has_no_last_fetch() {
+        let dir = temp_dir("last-fetch-never");
+        write_checkout(&dir, "ref: refs/heads/main\n", "[core]\n");
+        // No FETCH_HEAD: this checkout has never fetched.
+
+        let found = describe(&dir).expect("a working copy");
+
+        assert_eq!(found.last_fetch, None);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A worktree's own git directory carries no `FETCH_HEAD` of its own in
+    /// the common case - fetching happens against the clone it shares - so
+    /// this has to read the clone's, through the `commondir` [`describe`]
+    /// already follows for the remote.
+    #[test]
+    fn a_worktree_reads_its_clones_fetch_head() {
+        let dir = temp_dir("last-fetch-worktree");
+
+        let clone_git = dir.join("clone").join(".git");
+        std::fs::create_dir_all(&clone_git).unwrap();
+        std::fs::write(clone_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(clone_git.join("config"), "[core]\n").unwrap();
+        std::fs::write(clone_git.join("FETCH_HEAD"), b"").unwrap();
+
+        let worktree_git = clone_git.join("worktrees").join("side");
+        std::fs::create_dir_all(&worktree_git).unwrap();
+        std::fs::write(worktree_git.join("HEAD"), "ref: refs/heads/side\n").unwrap();
+        std::fs::write(worktree_git.join("commondir"), "../..\n").unwrap();
+        assert!(
+            !worktree_git.join("FETCH_HEAD").exists(),
+            "the fixture is only honest if the worktree has no FETCH_HEAD of its own"
+        );
+
+        let checkout = dir.join("side");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", worktree_git.display()),
+        )
+        .unwrap();
+
+        let found = describe(&checkout).expect("a worktree is a working copy");
+
+        let expected = std::fs::metadata(clone_git.join("FETCH_HEAD"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            found.last_fetch,
+            Some(expected),
+            "the clone's fetch, shared by every checkout of it"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
