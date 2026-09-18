@@ -10,7 +10,7 @@ import {
 } from "widgets.slint";
 import { FoldersPane } from "panes/folders_pane.slint";
 import { ContentsPane } from "panes/contents_pane.slint";
-import { FilePane } from "panes/file_pane.slint";
+import { ToolSlot } from "panes/tool_slot.slint";
 
 
 export component MainWindow inherits Window {
@@ -94,6 +94,17 @@ export component MainWindow inherits Window {
     in property <[string]> file-tabs;
     in property <int> file-tab-index;
     callback file-tab-selected(int);
+    // The tool slot's picker (#616): the active tool's own frame title,
+    // the titles of every tool that applies to the selection (empty
+    // unless there is more than one, which keeps the picker hidden with
+    // only the editor registered), and whether the active tool is the
+    // editor - false only for a tool with a view of its own, none of
+    // which exist yet beyond a window test's.
+    in property <string> active-tool-title: "File";
+    in property <[string]> tool-titles;
+    in property <int> tool-index;
+    callback tool-selected(int);
+    in property <bool> tool-showing-editor: true;
     // The editor's own commands, shown in the File pane while it is
     // open. The window's toolbar is about managing files, which is not
     // where anybody looks while typing into one.
@@ -813,10 +824,14 @@ export component MainWindow inherits Window {
                             root.width - folders-width - min-file-pane-width - splitters-width);
                     }
                 }
-                file-pane := FilePane {
+                file-pane := ToolSlot {
                     horizontal-stretch: 1;
                     min-width: min-file-pane-width;
-                    title: "File";
+                    title: active-tool-title;
+                    tool-titles: tool-titles;
+                    tool-index: tool-index;
+                    tool-selected(i) => { tool-selected(i); }
+                    tool-showing-editor: tool-showing-editor;
                     focused: focus-pane == 2;
                     editing-file: editing-file;
                     edit-modified: edit-modified;
