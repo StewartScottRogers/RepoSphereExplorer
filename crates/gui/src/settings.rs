@@ -236,6 +236,16 @@ pub fn save_window_geometry(geometry: WindowGeometry) {
     }
 }
 
+/// Whether `geometry` shares area with at least one of `displays` - the
+/// yes/no half of [`geometry_on_a_display`]'s check, exposed on its own for
+/// a caller that needs a different fallback than centring on a primary
+/// display when it is `false`. A popped-out pane's own window (#620) is
+/// one: it moves beside the main window instead.
+#[must_use]
+pub fn on_any_display(geometry: WindowGeometry, displays: &[DisplayBounds]) -> bool {
+    displays.iter().any(|display| display.overlaps(geometry))
+}
+
 /// `geometry`, unchanged if it still shares area with at least one of
 /// `displays` - it stayed on the same monitor, or the reader dragged it to
 /// another one that is still connected - or centred on `primary` and
@@ -251,7 +261,7 @@ pub fn geometry_on_a_display(
     displays: &[DisplayBounds],
     primary: DisplayBounds,
 ) -> WindowGeometry {
-    if displays.iter().any(|display| display.overlaps(geometry)) {
+    if on_any_display(geometry, displays) {
         return geometry;
     }
     let width = geometry.width.min(primary.width);
@@ -262,6 +272,135 @@ pub fn geometry_on_a_display(
         width,
         height,
         maximized: geometry.maximized,
+    }
+}
+
+/// Which of the three panes were popped out of the main window when the
+/// application last closed, and where each one's own window was (#620): a
+/// field holding `None` means that pane was docked. Read by
+/// [`load_pane_layout`], and by `gui::PaneWindows::pane_layout` for
+/// [`save_pane_layout`] to write on the way out.
+///
+/// Holds a pinned window's geometry for nothing: a pin names what a window
+/// shows, and D7 forbids a launch that remembers a location, so a pinned
+/// window is not part of this layout at all - it reopens unpinned, docked,
+/// following the shared selection like any other pane.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PaneLayout {
+    /// The folders tree pane's own window, if it was popped out.
+    pub folders: Option<WindowGeometry>,
+    /// The contents list pane's own window, if it was popped out.
+    pub contents: Option<WindowGeometry>,
+    /// The tool slot's own window, if it was popped out.
+    pub file: Option<WindowGeometry>,
+}
+
+/// A popped-out pane's own window, read from an object nested under this
+/// pane's key in `popped_panes` - the same four numbers and a flag
+/// [`WindowGeometry`] carries for the main window, but keyed without the
+/// `window_` prefix [`load_window_geometry`] uses, since there is more than
+/// one of these at once.
+fn geometry_from_object(value: &serde_json::Value) -> Option<WindowGeometry> {
+    Some(WindowGeometry {
+        x: position_field(value, "x")?,
+        y: position_field(value, "y")?,
+        width: dimension_field(value, "width")?,
+        height: dimension_field(value, "height")?,
+        maximized: value
+            .get("maximized")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// The reverse of [`geometry_from_object`]: `geometry` as the object
+/// `popped_panes` nests a popped-out pane's window under.
+fn geometry_to_object(geometry: WindowGeometry) -> serde_json::Value {
+    serde_json::json!({
+        "x": geometry.x,
+        "y": geometry.y,
+        "width": geometry.width,
+        "height": geometry.height,
+        "maximized": geometry.maximized,
+    })
+}
+
+/// [`load_pane_layout`]'s pure half: `value`'s `popped_panes` object read
+/// into a [`PaneLayout`], one pane at a time so a malformed entry for one
+/// pane falls back to docked without losing the other two - the same
+/// per-value fallback shape every other loader in this module has. Missing
+/// entirely, as a `gui.json` written before this work order is, reads back
+/// as every pane docked.
+fn pane_layout_from_value(value: &serde_json::Value) -> PaneLayout {
+    let popped = value
+        .get("popped_panes")
+        .and_then(serde_json::Value::as_object);
+    let pane = |key: &str| {
+        popped
+            .and_then(|object| object.get(key))
+            .and_then(geometry_from_object)
+    };
+    PaneLayout {
+        folders: pane("folders"),
+        contents: pane("contents"),
+        file: pane("file"),
+    }
+}
+
+/// The remembered pane layout: every pane docked for a missing, unreadable
+/// or malformed settings file, the same fallback [`load_pane_widths`] has.
+#[must_use]
+pub fn load_pane_layout() -> PaneLayout {
+    let Some(text) = settings_path().and_then(|path| std::fs::read_to_string(path).ok()) else {
+        return PaneLayout::default();
+    };
+    serde_json::from_str(&text).map_or_else(
+        |_| PaneLayout::default(),
+        |value| pane_layout_from_value(&value),
+    )
+}
+
+/// `existing` with its `popped_panes` field set from `layout`, every other
+/// field left as it was - the pane-layout counterpart to
+/// [`merged_pane_widths`]. A pane with no remembered geometry is left out
+/// of the object rather than written as `null`, so a `gui.json` this
+/// writes still reads back as docked for that pane under
+/// [`pane_layout_from_value`]'s "missing means docked" rule.
+fn merged_pane_layout(existing: &serde_json::Value, layout: PaneLayout) -> serde_json::Value {
+    let mut existing = existing.as_object().cloned().unwrap_or_default();
+    let mut popped = serde_json::Map::new();
+    for (key, geometry) in [
+        ("folders", layout.folders),
+        ("contents", layout.contents),
+        ("file", layout.file),
+    ] {
+        if let Some(geometry) = geometry {
+            popped.insert(key.to_owned(), geometry_to_object(geometry));
+        }
+    }
+    existing.insert("popped_panes".to_owned(), serde_json::Value::Object(popped));
+    serde_json::Value::Object(existing)
+}
+
+/// Writes `layout` to the settings file, creating its directory if needed.
+/// Best-effort, and reads the file first and changes only the
+/// `popped_panes` field, for the same reasons [`save_pane_widths`] does.
+pub fn save_pane_layout(layout: PaneLayout) {
+    let Some(path) = settings_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return;
+    }
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let value = merged_pane_layout(&existing, layout);
+    if let Ok(text) = serde_json::to_string_pretty(&value) {
+        let _ = std::fs::write(&path, text);
     }
 }
 
@@ -335,8 +474,9 @@ pub fn load_editor() -> Option<String> {
 mod tests {
     use super::{
         DisplayBounds, MAX_WIDTH, MAX_WINDOW_DIMENSION, MIN_WIDTH, MIN_WINDOW_DIMENSION,
-        PaneWidths, WindowGeometry, dimension_field, editor_field, geometry_on_a_display,
-        merged_pane_widths, merged_window_geometry, merged_zoom, position_field, width_field,
+        PaneLayout, PaneWidths, WindowGeometry, dimension_field, editor_field,
+        geometry_on_a_display, merged_pane_layout, merged_pane_widths, merged_window_geometry,
+        merged_zoom, on_any_display, pane_layout_from_value, position_field, width_field,
         zoom_field,
     };
 
@@ -638,5 +778,115 @@ mod tests {
             merged,
             serde_json::json!({ "editor": "subl", "zoom_percent": 150 })
         );
+    }
+
+    fn geometry(x: f32) -> WindowGeometry {
+        WindowGeometry {
+            x,
+            y: 40.0,
+            width: 480.0,
+            height: 600.0,
+            maximized: false,
+        }
+    }
+
+    /// A layout with two panes popped out round-trips through
+    /// `merged_pane_layout` and `pane_layout_from_value` (#620's acceptance
+    /// check 1).
+    #[test]
+    fn a_layout_with_two_panes_popped_out_round_trips() {
+        let layout = PaneLayout {
+            folders: Some(geometry(10.0)),
+            contents: None,
+            file: Some(geometry(700.0)),
+        };
+        let value = merged_pane_layout(&serde_json::Value::Null, layout);
+        assert_eq!(pane_layout_from_value(&value), layout);
+    }
+
+    /// A `gui.json` written before this work order - widths only, no
+    /// `popped_panes` key at all - loads with every pane docked.
+    #[test]
+    fn a_file_with_widths_only_has_every_pane_docked() {
+        let value = serde_json::json!({ "folders_width": 260.0, "contents_width": 400.0 });
+        assert_eq!(pane_layout_from_value(&value), PaneLayout::default());
+    }
+
+    /// A malformed entry for one pane falls back to docked without losing
+    /// the other, valid ones.
+    #[test]
+    fn a_malformed_pane_entry_falls_back_to_docked_on_its_own() {
+        let value = serde_json::json!({
+            "popped_panes": {
+                "folders": { "x": 10.0, "y": 20.0, "width": 480.0, "height": 600.0 },
+                "contents": { "x": "left", "y": 20.0, "width": 480.0, "height": 600.0 },
+            }
+        });
+        let layout = pane_layout_from_value(&value);
+        assert!(layout.folders.is_some(), "the well-formed entry survives");
+        assert_eq!(
+            layout.contents, None,
+            "the malformed entry falls back to docked on its own"
+        );
+        assert_eq!(layout.file, None, "an absent entry is docked too");
+    }
+
+    /// A window off every connected display is not "on any display" -
+    /// what a popped-out pane's own window checks, before falling back to
+    /// a place beside the main window rather than [`geometry_on_a_display`]'s
+    /// centred-on-primary (#620 requirement 5).
+    #[test]
+    fn a_geometry_off_every_display_is_on_no_display() {
+        let geometry = WindowGeometry {
+            x: 5000.0,
+            y: 5000.0,
+            width: 480.0,
+            height: 600.0,
+            maximized: false,
+        };
+        let displays = [DisplayBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        }];
+        assert!(!on_any_display(geometry, &displays));
+    }
+
+    /// A window still on a connected display is on some display.
+    #[test]
+    fn a_geometry_still_on_a_display_is_on_some_display() {
+        let displays = [DisplayBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        }];
+        assert!(on_any_display(geometry(100.0), &displays));
+    }
+
+    /// `merged_pane_layout` writes only numbers and a flag under
+    /// `popped_panes`, never a path, folder or file name (D7) - the
+    /// pane-layout counterpart of `window_geometry_fields_hold_no_path`.
+    #[test]
+    fn pane_layout_fields_hold_no_path() {
+        let layout = PaneLayout {
+            folders: Some(geometry(10.0)),
+            contents: Some(geometry(700.0)),
+            file: Some(geometry(1200.0)),
+        };
+        let merged = merged_pane_layout(&serde_json::Value::Null, layout);
+        let popped = merged
+            .get("popped_panes")
+            .and_then(serde_json::Value::as_object)
+            .expect("a popped_panes object");
+        for (pane, object) in popped {
+            for (key, value) in object.as_object().expect("a pane object") {
+                assert!(
+                    !value.is_string(),
+                    "{pane}.{key} holds {value}, which could be a path"
+                );
+            }
+        }
     }
 }
