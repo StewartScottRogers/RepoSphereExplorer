@@ -368,6 +368,72 @@ fn the_size_column_is_hidden_until_the_listing_holds_a_file() {
     );
 }
 
+/// Sets a file's modification time, so a fixture can control which of two
+/// repositories' `HEAD` is older without depending on how fast the test
+/// itself runs.
+fn set_mtime(path: &Path, seconds_before_now: u64) {
+    let at = std::time::SystemTime::now() - std::time::Duration::from_secs(seconds_before_now);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("the fixture file opens for its mtime to be set")
+        .set_modified(at)
+        .expect("the platform can set a file's modified time");
+}
+
+/// The Contents pane's Modified column shows a repository's last activity,
+/// not the folder's own modification time - which only moves when an entry
+/// directly inside it changes, so it rarely says when anybody last worked
+/// there (#588). A plain folder alongside two repositories keeps showing
+/// its own time.
+#[test]
+fn sorting_by_last_activity_orders_repositories_and_leaves_a_plain_folder_on_its_own_time() {
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = scratch("last-activity");
+
+    let older_head = directory.join("older-repo").join(".git").join("HEAD");
+    std::fs::create_dir_all(older_head.parent().unwrap()).expect("the fixture is written");
+    std::fs::write(&older_head, "ref: refs/heads/main\n").expect("the fixture is written");
+    set_mtime(&older_head, 100);
+
+    let newer_head = directory.join("newer-repo").join(".git").join("HEAD");
+    std::fs::create_dir_all(newer_head.parent().unwrap()).expect("the fixture is written");
+    std::fs::write(&newer_head, "ref: refs/heads/main\n").expect("the fixture is written");
+    set_mtime(&newer_head, 10);
+
+    // No `.git` marker, and created just now - newer than either
+    // repository's last activity, which is what makes the expected order
+    // below unambiguous without touching this folder's own time at all.
+    std::fs::create_dir_all(directory.join("plain-folder")).expect("the fixture is written");
+
+    let (ui, app) = window_on(&directory);
+
+    let header = ElementHandle::find_by_accessible_label(&ui, "Last activity")
+        .find(|handle| handle.size().height > 0.0 && handle.size().width > 0.0)
+        .expect("the Modified header reads \"Last activity\" once a repository is listed");
+    let at = header.absolute_position();
+    left_click(
+        &ui,
+        LogicalPosition::new(
+            at.x + header.size().width / 2.0,
+            at.y + header.size().height / 2.0,
+        ),
+    );
+
+    assert_eq!(app.borrow().sort_column(), 3);
+    assert!(app.borrow().sort_ascending());
+    let names: Vec<String> = rows_on_screen(&ui)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["older-repo/", "newer-repo/", "plain-folder/"],
+        "the repositories order by last activity, oldest first, and the \
+         plain folder - newer than either - sorts after both"
+    );
+}
+
 /// Sorting reorders the rows under the reader; the highlight has to come
 /// with the file it was on, not stay on the row number it happened to be.
 #[test]

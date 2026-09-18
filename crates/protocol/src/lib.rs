@@ -188,6 +188,13 @@ pub struct RepositoryInfo {
     /// (#587).
     #[serde(default)]
     pub kind: RepositoryKind,
+    /// The latest modification time among the checkout's `index`, `HEAD` and
+    /// `logs/HEAD`, in seconds since `UNIX_EPOCH` - the working copy's own
+    /// "last activity", which changes on checkout, commit, staging and
+    /// branch switches, unlike the folder's own modification time (#588).
+    /// Falls back to the folder's own time when none of the three exist.
+    #[serde(default)]
+    pub last_activity: Option<u64>,
 }
 
 /// What kind of working copy a [`RepositoryInfo`] describes. Mirrors
@@ -643,6 +650,7 @@ mod tests {
                     branch: Some("main".to_owned()),
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
                     kind: RepositoryKind::Clone,
+                    last_activity: None,
                 }),
             },
             DirectoryEntry {
@@ -685,6 +693,7 @@ mod tests {
                         clone: "/repos/clone".to_owned(),
                         clone_exists: true,
                     },
+                    last_activity: None,
                 }),
             },
             DirectoryEntry {
@@ -699,6 +708,7 @@ mod tests {
                     kind: RepositoryKind::Submodule {
                         outer: "/repos/outer".to_owned(),
                     },
+                    last_activity: None,
                 }),
             },
         ];
@@ -739,6 +749,23 @@ mod tests {
                 entries[0].repository.as_ref().unwrap().kind,
                 RepositoryKind::Clone
             ),
+            other => panic!("expected a listing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_repository_from_before_last_activity_existed_reads_as_none() {
+        // `last_activity` is defaulted rather than required, so a front end
+        // built after #588 can still read a `RepositoryInfo` from a service
+        // built before it.
+        let older = r#"{"Directory":{"entries":[{"name":"src","is_dir":true,"size":0,
+            "modified":null,"repository":{"provider":null,"branch":"main","remote":null}}]}}"#;
+        let response: Response = serde_json::from_str(older).unwrap();
+
+        match response {
+            Response::Directory { entries } => {
+                assert_eq!(entries[0].repository.as_ref().unwrap().last_activity, None);
+            }
             other => panic!("expected a listing, got {other:?}"),
         }
     }
@@ -1168,6 +1195,7 @@ mod tests {
                     branch: Some("main".to_owned()),
                     remote: None,
                     kind: RepositoryKind::Clone,
+                    last_activity: None,
                 }),
             }],
         };

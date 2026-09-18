@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// The largest `.git/config` this will read. Git's own configuration is
 /// small, and this only wants the remote's address out of it.
@@ -73,6 +74,13 @@ pub struct Repository {
     /// repository only - or when there is no branch to compare.
     #[serde(default)]
     pub tracking: Option<crate::tracking::Tracking>,
+    /// When the checkout was last worked in - the latest modification time
+    /// among its `index`, `HEAD` and `logs/HEAD`, which change on checkout,
+    /// commit, staging and branch switches, unlike the folder's own
+    /// modification time (#588). Falls back to the folder's own time when
+    /// none of the three exist.
+    #[serde(default)]
+    pub last_activity: Option<SystemTime>,
 }
 
 /// What `path` is as a working copy, or `None` if it is not one.
@@ -100,7 +108,23 @@ pub fn describe(path: &Path) -> Option<Repository> {
         // selected.
         status: None,
         tracking: None,
+        last_activity: last_activity_of(&git_dir, path),
     })
+}
+
+/// When the checkout at `git_dir` was last worked in: the latest of `index`,
+/// `HEAD` and `logs/HEAD`'s own modification times, a stat of three files
+/// affordable for every row of a listing (CLAUDE.md rule 9) - never a
+/// directory read. A worktree's `git_dir` is already its own, per
+/// [`git_dir_of`], so this reads what changed in *this* checkout, not the
+/// clone it shares a config with. Falls back to `path`'s own folder time
+/// when none of the three files exist.
+fn last_activity_of(git_dir: &Path, path: &Path) -> Option<SystemTime> {
+    ["index", "HEAD", "logs/HEAD"]
+        .into_iter()
+        .filter_map(|name| std::fs::metadata(git_dir.join(name)).ok()?.modified().ok())
+        .max()
+        .or_else(|| std::fs::metadata(path).ok()?.modified().ok())
 }
 
 /// Whether `path` is an ordinary clone, a linked worktree, or a submodule.
@@ -898,6 +922,143 @@ mod tests {
         let status = found.status.expect("an index it could read");
         assert_eq!(status.changed, 1, "a tracked file that is not there");
         assert_eq!(found.provider.as_deref(), Some("github.com"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---- last_activity (#588) -------------------------------------------
+
+    /// Sets a file's modification time, so a test can control the order two
+    /// files' mtimes come out in without depending on real elapsed time.
+    fn set_mtime(path: &Path, seconds_from_now: i64) {
+        let offset = std::time::Duration::from_secs(seconds_from_now.unsigned_abs());
+        let at = if seconds_from_now >= 0 {
+            std::time::SystemTime::now() + offset
+        } else {
+            std::time::SystemTime::now() - offset
+        };
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+    }
+
+    #[test]
+    fn last_activity_is_the_latest_of_index_head_and_logs_head() {
+        let dir = temp_dir("last-activity-latest");
+        write_checkout(&dir, "ref: refs/heads/main\n", "[core]\n");
+        let git = dir.join(".git");
+        std::fs::write(git.join("index"), b"").unwrap();
+        std::fs::create_dir_all(git.join("logs")).unwrap();
+        std::fs::write(git.join("logs").join("HEAD"), b"").unwrap();
+
+        set_mtime(&git.join("HEAD"), -300);
+        set_mtime(&git.join("index"), -100);
+        // The most recent of the three: a branch switch after the last
+        // commit and after the last staging.
+        set_mtime(&git.join("logs").join("HEAD"), -10);
+
+        let found = describe(&dir).expect("a working copy");
+
+        let expected = std::fs::metadata(git.join("logs").join("HEAD"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            found.last_activity,
+            Some(expected),
+            "logs/HEAD is the newest of the three"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn missing_activity_files_are_skipped() {
+        let dir = temp_dir("last-activity-missing");
+        write_checkout(&dir, "ref: refs/heads/main\n", "[core]\n");
+        let git = dir.join(".git");
+        // No index and no logs/HEAD - only HEAD, which write_checkout wrote.
+
+        let found = describe(&dir).expect("a working copy");
+
+        let expected = std::fs::metadata(git.join("HEAD"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            found.last_activity,
+            Some(expected),
+            "HEAD is the only one of the three that exists"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_worktree_reads_its_own_git_directory_for_last_activity() {
+        let dir = temp_dir("last-activity-worktree");
+
+        let clone_git = dir.join("clone").join(".git");
+        std::fs::create_dir_all(&clone_git).unwrap();
+        std::fs::write(clone_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(clone_git.join("config"), "[core]\n").unwrap();
+        std::fs::write(clone_git.join("index"), b"").unwrap();
+        // The clone's own activity is old - the worktree's is what matters.
+        set_mtime(&clone_git.join("index"), -100_000);
+
+        let worktree_git = clone_git.join("worktrees").join("side");
+        std::fs::create_dir_all(&worktree_git).unwrap();
+        std::fs::write(worktree_git.join("HEAD"), "ref: refs/heads/side\n").unwrap();
+        std::fs::write(worktree_git.join("commondir"), "../..\n").unwrap();
+        std::fs::write(worktree_git.join("index"), b"").unwrap();
+        set_mtime(&worktree_git.join("HEAD"), -50);
+        // The worktree's own newest file - older than the clone's own
+        // (-100_000) is not the point; newer than the worktree's own HEAD
+        // is, so the max among the worktree's own files is unambiguous.
+        set_mtime(&worktree_git.join("index"), -5);
+
+        let checkout = dir.join("side");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", worktree_git.display()),
+        )
+        .unwrap();
+
+        let found = describe(&checkout).expect("a worktree is a working copy");
+
+        let expected = std::fs::metadata(worktree_git.join("index"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            found.last_activity,
+            Some(expected),
+            "the worktree's own index, not the clone's"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_repository_with_none_of_the_three_falls_back_to_the_folders_time() {
+        let dir = temp_dir("last-activity-fallback");
+        // A `.git` directory with nothing in it that names an activity -
+        // not even HEAD, which every real checkout has, so the fallback is
+        // exercised honestly rather than by a HEAD that happens to exist.
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+
+        let found = describe(&dir).expect("a directory with a .git marker is a working copy");
+
+        let expected = std::fs::metadata(&dir).unwrap().modified().unwrap();
+        assert_eq!(
+            found.last_activity,
+            Some(expected),
+            "falls back to the folder's own modification time"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

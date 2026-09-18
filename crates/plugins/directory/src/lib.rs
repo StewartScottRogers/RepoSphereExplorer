@@ -302,6 +302,10 @@ impl PluginPresentation for DirectoryPresentation {
                     status::WorkingTree::summary,
                 ),
             ));
+            if let Some(at) = repository.last_activity {
+                let elapsed = SystemTime::now().duration_since(at).unwrap_or_default();
+                facts.push(Fact::new("Last activity", age(elapsed)));
+            }
             // A blank row, separating the working copy's own facts from
             // the folder facts that follow - not repository facts, and so
             // drawn dim rather than sharing the table's full weight.
@@ -395,6 +399,7 @@ mod tests {
                 kind: super::repository::Kind::Clone,
                 tracking: None,
                 status: None,
+                last_activity: None,
             }),
             readme: None,
         })
@@ -465,6 +470,7 @@ mod tests {
                     examined: 130,
                     partial: false,
                 }),
+                last_activity: None,
             }),
             readme: None,
         })
@@ -494,6 +500,7 @@ mod tests {
                     examined: 40,
                     partial: false,
                 }),
+                last_activity: None,
             }),
             readme: None,
         })
@@ -636,6 +643,9 @@ mod tests {
                 examined: 20,
                 partial: false,
             }),
+            last_activity: Some(
+                std::time::SystemTime::now() - std::time::Duration::from_hours(2 * 24),
+            ),
         }));
 
         let facts = DirectoryPresentation.facts(&data);
@@ -653,6 +663,7 @@ mod tests {
                 },
                 Fact::new("Remote", "https://github.com/owner/name.git"),
                 Fact::new("Working tree", "no uncommitted changes to tracked files"),
+                Fact::new("Last activity", "2 days ago"),
                 Fact::new("", ""),
                 Fact {
                     label: "Entries".to_owned(),
@@ -681,6 +692,7 @@ mod tests {
                 last_fetch: None,
             }),
             status: None,
+            last_activity: None,
         }));
 
         let facts = DirectoryPresentation.facts(&data);
@@ -712,6 +724,7 @@ mod tests {
             kind: super::repository::Kind::Clone,
             tracking: None,
             status: None,
+            last_activity: None,
         }));
 
         let facts = DirectoryPresentation.facts(&data);
@@ -724,6 +737,10 @@ mod tests {
         assert!(
             !facts.iter().any(|fact| fact.label == "Last fetched"),
             "and so nothing to say when it was last fetched: {facts:?}"
+        );
+        assert!(
+            !facts.iter().any(|fact| fact.label == "Last activity"),
+            "no last_activity means nothing to say: {facts:?}"
         );
     }
 
@@ -745,6 +762,7 @@ mod tests {
                 ),
             }),
             status: None,
+            last_activity: None,
         }));
 
         let facts = DirectoryPresentation.facts(&data);
