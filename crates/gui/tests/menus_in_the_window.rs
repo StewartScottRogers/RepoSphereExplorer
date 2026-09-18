@@ -566,6 +566,23 @@ fn help_keyboard_shortcuts_opens_from_the_menu() {
     );
 }
 
+/// The switcher's menu path (#590). Its shortcut had a test from the
+/// start; the menu item it is supposed to sit beside was missing, and the
+/// shortcut alone cannot show a reader the feature exists.
+#[test]
+fn go_to_repository_opens_the_switcher_from_the_menu() {
+    let _serial = serially();
+    let dir = scratch("go-menu");
+    let (ui, _app) = window_at(&dir);
+
+    from_menu(&ui, "Go", "Go to Repository...");
+
+    assert!(
+        ui.get_switcher_open(),
+        "Go > Go to Repository... should open the switcher"
+    );
+}
+
 #[test]
 fn f1_opens_the_keyboard_shortcuts_sheet_and_escape_closes_it() {
     let _serial = serially();

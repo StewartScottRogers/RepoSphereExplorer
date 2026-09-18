@@ -118,6 +118,9 @@ fn install_spy(ui: &MainWindow, fires: Fires, log: &Rc<RefCell<Vec<String>>>) {
         Fires::EditRequested => spy!(on_edit_requested, "edit-requested"),
         Fires::FindRequested => spy!(on_find_requested, "find-requested"),
         Fires::FilterFocusRequested => spy!(on_filter_focus_requested, "filter-focus-requested"),
+        Fires::SwitcherOpenRequested => {
+            spy!(on_switcher_open_requested, "switcher-open-requested");
+        }
         Fires::CancelRequested => spy!(on_cancel_requested, "cancel-requested"),
         Fires::ZoomInRequested => spy!(on_zoom_in_requested, "zoom-in-requested"),
         Fires::ZoomOutRequested => spy!(on_zoom_out_requested, "zoom-out-requested"),

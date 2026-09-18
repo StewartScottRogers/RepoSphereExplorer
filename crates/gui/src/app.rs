@@ -7,6 +7,7 @@
 use crate::document::Document;
 use crate::editor;
 use crate::launch::{self, Launch, Platform};
+use crate::switcher;
 use plugin_api::{
     Class, Fact, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span,
     TEXT_VIEW, UNKNOWN_ICON,
@@ -360,6 +361,10 @@ pub struct FolderNode {
     /// The working copy's remote, as written in its own configuration
     /// (#581) - what "Copy remote address" copies for a Folders pane row.
     pub remote: Option<String>,
+    /// The working copy's branch, `None` for a detached head - what the
+    /// Go to Repository switcher (#590) shows beside a result, since a
+    /// repository the switcher lists may not be the folder on screen.
+    pub branch: Option<String>,
 }
 
 impl FolderNode {
@@ -378,6 +383,7 @@ impl FolderNode {
             is_repository: false,
             provider: None,
             remote: None,
+            branch: None,
         }
     }
 
@@ -418,6 +424,7 @@ impl FolderNode {
                         is_repository: false,
                         provider: None,
                         remote: None,
+                        branch: None,
                     });
                     // Read fresh each time rather than only on first sight:
                     // a folder can turn into a working copy (or stop being
@@ -431,6 +438,10 @@ impl FolderNode {
                         .repository
                         .as_ref()
                         .and_then(|repository| repository.remote.clone());
+                    node.branch = entry
+                        .repository
+                        .as_ref()
+                        .and_then(|repository| repository.branch.clone());
                     node
                 })
                 .collect(),
@@ -512,6 +523,15 @@ enum Mode {
     /// address bar the way a path is typed.
     FindInput {
         input: String,
+    },
+    /// Ctrl+P / Cmd+P's "Go to Repository" switcher (#590): a query fuzzy-
+    /// matched against the Repos Directory's repositories in an overlay of
+    /// its own. Unlike the Contents pane's filter (#582), which narrows
+    /// whatever folder is already open, Enter here jumps to a repository
+    /// outright - so it takes over the keyboard as its own mode rather
+    /// than a flag on `Mode::Normal` the way that filter is.
+    Switcher {
+        query: String,
     },
 }
 
@@ -1328,6 +1348,29 @@ pub struct ContentRow {
     pub stale_tooltip: String,
 }
 
+/// One match in the Go to Repository switcher (#590).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitcherRow {
+    /// The repository's name.
+    pub name: String,
+    /// Its path relative to the Repos Directory, minus its own name -
+    /// empty until #591 lets a result be nested rather than a direct
+    /// child, dimmed beside `name` once it is not.
+    pub path: String,
+    /// Its branch, `detached` when it is on none - as [`ContentRow::branch`].
+    pub branch: String,
+    /// As [`ContentRow::marker`], but [`NOT_KNOWN_YET_MARKER`] whenever the
+    /// Repos Directory is not the folder on screen, since nothing has asked
+    /// this repository's working tree for its status in that case.
+    pub marker: String,
+    /// As [`ContentRow::marker_tooltip`].
+    pub marker_tooltip: String,
+    /// As [`ContentRow::marker_warning`].
+    pub marker_warning: bool,
+    /// Whether this is the switcher's highlighted result.
+    pub selected: bool,
+}
+
 /// One row of the File pane's fact table (#576).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactRow {
@@ -1385,6 +1428,11 @@ pub struct App {
     /// The Contents pane's filter (#582): a name typed into its field
     /// and/or the status bar's changed-only link.
     filter: Filter,
+    /// The highlighted row in the Go to Repository switcher's matches
+    /// (#590), while `mode` is `Mode::Switcher`. An index into that
+    /// query's matches, not into the full repository list, so it stays
+    /// meaningful as the query - and so the set of matches - changes.
+    switcher_selected: usize,
     /// Set alongside `reselect` by an operation, a save, or a manual
     /// refresh - a reload of the folder already on screen, as opposed to a
     /// navigation to a different one. Read once by the next listing to
@@ -1506,6 +1554,7 @@ impl App {
             all_contents: Vec::new(),
             contents: Vec::new(),
             filter: Filter::default(),
+            switcher_selected: 0,
             same_folder_reload: false,
             content_selected: 0,
             file_view: None,
@@ -2054,7 +2103,11 @@ impl App {
             | Mode::PathInput { input }
             | Mode::FindInput { input }
             | Mode::ReposRootInput { input } => Some(input),
-            Mode::Normal | Mode::ConfirmDelete { .. } => None,
+            // The switcher's own `type_into_switcher`/`switcher_backspace`
+            // edit `query` directly, so a query change also resets which
+            // match is highlighted - one generic `&mut String` cannot do
+            // that.
+            Mode::Normal | Mode::ConfirmDelete { .. } | Mode::Switcher { .. } => None,
         }
     }
 
@@ -2191,6 +2244,10 @@ impl App {
             self.reset_selection_after_filter();
             return;
         }
+        if matches!(self.mode, Mode::Switcher { .. }) {
+            self.switcher_backspace();
+            return;
+        }
         if let Some(input) = self.input_mut() {
             input.pop();
         }
@@ -2224,6 +2281,7 @@ impl App {
             Mode::Normal if os == "macos" => self.request_rename(),
             Mode::Normal => self.activate_selection(),
             Mode::ConfirmDelete { .. } => {}
+            Mode::Switcher { .. } => self.confirm_switcher(),
         }
     }
 
@@ -2268,6 +2326,9 @@ impl App {
             // not a command. Rename, copy and extract are on F2, Ctrl+C and
             // the context menu.
             Mode::Normal => self.type_ahead(text),
+            // The switcher's own query (#590), fuzzy-matched rather than
+            // narrowing a listing.
+            Mode::Switcher { .. } => self.type_into_switcher(text),
         }
     }
 
@@ -2303,6 +2364,20 @@ impl App {
     /// previewing. Ignored while a name is being typed, where the arrow keys
     /// belong to the input.
     pub fn move_selection(&mut self, delta: i32) {
+        if let Mode::Switcher { query } = &self.mode {
+            let Some(last) = self.switcher_matches(query).len().checked_sub(1) else {
+                return;
+            };
+            self.switcher_selected = if delta < 0 {
+                self.switcher_selected
+                    .saturating_sub(delta.unsigned_abs() as usize)
+            } else {
+                self.switcher_selected
+                    .saturating_add(delta.unsigned_abs() as usize)
+                    .min(last)
+            };
+            return;
+        }
         if !matches!(self.mode, Mode::Normal) {
             return;
         }
@@ -3980,6 +4055,156 @@ impl App {
         self.focus = Pane::Contents;
     }
 
+    /// Ctrl+P / Cmd+P: opens the Go to Repository switcher (#590). Refused
+    /// while another prompt, the editor or a cross-repository search
+    /// already has the keyboard, the same guard [`Self::begin_filter`]
+    /// uses.
+    pub fn begin_switcher(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing_file.is_some() || self.found.is_some()
+        {
+            return;
+        }
+        self.switcher_selected = 0;
+        self.mode = Mode::Switcher {
+            query: String::new(),
+        };
+    }
+
+    /// The Repos Directory's direct children that are working copies -
+    /// nested ones wait on #591 - matched against `query` and ranked by
+    /// [`switcher::score`], word-start and contiguous runs first. An empty
+    /// query keeps every repository, in name order.
+    fn switcher_matches(&self, query: &str) -> Vec<&FolderNode> {
+        let repositories = self
+            .root
+            .children
+            .iter()
+            .flatten()
+            .filter(|node| node.is_repository);
+        if query.is_empty() {
+            // The Contents pane's order, as far as a repository has the
+            // fields for it: they are all folders, so they have no size and
+            // one kind between them, and the tree the switcher reads knows
+            // no modified time. What is left is the name - and the
+            // direction, which the reader did choose and which the pane is
+            // showing right now.
+            let mut repositories: Vec<&FolderNode> = repositories.collect();
+            repositories.sort_by(|a, b| {
+                let ordering = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+                if self.sort_ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                }
+            });
+            return repositories;
+        }
+        let mut scored: Vec<(i32, &FolderNode)> = repositories
+            .filter_map(|node| switcher::score(query, &node.name).map(|score| (score, node)))
+            .collect();
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()))
+        });
+        scored.into_iter().map(|(_, node)| node).collect()
+    }
+
+    /// Whether the Go to Repository switcher is open.
+    #[must_use]
+    pub const fn switcher_open(&self) -> bool {
+        matches!(self.mode, Mode::Switcher { .. })
+    }
+
+    /// The switcher's typed query, or an empty string while it is closed.
+    #[must_use]
+    pub fn switcher_query(&self) -> String {
+        match &self.mode {
+            Mode::Switcher { query } => query.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// The switcher's matches for its current query, for the overlay to
+    /// draw: each result's name, branch and change marker, the way
+    /// Contents shows them. The change marker is only ever real when the
+    /// Repos Directory itself is the folder on screen - the listing
+    /// [`Self::row_statuses`] answers for - and is the "not known yet"
+    /// glyph otherwise, same as a Contents row not yet asked about.
+    #[must_use]
+    pub fn switcher_rows(&self) -> Vec<SwitcherRow> {
+        let query = self.switcher_query();
+        let at_root = self.selected_dir_path() == self.root.path;
+        self.switcher_matches(&query)
+            .into_iter()
+            .enumerate()
+            .map(|(index, node)| {
+                let marker = if at_root {
+                    self.marker_for(&node.name)
+                } else {
+                    NOT_KNOWN_YET_MARKER
+                };
+                SwitcherRow {
+                    name: node.name.clone(),
+                    // Every result is a direct child of the Repos Directory
+                    // until #591 lands, so it has no path of its own to show
+                    // beside its name.
+                    path: String::new(),
+                    branch: node.branch.clone().unwrap_or_else(|| "detached".to_owned()),
+                    marker: marker.to_owned(),
+                    marker_tooltip: marker_tooltip(marker).to_owned(),
+                    marker_warning: marker == CHANGED_MARKER,
+                    selected: index == self.switcher_selected,
+                }
+            })
+            .collect()
+    }
+
+    /// Appends one typed character to the switcher's query (#590),
+    /// resetting the highlight to the new query's first match.
+    fn type_into_switcher(&mut self, text: &str) {
+        let Some(c) = text.chars().next() else {
+            return;
+        };
+        if !typeable(c) {
+            return;
+        }
+        if let Mode::Switcher { query } = &mut self.mode {
+            query.push(c);
+        }
+        self.switcher_selected = 0;
+    }
+
+    /// Removes the last character of the switcher's query (#590).
+    fn switcher_backspace(&mut self) {
+        if let Mode::Switcher { query } = &mut self.mode {
+            query.pop();
+        }
+        self.switcher_selected = 0;
+    }
+
+    /// Return in the switcher: goes to the highlighted match, exactly as
+    /// clicking it would.
+    fn confirm_switcher(&mut self) {
+        self.activate_switcher_result(self.switcher_selected);
+    }
+
+    /// Clicking a switcher result, or Return while it is highlighted:
+    /// selects that repository in Contents, and its parent - the Repos
+    /// Directory itself - in Folders, the same as clicking the repository
+    /// there would. Every result is already a direct child of the root
+    /// (#591 is what would make that not so), so this reselects the root
+    /// row rather than re-rooting the whole tree the way Find's jump to an
+    /// arbitrary folder has to.
+    pub fn activate_switcher_result(&mut self, index: usize) {
+        let Mode::Switcher { query } = std::mem::replace(&mut self.mode, Mode::Normal) else {
+            return;
+        };
+        if let Some(node) = self.switcher_matches(&query).get(index) {
+            self.reselect = Some(node.name.clone());
+            self.select_folder(0);
+        }
+    }
+
     /// Clicking "N with uncommitted changes" in the status bar (#582):
     /// narrows the Contents pane to just those rows.
     pub fn filter_to_changed(&mut self) {
@@ -4551,6 +4776,7 @@ impl App {
                     "Repos Directory: {input}_  (Enter to open there from now on, Esc to cancel)"
                 )
             }
+            Mode::Switcher { query } => format!("Go to repository: {query}_  (Enter/Esc)"),
             Mode::Normal => self
                 .status
                 .clone()
@@ -4578,8 +4804,13 @@ impl App {
                 format!("Where are your repositories?  {input}")
             }
             // The address bar shows its own text field; the contents pane
-            // has nothing to say about a path being typed.
-            Mode::PathInput { .. } | Mode::FindInput { .. } | Mode::Normal => String::new(),
+            // has nothing to say about a path being typed. The switcher
+            // (#590) draws its own overlay, over every pane, so it has
+            // nothing to say about one row either.
+            Mode::PathInput { .. }
+            | Mode::FindInput { .. }
+            | Mode::Normal
+            | Mode::Switcher { .. } => String::new(),
         }
     }
 
@@ -4603,11 +4834,13 @@ impl App {
             | Mode::CopyInput { path, .. }
             | Mode::ExtractInput { path, .. } => path,
             // Nothing else is drawn on a row: the address bar's two
-            // prompts live in the address bar, and Normal has no prompt.
+            // prompts live in the address bar, Normal has no prompt, and
+            // the switcher (#590) draws over every pane rather than one row.
             Mode::Normal
             | Mode::PathInput { .. }
             | Mode::FindInput { .. }
-            | Mode::ReposRootInput { .. } => return -1,
+            | Mode::ReposRootInput { .. }
+            | Mode::Switcher { .. } => return -1,
         };
         let dir = self.selected_dir_path();
         self.contents
@@ -8717,6 +8950,127 @@ third",
 
         app.clear_filters();
         assert_eq!(app.content_rows().len(), 3);
+    }
+
+    #[test]
+    fn the_switchers_own_order_follows_the_way_contents_is_sorted() {
+        // #590 asks for "Contents' current sort order". Sorting the pane
+        // the other way round turns the switcher's list round with it; the
+        // review of #634 found it always alphabetical.
+        let mut app = app_listing_checkouts(&["alpha", "beta", "gamma"]);
+
+        app.begin_switcher();
+        let ascending: Vec<String> = app
+            .switcher_rows()
+            .into_iter()
+            .map(|row| row.name)
+            .collect();
+        assert_eq!(ascending, vec!["alpha", "beta", "gamma"]);
+        app.cancel_pending();
+
+        // Column 0 is Name: clicking it again reverses the direction.
+        app.sort_by_column(0);
+        app.begin_switcher();
+        let descending: Vec<String> = app
+            .switcher_rows()
+            .into_iter()
+            .map(|row| row.name)
+            .collect();
+
+        assert_eq!(
+            descending,
+            vec!["gamma", "beta", "alpha"],
+            "the switcher should list them the way the pane is listing them"
+        );
+    }
+
+    #[test]
+    fn opening_the_switcher_lists_every_repository_in_name_order() {
+        let mut app = app_listing_checkouts(&["zulu", "alpha", "mike"]);
+
+        app.begin_switcher();
+
+        assert!(app.switcher_open());
+        let names: Vec<_> = app.switcher_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(names, vec!["alpha", "mike", "zulu"]);
+    }
+
+    #[test]
+    fn typing_narrows_to_fuzzy_matches_and_resets_the_highlight() {
+        let mut app = app_listing_checkouts(&["TankSwarmCode", "other-repo"]);
+
+        app.begin_switcher();
+        app.handle_key_text("t");
+        app.handle_key_text("s");
+        app.handle_key_text("c");
+
+        let rows = app.switcher_rows();
+        assert_eq!(rows[0].name, "TankSwarmCode");
+        assert!(rows[0].selected, "the first match is highlighted");
+    }
+
+    #[test]
+    fn typing_into_the_switcher_sends_no_directory_or_find_request() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        // Discard the listing `App::new` already asked for at startup,
+        // which has nothing to do with the switcher.
+        app.pending_contents = None;
+
+        app.begin_switcher();
+        app.handle_key_text("a");
+        app.handle_key_text("l");
+        app.backspace();
+
+        assert!(
+            app.pending_contents.is_none(),
+            "a typed query must not walk the filesystem (#590)"
+        );
+        assert!(app.pending_find.is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_switcher_without_changing_the_selection() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        app.select_content(1);
+
+        app.begin_switcher();
+        app.handle_key_text("a");
+        app.cancel_pending();
+
+        assert!(!app.switcher_open());
+        assert_eq!(app.content_selected(), 1);
+    }
+
+    #[test]
+    fn return_on_the_highlighted_match_goes_to_it_once_the_listing_lands() {
+        let mut app = app_listing_checkouts(&["alpha", "beta", "gamma"]);
+        app.begin_switcher();
+        app.handle_key_text("b");
+
+        app.handle_return();
+
+        assert!(!app.switcher_open(), "Return closes the switcher");
+        assert_eq!(
+            app.folder_selected(),
+            0,
+            "the repository's parent, the Repos Directory, is selected in Folders"
+        );
+
+        // The fresh listing `select_folder` asked for, landing the way it
+        // would after a real click on the Repos Directory's row.
+        app.apply_contents_result_for_test(
+            &[],
+            Response::Directory {
+                entries: entries(&[
+                    ("alpha", true),
+                    ("beta", true),
+                    ("gamma", true),
+                    ("plain.txt", false),
+                ]),
+            },
+        );
+        let selected = app.content_rows()[app.content_selected()].name.clone();
+        assert_eq!(selected.trim_end_matches('/'), "beta");
     }
 
     #[test]
