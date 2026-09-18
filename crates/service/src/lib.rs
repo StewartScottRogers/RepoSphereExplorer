@@ -1,5 +1,6 @@
 //! The fat process: filesystem traversal, indexing, operations, and plugin cores.
 
+mod all_repositories;
 pub mod repos;
 
 use interprocess::local_socket::traits::Listener as _;
@@ -392,7 +393,7 @@ pub fn find_names(root: &Path, query: &str, limit: usize) -> (Vec<NameMatch>, bo
 
 /// `path` relative to `root`, with `/` between its components on every
 /// platform, as [`NameMatch`] carries it.
-fn relative_to(root: &Path, path: &Path) -> String {
+pub(crate) fn relative_to(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .components()
@@ -1137,6 +1138,10 @@ pub fn handle_request(request: &Request) -> Response {
             let outcome = repos::set_active_root(target);
             journal("set-repos-root", &[target.display().to_string()], &outcome);
             respond_to_operation(outcome)
+        }
+        Request::AllRepositories { root, refresh } => {
+            let (entries, done) = all_repositories::poll(Path::new(root), *refresh);
+            Response::AllRepositories { entries, done }
         }
     }
 }
