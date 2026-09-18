@@ -87,30 +87,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sync_ui(&ui, &app.borrow());
 
     gui::wire_callbacks(&ui, &app);
+    // Held outside `windows` so `.run()` below never has to borrow it: the
+    // event loop it starts is what pop-out and dock (#617) themselves run
+    // inside of, and a borrow held across it would make the first of
+    // either panic.
+    let run_handle = ui
+        .as_weak()
+        .upgrade()
+        .expect("the window has not been dropped yet");
+    let windows = Rc::new(RefCell::new(gui::PaneWindows::new(ui)));
+    gui::wire_pop_out(windows.borrow().main(), None, &windows, &app);
 
     let timer = Timer::default();
     let tick_app = app.clone();
-    let tick_ui = ui.as_weak();
+    let tick_windows = windows.clone();
     let tick_geometry_tracker = geometry_tracker.clone();
     timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
         let mut app = tick_app.borrow_mut();
         app.tick();
-        if let Some(ui) = tick_ui.upgrade() {
-            sync_ui(&ui, &app);
-            gui::ask_for_visible_statuses(&ui, &mut app);
-            gui::fit_pane_widths_to_window(&ui);
-            gui::observe_window_geometry(&ui, &tick_geometry_tracker);
+        let windows = tick_windows.borrow();
+        for ui in windows.windows() {
+            sync_ui(ui, &app);
+            gui::ask_for_visible_statuses(ui, &mut app);
         }
+        gui::fit_pane_widths_to_window(windows.main());
+        gui::observe_window_geometry(windows.main(), &tick_geometry_tracker);
     });
 
-    ui.run()?;
+    run_handle.run()?;
     // Written on the way out rather than on every drag or move: the layout
     // only has to survive to the next run.
     gui::settings::save_pane_widths(gui::settings::PaneWidths {
-        folders: ui.get_folders_width(),
-        contents: ui.get_contents_width(),
+        folders: run_handle.get_folders_width(),
+        contents: run_handle.get_contents_width(),
     });
-    if let Some(geometry) = gui::geometry_to_save(&ui, &geometry_tracker) {
+    if let Some(geometry) = gui::geometry_to_save(&run_handle, &geometry_tracker) {
         gui::settings::save_window_geometry(geometry);
     }
     gui::settings::save_zoom(app.borrow().zoom_percent());

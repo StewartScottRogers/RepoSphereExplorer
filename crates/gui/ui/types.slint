@@ -72,6 +72,13 @@ export struct ContentRow {
     stale-tooltip: string,
 }
 
+// One row of the View menu's Pop Out and Dock lists (#617): the pane's
+// name, and the index `pop-out-requested`/`dock-requested` take to mean it.
+export struct PaneMenuRow {
+    label: string,
+    pane: int,
+}
+
 // One match in the Go to Repository switcher (#590).
 export struct SwitcherRow {
     name: string,

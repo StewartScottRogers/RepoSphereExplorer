@@ -477,7 +477,7 @@ impl FolderNode {
 }
 
 /// Which pane last received user interaction, for the "focused" highlight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pane {
     /// The folders tree pane.
     Folders,

@@ -8,8 +8,8 @@ mod generated {
     slint::include_modules!();
 }
 pub use generated::{
-    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, ShortcutRow,
-    SwitcherRow, Theme, Zoom,
+    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, PaneMenuRow,
+    ShortcutRow, SwitcherRow, Theme, Zoom,
 };
 
 pub mod app;
@@ -26,7 +26,7 @@ pub mod tools;
 
 pub use app::PRESENTATION_PLUGINS;
 
-use app::{App, RepositoryMark};
+use app::{App, Pane, RepositoryMark};
 use plugin_api::{Class, Graphic, Icon};
 use slint::ComponentHandle as _;
 use slint::{Image, ModelRc, SharedPixelBuffer, SharedString, VecModel};
@@ -713,6 +713,243 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_switcher(ui, app);
     wire_all_repositories(ui, app);
     wire_tools(ui, app);
+}
+
+/// The application's open windows (#617): the main one, and one more for
+/// every pane currently popped out of it. All of them are wired against
+/// the same `Rc<RefCell<App>>`, and driven by the same 100ms timer, so a
+/// change made in any one of them reaches every other the moment it next
+/// ticks - see `main`'s timer and `sync_ui`.
+pub struct PaneWindows {
+    main: MainWindow,
+    popped: HashMap<Pane, MainWindow>,
+}
+
+impl PaneWindows {
+    /// A registry holding only `main`, with nothing popped out of it yet.
+    #[must_use]
+    pub fn new(main: MainWindow) -> Self {
+        Self {
+            main,
+            popped: HashMap::new(),
+        }
+    }
+
+    /// The main window.
+    #[must_use]
+    pub fn main(&self) -> &MainWindow {
+        &self.main
+    }
+
+    /// Every open window: the main one, then each popped-out one.
+    pub fn windows(&self) -> impl Iterator<Item = &MainWindow> {
+        std::iter::once(&self.main).chain(self.popped.values())
+    }
+
+    /// The window holding `pane` right now: the one it popped out into, or
+    /// the main window if it has not.
+    #[must_use]
+    pub fn window_for(&self, pane: Pane) -> &MainWindow {
+        self.popped.get(&pane).unwrap_or(&self.main)
+    }
+
+    /// Whether `pane` is currently popped out of the main window.
+    #[must_use]
+    pub fn is_popped_out(&self, pane: Pane) -> bool {
+        self.popped.contains_key(&pane)
+    }
+}
+
+/// `pane`'s index among the three panes (0 Folders, 1 Contents, 2 File):
+/// what `pop-out-requested`/`dock-requested` and a `PaneMenuRow` carry,
+/// matching `App::focus_index`.
+fn pane_index(pane: Pane) -> i32 {
+    match pane {
+        Pane::Folders => 0,
+        Pane::Contents => 1,
+        Pane::File => 2,
+    }
+}
+
+/// The pane a `pop-out-requested`/`dock-requested` index names, or `None`
+/// for a value that names none of the three - which the markup never
+/// sends, but a stray one is ignored rather than mistaken for a pane.
+fn pane_from_index(index: i32) -> Option<Pane> {
+    match index {
+        0 => Some(Pane::Folders),
+        1 => Some(Pane::Contents),
+        2 => Some(Pane::File),
+        _ => None,
+    }
+}
+
+/// What a popped-out window for `pane` is titled after: "Folders" and
+/// "Contents" plainly, and the tool slot's own current title - which
+/// changes with the selection - for the third.
+fn pane_title(pane: Pane, app: &App) -> String {
+    match pane {
+        Pane::Folders => "Folders".to_string(),
+        Pane::Contents => "Contents".to_string(),
+        Pane::File => app.active_tool_title(),
+    }
+}
+
+/// The View menu's Pop Out and Dock lists (#617): every pane not currently
+/// popped out, and every one that is.
+fn pane_menu_rows(windows: &PaneWindows, app: &App) -> (Vec<PaneMenuRow>, Vec<PaneMenuRow>) {
+    let mut pop_out_rows = Vec::new();
+    let mut dock_rows = Vec::new();
+    for pane in [Pane::Folders, Pane::Contents, Pane::File] {
+        let row = PaneMenuRow {
+            label: pane_title(pane, app).into(),
+            pane: pane_index(pane),
+        };
+        if windows.popped.contains_key(&pane) {
+            dock_rows.push(row);
+        } else {
+            pop_out_rows.push(row);
+        }
+    }
+    (pop_out_rows, dock_rows)
+}
+
+/// Pushes the View menu's Pop Out and Dock lists, freshly built from which
+/// panes are popped out right now, onto every open window - so a pane
+/// popped out or docked from any one of them is reflected in all.
+fn refresh_pane_menus(windows: &Rc<RefCell<PaneWindows>>, app: &App) {
+    let windows = windows.borrow();
+    let (pop_out_rows, dock_rows) = pane_menu_rows(&windows, app);
+    for ui in windows.windows() {
+        ui.set_pop_out_rows(ModelRc::new(VecModel::from(pop_out_rows.clone())));
+        ui.set_dock_rows(ModelRc::new(VecModel::from(dock_rows.clone())));
+    }
+}
+
+/// Sizes `ui` sensibly and places it beside `main` (#617), rather than
+/// leaving it wherever the platform's own default happens to put a new
+/// window.
+fn place_beside_main(main: &MainWindow, ui: &slint::Window) {
+    const DEFAULT_WIDTH: f32 = 480.0;
+    const DEFAULT_HEIGHT: f32 = 600.0;
+    ui.set_size(slint::LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT));
+    if let Some(geometry) = normal_window_geometry(main) {
+        ui.set_position(slint::LogicalPosition::new(
+            geometry.x + geometry.width,
+            geometry.y,
+        ));
+    }
+}
+
+/// Pops `pane` out of the window that currently holds it into a new window
+/// of its own (#617): titled for the pane, sized and placed beside the
+/// main window, wired the same as any other window - a no-op if it is
+/// already out.
+fn pop_out(pane: Pane, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
+    if windows.borrow().popped.contains_key(&pane) {
+        return;
+    }
+    let title = pane_title(pane, &app.borrow());
+    let new_ui = MainWindow::new().expect("a popped-out window should build");
+    new_ui.set_is_main_window(false);
+    new_ui.set_show_folders_pane(pane == Pane::Folders);
+    new_ui.set_show_contents_pane(pane == Pane::Contents);
+    new_ui.set_show_file_pane(pane == Pane::File);
+    new_ui.set_window_title(format!("Repos Explorer - {title}").into());
+    {
+        let main_window = windows.borrow();
+        place_beside_main(&main_window.main, new_ui.window());
+    }
+    wire_callbacks(&new_ui, app);
+    wire_pop_out(&new_ui, Some(pane), windows, app);
+    sync_ui(&new_ui, &app.borrow());
+    new_ui.show().expect("a popped-out window should show");
+
+    {
+        let main_window = windows.borrow();
+        match pane {
+            Pane::Folders => main_window.main.set_show_folders_pane(false),
+            Pane::Contents => main_window.main.set_show_contents_pane(false),
+            Pane::File => main_window.main.set_show_file_pane(false),
+        }
+    }
+    windows.borrow_mut().popped.insert(pane, new_ui);
+    refresh_pane_menus(windows, &app.borrow());
+}
+
+/// Docks `pane` back into the main window, closing the window it had
+/// popped out into (#617) - a no-op if it is not out.
+fn dock(pane: Pane, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
+    let Some(popped_ui) = windows.borrow_mut().popped.remove(&pane) else {
+        return;
+    };
+    let _ = popped_ui.hide();
+    {
+        let main_window = windows.borrow();
+        match pane {
+            Pane::Folders => main_window.main.set_show_folders_pane(true),
+            Pane::Contents => main_window.main.set_show_contents_pane(true),
+            Pane::File => main_window.main.set_show_file_pane(true),
+        }
+    }
+    refresh_pane_menus(windows, &app.borrow());
+}
+
+/// Wires a window's pop-out/dock button and its View menu's Pop Out and
+/// Dock lists (#617): `own_pane` is the pane this window is dedicated to
+/// popped out into its own window, or `None` for the main window, which
+/// holds all three until one of them pops out.
+///
+/// In the library rather than `main`, the same as [`wire_callbacks`], so a
+/// window test drives the same code the application does (rule 14).
+pub fn wire_pop_out(
+    ui: &MainWindow,
+    own_pane: Option<Pane>,
+    windows: &Rc<RefCell<PaneWindows>>,
+    app: &Rc<RefCell<App>>,
+) {
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        ui.on_pop_out_requested(move |index| {
+            if let Some(pane) = pane_from_index(index) {
+                pop_out(pane, &windows, &app);
+            }
+        });
+    }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        ui.on_dock_requested(move |index| {
+            if let Some(pane) = pane_from_index(index) {
+                dock(pane, &windows, &app);
+            }
+        });
+    }
+    if let Some(pane) = own_pane {
+        // Closing a popped-out window from the platform's own decoration
+        // docks it back, the same as its own dock button (GUIDANCE.md
+        // §2.6).
+        let windows = windows.clone();
+        let app = app.clone();
+        ui.window().on_close_requested(move || {
+            dock(pane, &windows, &app);
+            slint::CloseRequestResponse::KeepWindowShown
+        });
+    } else {
+        // The application exits when its last window closes (GUIDANCE.md
+        // §2.6): closing the main window - the one holding it - leaves no
+        // popped-out window dangling behind it.
+        let windows = windows.clone();
+        ui.window().on_close_requested(move || {
+            let popped_panes: Vec<Pane> = windows.borrow().popped.keys().copied().collect();
+            for pane in popped_panes {
+                if let Some(popped_ui) = windows.borrow_mut().popped.remove(&pane) {
+                    let _ = popped_ui.hide();
+                }
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+    }
 }
 
 /// Wires the tool slot's picker (#616): choosing a tool from it.
