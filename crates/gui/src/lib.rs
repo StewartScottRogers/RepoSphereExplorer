@@ -715,14 +715,21 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_tools(ui, app);
 }
 
-/// The application's open windows (#617): the main one, and one more for
-/// every pane currently popped out of it. All of them are wired against
-/// the same `Rc<RefCell<App>>`, and driven by the same 100ms timer, so a
-/// change made in any one of them reaches every other the moment it next
-/// ticks - see `main`'s timer and `sync_ui`.
+/// The application's open windows (#617): the main one, one more for every
+/// pane currently popped out of it, and one more again for every tool
+/// window ever pinned (#619) - which keeps its slot here for the rest of
+/// its life, whether it is pinned right now or has gone back to following
+/// the shared selection. All of them are wired against the same
+/// `Rc<RefCell<App>>`, and driven by the same 100ms timer, so a change made
+/// in any one of them reaches every other the moment it next ticks - see
+/// `main`'s timer and `sync_ui`.
 pub struct PaneWindows {
     main: MainWindow,
     popped: HashMap<Pane, MainWindow>,
+    /// Windows a File pop-out has been pinned into (#619), by the id
+    /// `App::pin_current`/`App::pin_extra_window` hands out - present here
+    /// whether or not `App` still counts that id as pinned right now.
+    pinned: HashMap<app::PinId, MainWindow>,
 }
 
 impl PaneWindows {
@@ -732,6 +739,7 @@ impl PaneWindows {
         Self {
             main,
             popped: HashMap::new(),
+            pinned: HashMap::new(),
         }
     }
 
@@ -741,9 +749,23 @@ impl PaneWindows {
         &self.main
     }
 
-    /// Every open window: the main one, then each popped-out one.
+    /// Every open window: the main one, then each popped-out one, then
+    /// each window a pin ever opened.
     pub fn windows(&self) -> impl Iterator<Item = &MainWindow> {
-        std::iter::once(&self.main).chain(self.popped.values())
+        std::iter::once(&self.main)
+            .chain(self.popped.values())
+            .chain(self.pinned.values())
+    }
+
+    /// Every open window alongside the pin id its own slot is tracked
+    /// under, if it has one - the main window and a live popped-out one
+    /// carry `None`; a window a pin ever opened carries `Some`, whether or
+    /// not `App` still counts it as pinned right now (`App::is_pinned`
+    /// says which).
+    pub fn windows_with_pin(&self) -> impl Iterator<Item = (&MainWindow, Option<app::PinId>)> {
+        std::iter::once((&self.main, None))
+            .chain(self.popped.values().map(|ui| (ui, None)))
+            .chain(self.pinned.iter().map(|(&id, ui)| (ui, Some(id))))
     }
 
     /// The window holding `pane` right now: the one it popped out into, or
@@ -757,6 +779,12 @@ impl PaneWindows {
     #[must_use]
     pub fn is_popped_out(&self, pane: Pane) -> bool {
         self.popped.contains_key(&pane)
+    }
+
+    /// The window `id` was ever pinned into, if it still has one open.
+    #[must_use]
+    pub fn pinned_window(&self, id: app::PinId) -> Option<&MainWindow> {
+        self.pinned.get(&id)
     }
 }
 
@@ -966,13 +994,30 @@ pub fn wire_pop_out(
     if let Some(pane) = own_pane {
         // Closing a popped-out window from the platform's own decoration
         // docks it back, the same as its own dock button (GUIDANCE.md
-        // §2.6).
-        let windows = windows.clone();
-        let app = app.clone();
-        ui.window().on_close_requested(move || {
-            dock(pane, &windows, &app);
-            slint::CloseRequestResponse::KeepWindowShown
-        });
+        // §2.6) - unless it has been pinned (#619 requirement 7), which
+        // `pane == Pane::File` below wires differently.
+        {
+            let windows = windows.clone();
+            let app = app.clone();
+            ui.window().on_close_requested(move || {
+                dock(pane, &windows, &app);
+                slint::CloseRequestResponse::KeepWindowShown
+            });
+        }
+        // The pin button (#619) only ever appears on the File pane's own
+        // popped-out window - see `PaneFrame`'s `pinnable`, set only where
+        // `file-pane` is instantiated - so this is the only pane whose
+        // pop-out window needs any of this wired at all.
+        //
+        // `pin_slot` remembers the id this window is pinned under, once it
+        // ever has been - `None` until then. Every one of these four
+        // callbacks is wired exactly once, right here, and reads or sets
+        // `pin_slot` on each call rather than being replaced later:
+        // replacing a callback from inside its own invocation (pinning,
+        // from the very `pin-requested` handler a click just entered)
+        // panics Slint's generated code ("Callback Handler set while
+        // called").
+        wire_pinning(ui, pane, windows, app);
     } else {
         // Closing the main window closes only the main window (#618): any
         // popped-out window keeps running, linked to every other, and the
@@ -983,6 +1028,300 @@ pub fn wire_pop_out(
         ui.window().on_close_requested(move || {
             close_main_window(&windows);
             slint::CloseRequestResponse::KeepWindowShown
+        });
+    }
+}
+
+/// Wires the pin button and the two ways a File pop-out window can be
+/// closed (#619). Its own function because the pinned case is not the
+/// docking case: Dock unpins and keeps the window, and the platform's
+/// close button refuses while an edit in it is unsaved.
+fn wire_pinning(
+    ui: &MainWindow,
+    pane: Pane,
+    windows: &Rc<RefCell<PaneWindows>>,
+    app: &Rc<RefCell<App>>,
+) {
+    let pin_slot: Rc<std::cell::Cell<Option<app::PinId>>> = Rc::new(std::cell::Cell::new(None));
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        let pin_slot = pin_slot.clone();
+        ui.window().on_close_requested(move || {
+            match pin_slot.get() {
+                // A pinned window holds the only copy of an edit in
+                // progress: the shared selection has no room for it,
+                // so closing would destroy it silently. Refuse, and
+                // say why, the way `cancel_file_edit` says "edit
+                // discarded" rather than losing one quietly.
+                Some(id) if app.borrow().pinned_edit_modified(id) => {
+                    refuse_to_lose_an_edit(&app);
+                }
+                Some(id) => close_extra(id, &windows, &app),
+                None => dock(pane, &windows, &app),
+            }
+            slint::CloseRequestResponse::KeepWindowShown
+        });
+    }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        let pin_slot = pin_slot.clone();
+        ui.on_dock_requested(move |index| match pin_slot.get() {
+            // #619 requirement 7, as written: docking a pinned
+            // window unpins it. The window stays where it is and
+            // follows the shared selection again, which is what the
+            // Unpin button does - and nothing it was holding, an
+            // edit in progress included, is lost.
+            Some(id) => unpin_extra(id, &windows, &app),
+            None => {
+                if let Some(pane) = pane_from_index(index) {
+                    dock(pane, &windows, &app);
+                }
+            }
+        });
+    }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        let pin_slot = pin_slot.clone();
+        ui.on_pin_requested(move || match pin_slot.get() {
+            None => {
+                if let Some(id) = pin_the_popped_file_window(&windows, &app) {
+                    pin_slot.set(Some(id));
+                }
+            }
+            Some(id) => pin_extra(id, &windows, &app),
+        });
+    }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        ui.on_unpin_requested(move || {
+            if let Some(id) = pin_slot.get() {
+                unpin_extra(id, &windows, &app);
+            }
+        });
+    }
+}
+
+/// Pins the tool slot's live File pop-out window to what it is showing
+/// now (#619): a no-op if nothing is selected to pin. From here on this
+/// window is its own thing - popping the File pane out again opens a
+/// fresh window that follows the shared selection, rather than reclaiming
+/// this one (requirement 4) - so its pin, dock and close all move to the
+/// id-keyed handlers below, for the rest of its life.
+///
+/// Wires none of the window's own callbacks: `wire_pop_out` already wired
+/// its pin/unpin/dock/close once, up front, to read the id this returns
+/// back out of the `pin_slot` it is stored in - replacing them here, from
+/// inside the very `pin-requested` handler a click just entered, is what
+/// used to panic Slint's generated code ("Callback Handler set while
+/// called").
+fn pin_the_popped_file_window(
+    windows: &Rc<RefCell<PaneWindows>>,
+    app: &Rc<RefCell<App>>,
+) -> Option<app::PinId> {
+    let ui = windows.borrow_mut().popped.remove(&Pane::File)?;
+    let Some(id) = app.borrow_mut().pin_current() else {
+        windows.borrow_mut().popped.insert(Pane::File, ui);
+        return None;
+    };
+    wire_file_pane_pinned(&ui, id, app);
+    apply_pinned_state(&ui, &app.borrow(), id);
+    windows.borrow_mut().pinned.insert(id, ui);
+    refresh_pane_menus(windows, &app.borrow());
+    Some(id)
+}
+
+/// Pins `id`'s window again, to whatever the shared selection is showing
+/// now - the same window, already tracked under `id` from an earlier pin,
+/// picking a fresh snapshot back up after having followed the shared
+/// selection since it was last unpinned.
+fn pin_extra(id: app::PinId, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
+    if !app.borrow_mut().pin_extra_window(id) {
+        return;
+    }
+    if let Some(ui) = windows.borrow().pinned.get(&id) {
+        apply_pinned_state(ui, &app.borrow(), id);
+    }
+}
+
+/// Unpins `id`'s window (#619 requirement 5): it keeps showing what it had
+/// until the next tick, which - following the shared selection again from
+/// this moment on - draws whatever that is right away.
+fn unpin_extra(id: app::PinId, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
+    app.borrow_mut().unpin(id);
+    if let Some(ui) = windows.borrow().pinned.get(&id) {
+        ui.set_pinned(false);
+        ui.set_window_title(
+            format!("Repos Explorer - {}", app.borrow().active_tool_title()).into(),
+        );
+        sync_ui(ui, &app.borrow());
+    }
+}
+
+/// Keeps `id`'s window open because it holds unsaved changes, and says so
+/// in its status line.
+///
+/// A pinned window's edit lives in its own `PinnedWindow` and nowhere else:
+/// an ordinary popped-out File window docks its edit back into the shared
+/// selection, and a pinned one has nothing to dock into. Closing it would
+/// be the one silent loss of work in the application (the review of #659).
+fn refuse_to_lose_an_edit(app: &Rc<RefCell<App>>) {
+    // Reported through the application, not written onto the window: a
+    // pinned window's status line is synced from the shared `App` on every
+    // tick, so a line set on the window alone would be gone a moment later.
+    app.borrow_mut()
+        .report("unsaved changes: save them, or discard the edit, before closing this window");
+}
+
+/// Closes `id`'s window for good: the platform's close button, once
+/// nothing would be lost by it. A pinned window has no pane slot of its
+/// own in the main window to return into, so closing is closing - its Dock
+/// button unpins instead.
+fn close_extra(id: app::PinId, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
+    if let Some(ui) = windows.borrow_mut().pinned.remove(&id) {
+        let _ = ui.hide();
+    }
+    app.borrow_mut().unpin(id);
+    refresh_pane_menus(windows, &app.borrow());
+}
+
+/// Pushes `id`'s freshly pinned state onto `ui`: the pinned flag and
+/// tooltip its own button reads, the window's title, and its content.
+fn apply_pinned_state(ui: &MainWindow, app: &App, id: app::PinId) {
+    ui.set_pinned(true);
+    if let Some(title) = app.pinned_title(id) {
+        ui.set_window_title(format!("Repos Explorer - {title}").into());
+    }
+    sync_pinned_window(ui, app, id);
+}
+
+/// Wires a pinned window's File pane callbacks (#619) to act on its own
+/// snapshot, under `id`, rather than the shared selection every other
+/// window follows - the pinned counterpart of the editing and tab/view
+/// choice callbacks `wire_editor`, `wire_rows` and `wire_commands` wire for
+/// a live window. Called once, right after a window is pinned for the
+/// first time; it stays bound for the rest of the window's life, pinned or
+/// not, since an unpinned extra window still only ever shows its own File
+/// pane.
+fn wire_file_pane_pinned(ui: &MainWindow, id: app::PinId, app: &Rc<RefCell<App>>) {
+    wire_editor_pinned(ui, id, app);
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_edit_requested(move || {
+            let mut app = app.borrow_mut();
+            app.pinned_begin_file_edit(id);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_pinned_window(&ui, &app, id);
+            }
+        });
+    }
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_save_requested(move || {
+            let mut app = app.borrow_mut();
+            if let Some(ui) = ui_weak.upgrade() {
+                app.pinned_set_edit_text(id, &ui.get_edit_text());
+            }
+            app.pinned_save_file_edit(id);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_pinned_window(&ui, &app, id);
+            }
+        });
+    }
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_cancel_requested(move || {
+            let mut app = app.borrow_mut();
+            app.pinned_cancel_file_edit(id);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_pinned_window(&ui, &app, id);
+            }
+        });
+    }
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_file_view_selected(move |i| {
+            let mut app = app.borrow_mut();
+            app.pinned_select_file_view(id, usize::try_from(i).unwrap_or(usize::MAX));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_pinned_window(&ui, &app, id);
+            }
+        });
+    }
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_file_tab_selected(move |i| {
+            let mut app = app.borrow_mut();
+            app.pinned_select_file_tab(id, usize::try_from(i).unwrap_or(usize::MAX));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_pinned_window(&ui, &app, id);
+            }
+        });
+    }
+}
+
+/// The keystroke and command half of [`wire_file_pane_pinned`], split out
+/// only to keep that function under its line cap - the pinned counterpart
+/// of [`wire_editor`].
+fn wire_editor_pinned(ui: &MainWindow, id: app::PinId, app: &Rc<RefCell<App>>) {
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        let mut clipboard = clipboard();
+        ui.on_edit_key(move |text, shift, control| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return false;
+            };
+            let rows = usize::try_from(ui.get_edit_visible_rows())
+                .unwrap_or(20)
+                .max(1);
+            let mut app = app.borrow_mut();
+            let used = app.pinned_edit_key(id, &mut clipboard, &text, shift, control, rows);
+            sync_pinned_window(&ui, &app, id);
+            used
+        });
+    }
+    macro_rules! on_edit_command_pinned {
+        ($setter:ident, $command:ident) => {{
+            let app = Rc::clone(app);
+            let ui_weak = ui.as_weak();
+            let mut clipboard = clipboard();
+            ui.$setter(move || {
+                let mut app = app.borrow_mut();
+                app.pinned_edit_command(id, app::EditCommand::$command, &mut clipboard);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_pinned_window(&ui, &app, id);
+                }
+            });
+        }};
+    }
+    on_edit_command_pinned!(on_edit_undo_requested, Undo);
+    on_edit_command_pinned!(on_edit_redo_requested, Redo);
+    on_edit_command_pinned!(on_edit_cut_requested, Cut);
+    on_edit_command_pinned!(on_edit_copy_requested, Copy);
+    on_edit_command_pinned!(on_edit_paste_requested, Paste);
+    {
+        let app = Rc::clone(app);
+        let ui_weak = ui.as_weak();
+        ui.on_edit_pressed(move |line, column| {
+            let mut app = app.borrow_mut();
+            app.pinned_edit_click(
+                id,
+                usize::try_from(line).unwrap_or(0),
+                usize::try_from(column).unwrap_or(0),
+                false,
+            );
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_pinned_window(&ui, &app, id);
+            }
         });
     }
 }
@@ -1579,6 +1918,118 @@ fn sync_switcher(ui: &MainWindow, app: &App) {
 /// Copies the File pane's own preview of the selected row - its graphic,
 /// views, coloured lines, plain text, fact table and README (#584) - into
 /// `ui`'s bound properties.
+/// Copies `id`'s own pinned state (#619) into `ui`'s bound properties - the
+/// pinned counterpart of [`sync_ui`], since a pinned window only ever shows
+/// the File pane and never the shared selection: no folders, contents,
+/// filter, switcher or Repos Directory message to draw.
+///
+/// Public, like `sync_ui`, so `main`'s timer - which does not otherwise
+/// need to know a pinned window from a live one - can sync every open
+/// window the same way: ask [`PaneWindows::windows_with_pin`] and
+/// [`app::App::is_pinned`] which function a given window needs.
+pub fn sync_pinned_window(ui: &MainWindow, app: &App, id: app::PinId) {
+    let graphic = app.pinned_file_graphic(id).as_ref().and_then(graphic_image);
+    ui.set_file_has_graphic(graphic.is_some());
+    ui.set_file_graphic(graphic.unwrap_or_default());
+    ui.set_file_view_index(row_index(app.pinned_file_view_index(id)));
+    ui.set_file_tabs(string_model(app.pinned_file_tabs(id)));
+    ui.set_file_tab_index(row_index(app.pinned_file_tab_index(id)));
+    ui.set_file_lines(ModelRc::new(VecModel::from(
+        app.pinned_file_lines(id)
+            .into_iter()
+            .map(|line| {
+                ModelRc::new(VecModel::from(
+                    line.into_iter()
+                        .map(|run| ColouredRun {
+                            text: run.text.into(),
+                            class: class_number(run.class),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+            })
+            .collect::<Vec<_>>(),
+    )));
+    ui.set_file_text(app.pinned_file_text(id).into());
+    ui.set_file_facts(ModelRc::new(VecModel::from(
+        app.pinned_file_facts(id)
+            .into_iter()
+            .map(|fact| FactRow {
+                label: fact.label.into(),
+                display_value: fact.display_value.into(),
+                full_value: fact.full_value.into(),
+                dim: fact.dim,
+            })
+            .collect::<Vec<_>>(),
+    )));
+    // A pinned window is always a file or folder's preview or edit, never
+    // the working copy the shared selection happens to be browsing - so,
+    // unlike the live File pane, it has no README section and no
+    // "Worktree of"/"Submodule of" line to draw.
+    ui.set_file_readme_name(SharedString::default());
+    ui.set_file_readme_title(SharedString::default());
+    ui.set_file_readme_excerpt(SharedString::default());
+    ui.set_file_related_repository_label(SharedString::default());
+    ui.set_file_related_repository_linked(false);
+    ui.set_editing_file(app.pinned_editing_file(id));
+    ui.set_can_edit(app.pinned_can_edit(id));
+    ui.set_status_text(app.status_text().into());
+    ui.set_focus_pane(2);
+    if let Some(title) = app.pinned_title(id) {
+        ui.set_active_tool_title(title.into());
+    }
+    ui.set_tool_showing_editor(true);
+    ui.set_tool_titles(string_model(Vec::new()));
+    ui.set_tool_index(0);
+    sync_pinned_editor(ui, app, id);
+}
+
+/// The pinned counterpart of [`sync_editor`].
+fn sync_pinned_editor(ui: &MainWindow, app: &App, id: app::PinId) {
+    ui.set_editing_in_colour(app.pinned_editing_in_colour(id));
+    ui.set_edit_modified(app.pinned_edit_modified(id));
+    ui.set_edit_can_undo(app.pinned_edit_can_undo(id));
+    ui.set_edit_can_redo(app.pinned_edit_can_redo(id));
+    ui.set_edit_has_selection(app.pinned_edit_has_selection(id));
+    let (line, column) = app.pinned_edit_position(id);
+    ui.set_edit_line(row_index(line));
+    ui.set_edit_column(row_index(column));
+    if !app.pinned_editing_file(id) {
+        return;
+    }
+    let text = app.pinned_edit_text(id);
+    if ui.get_edit_text() != text.as_str() {
+        ui.set_edit_text(text.into());
+    }
+    ui.set_edit_lines(ModelRc::new(VecModel::from(
+        app.pinned_edit_lines(id)
+            .into_iter()
+            .map(|line| {
+                ModelRc::new(VecModel::from(
+                    line.into_iter()
+                        .map(|run| ColouredRun {
+                            text: run.text.into(),
+                            class: class_number(run.class),
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+            })
+            .collect::<Vec<_>>(),
+    )));
+    let (line, column) = app.pinned_edit_caret(id);
+    ui.set_edit_caret_line(row_index(line));
+    ui.set_edit_caret_column(row_index(column));
+    ui.set_edit_longest_line(row_index(app.pinned_edit_longest_line(id)));
+    match app.pinned_edit_selection(id) {
+        Some(((start_line, start_column), (end_line, end_column))) => {
+            ui.set_edit_selection_start_line(row_index(start_line));
+            ui.set_edit_selection_start_column(row_index(start_column));
+            ui.set_edit_selection_end_line(row_index(end_line));
+            ui.set_edit_selection_end_column(row_index(end_column));
+        }
+        None => ui.set_edit_selection_start_line(-1),
+    }
+}
+
 fn sync_file_pane(ui: &MainWindow, app: &App) {
     let graphic = app.file_graphic().as_ref().and_then(graphic_image);
     ui.set_file_has_graphic(graphic.is_some());

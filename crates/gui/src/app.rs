@@ -342,6 +342,319 @@ pub fn present_view(plugin: &str, view: &str, data: &serde_json::Value) -> Vec<S
     }
 }
 
+/// The File pane's own accessors (#619), lifted out of the methods that
+/// read `self.file_view`/`self.file_view_index`/`self.editing_file` so a
+/// pinned window's own snapshot can be drawn through the very same logic
+/// as the shared selection's, rather than a second copy of it that could
+/// drift.
+///
+/// The picture the previewed file's plugin offers, if its type is one, for
+/// [`App::file_graphic`] and its pinned counterpart.
+fn file_graphic_of(file_view: Option<&Response>, file_view_index: usize) -> Option<Graphic> {
+    // The picture belongs to the Preview: it is what the plugin renders.
+    // The Text tab is the file read plainly, and a fixed band of rendered
+    // drawing above it is the Preview intruding on the one view that
+    // exists to get away from it. An SVG is a picture and text at once,
+    // so it has both tabs and this is reachable - read the file's markup
+    // and the drawing of it was still there, taking a fifth of the pane,
+    // with no way to dismiss it.
+    if file_views_of(file_view).get(file_view_index) != Some(&PREVIEW_VIEW) {
+        return None;
+    }
+    match file_view {
+        Some(Response::FileView { plugin, data, .. }) => present_graphic(plugin, data),
+        _ => None,
+    }
+}
+
+/// The views the previewed file's type offers, for [`App::file_views`] and
+/// its pinned counterpart.
+fn file_views_of(file_view: Option<&Response>) -> Vec<&'static str> {
+    match file_view {
+        Some(Response::FileView { plugin, data, .. }) => PRESENTATION_PLUGINS
+            .iter()
+            .find(|candidate| candidate.name() == plugin)
+            .map(|candidate| candidate.views(data))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// The Text view's lines, coloured, for [`App::file_lines`] and its pinned
+/// counterpart.
+fn file_lines_of(file_view: Option<&Response>, file_view_index: usize) -> Vec<Vec<ColouredRun>> {
+    let Some(Response::FileView { plugin, data, .. }) = file_view else {
+        return Vec::new();
+    };
+    let showing = file_views_of(file_view).get(file_view_index).copied();
+    if showing != Some(TEXT_VIEW) && showing != Some(PREVIEW_VIEW) {
+        return Vec::new();
+    }
+    let Some(text) = data.get("content").and_then(serde_json::Value::as_str) else {
+        return Vec::new();
+    };
+    let Some(presentation) = PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+    else {
+        return Vec::new();
+    };
+    let spans = presentation.classify(text);
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    let coloured = colour_lines(text, &spans);
+    if showing == Some(TEXT_VIEW) {
+        return coloured;
+    }
+
+    // The Preview is the plugin's summary and then, for a source
+    // language, the file itself - the same bytes the Text tab colours.
+    // Leaving one plain and the other coloured reads as the colouring
+    // being broken rather than as two views doing different jobs.
+    let preview = present(plugin, data);
+    let Some(from) = file_starts_in_preview(&preview, text) else {
+        // A Preview that is all summary - `msbuild` prints no file - is
+        // left exactly as it was.
+        return Vec::new();
+    };
+    let mut lines: Vec<Vec<ColouredRun>> = preview[..from]
+        .iter()
+        .map(|line| colour_summary_line(line).unwrap_or_else(|| plain_line(line)))
+        .collect();
+    lines.extend(coloured);
+    lines
+}
+
+/// The tab strip above the File pane, for [`App::file_tabs`] and its
+/// pinned counterpart.
+fn file_tabs_of(file_view: Option<&Response>, editing_file: Option<&Edit>) -> Vec<String> {
+    if editing_file.is_some() {
+        return vec![EDITING_TAB.to_owned()];
+    }
+    let mut tabs: Vec<String> = file_views_of(file_view)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if editing_file.is_none() && editable_text_of(file_view).is_some() {
+        tabs.push(EDIT_TAB.to_owned());
+    }
+    tabs
+}
+
+/// The File pane's fact table, for [`App::file_facts`] and its pinned
+/// counterpart.
+fn file_facts_of(file_view: Option<&Response>) -> Vec<FactRow> {
+    let Some(Response::FileView { plugin, data, .. }) = file_view else {
+        return Vec::new();
+    };
+    facts(plugin, data)
+        .into_iter()
+        .map(|fact| FactRow {
+            label: fact.label,
+            display_value: middle_elide(&fact.value, FACT_VALUE_BUDGET),
+            full_value: fact.value,
+            dim: fact.dim,
+        })
+        .collect()
+}
+
+/// Display text for the file pane, for [`App::file_text`] and its pinned
+/// counterpart.
+fn file_text_of(file_view: Option<&Response>, file_view_index: usize) -> String {
+    match file_view {
+        Some(Response::FileView { plugin, data, also }) => {
+            // A plugin offering a fact table (#576) draws it there instead
+            // of these lines - drawing both would say the same thing
+            // twice. What is never covered by the table, a stacked folder
+            // plugin's own lines (D12), still belongs here.
+            let mut lines = if facts(plugin, data).is_empty() {
+                let views = file_views_of(file_view);
+                match views.get(file_view_index) {
+                    Some(view) => present_view(plugin, view, data),
+                    None => present(plugin, data),
+                }
+            } else {
+                Vec::new()
+            };
+            // A folder is several things at once, and each folder plugin
+            // that recognises it adds its lines below the folder's own
+            // rather than in place of them.
+            for extra in also {
+                lines.push(String::new());
+                lines.extend(present_folder(&extra.plugin, &extra.data));
+            }
+            lines.join("\n")
+        }
+        Some(Response::Error { message }) => message.clone(),
+        Some(
+            Response::Directory { .. }
+            | Response::Done
+            | Response::ReposRoots { .. }
+            | Response::Names { .. }
+            | Response::WorkingTree { .. }
+            | Response::AllRepositories { .. },
+        )
+        | None => String::new(),
+    }
+}
+
+/// The selected working copy's README (#584), read straight from the
+/// `directory` plugin's own view data rather than through [`facts`] or
+/// [`present`]: the fact table only ever holds label/value pairs, and
+/// `directory` always has at least the entry-count fact, so its own
+/// `present` lines - which do carry the README - never reach the pane
+/// (`facts(plugin, data).is_empty()` is never true for it).
+fn readme_excerpt_of(
+    file_view: Option<&Response>,
+) -> Option<plugin_directory::readme::ReadmeExcerpt> {
+    let Some(Response::FileView { plugin, data, .. }) = file_view else {
+        return None;
+    };
+    if plugin != "directory" {
+        return None;
+    }
+    serde_json::from_value::<plugin_directory::DirectoryView>(data.clone())
+        .ok()
+        .and_then(|view| view.readme)
+}
+
+/// What the File pane's "Worktree of"/"Submodule of" line (#587) should
+/// say, and whether it is a link - read the same way [`readme_excerpt_of`]
+/// reads the README, straight from the `directory` plugin's own view data.
+/// `None` for an ordinary clone, which has no such thing to say.
+fn related_repository_of(file_view: Option<&Response>, root: &Path) -> Option<RelatedRepository> {
+    let Some(Response::FileView { plugin, data, .. }) = file_view else {
+        return None;
+    };
+    if plugin != "directory" {
+        return None;
+    }
+    let view = serde_json::from_value::<plugin_directory::DirectoryView>(data.clone()).ok()?;
+    let repository = view.repository?;
+    match repository.kind {
+        plugin_directory::repository::Kind::Clone => None,
+        plugin_directory::repository::Kind::Worktree {
+            clone,
+            clone_exists,
+        } => Some(if clone_exists {
+            RelatedRepository::Link {
+                label: format!("Worktree of {}", related_repository_name_of(&clone, root)),
+                path: clone,
+            }
+        } else {
+            RelatedRepository::Gone {
+                label: format!(
+                    "Worktree of a clone that is no longer at {}",
+                    clone.display()
+                ),
+            }
+        }),
+        plugin_directory::repository::Kind::Submodule { outer } => Some(RelatedRepository::Link {
+            label: format!("Submodule of {}", related_repository_name_of(&outer, root)),
+            path: outer,
+        }),
+    }
+}
+
+/// `path`'s folder name, with where it is in parentheses when that says
+/// more than the name alone does: its path relative to `root` when it is
+/// inside it, the full path otherwise - left off when `path` is a direct
+/// child of `root`, where the name already says where it is (#587).
+fn related_repository_name_of(path: &Path, root: &Path) -> String {
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let located = path.strip_prefix(root).map_or_else(
+        |_| path.display().to_string(),
+        |relative| relative.to_string_lossy().replace('\\', "/"),
+    );
+    if located == name {
+        name
+    } else {
+        format!("{name} (at {located})")
+    }
+}
+
+/// The previewed file's text, when its plugin can edit it, for
+/// [`App::editable_text`] and its pinned counterpart. `None` for a type
+/// that is not text, or a view holding only part of one - the plugin
+/// decides, per GUIDANCE.md §3.
+fn editable_text_of(file_view: Option<&Response>) -> Option<String> {
+    match file_view {
+        Some(Response::FileView { plugin, data, .. }) => PRESENTATION_PLUGINS
+            .iter()
+            .find(|candidate| candidate.name() == plugin)
+            .and_then(|candidate| candidate.editable_text(data)),
+        _ => None,
+    }
+}
+
+/// The text in the editor, for [`App::edit_text`] and its pinned
+/// counterpart.
+fn edit_text_of(editing_file: Option<&Edit>) -> String {
+    editing_file.map_or_else(String::new, |edit| edit.document.text().to_owned())
+}
+
+/// The editor's lines, coloured, for [`App::edit_lines`] and its pinned
+/// counterpart.
+fn edit_lines_of(editing_file: Option<&Edit>) -> Vec<Vec<ColouredRun>> {
+    let Some(edit) = editing_file else {
+        return Vec::new();
+    };
+    if !edit.coloured {
+        return Vec::new();
+    }
+    let text = edit.document.text();
+    let spans = edit
+        .plugin
+        .and_then(plugin_presentation_named)
+        .map(|plugin| plugin.classify(text))
+        .filter(|spans| !spans.is_empty())
+        .unwrap_or_else(|| vec![Span::new(0, text.len(), Class::Plain)]);
+    colour_lines(text, &spans)
+}
+
+/// Where the caret is, as a line and a column, for [`App::edit_caret`] and
+/// its pinned counterpart.
+fn edit_caret_of(editing_file: Option<&Edit>) -> (usize, usize) {
+    editing_file.map_or((0, 0), |edit| {
+        let caret = edit.document.caret();
+        (edit.document.line_of(caret), edit.document.column_of(caret))
+    })
+}
+
+/// The selection, as a start and an end in lines and columns, for
+/// [`App::edit_selection`] and its pinned counterpart.
+fn edit_selection_of(editing_file: Option<&Edit>) -> Option<((usize, usize), (usize, usize))> {
+    let edit = editing_file?;
+    let range = edit.document.selection()?;
+    Some((
+        (
+            edit.document.line_of(range.start),
+            edit.document.column_of(range.start),
+        ),
+        (
+            edit.document.line_of(range.end),
+            edit.document.column_of(range.end),
+        ),
+    ))
+}
+
+/// The widest line, in columns, for [`App::edit_longest_line`] and its
+/// pinned counterpart.
+fn edit_longest_line_of(editing_file: Option<&Edit>) -> usize {
+    editing_file.map_or(0, |edit| {
+        edit.document
+            .text()
+            .lines()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0)
+    })
+}
+
 /// A directory node in the folders pane's tree. Only directories appear
 /// here; files live in the contents pane.
 #[derive(Debug)]
@@ -1001,6 +1314,7 @@ pub fn chevron_hit(x: f32, depth: usize, zoom: f32) -> bool {
 }
 
 /// A file open in the editor.
+#[derive(Clone)]
 struct Edit {
     /// Where a save goes.
     path: PathBuf,
@@ -1023,6 +1337,42 @@ struct Edit {
     /// file, click a `.json` one, and the Rust somebody was typing lost
     /// its Rust colouring while its text and caret sat untouched.
     plugin: Option<&'static str>,
+}
+
+/// Identifies one pinned tool window (#619) among however many are open at
+/// once - never reused, so pinning the same file twice opens two
+/// independent windows rather than one the second pin steals from the
+/// first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PinId(u64);
+
+/// What a tool window pinned to a file or folder (#619) keeps of its own,
+/// beside the shared selection every other window follows: the preview or
+/// edit in progress it had at the moment it was pinned, independent of
+/// whatever the reader selects afterwards.
+struct PinnedWindow {
+    /// The pinned file or folder, for the gone-away check and for a save
+    /// to write back to.
+    path: PathBuf,
+    /// Its name, for the window's title and its "no longer there" message.
+    name: String,
+    file_view: Option<Response>,
+    file_view_index: usize,
+    editing_file: Option<Edit>,
+    /// A write in flight, independent of the shared selection's own -
+    /// saving a pinned file must not reload whatever folder the shared
+    /// selection happens to be browsing right now.
+    pending_save: Option<Receiver<io::Result<Response>>>,
+    /// A fresh preview in flight after a save, so the pane reflects what
+    /// was just written rather than what the file held when it was pinned.
+    pending_view: Option<Receiver<io::Result<Response>>>,
+    /// Set once the pinned path is confirmed gone (#619 requirement 6):
+    /// deleted or renamed, from inside this application or outside it.
+    /// Checked directly against the filesystem, the same reasoning
+    /// [`classify_root_problem`] gives for the Repos Directory's own root:
+    /// the service's error strings are not something a front end can
+    /// reliably tell "gone" apart from "unreadable" by parsing.
+    gone: bool,
 }
 
 /// How many names one search asks for. The service caps it too.
@@ -1129,6 +1479,19 @@ pub enum EditCommand {
     Copy,
     /// Insert what is on the clipboard.
     Paste,
+}
+
+/// The keystroke `edit_command`/`pinned_edit_command` route `command`
+/// through - the same keyboard shortcut a reader would type, so a button
+/// and its shortcut cannot come to mean different things.
+const fn edit_command_key(command: EditCommand) -> (&'static str, bool) {
+    match command {
+        EditCommand::Undo => ("z", true),
+        EditCommand::Redo => ("y", true),
+        EditCommand::Cut => ("x", true),
+        EditCommand::Copy => ("c", true),
+        EditCommand::Paste => ("v", true),
+    }
 }
 
 /// The tab that opens the editor, and the one shown while it is open.
@@ -1730,6 +2093,13 @@ pub struct App {
     /// applies to the selection - [`Self::active_tool_index`] is what falls
     /// back to the registry's default once it stops.
     chosen_tool: Option<usize>,
+    /// Tool windows pinned to a file or folder (#619), by the id their own
+    /// window is tracked under - present exactly while pinned; the window
+    /// stays open and keyed the same way once unpinned, following the
+    /// shared selection again until it is pinned once more or closed.
+    pinned: HashMap<PinId, PinnedWindow>,
+    /// The next id [`Self::pin_current`] hands out.
+    next_pin_id: u64,
 }
 
 /// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
@@ -1815,6 +2185,8 @@ impl App {
             zoom_percent: crate::zoom::DEFAULT,
             tool_registry: tools::ToolRegistry::default(),
             chosen_tool: None,
+            pinned: HashMap::new(),
+            next_pin_id: 0,
         };
         app.load_contents_for_selected();
         app
@@ -1994,6 +2366,41 @@ impl App {
             if self.listing_message_ticks >= LISTING_MESSAGE_RETRY_TICKS {
                 self.listing_message_ticks = 0;
                 self.refresh();
+            }
+        }
+        self.tick_pinned_windows();
+    }
+
+    /// The pinned-window half of [`Self::tick`]: applies a save or a
+    /// refreshed preview that landed, and notices a pinned path that has
+    /// gone away (#619 requirement 6) - split out because a pinned window
+    /// answers to none of the shared selection's own state above.
+    fn tick_pinned_windows(&mut self) {
+        for pinned in self.pinned.values_mut() {
+            if let Some(rx) = &pinned.pending_save
+                && let Ok(result) = rx.try_recv()
+            {
+                pinned.pending_save = None;
+                if matches!(result, Ok(Response::Done)) {
+                    pinned.pending_view = Some(spawn_request(Request::ViewFile {
+                        path: pinned.path.to_string_lossy().into_owned(),
+                    }));
+                }
+            }
+            if let Some(rx) = &pinned.pending_view
+                && let Ok(result) = rx.try_recv()
+            {
+                pinned.pending_view = None;
+                let view = result.unwrap_or_else(|err| Response::Error {
+                    message: err.to_string(),
+                });
+                pinned.file_view = Some(view);
+                pinned.file_view_index = 0;
+            }
+            if !pinned.gone
+                && matches!(std::fs::metadata(&pinned.path), Err(err) if err.kind() == io::ErrorKind::NotFound)
+            {
+                pinned.gone = true;
             }
         }
     }
@@ -3261,13 +3668,7 @@ impl App {
     /// plugin decides, per GUIDANCE.md §3.
     #[must_use]
     pub fn editable_text(&self) -> Option<String> {
-        match &self.file_view {
-            Some(Response::FileView { plugin, data, .. }) => PRESENTATION_PLUGINS
-                .iter()
-                .find(|candidate| candidate.name() == plugin)
-                .and_then(|candidate| candidate.editable_text(data)),
-            _ => None,
-        }
+        editable_text_of(self.file_view.as_ref())
     }
 
     /// Whether the selected file can be opened in the editor.
@@ -3282,12 +3683,34 @@ impl App {
         self.editing_file.is_some()
     }
 
+    /// Whether a pinned window (#619) is currently an editor.
+    #[must_use]
+    pub fn pinned_editing_file(&self, id: PinId) -> bool {
+        self.pinned
+            .get(&id)
+            .is_some_and(|pinned| pinned.editing_file.is_some())
+    }
+
+    /// [`Self::can_edit`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_can_edit(&self, id: PinId) -> bool {
+        self.pinned.get(&id).is_some_and(|pinned| {
+            pinned.editing_file.is_none() && editable_text_of(pinned.file_view.as_ref()).is_some()
+        })
+    }
+
     /// The text in the editor, or an empty string when it is closed.
     #[must_use]
     pub fn edit_text(&self) -> String {
-        self.editing_file
-            .as_ref()
-            .map_or_else(String::new, |edit| edit.document.text().to_owned())
+        edit_text_of(self.editing_file.as_ref())
+    }
+
+    /// [`Self::edit_text`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_text(&self, id: PinId) -> String {
+        self.pinned.get(&id).map_or_else(String::new, |pinned| {
+            edit_text_of(pinned.editing_file.as_ref())
+        })
     }
 
     /// Whether the hand-written surface is drawing the file, rather than
@@ -3297,23 +3720,29 @@ impl App {
         self.editing_file.as_ref().is_some_and(|edit| edit.coloured)
     }
 
+    /// [`Self::editing_in_colour`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_editing_in_colour(&self, id: PinId) -> bool {
+        self.pinned.get(&id).is_some_and(|pinned| {
+            pinned
+                .editing_file
+                .as_ref()
+                .is_some_and(|edit| edit.coloured)
+        })
+    }
+
     /// The editor's lines, coloured, for the surface to draw.
     #[must_use]
     pub fn edit_lines(&self) -> Vec<Vec<ColouredRun>> {
-        let Some(edit) = self.editing_file.as_ref() else {
-            return Vec::new();
-        };
-        if !edit.coloured {
-            return Vec::new();
-        }
-        let text = edit.document.text();
-        let spans = edit
-            .plugin
-            .and_then(plugin_presentation_named)
-            .map(|plugin| plugin.classify(text))
-            .filter(|spans| !spans.is_empty())
-            .unwrap_or_else(|| vec![Span::new(0, text.len(), Class::Plain)]);
-        colour_lines(text, &spans)
+        edit_lines_of(self.editing_file.as_ref())
+    }
+
+    /// [`Self::edit_lines`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_lines(&self, id: PinId) -> Vec<Vec<ColouredRun>> {
+        self.pinned.get(&id).map_or_else(Vec::new, |pinned| {
+            edit_lines_of(pinned.editing_file.as_ref())
+        })
     }
 
     /// Which presentation half opened the file being viewed.
@@ -3327,39 +3756,40 @@ impl App {
     /// Where the caret is, as a line and a column.
     #[must_use]
     pub fn edit_caret(&self) -> (usize, usize) {
-        self.editing_file.as_ref().map_or((0, 0), |edit| {
-            let caret = edit.document.caret();
-            (edit.document.line_of(caret), edit.document.column_of(caret))
-        })
+        edit_caret_of(self.editing_file.as_ref())
+    }
+
+    /// [`Self::edit_caret`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_caret(&self, id: PinId) -> (usize, usize) {
+        self.pinned
+            .get(&id)
+            .map_or((0, 0), |pinned| edit_caret_of(pinned.editing_file.as_ref()))
     }
 
     /// The selection, as a start and an end in lines and columns.
     #[must_use]
     pub fn edit_selection(&self) -> Option<((usize, usize), (usize, usize))> {
-        let edit = self.editing_file.as_ref()?;
-        let range = edit.document.selection()?;
-        Some((
-            (
-                edit.document.line_of(range.start),
-                edit.document.column_of(range.start),
-            ),
-            (
-                edit.document.line_of(range.end),
-                edit.document.column_of(range.end),
-            ),
-        ))
+        edit_selection_of(self.editing_file.as_ref())
+    }
+
+    /// [`Self::edit_selection`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_selection(&self, id: PinId) -> Option<((usize, usize), (usize, usize))> {
+        edit_selection_of(self.pinned.get(&id)?.editing_file.as_ref())
     }
 
     /// The widest line, in columns, which is how far the surface scrolls.
     #[must_use]
     pub fn edit_longest_line(&self) -> usize {
-        self.editing_file.as_ref().map_or(0, |edit| {
-            edit.document
-                .text()
-                .lines()
-                .map(|line| line.chars().count())
-                .max()
-                .unwrap_or(0)
+        edit_longest_line_of(self.editing_file.as_ref())
+    }
+
+    /// [`Self::edit_longest_line`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_longest_line(&self, id: PinId) -> usize {
+        self.pinned.get(&id).map_or(0, |pinned| {
+            edit_longest_line_of(pinned.editing_file.as_ref())
         })
     }
 
@@ -3375,12 +3805,34 @@ impl App {
             .is_some_and(|edit| edit.document.text() != edit.original)
     }
 
+    /// [`Self::edit_modified`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_modified(&self, id: PinId) -> bool {
+        self.pinned.get(&id).is_some_and(|pinned| {
+            pinned
+                .editing_file
+                .as_ref()
+                .is_some_and(|edit| edit.document.text() != edit.original)
+        })
+    }
+
     /// Whether the editor has a step to go back to.
     #[must_use]
     pub fn edit_can_undo(&self) -> bool {
         self.editing_file
             .as_ref()
             .is_some_and(|edit| edit.document.can_undo())
+    }
+
+    /// [`Self::edit_can_undo`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_can_undo(&self, id: PinId) -> bool {
+        self.pinned.get(&id).is_some_and(|pinned| {
+            pinned
+                .editing_file
+                .as_ref()
+                .is_some_and(|edit| edit.document.can_undo())
+        })
     }
 
     /// Whether it has one to put back.
@@ -3391,12 +3843,34 @@ impl App {
             .is_some_and(|edit| edit.document.can_redo())
     }
 
+    /// [`Self::edit_can_redo`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_can_redo(&self, id: PinId) -> bool {
+        self.pinned.get(&id).is_some_and(|pinned| {
+            pinned
+                .editing_file
+                .as_ref()
+                .is_some_and(|edit| edit.document.can_redo())
+        })
+    }
+
     /// Whether anything is selected, which is what Cut and Copy need.
     #[must_use]
     pub fn edit_has_selection(&self) -> bool {
         self.editing_file
             .as_ref()
             .is_some_and(|edit| edit.document.selection().is_some())
+    }
+
+    /// [`Self::edit_has_selection`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_has_selection(&self, id: PinId) -> bool {
+        self.pinned.get(&id).is_some_and(|pinned| {
+            pinned
+                .editing_file
+                .as_ref()
+                .is_some_and(|edit| edit.document.selection().is_some())
+        })
     }
 
     /// The caret's line and column, counted from one.
@@ -3410,19 +3884,31 @@ impl App {
         (line + 1, column + 1)
     }
 
+    /// [`Self::edit_position`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_edit_position(&self, id: PinId) -> (usize, usize) {
+        let (line, column) = self.pinned_edit_caret(id);
+        (line + 1, column + 1)
+    }
+
     /// One of the editor's own commands, run from the pane's row.
     ///
     /// Routed through the same keystroke handler the keyboard uses, so
     /// a button and its shortcut cannot come to mean different things.
     pub fn edit_command(&mut self, command: EditCommand, clipboard: &mut dyn editor::Clipboard) {
-        let (text, control) = match command {
-            EditCommand::Undo => ("z", true),
-            EditCommand::Redo => ("y", true),
-            EditCommand::Cut => ("x", true),
-            EditCommand::Copy => ("c", true),
-            EditCommand::Paste => ("v", true),
-        };
+        let (text, control) = edit_command_key(command);
         self.edit_key(clipboard, text, false, control, 1);
+    }
+
+    /// [`Self::edit_command`], for a pinned window (#619).
+    pub fn pinned_edit_command(
+        &mut self,
+        id: PinId,
+        command: EditCommand,
+        clipboard: &mut dyn editor::Clipboard,
+    ) {
+        let (text, control) = edit_command_key(command);
+        self.pinned_edit_key(id, clipboard, text, false, control, 1);
     }
 
     /// A keystroke, for the editor to make sense of.
@@ -3440,9 +3926,40 @@ impl App {
         editor::handle_key(&mut edit.document, clipboard, text, shift, control, rows)
     }
 
+    /// [`Self::edit_key`], for a pinned window (#619).
+    pub fn pinned_edit_key(
+        &mut self,
+        id: PinId,
+        clipboard: &mut dyn editor::Clipboard,
+        text: &str,
+        shift: bool,
+        control: bool,
+        rows: usize,
+    ) -> bool {
+        let Some(edit) = self
+            .pinned
+            .get_mut(&id)
+            .and_then(|pinned| pinned.editing_file.as_mut())
+        else {
+            return false;
+        };
+        editor::handle_key(&mut edit.document, clipboard, text, shift, control, rows)
+    }
+
     /// A click in the editor.
     pub fn edit_click(&mut self, line: usize, column: usize, extend: bool) {
         if let Some(edit) = self.editing_file.as_mut() {
+            editor::handle_click(&mut edit.document, line, column, extend);
+        }
+    }
+
+    /// [`Self::edit_click`], for a pinned window (#619).
+    pub fn pinned_edit_click(&mut self, id: PinId, line: usize, column: usize, extend: bool) {
+        if let Some(edit) = self
+            .pinned
+            .get_mut(&id)
+            .and_then(|pinned| pinned.editing_file.as_mut())
+        {
             editor::handle_click(&mut edit.document, line, column, extend);
         }
     }
@@ -3480,6 +3997,34 @@ impl App {
         self.focus = Pane::File;
     }
 
+    /// [`Self::begin_file_edit`], for a pinned window (#619): opens its own
+    /// pinned path, rather than whatever the shared selection currently
+    /// has - which is why it does not go through [`Self::selected_entry_path`].
+    pub fn pinned_begin_file_edit(&mut self, id: PinId) {
+        let Some(pinned) = self.pinned.get_mut(&id) else {
+            return;
+        };
+        if pinned.gone {
+            return;
+        }
+        let Some(text) = editable_text_of(pinned.file_view.as_ref()) else {
+            return;
+        };
+        let coloured = editor::code_editor_suits(&text);
+        let plugin = match &pinned.file_view {
+            Some(Response::FileView { plugin, .. }) => plugin_presentation_named(plugin),
+            _ => None,
+        }
+        .map(PluginPresentation::name);
+        pinned.editing_file = Some(Edit {
+            path: pinned.path.clone(),
+            original: text.clone(),
+            document: Document::new(text),
+            coloured,
+            plugin,
+        });
+    }
+
     /// Takes the editor's text as the user has changed it.
     pub fn set_edit_text(&mut self, text: &str) {
         // Only the plain box needs this: it owns its own text while the
@@ -3487,6 +4032,18 @@ impl App {
         // reports every keystroke as it happens, so its document is
         // already current and overwriting it here would undo the caret.
         if let Some(edit) = self.editing_file.as_mut()
+            && !edit.coloured
+        {
+            edit.document = Document::new(text);
+        }
+    }
+
+    /// [`Self::set_edit_text`], for a pinned window (#619).
+    pub fn pinned_set_edit_text(&mut self, id: PinId, text: &str) {
+        if let Some(edit) = self
+            .pinned
+            .get_mut(&id)
+            .and_then(|pinned| pinned.editing_file.as_mut())
             && !edit.coloured
         {
             edit.document = Document::new(text);
@@ -3517,12 +4074,39 @@ impl App {
         self.status = Some("saving...".to_owned());
     }
 
+    /// [`Self::save_file_edit`], for a pinned window (#619): writes back
+    /// through the service exactly the same way, but does not reload
+    /// whatever folder the shared selection happens to be browsing - a
+    /// pinned file may not even be in it. [`Self::tick_pinned_windows`]
+    /// asks for a fresh preview of its own once the write lands.
+    pub fn pinned_save_file_edit(&mut self, id: PinId) {
+        let Some(pinned) = self.pinned.get_mut(&id) else {
+            return;
+        };
+        let Some(edit) = pinned.editing_file.as_ref() else {
+            return;
+        };
+        let text = edit.document.text().to_owned();
+        pinned.editing_file = None;
+        pinned.pending_save = Some(spawn_request(Request::WriteFile {
+            path: pinned.path.to_string_lossy().into_owned(),
+            content: text,
+        }));
+    }
+
     /// Closes the editor without writing. The service keeps no record of a
     /// discarded edit, so this is the one place the text is lost - which is
     /// why the status bar says so rather than closing silently.
     pub fn cancel_file_edit(&mut self) {
         if self.editing_file.take().is_some() {
             self.status = Some("edit discarded".to_owned());
+        }
+    }
+
+    /// [`Self::cancel_file_edit`], for a pinned window (#619).
+    pub fn pinned_cancel_file_edit(&mut self, id: PinId) {
+        if let Some(pinned) = self.pinned.get_mut(&id) {
+            pinned.editing_file = None;
         }
     }
 
@@ -5046,21 +5630,15 @@ impl App {
     /// rather than as three lines describing it.
     #[must_use]
     pub fn file_graphic(&self) -> Option<Graphic> {
-        // The picture belongs to the Preview: it is what the plugin
-        // renders. The Text tab is the file read plainly, and a fixed
-        // band of rendered drawing above it is the Preview intruding on
-        // the one view that exists to get away from it. An SVG is a
-        // picture and text at once, so it has both tabs and this is
-        // reachable - read the file's markup and the drawing of it was
-        // still there, taking a fifth of the pane, with no way to dismiss
-        // it.
-        if self.file_views().get(self.file_view_index) != Some(&PREVIEW_VIEW) {
-            return None;
-        }
-        match &self.file_view {
-            Some(Response::FileView { plugin, data, .. }) => present_graphic(plugin, data),
-            _ => None,
-        }
+        file_graphic_of(self.file_view.as_ref(), self.file_view_index)
+    }
+
+    /// [`Self::file_graphic`], for a pinned window (#619)'s own preview
+    /// rather than the shared selection's.
+    #[must_use]
+    pub fn pinned_file_graphic(&self, id: PinId) -> Option<Graphic> {
+        let pinned = self.pinned.get(&id)?;
+        file_graphic_of(pinned.file_view.as_ref(), pinned.file_view_index)
     }
 
     /// The views the previewed file's type offers, in the plugin's order.
@@ -5068,14 +5646,7 @@ impl App {
     /// rather than a file - there is nothing there to look at two ways.
     #[must_use]
     pub fn file_views(&self) -> Vec<&'static str> {
-        match &self.file_view {
-            Some(Response::FileView { plugin, data, .. }) => PRESENTATION_PLUGINS
-                .iter()
-                .find(|candidate| candidate.name() == plugin)
-                .map(|candidate| candidate.views(data))
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        }
+        file_views_of(self.file_view.as_ref())
     }
 
     /// The Text view's lines, each split into coloured runs, or empty when
@@ -5092,48 +5663,15 @@ impl App {
     /// flattening that would leave the pane unable to place either.
     #[must_use]
     pub fn file_lines(&self) -> Vec<Vec<ColouredRun>> {
-        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
-            return Vec::new();
-        };
-        let showing = self.file_views().get(self.file_view_index).copied();
-        if showing != Some(TEXT_VIEW) && showing != Some(PREVIEW_VIEW) {
-            return Vec::new();
-        }
-        let Some(text) = data.get("content").and_then(serde_json::Value::as_str) else {
-            return Vec::new();
-        };
-        let Some(presentation) = PRESENTATION_PLUGINS
-            .iter()
-            .find(|candidate| candidate.name() == plugin)
-        else {
-            return Vec::new();
-        };
-        let spans = presentation.classify(text);
-        if spans.is_empty() {
-            return Vec::new();
-        }
-        let coloured = colour_lines(text, &spans);
-        if showing == Some(TEXT_VIEW) {
-            return coloured;
-        }
+        file_lines_of(self.file_view.as_ref(), self.file_view_index)
+    }
 
-        // The Preview is the plugin's summary and then, for a source
-        // language, the file itself - the same bytes the Text tab
-        // colours. Leaving one plain and the other coloured reads as the
-        // colouring being broken rather than as two views doing
-        // different jobs.
-        let preview = present(plugin, data);
-        let Some(from) = file_starts_in_preview(&preview, text) else {
-            // A Preview that is all summary - `msbuild` prints no file -
-            // is left exactly as it was.
-            return Vec::new();
-        };
-        let mut lines: Vec<Vec<ColouredRun>> = preview[..from]
-            .iter()
-            .map(|line| colour_summary_line(line).unwrap_or_else(|| plain_line(line)))
-            .collect();
-        lines.extend(coloured);
-        lines
+    /// [`Self::file_lines`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_file_lines(&self, id: PinId) -> Vec<Vec<ColouredRun>> {
+        self.pinned.get(&id).map_or_else(Vec::new, |pinned| {
+            file_lines_of(pinned.file_view.as_ref(), pinned.file_view_index)
+        })
     }
 
     /// The tab strip above the File pane: the plugin's views, and then
@@ -5150,14 +5688,15 @@ impl App {
     /// what they did.
     #[must_use]
     pub fn file_tabs(&self) -> Vec<String> {
-        if self.editing_file() {
-            return vec![EDITING_TAB.to_owned()];
-        }
-        let mut tabs: Vec<String> = self.file_views().into_iter().map(str::to_owned).collect();
-        if self.can_edit() {
-            tabs.push(EDIT_TAB.to_owned());
-        }
-        tabs
+        file_tabs_of(self.file_view.as_ref(), self.editing_file.as_ref())
+    }
+
+    /// [`Self::file_tabs`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_file_tabs(&self, id: PinId) -> Vec<String> {
+        self.pinned.get(&id).map_or_else(Vec::new, |pinned| {
+            file_tabs_of(pinned.file_view.as_ref(), pinned.editing_file.as_ref())
+        })
     }
 
     /// Which tab is active, as an index into [`Self::file_tabs`].
@@ -5168,6 +5707,18 @@ impl App {
         } else {
             self.file_view_index
         }
+    }
+
+    /// [`Self::file_tab_index`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_file_tab_index(&self, id: PinId) -> usize {
+        self.pinned.get(&id).map_or(0, |pinned| {
+            if pinned.editing_file.is_some() {
+                0
+            } else {
+                pinned.file_view_index
+            }
+        })
     }
 
     /// Chooses the tab at `index`: a view, or the editor.
@@ -5184,10 +5735,39 @@ impl App {
         }
     }
 
+    /// [`Self::select_file_tab`], for a pinned window (#619).
+    pub fn pinned_select_file_tab(&mut self, id: PinId, index: usize) {
+        if self.pinned_editing_file(id) {
+            return;
+        }
+        let views = self.pinned_file_views(id).len();
+        if index < views {
+            self.pinned_select_file_view(id, index);
+        } else if index == views {
+            self.pinned_begin_file_edit(id);
+        }
+    }
+
     /// Which view the pane is showing, as an index into [`Self::file_views`].
     #[must_use]
     pub const fn file_view_index(&self) -> usize {
         self.file_view_index
+    }
+
+    /// [`Self::file_view_index`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_file_view_index(&self, id: PinId) -> usize {
+        self.pinned
+            .get(&id)
+            .map_or(0, |pinned| pinned.file_view_index)
+    }
+
+    /// [`Self::file_views`], for a pinned window (#619).
+    #[must_use]
+    fn pinned_file_views(&self, id: PinId) -> Vec<&'static str> {
+        self.pinned
+            .get(&id)
+            .map_or_else(Vec::new, |pinned| file_views_of(pinned.file_view.as_ref()))
     }
 
     /// Shows the view at `index`, ignoring an index the type does not offer:
@@ -5199,82 +5779,49 @@ impl App {
         }
     }
 
+    /// [`Self::select_file_view`], for a pinned window (#619).
+    pub fn pinned_select_file_view(&mut self, id: PinId, index: usize) {
+        if index < self.pinned_file_views(id).len()
+            && let Some(pinned) = self.pinned.get_mut(&id)
+        {
+            pinned.file_view_index = index;
+        }
+    }
+
     /// The File pane's fact table for the selected file: the label/value
     /// pairs [`Self::file_text`] draws as sentences instead, when the
     /// plugin has nothing tabular to offer.
     #[must_use]
     pub fn file_facts(&self) -> Vec<FactRow> {
-        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
-            return Vec::new();
-        };
-        facts(plugin, data)
-            .into_iter()
-            .map(|fact| FactRow {
-                label: fact.label,
-                display_value: middle_elide(&fact.value, FACT_VALUE_BUDGET),
-                full_value: fact.value,
-                dim: fact.dim,
-            })
-            .collect()
+        file_facts_of(self.file_view.as_ref())
+    }
+
+    /// [`Self::file_facts`], for a pinned window (#619).
+    #[must_use]
+    pub fn pinned_file_facts(&self, id: PinId) -> Vec<FactRow> {
+        self.pinned
+            .get(&id)
+            .map_or_else(Vec::new, |pinned| file_facts_of(pinned.file_view.as_ref()))
     }
 
     /// Display text for the file pane, in whichever view is selected.
     #[must_use]
     pub fn file_text(&self) -> String {
-        match &self.file_view {
-            Some(Response::FileView { plugin, data, also }) => {
-                // A plugin offering a fact table (#576) draws it there
-                // instead of these lines - drawing both would say the same
-                // thing twice. What is never covered by the table, a
-                // stacked folder plugin's own lines (D12), still belongs
-                // here.
-                let mut lines = if facts(plugin, data).is_empty() {
-                    let views = self.file_views();
-                    match views.get(self.file_view_index) {
-                        Some(view) => present_view(plugin, view, data),
-                        None => present(plugin, data),
-                    }
-                } else {
-                    Vec::new()
-                };
-                // A folder is several things at once, and each folder
-                // plugin that recognises it adds its lines below the
-                // folder's own rather than in place of them.
-                for extra in also {
-                    lines.push(String::new());
-                    lines.extend(present_folder(&extra.plugin, &extra.data));
-                }
-                lines.join("\n")
-            }
-            Some(Response::Error { message }) => message.clone(),
-            Some(
-                Response::Directory { .. }
-                | Response::Done
-                | Response::ReposRoots { .. }
-                | Response::Names { .. }
-                | Response::WorkingTree { .. }
-                | Response::AllRepositories { .. },
-            )
-            | None => String::new(),
-        }
+        file_text_of(self.file_view.as_ref(), self.file_view_index)
     }
 
-    /// The selected working copy's README (#584), read straight from the
-    /// `directory` plugin's own view data rather than through [`facts`] or
-    /// [`present`]: the fact table only ever holds label/value pairs, and
-    /// `directory` always has at least the entry-count fact, so its own
-    /// `present` lines - which do carry the README - never reach the pane
-    /// (`facts(plugin, data).is_empty()` is never true for it).
-    fn readme_excerpt(&self) -> Option<plugin_directory::readme::ReadmeExcerpt> {
-        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
-            return None;
+    /// [`Self::file_text`], for a pinned window (#619): its own gone-away
+    /// message (requirement 6) once the pinned path is confirmed gone,
+    /// otherwise the same text the live pane would show for that preview.
+    #[must_use]
+    pub fn pinned_file_text(&self, id: PinId) -> String {
+        let Some(pinned) = self.pinned.get(&id) else {
+            return String::new();
         };
-        if plugin != "directory" {
-            return None;
+        if pinned.gone {
+            return format!("{} is no longer there.", pinned.name);
         }
-        serde_json::from_value::<plugin_directory::DirectoryView>(data.clone())
-            .ok()
-            .and_then(|view| view.readme)
+        file_text_of(pinned.file_view.as_ref(), pinned.file_view_index)
     }
 
     /// The README's file name, for the File pane's Open README link - empty
@@ -5282,7 +5829,7 @@ impl App {
     /// gives [`Self::open_readme`] nothing to act on.
     #[must_use]
     pub fn file_readme_name(&self) -> String {
-        self.readme_excerpt()
+        readme_excerpt_of(self.file_view.as_ref())
             .map(|readme| readme.name)
             .unwrap_or_default()
     }
@@ -5293,7 +5840,7 @@ impl App {
     /// which is what hides the section.
     #[must_use]
     pub fn file_readme_title(&self) -> String {
-        self.readme_excerpt()
+        readme_excerpt_of(self.file_view.as_ref())
             .map(|readme| readme.title.unwrap_or_else(|| "README".to_owned()))
             .unwrap_or_default()
     }
@@ -5303,7 +5850,7 @@ impl App {
     /// none to show (a bare `README`, or one past the read cap).
     #[must_use]
     pub fn file_readme_excerpt(&self) -> String {
-        self.readme_excerpt()
+        readme_excerpt_of(self.file_view.as_ref())
             .map(|readme| readme.excerpt.join("\n\n"))
             .unwrap_or_default()
     }
@@ -5322,72 +5869,11 @@ impl App {
         self.open_content(self.content_selected);
     }
 
-    /// What the File pane's "Worktree of"/"Submodule of" line (#587) should
-    /// say, and whether it is a link - read the same way [`Self::readme_excerpt`]
-    /// reads the README, straight from the `directory` plugin's own view
-    /// data. `None` for an ordinary clone, which has no such thing to say.
-    fn related_repository(&self) -> Option<RelatedRepository> {
-        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
-            return None;
-        };
-        if plugin != "directory" {
-            return None;
-        }
-        let view = serde_json::from_value::<plugin_directory::DirectoryView>(data.clone()).ok()?;
-        let repository = view.repository?;
-        match repository.kind {
-            plugin_directory::repository::Kind::Clone => None,
-            plugin_directory::repository::Kind::Worktree {
-                clone,
-                clone_exists,
-            } => Some(if clone_exists {
-                RelatedRepository::Link {
-                    label: format!("Worktree of {}", self.related_repository_name(&clone)),
-                    path: clone,
-                }
-            } else {
-                RelatedRepository::Gone {
-                    label: format!(
-                        "Worktree of a clone that is no longer at {}",
-                        clone.display()
-                    ),
-                }
-            }),
-            plugin_directory::repository::Kind::Submodule { outer } => {
-                Some(RelatedRepository::Link {
-                    label: format!("Submodule of {}", self.related_repository_name(&outer)),
-                    path: outer,
-                })
-            }
-        }
-    }
-
-    /// `path`'s folder name, with where it is in parentheses when that says
-    /// more than the name alone does: its path relative to the Repos
-    /// Directory when it is inside `self.root`, the full path otherwise -
-    /// left off when `path` is a direct child of the Repos Directory, where
-    /// the name already says where it is (#587).
-    fn related_repository_name(&self, path: &Path) -> String {
-        let name = path.file_name().map_or_else(
-            || path.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
-        let located = path.strip_prefix(&self.root.path).map_or_else(
-            |_| path.display().to_string(),
-            |relative| relative.to_string_lossy().replace('\\', "/"),
-        );
-        if located == name {
-            name
-        } else {
-            format!("{name} (at {located})")
-        }
-    }
-
     /// The File pane's "Worktree of"/"Submodule of" line (#587), or empty
     /// when the selected folder is not one - which hides the line.
     #[must_use]
     pub fn file_related_repository_label(&self) -> String {
-        match self.related_repository() {
+        match related_repository_of(self.file_view.as_ref(), &self.root.path) {
             Some(RelatedRepository::Link { label, .. } | RelatedRepository::Gone { label }) => {
                 label
             }
@@ -5402,9 +5888,15 @@ impl App {
     #[must_use]
     pub fn file_related_repository_linked(&self) -> bool {
         matches!(
-            self.related_repository(),
+            related_repository_of(self.file_view.as_ref(), &self.root.path),
             Some(RelatedRepository::Link { .. })
         )
+    }
+
+    /// What the File pane's "Worktree of"/"Submodule of" line (#587) says,
+    /// straight from the `directory` plugin's own view data, for `related_repository`.
+    fn related_repository(&self) -> Option<RelatedRepository> {
+        related_repository_of(self.file_view.as_ref(), &self.root.path)
     }
 
     /// Follows the File pane's "Worktree of"/"Submodule of" link (#587):
@@ -5698,6 +6190,83 @@ impl App {
         if let Some(&index) = self.tool_registry.applicable(&selection).get(visible_index) {
             self.chosen_tool = Some(index);
         }
+    }
+
+    /// Pins what the tool slot is showing now into a new window of its own
+    /// (#619): a snapshot of the current file or folder's preview or edit
+    /// in progress, kept while the shared selection moves on elsewhere.
+    /// `None` when nothing is selected, which is what leaves the pop-out
+    /// window with nothing to pin.
+    pub fn pin_current(&mut self) -> Option<PinId> {
+        let id = PinId(self.next_pin_id);
+        self.next_pin_id += 1;
+        self.pin_current_as(id)?;
+        Some(id)
+    }
+
+    /// Re-pins `id`'s window - already open, and already known by this id
+    /// from an earlier pin - to what the shared selection is showing now.
+    /// The window itself does not change; only whether it follows the
+    /// shared selection or keeps its own snapshot does. `true` when there
+    /// was something to pin.
+    pub fn pin_extra_window(&mut self, id: PinId) -> bool {
+        self.pin_current_as(id).is_some()
+    }
+
+    /// The snapshot [`Self::pin_current`] and [`Self::pin_extra_window`]
+    /// both build, keyed under whichever id the caller already settled on.
+    fn pin_current_as(&mut self, id: PinId) -> Option<()> {
+        let (path, name) = self.selected_entry_path()?;
+        self.pinned.insert(
+            id,
+            PinnedWindow {
+                path,
+                name,
+                file_view: self.file_view.clone(),
+                file_view_index: self.file_view_index,
+                editing_file: self.editing_file.clone(),
+                pending_save: None,
+                pending_view: None,
+                gone: false,
+            },
+        );
+        Some(())
+    }
+
+    /// Unpins `id`'s window (#619 requirement 5): its own snapshot is
+    /// dropped, so it goes back to following the shared selection the very
+    /// next time it is synced. A no-op if `id` is not currently pinned,
+    /// which is what closing an already-unpinned extra window is.
+    pub fn unpin(&mut self, id: PinId) {
+        self.pinned.remove(&id);
+    }
+
+    /// The pinned window's own title, once pinned - its tool and the file
+    /// or folder's name (#619 requirement 2), e.g. "File - app.rs".
+    #[must_use]
+    pub fn pinned_title(&self, id: PinId) -> Option<String> {
+        let pinned = self.pinned.get(&id)?;
+        Some(format!(
+            "{} - {}",
+            self.tool_registry.tools()[0].title(),
+            pinned.name
+        ))
+    }
+
+    /// Whether the pinned path is confirmed gone (#619 requirement 6).
+    /// `false` once `id` is no longer pinned, the same as it never having
+    /// been - there is nothing left to say is gone.
+    #[must_use]
+    pub fn pinned_gone(&self, id: PinId) -> bool {
+        self.pinned.get(&id).is_some_and(|pinned| pinned.gone)
+    }
+
+    /// Whether `id`'s window is pinned right now - `false` once it has
+    /// been unpinned, even though the window itself, and the id it is
+    /// tracked under, both live on.
+    #[must_use]
+    pub fn is_pinned(&self, id: PinId) -> bool {
+        self.pinned.contains_key(&id)
     }
 }
 
@@ -8568,6 +9137,132 @@ third",
             "and the file is untouched"
         );
     }
+
+    /// A real two-file directory, previewing the first (`a.rs`) but not
+    /// editing it - what popping the tool slot out and pinning it starts
+    /// from, for #619's own tests.
+    fn previewing_first_of_two(directory: &Path) -> App {
+        std::fs::write(directory.join("a.rs"), "fn a() {}\n").expect("a.rs is written");
+        std::fs::write(directory.join("b.rs"), "fn b() {}\n").expect("b.rs is written");
+        let mut app = App::new(directory.to_path_buf());
+        let entries = service::list_directory(directory).expect("the scratch directory lists");
+        app.apply_contents_result(&[], Ok(Response::Directory { entries }));
+        app.select_content(0);
+        let view = service::view_file(&directory.join("a.rs")).expect("a.rs opens");
+        app.show_file_view(Some(view));
+        app
+    }
+
+    /// #619 requirement: a pinned window keeps what it showed when pinned
+    /// while the shared selection moves on elsewhere.
+    #[test]
+    fn pinning_keeps_its_own_file_while_the_shared_selection_moves_on() {
+        let directory = scratch("pin-keeps-its-own-file");
+        let mut app = previewing_first_of_two(&directory);
+
+        let id = app
+            .pin_current()
+            .expect("a.rs is selected, so there is something to pin");
+        assert_eq!(
+            app.pinned_file_text(id),
+            app.file_text(),
+            "pinning takes a snapshot of what was already showing"
+        );
+
+        app.select_content(1);
+        let view = service::view_file(&directory.join("b.rs")).expect("b.rs opens");
+        app.show_file_view(Some(view));
+
+        assert!(
+            app.file_text().contains("fn b"),
+            "the shared selection moved on to b.rs"
+        );
+        assert!(
+            app.pinned_file_text(id).contains("fn a"),
+            "but the pinned window kept a.rs: {}",
+            app.pinned_file_text(id)
+        );
+    }
+
+    /// #619 requirement 5: unpinning returns the window to following the
+    /// shared selection straight away - which, at `App`'s level, is simply
+    /// no longer keeping a snapshot to show instead of it.
+    #[test]
+    fn unpinning_drops_its_own_snapshot() {
+        let directory = scratch("unpin-drops-its-own-snapshot");
+        let mut app = previewing_first_of_two(&directory);
+        let id = app.pin_current().expect("a.rs is selected");
+        assert!(app.is_pinned(id));
+
+        app.unpin(id);
+
+        assert!(
+            !app.is_pinned(id),
+            "unpinning drops the id from App's own pinned map"
+        );
+    }
+
+    /// #619 requirement 6: a pinned path that goes away, from inside this
+    /// application or outside it, is noticed and reported - without the
+    /// window losing its pin, so Unpin stays offered.
+    #[test]
+    fn a_pinned_files_disappearance_is_noticed_and_still_offers_to_unpin() {
+        let directory = scratch("pin-gone");
+        let mut app = previewing_first_of_two(&directory);
+        let id = app.pin_current().expect("a.rs is selected");
+
+        std::fs::remove_file(directory.join("a.rs")).expect("a.rs is removed");
+        app.tick();
+
+        assert!(app.pinned_gone(id), "the pinned path is confirmed gone");
+        assert!(
+            app.pinned_file_text(id).contains("is no longer there"),
+            "the window says so: {}",
+            app.pinned_file_text(id)
+        );
+        assert!(
+            app.is_pinned(id),
+            "still pinned - Unpin stays offered rather than the window \
+             silently closing on its own"
+        );
+    }
+
+    /// #619 requirement 3: editing while pinned works exactly as unpinned,
+    /// including that a save never reaches into the shared selection's own
+    /// reload bookkeeping - the pinned file may not even be in the folder
+    /// currently browsed.
+    #[test]
+    fn saving_a_pinned_edit_does_not_touch_the_shared_selections_own_reload() {
+        let directory = scratch("pin-save-independent");
+        let mut app = previewing_first_of_two(&directory);
+        let id = app.pin_current().expect("a.rs is selected");
+
+        app.pinned_begin_file_edit(id);
+        assert!(
+            app.pinned_editing_file(id),
+            "the pinned window opens its own editor"
+        );
+
+        let mut clipboard = NoClipboard;
+        app.pinned_edit_key(id, &mut clipboard, "x", false, false, 20);
+        assert!(app.pinned_edit_text(id).starts_with('x'));
+        assert!(
+            app.reselect.is_none() && !app.same_folder_reload,
+            "sanity: nothing queued yet"
+        );
+
+        app.pinned_save_file_edit(id);
+
+        assert!(
+            !app.pinned_editing_file(id),
+            "the pinned editor closes on save, the same as the live one"
+        );
+        assert!(
+            app.reselect.is_none() && !app.same_folder_reload,
+            "and the shared selection's own reload is untouched by it"
+        );
+    }
+
     /// The rule that finds the file inside a Preview, on the shapes it
     /// meets. It is the only judgement in #492; everything else draws.
     #[test]

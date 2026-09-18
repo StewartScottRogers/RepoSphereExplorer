@@ -153,6 +153,13 @@ export component MainWindow inherits Window {
     // window's View menu).
     callback dock-all-requested();
     callback show-main-window-requested();
+    // #619: pins the File pane's own popped-out window to what it is
+    // showing, so it keeps that instead of following the shared selection
+    // - offered only there, never on the main window or a Folders/Contents
+    // pop-out.
+    in property <bool> pinned: false;
+    callback pin-requested();
+    callback unpin-requested();
 
     callback folder-row-clicked(int, length);
     callback folder-row-double-clicked(int);
@@ -902,6 +909,10 @@ export component MainWindow inherits Window {
                     popped-out: !root.is-main-window;
                     pop-out-clicked => { pop-out-requested(2); }
                     dock-clicked => { dock-requested(2); }
+                    pinnable: true;
+                    pinned: root.pinned;
+                    pin-clicked => { pin-requested(); }
+                    unpin-clicked => { unpin-requested(); }
                     editing-file: editing-file;
                     edit-modified: edit-modified;
                     edit-can-undo: edit-can-undo;
