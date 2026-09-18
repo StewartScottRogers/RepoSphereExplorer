@@ -106,8 +106,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut app = tick_app.borrow_mut();
         app.tick();
         let windows = tick_windows.borrow();
-        for ui in windows.windows() {
-            sync_ui(ui, &app);
+        for (ui, pin) in windows.windows_with_pin() {
+            match pin {
+                Some(id) if app.is_pinned(id) => gui::sync_pinned_window(ui, &app, id),
+                _ => sync_ui(ui, &app),
+            }
             gui::ask_for_visible_statuses(ui, &mut app);
         }
         gui::fit_pane_widths_to_window(windows.main());

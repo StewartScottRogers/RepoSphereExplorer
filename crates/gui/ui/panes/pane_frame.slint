@@ -27,6 +27,13 @@ export component PaneFrame inherits Rectangle {
     in property <bool> popped-out: false;
     callback pop-out-clicked();
     callback dock-clicked();
+    // The pin button (#619): only the tool slot's own popped-out window
+    // offers it - Folders and Contents windows have no pin, since they
+    // are the selection - so this is left false by every other pane.
+    in property <bool> pinnable: false;
+    in property <bool> pinned: false;
+    callback pin-clicked();
+    callback unpin-clicked();
 
     border-width: 1px;
     border-color: focused ? Theme.accent : Theme.border;
@@ -56,6 +63,57 @@ export component PaneFrame inherits Rectangle {
                 x: parent.width - self.width;
                 alignment: end;
                 padding-right: 4px;
+                spacing: 2px;
+                // #619: pins this window to what it is showing, so it
+                // keeps that rather than following the shared selection -
+                // only offered once the pane is already popped out, and
+                // only by the pane this frame belongs to when it is the
+                // tool slot (`pinnable`); Folders and Contents have no pin,
+                // since they are the selection.
+                if popped-out && pinnable: Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    background: pin-touch.has-hover ? Theme.hover : transparent;
+                    border-radius: 3px;
+                    accessible-role: button;
+                    accessible-label: pinned ? "Unpin" : "Pin: keep showing this";
+                    Text {
+                        // A filled pin when pinned, an outline when not.
+                        text: pinned ? "\u{1F4CC}" : "\u{1F4CD}";
+                        width: 100%;
+                        height: 100%;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: Theme.dim-text;
+                    }
+                    pin-touch := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (pinned) {
+                                unpin-clicked();
+                            } else {
+                                pin-clicked();
+                            }
+                        }
+                    }
+                    if pin-touch.has-hover: Rectangle {
+                        x: -pin-tip-text.preferred-width - 12px;
+                        y: 0px;
+                        width: pin-tip-text.preferred-width + 8px;
+                        height: pin-tip-text.preferred-height + 6px;
+                        background: Theme.panel;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        pin-tip-text := Text {
+                            x: 4px;
+                            y: 3px;
+                            text: pinned ? "Unpin" : "Keep showing this";
+                            color: Palette.foreground;
+                        }
+                    }
+                }
                 Rectangle {
                     width: 18px;
                     height: 18px;
