@@ -1017,57 +1017,7 @@ pub fn wire_pop_out(
         // from the very `pin-requested` handler a click just entered)
         // panics Slint's generated code ("Callback Handler set while
         // called").
-        if pane == Pane::File {
-            let pin_slot: Rc<std::cell::Cell<Option<app::PinId>>> =
-                Rc::new(std::cell::Cell::new(None));
-            {
-                let windows = windows.clone();
-                let app = app.clone();
-                let pin_slot = pin_slot.clone();
-                ui.window().on_close_requested(move || {
-                    match pin_slot.get() {
-                        Some(id) => close_extra(id, &windows, &app),
-                        None => dock(pane, &windows, &app),
-                    }
-                    slint::CloseRequestResponse::KeepWindowShown
-                });
-            }
-            {
-                let windows = windows.clone();
-                let app = app.clone();
-                let pin_slot = pin_slot.clone();
-                ui.on_dock_requested(move |index| match pin_slot.get() {
-                    Some(id) => close_extra(id, &windows, &app),
-                    None => {
-                        if let Some(pane) = pane_from_index(index) {
-                            dock(pane, &windows, &app);
-                        }
-                    }
-                });
-            }
-            {
-                let windows = windows.clone();
-                let app = app.clone();
-                let pin_slot = pin_slot.clone();
-                ui.on_pin_requested(move || match pin_slot.get() {
-                    None => {
-                        if let Some(id) = pin_the_popped_file_window(&windows, &app) {
-                            pin_slot.set(Some(id));
-                        }
-                    }
-                    Some(id) => pin_extra(id, &windows, &app),
-                });
-            }
-            {
-                let windows = windows.clone();
-                let app = app.clone();
-                ui.on_unpin_requested(move || {
-                    if let Some(id) = pin_slot.get() {
-                        unpin_extra(id, &windows, &app);
-                    }
-                });
-            }
-        }
+        wire_pinning(ui, pane, windows, app);
     } else {
         // Closing the main window closes only the main window (#618): any
         // popped-out window keeps running, linked to every other, and the
@@ -1078,6 +1028,79 @@ pub fn wire_pop_out(
         ui.window().on_close_requested(move || {
             close_main_window(&windows);
             slint::CloseRequestResponse::KeepWindowShown
+        });
+    }
+}
+
+/// Wires the pin button and the two ways a File pop-out window can be
+/// closed (#619). Its own function because the pinned case is not the
+/// docking case: Dock unpins and keeps the window, and the platform's
+/// close button refuses while an edit in it is unsaved.
+fn wire_pinning(
+    ui: &MainWindow,
+    pane: Pane,
+    windows: &Rc<RefCell<PaneWindows>>,
+    app: &Rc<RefCell<App>>,
+) {
+    let pin_slot: Rc<std::cell::Cell<Option<app::PinId>>> = Rc::new(std::cell::Cell::new(None));
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        let pin_slot = pin_slot.clone();
+        ui.window().on_close_requested(move || {
+            match pin_slot.get() {
+                // A pinned window holds the only copy of an edit in
+                // progress: the shared selection has no room for it,
+                // so closing would destroy it silently. Refuse, and
+                // say why, the way `cancel_file_edit` says "edit
+                // discarded" rather than losing one quietly.
+                Some(id) if app.borrow().pinned_edit_modified(id) => {
+                    refuse_to_lose_an_edit(&app);
+                }
+                Some(id) => close_extra(id, &windows, &app),
+                None => dock(pane, &windows, &app),
+            }
+            slint::CloseRequestResponse::KeepWindowShown
+        });
+    }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        let pin_slot = pin_slot.clone();
+        ui.on_dock_requested(move |index| match pin_slot.get() {
+            // #619 requirement 7, as written: docking a pinned
+            // window unpins it. The window stays where it is and
+            // follows the shared selection again, which is what the
+            // Unpin button does - and nothing it was holding, an
+            // edit in progress included, is lost.
+            Some(id) => unpin_extra(id, &windows, &app),
+            None => {
+                if let Some(pane) = pane_from_index(index) {
+                    dock(pane, &windows, &app);
+                }
+            }
+        });
+    }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        let pin_slot = pin_slot.clone();
+        ui.on_pin_requested(move || match pin_slot.get() {
+            None => {
+                if let Some(id) = pin_the_popped_file_window(&windows, &app) {
+                    pin_slot.set(Some(id));
+                }
+            }
+            Some(id) => pin_extra(id, &windows, &app),
+        });
+    }
+    {
+        let windows = windows.clone();
+        let app = app.clone();
+        ui.on_unpin_requested(move || {
+            if let Some(id) = pin_slot.get() {
+                unpin_extra(id, &windows, &app);
+            }
         });
     }
 }
@@ -1138,11 +1161,25 @@ fn unpin_extra(id: app::PinId, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefC
     }
 }
 
-/// Closes `id`'s window for good (#619 requirement 7): from its own Dock
-/// button, or the platform's close button - a pinned window has no pane
-/// slot of its own in the main window to return into, since whatever it
-/// once held has long since been filled by something else, so both act
-/// the same way here.
+/// Keeps `id`'s window open because it holds unsaved changes, and says so
+/// in its status line.
+///
+/// A pinned window's edit lives in its own `PinnedWindow` and nowhere else:
+/// an ordinary popped-out File window docks its edit back into the shared
+/// selection, and a pinned one has nothing to dock into. Closing it would
+/// be the one silent loss of work in the application (the review of #659).
+fn refuse_to_lose_an_edit(app: &Rc<RefCell<App>>) {
+    // Reported through the application, not written onto the window: a
+    // pinned window's status line is synced from the shared `App` on every
+    // tick, so a line set on the window alone would be gone a moment later.
+    app.borrow_mut()
+        .report("unsaved changes: save them, or discard the edit, before closing this window");
+}
+
+/// Closes `id`'s window for good: the platform's close button, once
+/// nothing would be lost by it. A pinned window has no pane slot of its
+/// own in the main window to return into, so closing is closing - its Dock
+/// button unpins instead.
 fn close_extra(id: app::PinId, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
     if let Some(ui) = windows.borrow_mut().pinned.remove(&id) {
         let _ = ui.hide();

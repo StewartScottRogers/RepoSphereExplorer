@@ -20,6 +20,18 @@ use std::time::{Duration, Instant};
 mod common;
 use common::ensure_service;
 
+/// The editor's clipboard, which this test never uses: typing a letter
+/// takes one, and nothing here cuts or pastes.
+struct NoClipboard;
+
+impl gui::editor::Clipboard for NoClipboard {
+    fn read(&mut self) -> Option<String> {
+        None
+    }
+
+    fn write(&mut self, _text: &str) {}
+}
+
 /// A scratch directory of this test's own, holding two files so the shared
 /// selection can move from one to the other while a pinned window keeps
 /// showing the first.
@@ -225,7 +237,7 @@ fn pinning_keeps_its_file_while_the_shared_selection_moves_on_and_unpinning_foll
 /// pinned window has no pane slot of its own left in the main window to
 /// return into, closes it, the same as its own close button would.
 #[test]
-fn docking_a_pinned_window_closes_it() {
+fn docking_a_pinned_window_unpins_it_and_keeps_it() {
     let (windows, app) = windows_at(&scratch("pin-dock"));
     let main = windows.borrow().main().as_weak().upgrade().unwrap();
     let popped = pop_out_and_pin(&windows, &app, &main, "a.txt");
@@ -235,23 +247,29 @@ fn docking_a_pinned_window_closes_it() {
     pump(&windows, &app);
 
     assert!(
-        pinned_window(&windows).is_none(),
-        "docking closed the pinned window"
+        !popped.get_pinned(),
+        "no longer pinned: it follows the shared selection again"
     );
-    assert!(!popped.window().is_visible());
+    assert!(
+        popped.window().is_visible(),
+        "and the window is still there - docking a pinned window unpins \
+         it (#619 requirement 7), it does not destroy it"
+    );
+    // It stays an extra window of its own - unpinned, following the
+    // shared selection, and still on screen.
+    assert!(
+        pinned_window(&windows).is_some(),
+        "the window is still known"
+    );
     // The main window's own File pane stays exactly as it was: hidden
-    // since the original pop-out, and not this window's slot to give
-    // back. Popping the tool out again still works, into a fresh window.
+    // since the original pop-out, and not this window's slot to give back.
     assert!(!main.get_show_file_pane());
-    pane_handle(&windows, Pane::File).invoke_pop_out_requested(2);
-    pump(&windows, &app);
-    assert!(pane_handle(&windows, Pane::File).get_show_file_pane());
 }
 
-/// The platform's own close button reaches the same place as the Dock
-/// button does for a pinned window (#619 requirement 7), the same join
-/// `pop_out_windows.rs`'s `closing_a_popped_out_window_docks_its_pane_back`
-/// proves for an ordinary one.
+/// The platform's own close button closes a pinned window, which has no
+/// pane slot in the main window to dock back into - unlike its Dock
+/// button, which unpins (#619 requirement 7). Nothing is lost here: the
+/// test below covers the case where something would be.
 #[test]
 fn closing_a_pinned_window_from_its_own_decoration_closes_it_too() {
     let (windows, app) = windows_at(&scratch("pin-close"));
@@ -263,6 +281,53 @@ fn closing_a_pinned_window_from_its_own_decoration_closes_it_too() {
 
     assert!(pinned_window(&windows).is_none());
     assert!(!popped.window().is_visible());
+}
+
+/// A pinned window holds the only copy of an edit in progress: the shared
+/// selection has no room for it, and there is no pane slot to dock into.
+/// Closing it would be the one place in the application where work is lost
+/// silently, which the review of #659 found. It refuses instead, and says
+/// why.
+#[test]
+fn a_pinned_window_with_unsaved_changes_refuses_to_close() {
+    let (windows, app) = windows_at(&scratch("pin-unsaved"));
+    let main = windows.borrow().main().as_weak().upgrade().unwrap();
+    let popped = pop_out_and_pin(&windows, &app, &main, "a.txt");
+    let (id, _) = pinned_window(&windows).expect("the window is pinned");
+
+    app.borrow_mut().pinned_begin_file_edit(id);
+    {
+        // Typed, rather than set: `pinned_set_edit_text` is the plain
+        // editor's path, and a text file gets the colouring one.
+        let mut clipboard = NoClipboard;
+        let mut app = app.borrow_mut();
+        for letter in ["h", "e", "r", "e"] {
+            app.pinned_edit_key(id, &mut clipboard, letter, false, false, 24);
+        }
+    }
+    pump(&windows, &app);
+    assert!(
+        app.borrow().pinned_edit_modified(id),
+        "the edit is unsaved before the close is asked for"
+    );
+
+    popped.window().dispatch_event(WindowEvent::CloseRequested);
+    pump(&windows, &app);
+
+    assert!(
+        pinned_window(&windows).is_some(),
+        "the window is still open, and still pinned"
+    );
+    assert!(popped.window().is_visible());
+    assert!(
+        app.borrow().pinned_edit_modified(id),
+        "and the unsaved edit is still there"
+    );
+    assert!(
+        popped.get_status_text().contains("unsaved changes"),
+        "it says why it would not close: {}",
+        popped.get_status_text()
+    );
 }
 
 /// #619 requirement 6: a pinned file deleted through the application - from
