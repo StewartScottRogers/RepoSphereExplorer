@@ -547,6 +547,23 @@ struct Found {
     previous_selected: usize,
 }
 
+/// The All Repositories view (#591): every working copy the service has
+/// found so far up to three folder levels below the Repos Directory, shown
+/// in the Contents pane in place of the listing, the way [`Found`]'s
+/// results are.
+struct AllRepositoriesView {
+    /// The Repos Directory the scan is below; every entry's location is
+    /// relative to it.
+    root: PathBuf,
+    /// What the background scan has found so far, in the order it met them.
+    entries: Vec<protocol::AllRepositoryEntry>,
+    /// Whether the scan has finished, so the status bar can stop counting.
+    done: bool,
+    /// The listing's selection before this view replaced it, so Escape puts
+    /// the reader back where they were.
+    previous_selected: usize,
+}
+
 /// What to do once a pending operation completes successfully, beyond the
 /// reload every operation already triggers.
 #[derive(Debug)]
@@ -1015,6 +1032,30 @@ fn found_row(found_match: &protocol::NameMatch) -> ContentRow {
         mark: None,
         stale_marker: String::new(),
         stale_tooltip: String::new(),
+    }
+}
+
+/// An All Repositories entry's own folder, `root/location/name` - `root`
+/// joined straight with `name` when `location` is empty, a direct child of
+/// the root.
+fn all_repository_path(root: &Path, entry: &protocol::AllRepositoryEntry) -> PathBuf {
+    if entry.location.is_empty() {
+        root.join(&entry.name)
+    } else {
+        root.join(&entry.location).join(&entry.name)
+    }
+}
+
+/// The key an All Repositories entry's working-tree status is asked for and
+/// recorded under in [`App::row_statuses`]: `location/name`, or plain `name`
+/// for a direct child of the root. `/` cannot appear inside a single path
+/// component, so this can never collide with an ordinary listing row's own
+/// name, and the same map serves both without a second one.
+fn all_repository_status_key(entry: &protocol::AllRepositoryEntry) -> String {
+    if entry.location.is_empty() {
+        entry.name.clone()
+    } else {
+        format!("{}/{}", entry.location, entry.name)
     }
 }
 
@@ -1488,10 +1529,17 @@ pub struct App {
     /// other folder, and that join would name a file the reader never
     /// picked. That is the defect the terminal front end had until #524.
     found: Option<Found>,
+    /// The All Repositories view (#591), while it is what the Contents pane
+    /// shows in place of the listing.
+    all_repositories: Option<AllRepositoriesView>,
+    /// The All Repositories scan's next poll, in flight.
+    pending_all_repositories: Option<Receiver<io::Result<Response>>>,
     /// Working-tree status of the listing's repository rows that have been
-    /// asked about, by entry name. Cleared when a listing lands, along with
-    /// every request still outstanding, so an answer about one folder's
-    /// `alpha` is never drawn on another folder's.
+    /// asked about, by entry name - or, for an All Repositories row, its
+    /// location and name joined by `/`, which cannot collide with a plain
+    /// name since `/` never appears inside one. Cleared when a listing
+    /// lands, along with every request still outstanding, so an answer
+    /// about one folder's `alpha` is never drawn on another folder's.
     row_statuses: HashMap<String, RowStatus>,
     /// Status requests in flight: the entry name each is for, and its
     /// answer.
@@ -1575,6 +1623,8 @@ impl App {
             pending_file_path: None,
             pending_find: None,
             found: None,
+            all_repositories: None,
+            pending_all_repositories: None,
             row_statuses: HashMap::new(),
             pending_statuses: Vec::new(),
             shown_file_path: None,
@@ -1599,6 +1649,8 @@ impl App {
     fn load_contents_for_selected(&mut self) {
         // Any navigation, a refresh included, puts the listing back.
         self.found = None;
+        self.all_repositories = None;
+        self.pending_all_repositories = None;
         let rows = self.root.flatten();
         let Some((_, indices)) = rows.get(self.folder_selected).cloned() else {
             return;
@@ -1660,6 +1712,17 @@ impl App {
             }));
             return;
         }
+        if let Some(view) = &self.all_repositories {
+            let Some(entry) = view.entries.get(self.content_selected) else {
+                return;
+            };
+            let path = all_repository_path(&view.root, entry);
+            self.pending_file_path = Some(path.clone());
+            self.pending_file = Some(spawn_request(Request::ViewFile {
+                path: path.to_string_lossy().into_owned(),
+            }));
+            return;
+        }
         let Some(entry) = self.contents.get(self.content_selected) else {
             self.show_file_view(None);
             self.pending_file = None;
@@ -1706,6 +1769,12 @@ impl App {
         {
             self.apply_find_result(&query, result);
         }
+        if let Some(rx) = &self.pending_all_repositories
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_all_repositories = None;
+            self.apply_all_repositories_result(result);
+        }
         let mut answered = Vec::new();
         self.pending_statuses
             .retain(|(name, rx)| match rx.try_recv() {
@@ -1735,6 +1804,27 @@ impl App {
     /// asked about is never asked again, answered or not.
     pub fn ask_for_statuses(&mut self, rows: std::ops::Range<usize>) {
         if self.found.is_some() {
+            return;
+        }
+        if let Some(view) = &self.all_repositories {
+            let root = view.root.clone();
+            let end = rows.end.min(view.entries.len());
+            let start = rows.start.min(end);
+            let candidates: Vec<protocol::AllRepositoryEntry> =
+                view.entries.get(start..end).unwrap_or_default().to_vec();
+            for entry in candidates {
+                let key = all_repository_status_key(&entry);
+                if self.row_statuses.contains_key(&key) {
+                    continue;
+                }
+                self.row_statuses.insert(key.clone(), RowStatus::Waiting);
+                let request = Request::WorkingTreeStatus {
+                    path: all_repository_path(&root, &entry)
+                        .to_string_lossy()
+                        .into_owned(),
+                };
+                self.pending_statuses.push((key, spawn_request(request)));
+            }
             return;
         }
         let folder = self.selected_dir_path();
@@ -1780,6 +1870,52 @@ impl App {
             Some(RowStatus::Answered(Some(status))) if status.changed > 0 => CHANGED_MARKER,
             Some(RowStatus::Answered(Some(status))) if !status.partial => "",
             Some(RowStatus::Answered(_)) => CANNOT_TELL_MARKER,
+        }
+    }
+
+    /// An All Repositories row (#591) as a Contents row: its branch and
+    /// change marker filled in exactly as an ordinary listing row's are,
+    /// visible rows only, and its Location - the parent folder its own row
+    /// would otherwise not name - where the Type column would be.
+    fn all_repository_row(&self, now: u64, entry: &protocol::AllRepositoryEntry) -> ContentRow {
+        let marker = self.marker_for(&all_repository_status_key(entry));
+        let stale = fetch_is_stale(
+            entry.repository.last_fetch,
+            entry.repository.remote.is_some(),
+            now,
+        );
+        let stale_tooltip = if stale {
+            stale_fetch_tooltip(entry.repository.last_fetch, now)
+        } else {
+            String::new()
+        };
+        ContentRow {
+            icon: icon_for(&entry.name, true),
+            is_dir: true,
+            name: format!("{}/", entry.name),
+            size: String::new(),
+            kind: if entry.location.is_empty() {
+                ".".to_owned()
+            } else {
+                entry.location.clone()
+            },
+            modified: String::new(),
+            is_repository: true,
+            mark: repository_mark(true, entry.repository.provider.as_deref()),
+            branch: entry
+                .repository
+                .branch
+                .clone()
+                .unwrap_or_else(|| "detached".to_owned()),
+            marker: marker.to_owned(),
+            marker_tooltip: marker_tooltip(marker).to_owned(),
+            marker_warning: marker == CHANGED_MARKER,
+            stale_marker: if stale {
+                STALE_FETCH_MARKER.to_owned()
+            } else {
+                String::new()
+            },
+            stale_tooltip,
         }
     }
 
@@ -1930,7 +2066,8 @@ impl App {
                 | Response::Done
                 | Response::ReposRoots { .. }
                 | Response::Names { .. }
-                | Response::WorkingTree { .. },
+                | Response::WorkingTree { .. }
+                | Response::AllRepositories { .. },
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
@@ -2430,6 +2567,14 @@ impl App {
             self.status = None;
             return;
         }
+        if matches!(self.mode, Mode::Normal)
+            && let Some(view) = self.all_repositories.take()
+        {
+            self.pending_all_repositories = None;
+            self.select_content(view.previous_selected);
+            self.status = None;
+            return;
+        }
         // Escape in Contents (#582): drops a filter the same way "clear"
         // does, rather than falling through to the generic cancel below,
         // which has nothing else pending to say "cancelled" about.
@@ -2492,7 +2637,7 @@ impl App {
     /// was already in. The lead row moves onto whatever was clicked, or onto
     /// another selected row when the lead itself is deselected.
     pub fn toggle_content(&mut self, index: usize) {
-        if self.found.is_some() {
+        if self.found.is_some() || self.all_repositories.is_some() {
             return;
         }
         if index >= self.contents.len() {
@@ -2517,7 +2662,7 @@ impl App {
 
     /// Shift+click: selects every row between the anchor and `index`.
     pub fn extend_selection_to(&mut self, index: usize) {
-        if self.found.is_some() {
+        if self.found.is_some() || self.all_repositories.is_some() {
             return;
         }
         if index >= self.contents.len() {
@@ -2583,7 +2728,7 @@ impl App {
     /// The lead row is the far end, where the pointer was released, so a
     /// following Shift+click extends from there.
     pub fn select_range(&mut self, from: usize, to: usize) {
-        if self.found.is_some() {
+        if self.found.is_some() || self.all_repositories.is_some() {
             return;
         }
         if self.contents.is_empty() {
@@ -2666,6 +2811,10 @@ impl App {
     pub fn open_content(&mut self, index: usize) {
         if self.found.is_some() {
             self.open_found(index);
+            return;
+        }
+        if self.all_repositories.is_some() {
+            self.open_all_repositories_entry(index);
             return;
         }
         let Some(entry) = self.contents.get(index).cloned() else {
@@ -3218,8 +3367,20 @@ impl App {
         }
     }
 
-    /// F5: re-reads the folder being browsed.
+    /// F5: re-reads the folder being browsed, or, while All Repositories
+    /// (#591) is open, discards its cached scan and starts another.
     pub fn refresh(&mut self) {
+        if let Some(view) = &mut self.all_repositories {
+            view.entries.clear();
+            view.done = false;
+            let root = view.root.clone();
+            self.status = Some("Looking for repositories…".to_owned());
+            self.pending_all_repositories = Some(spawn_request(Request::AllRepositories {
+                root: root.to_string_lossy().into_owned(),
+                refresh: true,
+            }));
+            return;
+        }
         self.reselect = self
             .contents
             .get(self.content_selected)
@@ -3242,7 +3403,11 @@ impl App {
     /// starts after the current row so repeated presses cycle through the
     /// matches.
     pub fn type_ahead(&mut self, prefix: &str) {
-        if !matches!(self.mode, Mode::Normal) || prefix.is_empty() || self.found.is_some() {
+        if !matches!(self.mode, Mode::Normal)
+            || prefix.is_empty()
+            || self.found.is_some()
+            || self.all_repositories.is_some()
+        {
             return;
         }
         // The letter goes to the pane that is drawn as the focused one.
@@ -3679,7 +3844,10 @@ impl App {
     /// that rule one level further in: the guard belongs where every route
     /// has to pass, not on one of the ways in.
     fn pane_command_allowed(&self) -> bool {
-        matches!(self.mode, Mode::Normal) && self.editing_file.is_none() && self.found.is_none()
+        matches!(self.mode, Mode::Normal)
+            && self.editing_file.is_none()
+            && self.found.is_none()
+            && self.all_repositories.is_none()
     }
 
     /// Whether Up has anywhere to go, so the button can be drawn refused
@@ -3892,7 +4060,7 @@ impl App {
     /// column. Out-of-range columns are ignored. The selected entry keeps
     /// its selection across the reorder.
     pub fn sort_by_column(&mut self, column: i32) {
-        if self.found.is_some() {
+        if self.found.is_some() || self.all_repositories.is_some() {
             return;
         }
         let Some(key) = SortKey::from_index(column) else {
@@ -3962,6 +4130,14 @@ impl App {
     pub fn content_rows(&self) -> Vec<ContentRow> {
         if let Some(found) = &self.found {
             return found.matches.iter().map(found_row).collect();
+        }
+        if let Some(view) = &self.all_repositories {
+            let now = now_epoch_seconds();
+            return view
+                .entries
+                .iter()
+                .map(|entry| self.all_repository_row(now, entry))
+                .collect();
         }
         let now = now_epoch_seconds();
         self.contents
@@ -4276,24 +4452,38 @@ impl App {
         self.found.is_some()
     }
 
+    /// Whether the Contents pane is showing the All Repositories view
+    /// (#591) rather than the browsed folder, so its column headings can
+    /// say so.
+    #[must_use]
+    pub const fn showing_all_repositories(&self) -> bool {
+        self.all_repositories.is_some()
+    }
+
     /// Whether the Contents pane should draw its Size column: a search's
     /// results keep their own columns regardless (#578), and an ordinary
     /// listing draws it only once it holds a file - every row is a folder
     /// in the common case of browsing a Repos Directory, where an empty,
     /// fixed-width Size column only crowds out the Name and Type columns
-    /// for a fact no row has.
+    /// for a fact no row has. An All Repositories row is always a folder,
+    /// so it never earns the column either.
     #[must_use]
     pub fn content_size_column_visible(&self) -> bool {
-        self.found.is_some() || self.contents.iter().any(|entry| !entry.is_dir)
+        self.found.is_some()
+            || (self.all_repositories.is_none() && self.contents.iter().any(|entry| !entry.is_dir))
     }
 
     /// Whether the Contents pane's Modified column should read "Last
     /// activity" instead: once the listing holds any repository row, since
     /// that column shows last activity rather than the folder's own time
-    /// for that row (#588). A search's results are never repository rows.
+    /// for that row (#588). A search's results, and the All Repositories
+    /// view (#591), draw their own Type-column replacement instead and are
+    /// never this.
     #[must_use]
     pub fn content_holds_repository(&self) -> bool {
-        self.found.is_none() && self.contents.iter().any(|entry| entry.repository.is_some())
+        self.found.is_none()
+            && self.all_repositories.is_none()
+            && self.contents.iter().any(|entry| entry.repository.is_some())
     }
 
     /// Plants a search's answer, for a test that has one without a service.
@@ -4364,10 +4554,99 @@ impl App {
         self.browse(folder);
     }
 
+    /// View > All Repositories, and the Folders tree's own entry for it
+    /// (#591): every working copy up to three folder levels below the
+    /// Repos Directory, found by the service in the background. Replaces
+    /// the Contents pane's listing in place, the way a search's results
+    /// do, rather than navigating anywhere - the browsed folder is still
+    /// there for Escape to put back.
+    pub fn open_all_repositories(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing_file.is_some() {
+            return;
+        }
+        self.found = None;
+        let root = self.root.path.clone();
+        self.all_repositories = Some(AllRepositoriesView {
+            root: root.clone(),
+            entries: Vec::new(),
+            done: false,
+            previous_selected: self.content_selected,
+        });
+        self.content_selected = 0;
+        self.anchor = 0;
+        self.selection.clear();
+        self.selection.insert(0);
+        self.focus = Pane::Contents;
+        self.status = Some("Looking for repositories…".to_owned());
+        self.pending_all_repositories = Some(spawn_request(Request::AllRepositories {
+            root: root.to_string_lossy().into_owned(),
+            refresh: false,
+        }));
+    }
+
+    /// Plants an All Repositories answer, for a test that has one without a
+    /// service.
+    pub fn apply_all_repositories_result_for_test(&mut self, response: Response) {
+        self.apply_all_repositories_result(Ok(response));
+    }
+
+    fn apply_all_repositories_result(&mut self, result: io::Result<Response>) {
+        let Some(view) = &mut self.all_repositories else {
+            return;
+        };
+        match result {
+            Ok(Response::AllRepositories { entries, done }) => {
+                view.entries = entries;
+                view.done = done;
+                self.status = if done {
+                    None
+                } else {
+                    let root = view.root.clone();
+                    let found_so_far = view.entries.len();
+                    self.pending_all_repositories = Some(spawn_request(Request::AllRepositories {
+                        root: root.to_string_lossy().into_owned(),
+                        refresh: false,
+                    }));
+                    Some(format!("Looking for repositories… {found_so_far} found"))
+                };
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("unexpected response to All Repositories".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// Return or double-click on an All Repositories row (#591): goes to
+    /// that repository in its real folder, the same way [`Self::open_found`]
+    /// goes to a search result's.
+    fn open_all_repositories_entry(&mut self, index: usize) {
+        let Some(view) = &self.all_repositories else {
+            return;
+        };
+        let Some(entry) = view.entries.get(index) else {
+            return;
+        };
+        let path = all_repository_path(&view.root, entry);
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let (folder, name) = (folder.to_path_buf(), name.to_string_lossy().into_owned());
+        self.all_repositories = None;
+        self.pending_all_repositories = None;
+        self.remember_current();
+        self.push_history(folder.clone());
+        self.reselect = Some(name);
+        self.browse(folder);
+    }
+
     fn listed_len(&self) -> usize {
-        self.found
-            .as_ref()
-            .map_or(self.contents.len(), |found| found.matches.len())
+        if let Some(found) = &self.found {
+            return found.matches.len();
+        }
+        if let Some(view) = &self.all_repositories {
+            return view.entries.len();
+        }
+        self.contents.len()
     }
 
     /// Index of the selected row in [`Self::content_labels`].
@@ -4587,7 +4866,8 @@ impl App {
                 | Response::Done
                 | Response::ReposRoots { .. }
                 | Response::Names { .. }
-                | Response::WorkingTree { .. },
+                | Response::WorkingTree { .. }
+                | Response::AllRepositories { .. },
             )
             | None => String::new(),
         }
@@ -4868,6 +5148,15 @@ impl App {
     /// filter (#582) while that is narrowing the pane - the size and
     /// selection a full summary carries say nothing a filtered view needs.
     fn contents_summary(&self) -> String {
+        if let Some(view) = &self.all_repositories {
+            let count = view.entries.len();
+            let noun = if count == 1 {
+                "repository"
+            } else {
+                "repositories"
+            };
+            return format!("{count} {noun} found");
+        }
         if self.filter.changed_only {
             return format!("showing {} with uncommitted changes", self.contents.len());
         }
@@ -9369,5 +9658,145 @@ third",
         app.ask_for_statuses(0..10);
 
         assert!(app.pending_statuses.is_empty());
+    }
+
+    // ---- All Repositories (#591) -----------------------------------------
+
+    fn all_repository_entry(name: &str, location: &str) -> protocol::AllRepositoryEntry {
+        protocol::AllRepositoryEntry {
+            name: name.to_owned(),
+            location: location.to_owned(),
+            repository: RepositoryInfo {
+                provider: None,
+                branch: Some("main".to_owned()),
+                remote: None,
+                kind: RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch: None,
+            },
+        }
+    }
+
+    #[test]
+    fn opening_all_repositories_asks_the_service_and_shows_a_looking_status() {
+        let mut app = app_with_one_content_entry();
+
+        app.open_all_repositories();
+
+        assert!(app.pending_all_repositories.is_some());
+        assert!(app.showing_all_repositories());
+        assert!(app.status_text().contains("Looking for repositories"));
+    }
+
+    #[test]
+    fn results_land_in_the_contents_pane_with_a_location_column() {
+        let mut app = app_with_one_content_entry();
+        app.open_all_repositories();
+
+        app.apply_all_repositories_result_for_test(Response::AllRepositories {
+            entries: vec![
+                all_repository_entry("direct", ""),
+                all_repository_entry("project", "github/owner"),
+            ],
+            done: true,
+        });
+
+        let rows = app.content_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "direct/");
+        assert_eq!(rows[0].kind, ".", "a direct child names the root itself");
+        assert_eq!(rows[1].name, "project/");
+        assert_eq!(rows[1].kind, "github/owner");
+        assert!(rows[1].is_repository);
+        assert_eq!(rows[1].branch, "main");
+    }
+
+    #[test]
+    fn an_unfinished_scan_keeps_polling_and_says_how_many_are_found_so_far() {
+        let mut app = app_with_one_content_entry();
+        app.open_all_repositories();
+
+        app.apply_all_repositories_result_for_test(Response::AllRepositories {
+            entries: vec![all_repository_entry("one", "")],
+            done: false,
+        });
+
+        assert!(
+            app.pending_all_repositories.is_some(),
+            "still scanning, so another poll is on its way"
+        );
+        assert!(app.status_text().contains("1 found"));
+
+        app.apply_all_repositories_result_for_test(Response::AllRepositories {
+            entries: vec![
+                all_repository_entry("one", ""),
+                all_repository_entry("two", ""),
+            ],
+            done: true,
+        });
+
+        assert_eq!(app.content_rows().len(), 2);
+        assert!(
+            !app.status_text().contains("Looking for repositories"),
+            "the scan is done: {}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn escape_restores_the_listing_that_was_on_screen_before() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        app.select_content(1);
+        app.open_all_repositories();
+
+        app.cancel_pending();
+
+        assert!(!app.showing_all_repositories());
+        assert_eq!(app.content_selected(), 1);
+    }
+
+    #[test]
+    fn f5_discards_the_cached_scan_and_asks_again() {
+        let mut app = app_with_one_content_entry();
+        app.open_all_repositories();
+        app.apply_all_repositories_result_for_test(Response::AllRepositories {
+            entries: vec![all_repository_entry("one", "")],
+            done: true,
+        });
+
+        app.refresh();
+
+        assert!(app.content_rows().is_empty(), "the stale list is cleared");
+        assert!(app.pending_all_repositories.is_some());
+        assert!(app.status_text().contains("Looking for repositories"));
+    }
+
+    #[test]
+    fn opening_a_nested_entry_goes_to_its_real_folder_with_it_selected() {
+        let mut app = app_with_one_content_entry();
+        app.open_all_repositories();
+        app.apply_all_repositories_result_for_test(Response::AllRepositories {
+            entries: vec![all_repository_entry("project", "github/owner")],
+            done: true,
+        });
+
+        app.open_content(0);
+
+        assert!(!app.showing_all_repositories());
+        assert_eq!(
+            PathBuf::from(app.current_path()),
+            std::env::temp_dir().join("github").join("owner")
+        );
+    }
+
+    #[test]
+    fn navigating_a_folder_leaves_all_repositories() {
+        let mut app = app_with_one_content_entry();
+        app.open_all_repositories();
+
+        app.refresh();
+        app.select_folder(0);
+
+        assert!(!app.showing_all_repositories());
     }
 }

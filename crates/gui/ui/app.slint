@@ -219,6 +219,12 @@ component Pane inherits Rectangle {
     in property <bool> focused;
     in property <[FolderRow]> rows;
     in property <int> selected;
+    // View > All Repositories (#591): a fixed entry above the tree itself,
+    // since its rows are not part of it - a fresh scan below the Repos
+    // Directory has nothing to do with which folders happen to be expanded.
+    in property <image> all-repositories-icon;
+    in property <bool> all-repositories-selected;
+    callback all-repositories-clicked();
     // The click carries where it landed, because the chevron and the name
     // do different things and only Rust knows which is which - see
     // `app::chevron_hit`.
@@ -319,6 +325,47 @@ component Pane inherits Rectangle {
             color: Theme.heading-text;
             height: 22px;
             horizontal-alignment: center;
+        }
+        all-repositories-row := Rectangle {
+            height: row-height;
+            background: all-repositories-selected
+                ? selection-colour
+                : (all-repositories-touch.has-hover ? Theme.hover : transparent);
+            accessible-role: text;
+            accessible-label: "All repositories";
+            HorizontalLayout {
+                padding-left: pad;
+                padding-right: 4px;
+                Rectangle {
+                    width: chevron;
+                    horizontal-stretch: 0;
+                }
+                Image {
+                    source: all-repositories-icon;
+                    width: 16px * Zoom.factor;
+                    height: 16px * Zoom.factor;
+                    image-fit: contain;
+                    horizontal-stretch: 0;
+                }
+                Rectangle {
+                    width: 5px * Zoom.factor;
+                    horizontal-stretch: 0;
+                }
+                Text {
+                    text: "All repositories";
+                    color: all-repositories-selected && focused ? Theme.on-accent : Palette.foreground;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    min-width: 24px * Zoom.factor;
+                }
+            }
+            all-repositories-touch := TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => { all-repositories-clicked(); }
+            }
         }
         scroll := ScrollView {
             viewport-y <=> root.scroll-y;
@@ -807,6 +854,9 @@ component ContentsPane inherits Rectangle {
     // While a search's results fill the pane, its columns hold a result's
     // repository and folder rather than a size, type and date.
     in property <bool> showing-found;
+    // While the All Repositories view (#591) fills the pane, its Type
+    // column holds a Location instead.
+    in property <bool> showing-all-repositories;
     // Whether the Size column is worth drawing: a search's results keep
     // their own columns regardless of this, and an ordinary listing hides
     // it, giving its width to Name, until it holds a file (#578).
@@ -1000,7 +1050,7 @@ component ContentsPane inherits Rectangle {
                     width: kind-column;
                     horizontal-stretch: 0;
                     align-right: true;
-                    label: showing-found ? "Repository" : "Type";
+                    label: showing-found ? "Repository" : (showing-all-repositories ? "Location" : "Type");
                     active: sort-column == 2;
                     ascending: sort-ascending;
                     activated => { sort-requested(2); }
@@ -1009,7 +1059,7 @@ component ContentsPane inherits Rectangle {
                     width: modified-column;
                     horizontal-stretch: 0;
                     align-right: true;
-                    label: showing-found ? "" : (holds-repository ? "Last activity" : "Modified");
+                    label: showing-found || showing-all-repositories ? "" : (holds-repository ? "Last activity" : "Modified");
                     active: sort-column == 3;
                     ascending: sort-ascending;
                     activated => { sort-requested(3); }
@@ -1875,6 +1925,17 @@ export component MainWindow inherits Window {
     callback folder-copy-remote-address-requested();
     callback folder-show-in-file-manager-requested();
     in property <bool> showing-found;
+    // View > All Repositories (#591): every working copy found up to three
+    // folder levels below the Repos Directory. `showing-all-repositories`
+    // is what tells the Contents pane's columns and the Folders tree's own
+    // entry apart from an ordinary listing; `all-repositories-requested`
+    // opens it, the way `switcher-open-requested` opens the switcher.
+    in property <bool> showing-all-repositories;
+    callback all-repositories-requested();
+    // The Folders tree's own All Repositories entry draws the same folder
+    // icon a plain folder's row does - a scan below the root is not itself
+    // a working copy, so it never earns the branch mark one carries.
+    in property <image> all-repositories-icon;
     // Whether the current listing holds a file, so the Size column - blank
     // on every row otherwise - is drawn only once there is a size to show
     // (#578).
@@ -2359,7 +2420,10 @@ export component MainWindow inherits Window {
                     title: "Folders";
                     focused: focus-pane == 0;
                     rows: folder-rows;
-                    selected: folder-selected;
+                    selected: showing-all-repositories ? -1 : folder-selected;
+                    all-repositories-icon: all-repositories-icon;
+                    all-repositories-selected: showing-all-repositories;
+                    all-repositories-clicked => { all-repositories-requested(); }
                     scroll-y <=> folders-scroll-y;
                     width: folders-width;
                     horizontal-stretch: 0;
@@ -2415,8 +2479,9 @@ export component MainWindow inherits Window {
                     prompt-text: content-prompt-text;
                     prompt-row: content-prompt-row;
                     prompt-editable: content-prompt-editable;
-                    sort-column: showing-found ? -1 : content-sort-column;
+                    sort-column: showing-found || showing-all-repositories ? -1 : content-sort-column;
                     showing-found: showing-found;
+                    showing-all-repositories: showing-all-repositories;
                     show-size-column: content-size-column-visible;
                     holds-repository: content-holds-repository;
                     sort-ascending: content-sort-ascending;
@@ -3052,6 +3117,11 @@ export component MainWindow inherits Window {
                     shortcut: "F5";
                     item-height: menu-item-h;
                     activated => { open-menu = -1; refresh-requested(); }
+                }
+                ContextMenuItem {
+                    label: "All Repositories";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; all-repositories-requested(); }
                 }
                 ContextMenuItem {
                     label: "Up One Level";
