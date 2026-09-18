@@ -796,6 +796,17 @@ fn format_timestamp(seconds: Option<u64>) -> String {
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
+/// The time an entry's Modified column sorts and displays by: a
+/// repository's last activity when it has one, and the folder's or file's
+/// own modification time otherwise (#588).
+fn effective_modified(entry: &DirectoryEntry) -> Option<u64> {
+    entry
+        .repository
+        .as_ref()
+        .and_then(|repository| repository.last_activity)
+        .or(entry.modified)
+}
+
 /// Converts days since 1970-01-01 into a civil `(year, month, day)`, by
 /// Howard Hinnant's `civil_from_days`. Avoids taking on a date library for
 /// one column.
@@ -3711,7 +3722,7 @@ impl App {
                 SortKey::Kind => {
                     format_kind(&a.name, a.is_dir).cmp(&format_kind(&b.name, b.is_dir))
                 }
-                SortKey::Modified => a.modified.cmp(&b.modified),
+                SortKey::Modified => effective_modified(a).cmp(&effective_modified(b)),
             }
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then_with(|| a.name.cmp(&b.name));
@@ -3821,7 +3832,7 @@ impl App {
                         format_size(entry.size)
                     },
                     kind: format_kind_of(&entry.name, entry.is_dir, entry.repository.as_ref()),
-                    modified: format_timestamp(entry.modified),
+                    modified: format_timestamp(effective_modified(entry)),
                     is_repository: entry.repository.is_some(),
                     mark: repository_mark(
                         entry.repository.is_some(),
@@ -3956,6 +3967,15 @@ impl App {
     #[must_use]
     pub fn content_size_column_visible(&self) -> bool {
         self.found.is_some() || self.contents.iter().any(|entry| !entry.is_dir)
+    }
+
+    /// Whether the Contents pane's Modified column should read "Last
+    /// activity" instead: once the listing holds any repository row, since
+    /// that column shows last activity rather than the folder's own time
+    /// for that row (#588). A search's results are never repository rows.
+    #[must_use]
+    pub fn content_holds_repository(&self) -> bool {
+        self.found.is_none() && self.contents.iter().any(|entry| entry.repository.is_some())
     }
 
     /// Plants a search's answer, for a test that has one without a service.
@@ -4957,6 +4977,7 @@ second", "truncated": false }),
                 kind: plugin_directory::repository::Kind::Clone,
                 tracking: None,
                 status: None,
+                last_activity: None,
             }),
             readme: None,
         })
@@ -5000,6 +5021,7 @@ second", "truncated": false }),
                 kind,
                 tracking: None,
                 status: None,
+                last_activity: None,
             }),
             readme: None,
         })
@@ -5511,6 +5533,7 @@ third",
             branch: None,
             remote: None,
             kind: RepositoryKind::Clone,
+            last_activity: None,
         };
         assert_eq!(
             format_kind_of("repo", true, Some(&with_provider)),
@@ -5524,6 +5547,7 @@ third",
             branch: None,
             remote: None,
             kind: RepositoryKind::Clone,
+            last_activity: None,
         };
         assert_eq!(
             format_kind_of("repo", true, Some(&without_provider)),
@@ -5543,6 +5567,7 @@ third",
                 clone: "/repos/clone".to_owned(),
                 clone_exists: true,
             },
+            last_activity: None,
         };
         assert_eq!(
             format_kind_of("linked", true, Some(&worktree)),
@@ -5556,6 +5581,7 @@ third",
             kind: RepositoryKind::Submodule {
                 outer: "/repos/outer".to_owned(),
             },
+            last_activity: None,
         };
         assert_eq!(
             format_kind_of("inner", true, Some(&submodule)),
@@ -5570,6 +5596,7 @@ third",
                 clone: "/repos/clone".to_owned(),
                 clone_exists: false,
             },
+            last_activity: None,
         };
         assert_eq!(
             format_kind_of("linked", true, Some(&worktree_with_no_remote)),
@@ -5671,6 +5698,127 @@ third",
             "beta.txt",
             "the selection follows its entry"
         );
+    }
+
+    #[test]
+    fn sorting_by_modified_orders_repositories_by_last_activity_not_folder_time() {
+        // The folder's own modification time only moves when an entry
+        // directly inside it changes, so it is a poor answer to "which was
+        // I in most recently"; last activity is read from the checkout's
+        // own files instead (#588).
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    DirectoryEntry {
+                        name: "older-folder-newer-activity".to_owned(),
+                        is_dir: true,
+                        size: 0,
+                        modified: Some(100),
+                        repository: Some(RepositoryInfo {
+                            provider: None,
+                            branch: None,
+                            remote: None,
+                            kind: RepositoryKind::Clone,
+                            last_activity: Some(900),
+                        }),
+                    },
+                    DirectoryEntry {
+                        name: "newer-folder-older-activity".to_owned(),
+                        is_dir: true,
+                        size: 0,
+                        modified: Some(800),
+                        repository: Some(RepositoryInfo {
+                            provider: None,
+                            branch: None,
+                            remote: None,
+                            kind: RepositoryKind::Clone,
+                            last_activity: Some(200),
+                        }),
+                    },
+                    DirectoryEntry {
+                        name: "plain-folder".to_owned(),
+                        is_dir: true,
+                        size: 0,
+                        modified: Some(500),
+                        repository: None,
+                    },
+                ],
+            }),
+        );
+
+        app.sort_by_column(3);
+
+        assert_eq!(
+            app.content_rows()
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "newer-folder-older-activity/",
+                "plain-folder/",
+                "older-folder-newer-activity/",
+            ],
+            "the repositories order by last activity (200, 900), the plain \
+             folder by its own time (500) - not by folder time throughout"
+        );
+        let newest_row = app
+            .content_rows()
+            .into_iter()
+            .find(|row| row.name == "older-folder-newer-activity/")
+            .unwrap();
+        assert_eq!(
+            newest_row.modified,
+            format_timestamp(Some(900)),
+            "the Modified cell shows last activity, not the folder's own time"
+        );
+    }
+
+    #[test]
+    fn content_holds_repository_is_true_once_any_row_is_a_working_copy() {
+        let mut app = App::new(std::env::temp_dir());
+        assert!(
+            !app.content_holds_repository(),
+            "an empty listing holds no repository"
+        );
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("plain", true), ("also-plain.txt", false)]),
+            }),
+        );
+        assert!(!app.content_holds_repository());
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    DirectoryEntry {
+                        name: "plain".to_owned(),
+                        is_dir: true,
+                        size: 0,
+                        modified: None,
+                        repository: None,
+                    },
+                    DirectoryEntry {
+                        name: "checkout".to_owned(),
+                        is_dir: true,
+                        size: 0,
+                        modified: None,
+                        repository: Some(RepositoryInfo {
+                            provider: None,
+                            branch: None,
+                            remote: None,
+                            kind: RepositoryKind::Clone,
+                            last_activity: None,
+                        }),
+                    },
+                ],
+            }),
+        );
+        assert!(app.content_holds_repository());
     }
 
     #[test]
@@ -6790,6 +6938,7 @@ third",
                     branch: Some("main".to_owned()),
                     remote: Some("https://github.com/owner/explorer.git".to_owned()),
                     kind: RepositoryKind::Clone,
+                    last_activity: None,
                 }),
             },
             DirectoryEntry {
@@ -7732,6 +7881,7 @@ third",
                         branch: branch.map(str::to_owned),
                         remote: remote.map(str::to_owned),
                         kind: RepositoryKind::Clone,
+                        last_activity: None,
                     }),
                 }],
             }),
@@ -7962,6 +8112,7 @@ third",
                         branch: Some("main".to_owned()),
                         remote: Some("git@github.com:owner/name.git".to_owned()),
                         kind: RepositoryKind::Clone,
+                        last_activity: None,
                     }),
                 }],
             }),
@@ -8208,6 +8359,7 @@ third",
                     branch: Some("main".to_owned()),
                     remote: None,
                     kind: RepositoryKind::Clone,
+                    last_activity: None,
                 }),
             })
             .collect();
@@ -8547,6 +8699,7 @@ third",
                         branch: None,
                         remote: None,
                         kind: RepositoryKind::Clone,
+                        last_activity: None,
                     }),
                 }],
             }),

@@ -151,6 +151,10 @@ pub fn describe(path: &Path) -> Option<RepositoryInfo> {
                 outer: outer.to_string_lossy().into_owned(),
             },
         },
+        last_activity: found
+            .last_activity
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs()),
     })
 }
 

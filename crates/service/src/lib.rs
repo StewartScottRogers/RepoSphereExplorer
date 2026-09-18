@@ -3527,6 +3527,85 @@ public class OrderBook {
     }
 
     #[test]
+    fn a_listing_carries_a_repositorys_last_activity() {
+        // The folder's own modification time only moves when an entry
+        // directly inside it changes; last activity is read from the
+        // checkout's own files instead (#588).
+        let dir = scratch();
+        let checkout = dir.join("widgets");
+        let git = checkout.join(".git");
+        fs::create_dir_all(&git).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let entries = list_directory(&dir).unwrap();
+
+        let entry = entries.iter().find(|e| e.name == "widgets").unwrap();
+        let found = entry
+            .repository
+            .as_ref()
+            .expect("a checkout, by its marker");
+        let expected = fs::metadata(git.join("HEAD"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(
+            found.last_activity,
+            Some(expected),
+            "HEAD is the only one of the three activity files this fixture wrote"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn listing_two_hundred_repositories_stays_a_stat_per_row() {
+        // GUIDANCE.md 3.4/3.5: a directory read per row would make a
+        // listing of this size crawl. Reading last activity is a stat of
+        // three named files per repository (CLAUDE.md rule 9), never a
+        // read of the git directory's contents - so 200 of them stays
+        // fast. The actual wall-clock time is reported in the pull
+        // request alongside the same listing's time before this change.
+        let dir = scratch();
+        for n in 0..200 {
+            let git = dir.join(format!("repo-{n}")).join(".git");
+            fs::create_dir_all(git.join("logs")).unwrap();
+            fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+            fs::write(
+                git.join("config"),
+                "[remote \"origin\"]\n\turl = https://github.com/acme/widgets.git\n",
+            )
+            .unwrap();
+            fs::write(git.join("index"), b"").unwrap();
+            fs::write(git.join("logs").join("HEAD"), b"").unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        let entries = list_directory(&dir).unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(entries.len(), 200);
+        for entry in &entries {
+            assert!(
+                entry
+                    .repository
+                    .as_ref()
+                    .is_some_and(|found| found.last_activity.is_some()),
+                "{} should have last activity",
+                entry.name
+            );
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "200 repositories took {elapsed:?}, far more than a handful of stats per row should"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn an_ordinary_folder_is_listed_without_being_called_a_working_copy() {
         let dir = scratch();
         fs::create_dir_all(dir.join("just-a-folder")).unwrap();

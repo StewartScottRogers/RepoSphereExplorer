@@ -789,6 +789,10 @@ component ContentsPane inherits Rectangle {
     // their own columns regardless of this, and an ordinary listing hides
     // it, giving its width to Name, until it holds a file (#578).
     in property <bool> show-size-column: true;
+    // Whether the listing holds a repository row, so the Modified column's
+    // header reads "Last activity" instead - what that column shows for a
+    // repository row (#588).
+    in property <bool> holds-repository;
     in property <bool> sort-ascending;
     callback sort-requested(int);
     // Whether the selected row previewed as an archive; Extract is greyed
@@ -983,7 +987,7 @@ component ContentsPane inherits Rectangle {
                     width: modified-column;
                     horizontal-stretch: 0;
                     align-right: true;
-                    label: showing-found ? "" : "Modified";
+                    label: showing-found ? "" : (holds-repository ? "Last activity" : "Modified");
                     active: sort-column == 3;
                     ascending: sort-ascending;
                     activated => { sort-requested(3); }
@@ -1838,6 +1842,9 @@ export component MainWindow inherits Window {
     // on every row otherwise - is drawn only once there is a size to show
     // (#578).
     in property <bool> content-size-column-visible: true;
+    // Whether the current listing holds a repository, so the Modified
+    // column's header reads "Last activity" (#588).
+    in property <bool> content-holds-repository;
     callback find-requested();
     // The Contents pane's filter field and the status bar's two links
     // (#582): a name typed narrows the listing live, the changed count is
@@ -2353,6 +2360,7 @@ export component MainWindow inherits Window {
                     sort-column: showing-found ? -1 : content-sort-column;
                     showing-found: showing-found;
                     show-size-column: content-size-column-visible;
+                    holds-repository: content-holds-repository;
                     sort-ascending: content-sort-ascending;
                     sort-requested(c) => { content-sort-requested(c); }
                     new-folder-requested => { new-folder-requested(); }

@@ -1333,6 +1333,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_editing_path(app.editing_path());
     ui.set_showing_found(app.showing_found());
     ui.set_content_size_column_visible(app.content_size_column_visible());
+    ui.set_content_holds_repository(app.content_holds_repository());
     ui.set_editing_file(app.editing_file());
     ui.set_can_edit(app.can_edit());
     ui.set_can_open(app.can_open());
