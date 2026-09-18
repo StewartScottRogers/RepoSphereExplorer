@@ -147,6 +147,12 @@ export component MainWindow inherits Window {
     // popped-out one, built in Rust from which panes are currently out.
     in property <[PaneMenuRow]> pop-out-rows;
     in property <[PaneMenuRow]> dock-rows;
+    // #618: docks every popped-out pane back at once (the empty main
+    // window's own "Dock All"), and brings the main window back after it
+    // was closed while panes were still popped out (every popped-out
+    // window's View menu).
+    callback dock-all-requested();
+    callback show-main-window-requested();
 
     callback folder-row-clicked(int, length);
     callback folder-row-double-clicked(int);
@@ -744,6 +750,30 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            // #618: every pane is popped out of the main window into one of
+            // its own. The panes layout below collapses to nothing in this
+            // case (each pane's width goes to 0), so this message and Dock
+            // All button fill the gap rather than leaving it blank.
+            if is-main-window && !show-folders-pane && !show-contents-pane && !show-file-pane: Rectangle {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "All panes are in their own windows";
+                        horizontal-alignment: center;
+                        color: Theme.dim-text;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        padding-top: 8px;
+                        CommandButton {
+                            label: "Dock All";
+                            activated => { dock-all-requested(); }
+                        }
+                    }
+                }
+            }
             HorizontalLayout {
                 spacing: 2px;
                 folders-pane := FoldersPane {
@@ -1187,6 +1217,14 @@ export component MainWindow inherits Window {
                     label: "Dock " + row.label;
                     item-height: menu-item-h;
                     activated => { open-menu = -1; dock-requested(row.pane); }
+                }
+                // #618: only meaningful from a popped-out window - the main
+                // window's own View menu is only reachable while it is
+                // already showing.
+                if !is-main-window: ContextMenuItem {
+                    label: "Show Main Window";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; show-main-window-requested(); }
                 }
             }
         }
