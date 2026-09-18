@@ -10149,17 +10149,49 @@ third",
         );
     }
 
+    /// Finds a drive letter this host genuinely lacks, probing each in
+    /// turn the way `not_there_cause` does: `"<letter>:"` plus the path
+    /// separator. "Lacks" means the probe answers `NotFound` specifically.
+    /// A drive that is present but not ready, such as an empty optical
+    /// drive, answers with a different error and must stay classified as
+    /// unreadable, not missing.
+    fn missing_drive_letter() -> Option<char> {
+        ('A'..='Z').find(|letter| {
+            let mut root = format!("{letter}:");
+            root.push(std::path::MAIN_SEPARATOR);
+            matches!(
+                std::fs::metadata(&root).err().map(|err| err.kind()),
+                Some(std::io::ErrorKind::NotFound)
+            )
+        })
+    }
+
     #[test]
     fn classify_root_problem_reports_a_drive_that_is_not_connected() {
-        // "Z:\repos" parses as a drive-letter path from its text alone
-        // (see `drive_letter`), so this is exercisable on any host - this
-        // Linux test runner included - without a real Windows drive.
-        let problem = super::classify_root_problem(Path::new(r"Z:\repos"), "not found");
+        // The letter is found rather than named as a constant: this test
+        // used to hard-code `Z:`, which is exactly the drive letter this
+        // project's own README uses for its example Repos Directory. On a
+        // Windows machine with a `Z:` drive mapped, `Z:\repos` is a real
+        // folder and the classifier correctly reports it as unreadable
+        // rather than missing, so the hard-coded test failed even though
+        // the classifier was right. Probing for a letter this host
+        // genuinely lacks keeps the test honest on every host, including
+        // a Windows one with `Z:` mapped.
+        let Some(letter) = missing_drive_letter() else {
+            // Every letter A-Z answered on this host, so there is no
+            // "not connected" case left to tell apart from "present" -
+            // nothing to assert.
+            return;
+        };
+
+        let mut root = PathBuf::from(format!("{letter}:"));
+        root.push("repos");
+        let problem = super::classify_root_problem(&root, "not found");
 
         assert_eq!(
             problem,
             super::RootProblem::NotThere {
-                cause: super::NotThereCause::DriveNotConnected("Z:".to_owned())
+                cause: super::NotThereCause::DriveNotConnected(format!("{letter}:"))
             }
         );
     }
