@@ -5,6 +5,7 @@ pub mod bindings;
 mod colour;
 mod document;
 mod editor;
+pub mod settings;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
