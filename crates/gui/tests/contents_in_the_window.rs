@@ -716,12 +716,20 @@ fn a_double_click_after_scrolling_opens_the_folder_under_the_pointer() {
     }
     let (ui, app) = window_on(&directory);
     focus_the_listing(&ui);
-    for _ in 0..50 {
-        press(
-            &ui,
-            &char::from(slint::platform::Key::DownArrow).to_string(),
-        );
-    }
+    // End, rather than a counted run of Down presses, because how far the
+    // listing has to move before it scrolls is not a number this test can
+    // know. The window takes its preferred size, and that grows with the
+    // Folders tree beside the listing: sixty subfolders make the tree sixty
+    // rows tall, so on a desktop the window came out 1174 logical pixels
+    // tall and the listing's viewport 1004 of them. Sixty rows of twenty
+    // then overflow by less than ten, fifty Down presses left the pane
+    // scrolled by sixteen pixels, and the guard below fired before the
+    // double click it guards was ever tried (#662). The sibling scroll
+    // tests here list sixty *files*, which leave the tree empty and the
+    // window short, which is why they passed on the same machine. The far
+    // end of the listing is as far as the pane can scroll, whatever size
+    // the window came out.
+    press(&ui, &char::from(slint::platform::Key::End).to_string());
     assert!(ui.get_content_scroll_y() < -ROW_HEIGHT, "the pane scrolled");
 
     let (drawn, position) = nth_row_on_screen(&ui, 3);
