@@ -100,6 +100,16 @@ impl Events for CrosstermEvents {
     }
 }
 
+/// How many Contents rows a terminal `terminal_height` cells tall has room
+/// to draw: [`app::render_app`]'s status line taking its own one row, then
+/// the Contents pane's block (two borders) and its table header (one row).
+/// Mirrors that layout rather than reading it back from a frame, so
+/// [`tick`] can know before the next draw what a reader can actually see
+/// (#641).
+pub(crate) fn contents_visible_rows_for(terminal_height: u16) -> usize {
+    usize::from(terminal_height.saturating_sub(4))
+}
+
 /// Runs one iteration of the terminal event loop: draws the current state,
 /// applies any background request results that have arrived, and handles
 /// one key press if `events` has one ready within `poll_timeout`.
@@ -113,9 +123,14 @@ pub fn tick<B: Backend, E: Events>(
     events: &mut E,
     poll_timeout: Duration,
 ) -> io::Result<()> {
+    let mut terminal_height = 0;
     terminal
-        .draw(|frame| render_app(frame, frame.area(), app))
+        .draw(|frame| {
+            terminal_height = frame.area().height;
+            render_app(frame, frame.area(), app);
+        })
         .map_err(|err| io::Error::other(err.to_string()))?;
+    app.set_contents_viewport_rows(contents_visible_rows_for(terminal_height));
     app.tick();
     if events.poll(poll_timeout)? {
         match events.read()? {
@@ -124,9 +139,14 @@ pub fn tick<B: Backend, E: Events>(
             // a resize is laid out again at the new size as soon as it
             // arrives instead of waiting on the next poll.
             Event::Resize(_, _) => {
+                let mut resized_height = 0;
                 terminal
-                    .draw(|frame| render_app(frame, frame.area(), app))
+                    .draw(|frame| {
+                        resized_height = frame.area().height;
+                        render_app(frame, frame.area(), app);
+                    })
                     .map_err(|err| io::Error::other(err.to_string()))?;
+                app.set_contents_viewport_rows(contents_visible_rows_for(resized_height));
             }
             _ => {}
         }

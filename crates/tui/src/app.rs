@@ -19,6 +19,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState};
 use std::collections::HashMap;
 use std::io;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
@@ -337,6 +338,53 @@ const NOT_KNOWN_YET_MARKER: &str = "\u{2026}";
 /// without finding a change.
 const CANNOT_TELL_MARKER: &str = "?";
 
+/// Drawn after a repository row's branch when its last fetch is too old to
+/// trust, or it has a remote and has never been fetched at all (#589,
+/// #641). Matches the graphical front end's own glyph for the same mark.
+const STALE_FETCH_MARKER: &str = "\u{23F0}";
+
+/// How old a fetch has to be, in seconds, before [`STALE_FETCH_MARKER`] is
+/// drawn - 30 days, the same threshold the graphical front end's File pane
+/// already reads as stale (#576).
+const STALE_FETCH_SECONDS: u64 = 30 * 24 * 60 * 60;
+
+/// Whether a repository row's last fetch is too old to trust, or it has a
+/// remote and was never fetched. A repository with no remote is never
+/// stale - there is nothing for it to have fetched (#589). `now` is a
+/// parameter so a test can fix the clock.
+fn fetch_is_stale(last_fetch: Option<u64>, has_remote: bool, now: u64) -> bool {
+    if !has_remote {
+        return false;
+    }
+    match last_fetch {
+        Some(at) => now.saturating_sub(at) > STALE_FETCH_SECONDS,
+        None => true,
+    }
+}
+
+/// [`STALE_FETCH_MARKER`]'s words for the status line: `Last fetched 61
+/// days ago; ahead and behind counts may be out of date`, or `Never
+/// fetched` for a repository that has a remote but has never fetched it.
+fn stale_fetch_tooltip(last_fetch: Option<u64>, now: u64) -> String {
+    match last_fetch {
+        Some(at) => {
+            let days = now.saturating_sub(at) / 86_400;
+            let noun = if days == 1 { "day" } else { "days" };
+            format!("Last fetched {days} {noun} ago; ahead and behind counts may be out of date")
+        }
+        None => "Never fetched".to_owned(),
+    }
+}
+
+/// Seconds since `UNIX_EPOCH`, for comparing against a repository's
+/// `last_fetch` - `0` on a clock that reads before the epoch, which never
+/// happens on a real machine.
+fn now_epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 /// The three-pane explorer's state: a folders tree, the selected folder's
 /// contents, and the selected file's preview.
 pub struct App {
@@ -376,6 +424,17 @@ pub struct App {
     /// Working-tree status requests in flight, by the entry name they were
     /// asked about.
     pending_statuses: Vec<(String, Receiver<io::Result<Response>>)>,
+    /// The index of the first Contents row the pane currently shows -
+    /// follows `contents_selected` so a status is asked for only once its
+    /// row scrolls into view (#641).
+    contents_scroll: usize,
+    /// How many Contents rows fit in the pane the terminal last drew, set
+    /// by [`App::set_contents_viewport_rows`]. `usize::MAX` until the first
+    /// real draw reports one, so a listing asked about before any terminal
+    /// exists - as most of this module's own tests do - still gets every
+    /// row's status asked for, matching the behaviour before scrolling was
+    /// scoped at all.
+    contents_viewport_rows: usize,
     /// Set once the user has asked to quit.
     pub should_quit: bool,
 }
@@ -404,6 +463,8 @@ impl App {
             sort_ascending: true,
             row_statuses: HashMap::new(),
             pending_statuses: Vec::new(),
+            contents_scroll: 0,
+            contents_viewport_rows: usize::MAX,
             should_quit: false,
         };
         app.load_contents_for_selected();
@@ -511,17 +572,22 @@ impl App {
             .as_deref()
             .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
             .unwrap_or(0);
+        self.clamp_contents_scroll();
         self.load_file_view();
     }
 
-    /// Asks the service for the working-tree status of every repository
-    /// row in the current listing that has not been asked about since it
-    /// landed - one request per row, after the listing is already on
-    /// screen: the branch is in the listing already, and the changes cost
-    /// a pass over a checkout's tracked files that a listing of forty
-    /// checkouts must not wait for (GUIDANCE.md §3.5, #640).
-    fn ask_for_statuses(&mut self) {
-        for entry in &self.contents {
+    /// Asks the service for the working-tree status of each repository row
+    /// in `range` that has not been asked about since the listing landed -
+    /// one request per row, after the listing is already on screen: the
+    /// branch is in the listing already, and the changes cost a pass over
+    /// a checkout's tracked files that a listing of forty checkouts must
+    /// not wait for (GUIDANCE.md §3.5, #640). `range` is the rows currently
+    /// on screen (#641): a row outside it is never asked about until it
+    /// scrolls into view.
+    fn ask_for_statuses(&mut self, range: Range<usize>) {
+        let end = range.end.min(self.contents.len());
+        let start = range.start.min(end);
+        for entry in self.contents.get(start..end).unwrap_or_default() {
             if entry.repository.is_none() || self.row_statuses.contains_key(&entry.name) {
                 continue;
             }
@@ -537,6 +603,45 @@ impl App {
             self.pending_statuses
                 .push((entry.name.clone(), spawn_request(request)));
         }
+    }
+
+    /// The Contents rows currently on screen, by index - [`App::tick`] asks
+    /// for their statuses every iteration, and a fresh listing asks for
+    /// them as soon as it lands (#641).
+    fn visible_content_range(&self) -> Range<usize> {
+        let start = self.contents_scroll.min(self.contents.len());
+        let end = start
+            .saturating_add(self.contents_viewport_rows)
+            .min(self.contents.len());
+        start..end
+    }
+
+    /// Keeps `contents_selected` inside the rows [`App::visible_content_range`]
+    /// reports, the way a reader expects the cursor's own row to always be
+    /// on screen: scrolling up when it moves above the top, and down when
+    /// it moves past the bottom.
+    fn clamp_contents_scroll(&mut self) {
+        if self.contents_selected < self.contents_scroll {
+            self.contents_scroll = self.contents_selected;
+        } else if self.contents_viewport_rows > 0
+            && self.contents_selected
+                >= self
+                    .contents_scroll
+                    .saturating_add(self.contents_viewport_rows)
+        {
+            self.contents_scroll = self.contents_selected + 1 - self.contents_viewport_rows;
+        }
+    }
+
+    /// Records how many Contents rows the terminal's last draw had room
+    /// for, so [`App::visible_content_range`] can scope status requests to
+    /// what a reader can actually see (#641). Called from the event loop
+    /// with [`crate::contents_visible_rows_for`], never from a test that
+    /// draws nothing - which is why the viewport defaults to every row
+    /// until this has run at least once.
+    pub(crate) fn set_contents_viewport_rows(&mut self, rows: usize) {
+        self.contents_viewport_rows = rows;
+        self.clamp_contents_scroll();
     }
 
     /// Records the answer for the row named `name`, if it was asked about
@@ -606,6 +711,10 @@ impl App {
         for (name, result) in answered {
             self.apply_status_result(&name, result);
         }
+        // Scrolling since the last tick may have brought new rows into
+        // view; already-asked rows are skipped, so this costs nothing on a
+        // tick where nothing moved (#641).
+        self.ask_for_statuses(self.visible_content_range());
     }
 
     fn apply_operation_result(&mut self, result: io::Result<Response>) {
@@ -643,8 +752,9 @@ impl App {
                 self.pending_statuses.clear();
                 self.sort_contents();
                 self.contents_selected = 0;
+                self.contents_scroll = 0;
                 self.load_file_view();
-                self.ask_for_statuses();
+                self.ask_for_statuses(self.visible_content_range());
             }
             Ok(Response::Error { message }) => self.status = Some(message),
             Ok(
@@ -849,38 +959,119 @@ impl App {
     }
 
     /// The text shown on the status line: a prompt if a confirmation or
-    /// text input is pending, otherwise the current status or the default
-    /// help text, in full - see [`App::status_line_at`] for the version
-    /// that fits a given terminal width.
+    /// text input is pending, otherwise the current status or the ambient
+    /// one - the Contents pane's counts, or the default help text when it
+    /// holds no repository - in full. See [`App::status_line_at`] for the
+    /// version that fits a given terminal width.
     fn status_line(&self) -> String {
         match &self.mode {
             Mode::ConfirmDelete { name, .. } => format!("Delete {name}? y/n"),
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
-            Mode::Normal => self
-                .status
-                .clone()
-                .unwrap_or_else(|| HELP_SEGMENTS.join("  ")),
+            Mode::Normal => self.status.clone().unwrap_or_else(|| self.ambient_status()),
         }
     }
 
     /// As [`App::status_line`], but the default help text is shortened to
     /// fit `width` columns rather than being cut off wherever the terminal
     /// happens to end - the bug #638 reported: a truncated help line on an
-    /// 80-column terminal, hiding three of its own bindings. A prompt or a
-    /// custom status message is returned exactly as `status_line` gives it,
-    /// since neither is this front end's to shorten (a full reference for
-    /// the help text is #649's job).
+    /// 80-column terminal, hiding three of its own bindings. A prompt, a
+    /// custom status message, or the Contents pane's counts (#641) is
+    /// returned exactly as `status_line` gives it, since none of those is
+    /// this front end's to shorten (a full reference for the help text is
+    /// #649's job).
     fn status_line_at(&self, width: usize) -> String {
         match &self.mode {
-            Mode::Normal if self.status.is_none() => fit_help_line(width),
+            Mode::Normal if self.status.is_none() && self.contents_summary().is_empty() => {
+                fit_help_line(width)
+            }
             Mode::ConfirmDelete { .. }
             | Mode::RenameInput { .. }
             | Mode::CopyInput { .. }
             | Mode::ExtractInput { .. }
             | Mode::Normal => self.status_line(),
         }
+    }
+
+    /// What [`App::status_line`] shows in [`Mode::Normal`] with nothing
+    /// else to say: the Contents pane's counts (#641) when it holds a
+    /// repository, with the selected row's stale-fetch words appended when
+    /// it has one; the keyboard help text for a folder with no repository
+    /// rows, which has nothing of that kind to say.
+    fn ambient_status(&self) -> String {
+        let summary = self.contents_summary();
+        if summary.is_empty() {
+            return HELP_SEGMENTS.join("  ");
+        }
+        match self.stale_fetch_note() {
+            Some(note) => format!("{summary} - {note}"),
+            None => summary,
+        }
+    }
+
+    /// `{N} item(s), {M} repositor(y|ies){not known}{with uncommitted
+    /// changes}` - what the Contents pane's listing holds, e.g. `17 items,
+    /// 16 repositories, 3 with uncommitted changes` (#641). Empty when the
+    /// listing holds no repository row, so a plain folder's status line
+    /// keeps its keyboard hints instead of a bare item count nobody asked
+    /// for.
+    fn contents_summary(&self) -> String {
+        let repository_names: Vec<&str> = self
+            .contents
+            .iter()
+            .filter(|entry| entry.repository.is_some())
+            .map(|entry| entry.name.as_str())
+            .collect();
+        if repository_names.is_empty() {
+            return String::new();
+        }
+
+        let items = self.contents.len();
+        let item_noun = if items == 1 { "item" } else { "items" };
+        let repos = repository_names.len();
+        let repo_noun = if repos == 1 {
+            "repository"
+        } else {
+            "repositories"
+        };
+        let markers: Vec<&str> = repository_names
+            .iter()
+            .map(|name| self.marker_for(name))
+            .collect();
+        let not_known = markers
+            .iter()
+            .filter(|marker| matches!(**marker, NOT_KNOWN_YET_MARKER | CANNOT_TELL_MARKER))
+            .count();
+        let not_known = if not_known == 0 {
+            String::new()
+        } else {
+            format!(" ({not_known} not known)")
+        };
+        let changed = markers
+            .iter()
+            .filter(|marker| **marker == CHANGED_MARKER)
+            .count();
+        let changed = if changed == 0 {
+            String::new()
+        } else {
+            format!(", {changed} with uncommitted changes")
+        };
+        format!("{items} {item_noun}, {repos} {repo_noun}{not_known}{changed}")
+    }
+
+    /// The status line's words for the selected row's stale fetch, when it
+    /// has one (#589, #641) - `None` for a clean fetch, a row that is not a
+    /// repository, or no selection at all.
+    fn stale_fetch_note(&self) -> Option<String> {
+        let repository = self
+            .contents
+            .get(self.contents_selected)?
+            .repository
+            .as_ref()?;
+        let now = now_epoch_seconds();
+        fetch_is_stale(repository.last_fetch, repository.remote.is_some(), now)
+            .then(|| stale_fetch_tooltip(repository.last_fetch, now))
     }
 
     fn move_up_in_tree(&mut self) {
@@ -931,6 +1122,7 @@ impl App {
     fn move_up_in_contents(&mut self) {
         if self.contents_selected > 0 {
             self.contents_selected -= 1;
+            self.clamp_contents_scroll();
             self.load_file_view();
         }
     }
@@ -938,6 +1130,7 @@ impl App {
     fn move_down_in_contents(&mut self) {
         if self.contents_selected + 1 < self.contents.len() {
             self.contents_selected += 1;
+            self.clamp_contents_scroll();
             self.load_file_view();
         }
     }
@@ -1310,7 +1503,8 @@ fn sort_header(title: &'static str, app: &App, key: SortKey) -> Cell<'static> {
 
 /// The Branch column's cell: the branch name, then its change marker in
 /// the warning colour when it means uncommitted changes - a glyph, not
-/// colour alone (#574, #640).
+/// colour alone (#574, #640) - and [`STALE_FETCH_MARKER`] after that when
+/// the last fetch is too old to trust (#589, #641).
 fn branch_cell(app: &App, entry: &DirectoryEntry) -> Cell<'static> {
     let Some(repository) = &entry.repository else {
         return Cell::from("");
@@ -1320,18 +1514,30 @@ fn branch_cell(app: &App, entry: &DirectoryEntry) -> Cell<'static> {
         .clone()
         .unwrap_or_else(|| "detached".to_owned());
     let marker = app.marker_for(&entry.name);
-    if marker.is_empty() {
+    let stale = fetch_is_stale(
+        repository.last_fetch,
+        repository.remote.is_some(),
+        now_epoch_seconds(),
+    );
+    if marker.is_empty() && !stale {
         return Cell::from(branch);
     }
-    let marker_style = if marker == CHANGED_MARKER {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-    Cell::from(Line::from(vec![
-        Span::raw(format!("{branch} ")),
-        Span::styled(marker, marker_style),
-    ]))
+    let mut spans = vec![Span::raw(format!("{branch} "))];
+    if !marker.is_empty() {
+        let marker_style = if marker == CHANGED_MARKER {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        spans.push(Span::styled(marker, marker_style));
+    }
+    if stale {
+        if !marker.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::raw(STALE_FETCH_MARKER));
+    }
+    Cell::from(Line::from(spans))
 }
 
 /// One Contents row's cells, fitted to `columns`.
@@ -1404,18 +1610,83 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_stateful_widget(table, area, &mut state);
 }
 
+/// What the File pane says above the selected repository's own view when
+/// it is a worktree or a submodule (#587, #641): the clone or outer
+/// working copy it belongs to, or that the clone is no longer there.
+/// `None` for an ordinary clone, or a selection that is not a repository
+/// row at all.
+fn related_repository_line(app: &App) -> Option<String> {
+    let repository = app
+        .contents
+        .get(app.contents_selected)?
+        .repository
+        .as_ref()?;
+    match &repository.kind {
+        protocol::RepositoryKind::Clone => None,
+        protocol::RepositoryKind::Worktree {
+            clone,
+            clone_exists,
+        } => Some(if *clone_exists {
+            format!(
+                "Worktree of {}",
+                related_repository_name(Path::new(clone), &app.root.path)
+            )
+        } else {
+            format!("Worktree of a clone that is no longer at {clone}")
+        }),
+        protocol::RepositoryKind::Submodule { outer } => Some(format!(
+            "Submodule of {}",
+            related_repository_name(Path::new(outer), &app.root.path)
+        )),
+    }
+}
+
+/// `path`'s folder name, with where it is in parentheses when that says
+/// more than the name alone does: its path relative to `root` when it is
+/// inside it, the full path otherwise - left off when `path` is a direct
+/// child of `root`, where the name already says where it is (#587).
+/// Mirrors the graphical front end's own `related_repository_name_of`.
+fn related_repository_name(path: &Path, root: &Path) -> String {
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let located = path.strip_prefix(root).map_or_else(
+        |_| path.display().to_string(),
+        |relative| relative.to_string_lossy().replace('\\', "/"),
+    );
+    if located == name {
+        name
+    } else {
+        format!("{name} (at {located})")
+    }
+}
+
 fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let block = pane_block("File", app.focus == Focus::File);
-    match &app.file_view {
-        Some(response) => render_with_block(frame, area, response, block),
-        None => frame.render_widget(Paragraph::new("(no file selected)").block(block), area),
-    }
+    let Some(response) = &app.file_view else {
+        frame.render_widget(Paragraph::new("(no file selected)").block(block), area);
+        return;
+    };
+    let Some(line) = related_repository_line(app) else {
+        render_with_block(frame, area, response, block);
+        return;
+    };
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    frame.render_widget(Paragraph::new(line), rows[0]);
+    render_with_block(frame, rows[1], response, Block::default());
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        App, CHANGED_MARKER, Focus, FolderNode, Mode, RowStatus, render_app, render_contents,
+        App, CHANGED_MARKER, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER, RowStatus,
+        STALE_FETCH_MARKER, render_app, render_contents,
     };
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
@@ -2010,6 +2281,19 @@ mod tests {
                 last_activity: None,
                 last_fetch: None,
             }),
+        }
+    }
+
+    /// As [`repository_entry`], but with no remote configured - so it is
+    /// never stale (#589) - for a test whose own subject is something
+    /// other than the stale-fetch mark.
+    fn repository_entry_without_remote(name: &str, branch: &str) -> DirectoryEntry {
+        DirectoryEntry {
+            repository: Some(protocol::RepositoryInfo {
+                remote: None,
+                ..repository_entry(name, branch).repository.unwrap()
+            }),
+            ..repository_entry(name, branch)
         }
     }
 
@@ -3395,5 +3679,443 @@ mod tests {
             narrow.ends_with("q: quit"),
             "even a narrow terminal should still say how to quit: {narrow:?}"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // #641: the terminal front end reads what a repository is, for every
+    // row on screen.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn two_repositories_show_the_unanswered_mark_before_their_statuses_arrive_and_their_own_marks_after()
+     {
+        let root = notional_root("two-repos-marks");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    repository_entry("dirty", "main"),
+                    repository_entry("clean", "main"),
+                ],
+            }),
+        );
+
+        let before = drawn_contents(70, 6, &app).concat();
+        assert!(
+            before.contains(NOT_KNOWN_YET_MARKER),
+            "before an answer arrives, a repository row says it does not know yet: {before}"
+        );
+
+        app.row_statuses.insert(
+            "dirty".to_owned(),
+            RowStatus::Answered(Some(protocol::WorkingTreeSummary {
+                changed: 1,
+                partial: false,
+                summary: "1 tracked file changed".to_owned(),
+            })),
+        );
+        app.row_statuses.insert(
+            "clean".to_owned(),
+            RowStatus::Answered(Some(protocol::WorkingTreeSummary {
+                changed: 0,
+                partial: false,
+                summary: "clean".to_owned(),
+            })),
+        );
+
+        let after = drawn_contents(70, 6, &app).concat();
+        assert!(
+            after.contains(CHANGED_MARKER),
+            "the dirty repository should carry its own mark: {after}"
+        );
+        assert!(
+            !after.contains(NOT_KNOWN_YET_MARKER),
+            "once both have answered, neither should still say it does not know: {after}"
+        );
+    }
+
+    #[test]
+    fn scrolling_asks_only_for_the_rows_that_have_come_into_view() {
+        let root = notional_root("scroll-visible-range");
+        let mut app = App::new(root);
+        app.set_contents_viewport_rows(2);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    repository_entry("a", "main"),
+                    repository_entry("b", "main"),
+                    repository_entry("c", "main"),
+                    repository_entry("d", "main"),
+                ],
+            }),
+        );
+
+        // The viewport only fits two rows: only the first two are asked.
+        assert!(app.row_statuses.contains_key("a"));
+        assert!(app.row_statuses.contains_key("b"));
+        assert!(!app.row_statuses.contains_key("c"));
+        assert!(!app.row_statuses.contains_key("d"));
+
+        // Moving the cursor past the visible window scrolls it; the next
+        // tick asks for the row that came into view, and only that one.
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Down);
+        app.tick();
+
+        assert!(
+            app.row_statuses.contains_key("c"),
+            "the row that scrolled into view should now be asked about"
+        );
+        assert!(
+            !app.row_statuses.contains_key("d"),
+            "a row still off screen should not be"
+        );
+    }
+
+    #[test]
+    fn a_new_listing_abandons_the_statuses_of_the_old_one() {
+        let root = notional_root("abandon-old-statuses");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![repository_entry("old-repo", "main")],
+            }),
+        );
+        assert!(app.row_statuses.contains_key("old-repo"));
+        let (_tx, rx) = std::sync::mpsc::channel::<std::io::Result<Response>>();
+        app.pending_statuses.push(("old-repo".to_owned(), rx));
+
+        // Navigating away applies a fresh listing - even an empty one -
+        // which must not leave the old folder's statuses, or its
+        // outstanding requests, behind for a late answer to land in.
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: Vec::new(),
+            }),
+        );
+
+        assert!(app.row_statuses.is_empty());
+        assert!(app.pending_statuses.is_empty());
+        app.tick();
+    }
+
+    #[test]
+    fn fetch_is_stale_flags_an_old_or_missing_fetch_but_not_a_recent_one_or_no_remote() {
+        const DAY: u64 = 24 * 60 * 60;
+        let now = 1_000_000_000u64;
+
+        assert!(super::fetch_is_stale(Some(now - 31 * DAY), true, now));
+        assert!(!super::fetch_is_stale(Some(now - 29 * DAY), true, now));
+        assert!(
+            super::fetch_is_stale(None, true, now),
+            "a repository with a remote it has never fetched is stale"
+        );
+        assert!(
+            !super::fetch_is_stale(None, false, now),
+            "a repository with no remote has nothing to have fetched"
+        );
+    }
+
+    fn repository_entry_with_last_fetch(name: &str, last_fetch: Option<u64>) -> DirectoryEntry {
+        DirectoryEntry {
+            name: name.to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: Some("https://github.com/owner/repo.git".to_owned()),
+                kind: protocol::RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_stale_repositorys_row_carries_the_clock_glyph() {
+        let root = notional_root("stale-clock-glyph");
+        let now = super::now_epoch_seconds();
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![repository_entry_with_last_fetch(
+                    "checkout",
+                    Some(now - 31 * 24 * 60 * 60),
+                )],
+            }),
+        );
+
+        let text = drawn_contents(60, 6, &app).concat();
+
+        assert!(
+            text.contains(STALE_FETCH_MARKER),
+            "a fetch over 30 days old should carry the clock glyph: {text}"
+        );
+    }
+
+    #[test]
+    fn the_status_line_says_why_the_selected_rows_fetch_is_stale() {
+        let root = notional_root("stale-status-line");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![repository_entry_with_last_fetch("checkout", None)],
+            }),
+        );
+
+        assert!(
+            app.status_line().contains("Never fetched"),
+            "a repository with a remote and no fetch at all should say so: {}",
+            app.status_line()
+        );
+    }
+
+    #[test]
+    fn the_type_column_names_a_worktree_and_a_submodule() {
+        let worktree = DirectoryEntry {
+            name: "feature".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                branch: Some("feature".to_owned()),
+                remote: Some("https://github.com/owner/repo.git".to_owned()),
+                kind: protocol::RepositoryKind::Worktree {
+                    clone: "/repos/repo".to_owned(),
+                    clone_exists: true,
+                },
+                last_activity: None,
+                last_fetch: None,
+            }),
+        };
+        let submodule = DirectoryEntry {
+            name: "vendor".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: Some("https://github.com/owner/vendor.git".to_owned()),
+                kind: protocol::RepositoryKind::Submodule {
+                    outer: "/repos/outer".to_owned(),
+                },
+                last_activity: None,
+                last_fetch: None,
+            }),
+        };
+
+        assert_eq!(super::format_kind(&worktree), "Worktree · github.com");
+        assert_eq!(super::format_kind(&submodule), "Submodule · github.com");
+    }
+
+    fn app_with_worktree(root: &Path, clone: &Path, clone_exists: bool) -> App {
+        let mut app = App::new(root.to_path_buf());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "feature".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(protocol::RepositoryInfo {
+                        provider: Some("github.com".to_owned()),
+                        branch: Some("feature".to_owned()),
+                        remote: None,
+                        kind: protocol::RepositoryKind::Worktree {
+                            clone: clone.to_string_lossy().into_owned(),
+                            clone_exists,
+                        },
+                        last_activity: None,
+                        last_fetch: None,
+                    }),
+                }],
+            }),
+        );
+        app.file_view = Some(Response::Error {
+            message: String::new(),
+        });
+        app
+    }
+
+    #[test]
+    fn the_file_pane_names_the_clone_a_worktree_belongs_to() {
+        let root = notional_root("worktree-file-pane");
+        let app = app_with_worktree(&root, &root.join("repo"), true);
+
+        let text = drawn_rows(100, 20, &app).concat();
+
+        assert!(
+            text.contains("Worktree of repo"),
+            "the File pane should name the clone this worktree belongs to: {text}"
+        );
+    }
+
+    #[test]
+    fn the_file_pane_says_when_a_worktrees_clone_is_gone() {
+        let root = notional_root("worktree-clone-gone");
+        let app = app_with_worktree(&root, &PathBuf::from("/elsewhere/repo"), false);
+
+        let text = drawn_rows(250, 10, &app).concat();
+
+        assert!(
+            text.contains("Worktree of a clone that is no longer at /elsewhere/repo"),
+            "a worktree whose clone is gone should say so, not name it as if it were still there: {text}"
+        );
+    }
+
+    #[test]
+    fn the_file_pane_names_the_outer_working_copy_a_submodule_belongs_to() {
+        let root = notional_root("submodule-file-pane");
+        let mut app = App::new(root.clone());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "vendor".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(protocol::RepositoryInfo {
+                        provider: Some("github.com".to_owned()),
+                        branch: Some("main".to_owned()),
+                        remote: None,
+                        kind: protocol::RepositoryKind::Submodule {
+                            outer: root.join("outer").to_string_lossy().into_owned(),
+                        },
+                        last_activity: None,
+                        last_fetch: None,
+                    }),
+                }],
+            }),
+        );
+        app.file_view = Some(Response::Error {
+            message: String::new(),
+        });
+
+        let text = drawn_rows(100, 20, &app).concat();
+
+        assert!(
+            text.contains("Submodule of outer"),
+            "the File pane should name the outer working copy this submodule belongs to: {text}"
+        );
+    }
+
+    #[test]
+    fn a_repositorys_last_activity_drives_the_modified_column() {
+        let root = notional_root("last-activity-modified");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "checkout".to_owned(),
+                    is_dir: true,
+                    // The folder's own modified time - if this wins over
+                    // the repository's last activity, the Modified column
+                    // shows the Unix epoch instead.
+                    size: 0,
+                    modified: Some(0),
+                    repository: Some(protocol::RepositoryInfo {
+                        provider: None,
+                        branch: Some("main".to_owned()),
+                        remote: None,
+                        kind: protocol::RepositoryKind::Clone,
+                        last_activity: Some(1_700_000_000),
+                        last_fetch: None,
+                    }),
+                }],
+            }),
+        );
+
+        let text = drawn_contents(90, 6, &app).concat();
+
+        assert!(
+            text.contains(&super::format_timestamp(Some(1_700_000_000))),
+            "the Modified column should show the repository's last activity: {text}"
+        );
+        assert!(
+            !text.contains(&super::format_timestamp(Some(0))),
+            "the folder's own modified time should not win over last activity: {text}"
+        );
+    }
+
+    #[test]
+    fn the_status_line_counts_items_repositories_and_uncommitted_changes() {
+        let root = notional_root("status-line-counts");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    repository_entry_without_remote("alpha", "main"),
+                    repository_entry_without_remote("beta", "main"),
+                    DirectoryEntry {
+                        name: "notes.txt".to_owned(),
+                        is_dir: false,
+                        size: 0,
+                        modified: None,
+                        repository: None,
+                    },
+                ],
+            }),
+        );
+        app.row_statuses.insert(
+            "alpha".to_owned(),
+            RowStatus::Answered(Some(protocol::WorkingTreeSummary {
+                changed: 2,
+                partial: false,
+                summary: "2 tracked files changed".to_owned(),
+            })),
+        );
+        app.row_statuses.insert(
+            "beta".to_owned(),
+            RowStatus::Answered(Some(protocol::WorkingTreeSummary {
+                changed: 0,
+                partial: false,
+                summary: "clean".to_owned(),
+            })),
+        );
+
+        assert_eq!(
+            app.status_line(),
+            "3 items, 2 repositories, 1 with uncommitted changes"
+        );
+    }
+
+    #[test]
+    fn the_status_line_says_how_many_repositories_are_not_known_yet() {
+        let root = notional_root("status-line-not-known");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    repository_entry_without_remote("alpha", "main"),
+                    repository_entry_without_remote("beta", "main"),
+                ],
+            }),
+        );
+
+        assert_eq!(app.status_line(), "2 items, 2 repositories (2 not known)");
+    }
+
+    #[test]
+    fn the_status_line_falls_back_to_help_text_for_a_folder_with_no_repository() {
+        let root = notional_root("status-line-no-repository");
+        let app = app_showing(&root, &[("notes.txt", false)]);
+
+        assert!(app.status_line().starts_with("Tab: switch pane"));
     }
 }
