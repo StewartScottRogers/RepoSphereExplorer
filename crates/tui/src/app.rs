@@ -12,6 +12,7 @@ use crate::bindings::{self, Action};
 use crate::colour::{self, Run};
 use crate::document::Document;
 use crate::settings;
+use crate::switcher;
 use crate::{
     classify, editable_text, editor, facts, graphic, present, present_folder, present_view,
     render_with_block, views,
@@ -46,6 +47,15 @@ pub struct FolderNode {
     pub expanded: bool,
     /// Subdirectories, once fetched.
     pub children: Option<Vec<FolderNode>>,
+    /// Whether this folder is itself a source control working copy - what
+    /// the "Go to Repository" switcher (#647) narrows to.
+    pub is_repository: bool,
+    /// The working copy's checked-out branch, when it is one - `None` for
+    /// an ordinary folder, or a working copy with no branch to show.
+    pub branch: Option<String>,
+    /// The working copy's provider - `github.com` and the like - when it
+    /// is one.
+    pub provider: Option<String>,
 }
 
 impl FolderNode {
@@ -61,6 +71,9 @@ impl FolderNode {
             name,
             expanded: true,
             children: None,
+            is_repository: false,
+            branch: None,
+            provider: None,
         }
     }
 
@@ -95,12 +108,28 @@ impl FolderNode {
                 .iter()
                 .filter(|entry| entry.is_dir)
                 .map(|entry| {
-                    previous.remove(&entry.name).unwrap_or_else(|| FolderNode {
+                    let mut node = previous.remove(&entry.name).unwrap_or_else(|| FolderNode {
                         path: path.join(&entry.name),
                         name: entry.name.clone(),
                         expanded: false,
                         children: None,
-                    })
+                        is_repository: false,
+                        branch: None,
+                        provider: None,
+                    });
+                    // Read fresh each time rather than only on first sight:
+                    // a folder can turn into a working copy (or stop being
+                    // one) between listings, same as its children can.
+                    node.is_repository = entry.repository.is_some();
+                    node.branch = entry
+                        .repository
+                        .as_ref()
+                        .and_then(|repository| repository.branch.clone());
+                    node.provider = entry
+                        .repository
+                        .as_ref()
+                        .and_then(|repository| repository.provider.clone());
+                    node
                 })
                 .collect(),
         );
@@ -317,6 +346,51 @@ enum Mode {
     /// once rather than waiting for Enter, so the text lives on
     /// [`App::filter`] itself rather than in this variant.
     FilterInput,
+    /// Typing into the "Go to Repository" switcher (#647), on the same
+    /// chord as the graphical front end's own Ctrl+P: narrows to
+    /// repositories that are direct children of the Repos Directory as it
+    /// types - nested ones wait on #591's own All Repositories view -
+    /// ranked by [`switcher::score`]. Up and Down move `selected`; Enter
+    /// goes there; Escape leaves everything as it was.
+    Switcher {
+        /// The text typed so far.
+        query: String,
+        /// Which of the current matches is highlighted.
+        selected: usize,
+    },
+    /// Typing into the cross-repository "Find" query (#647), for
+    /// `Request::FindNames`.
+    FindInput {
+        /// The text typed so far.
+        query: String,
+    },
+    /// Find's results, once the service has answered - or while
+    /// [`App::pending_find`] is still waiting on them, when `matches` is
+    /// still empty. Up and Down move `selected`; Enter goes to the
+    /// highlighted match; Escape leaves everything as it was.
+    Found {
+        /// The query the results answer.
+        query: String,
+        /// What the service found, empty until it answers.
+        matches: Vec<protocol::NameMatch>,
+        /// Whether the service stopped short of every match.
+        truncated: bool,
+        /// Which match is highlighted.
+        selected: usize,
+    },
+    /// The All Repositories view (#647/#591): every working copy up to
+    /// three folder levels below the Repos Directory, filled in as the
+    /// background scan progresses. Up and Down move `selected`; Enter goes
+    /// to the highlighted repository; a refresh key starts the scan over;
+    /// Escape leaves everything as it was.
+    AllRepositoriesView {
+        /// What the scan has found so far.
+        entries: Vec<protocol::AllRepositoryEntry>,
+        /// Whether the scan is finished.
+        done: bool,
+        /// Which entry is highlighted.
+        selected: usize,
+    },
 }
 
 /// What a real modal (#646) shows, drawn in a cleared box over the panes
@@ -334,6 +408,27 @@ struct Modal {
     /// for a prompt that collects one.
     input: Option<(String, usize)>,
     /// The keys that answer it, e.g. `"Enter/Esc"` or `"y/n"`.
+    keys: &'static str,
+}
+
+/// What the switcher, Find, or All Repositories overlay (#647) shows: the
+/// same cleared-box treatment [`Modal`] gives a fixed prompt, but a
+/// navigable list of rows rather than a handful of fixed lines.
+struct ListOverlay {
+    /// What the overlay is doing, drawn as the box's title.
+    title: String,
+    /// The text being typed, and the column the caret sits at within it,
+    /// for a prompt that collects one - `None` once results are showing and
+    /// only the selection moves.
+    query: Option<(String, usize)>,
+    /// A line under the query or the title - a count, or a "still
+    /// looking..." notice - `None` when there is nothing to say yet.
+    note: Option<String>,
+    /// Each row's own text, one line each.
+    rows: Vec<String>,
+    /// Which row is highlighted.
+    selected: usize,
+    /// The keys that answer it.
     keys: &'static str,
 }
 
@@ -617,6 +712,14 @@ pub struct App {
     /// An outstanding `Open` request (#646), asked for by
     /// [`App::start_open`].
     pending_open: Option<Receiver<io::Result<Response>>>,
+    /// An outstanding `FindNames` request (#647), and the query it was
+    /// asked with, so a stale answer to an earlier query can never be
+    /// mistaken for the current one's.
+    pending_find: Option<(String, Receiver<io::Result<Response>>)>,
+    /// An outstanding `AllRepositories` request (#647/#591) - re-sent with
+    /// `refresh: false` each time one answers until it says `done`, which
+    /// is the whole of the view's "still looking" progress.
+    pending_all_repositories: Option<Receiver<io::Result<Response>>>,
     /// The path the outstanding `Open` request named, so the status line
     /// can say what was handed over once it answers.
     pending_open_path: Option<PathBuf>,
@@ -732,6 +835,8 @@ impl App {
             clipboard: None,
             pending_open: None,
             pending_open_path: None,
+            pending_find: None,
+            pending_all_repositories: None,
             sort_key: SortKey::Name,
             sort_ascending: true,
             row_statuses: HashMap::new(),
@@ -779,6 +884,17 @@ impl App {
     #[must_use]
     pub fn address_path(&self) -> String {
         self.selected_dir_path().to_string_lossy().into_owned()
+    }
+
+    /// The Contents pane cursor's own row name, if there is one - so a test
+    /// outside this module can tell that the switcher, Find, or All
+    /// Repositories (#647) actually moved the selection there, without
+    /// scraping a rendered pane for which row is highlighted.
+    #[must_use]
+    pub fn selected_content_name(&self) -> Option<&str> {
+        self.contents
+            .get(self.contents_selected)
+            .map(|entry| entry.name.as_str())
     }
 
     /// The Folders and Contents pane widths, in columns, if the reader has
@@ -1024,6 +1140,360 @@ impl App {
     fn toggle_changed_filter(&mut self) {
         self.filter.changed_only = !self.filter.changed_only;
         self.resync_filtered_selection();
+    }
+
+    /// Opens the "Go to Repository" switcher (#647). Refused while another
+    /// prompt or the editor already has the keyboard, the same guard
+    /// [`App::start_filter`] has no need of because a filter narrows the
+    /// listing already on screen rather than taking it over.
+    fn begin_switcher(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing.is_some() {
+            return;
+        }
+        self.mode = Mode::Switcher {
+            query: String::new(),
+            selected: 0,
+        };
+    }
+
+    /// The Repos Directory's direct children that are working copies -
+    /// nested ones wait on #591 - matched against `query` and ranked by
+    /// [`switcher::score`], word-start and contiguous runs first. An empty
+    /// query keeps every repository, in the Contents pane's own sort order.
+    fn switcher_matches(&self, query: &str) -> Vec<&FolderNode> {
+        let repositories = self
+            .root
+            .children
+            .iter()
+            .flatten()
+            .filter(|node| node.is_repository);
+        if query.is_empty() {
+            let mut repositories: Vec<&FolderNode> = repositories.collect();
+            repositories.sort_by(|a, b| {
+                let ordering = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+                if self.sort_ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                }
+            });
+            return repositories;
+        }
+        let mut scored: Vec<(i32, &FolderNode)> = repositories
+            .filter_map(|node| switcher::score(query, &node.name).map(|score| (score, node)))
+            .collect();
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()))
+        });
+        scored.into_iter().map(|(_, node)| node).collect()
+    }
+
+    /// One key while the switcher is open.
+    fn handle_switcher_key(&mut self, code: KeyCode) {
+        let Mode::Switcher { query, .. } = &self.mode else {
+            return;
+        };
+        let query = query.clone();
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => self.confirm_switcher(),
+            KeyCode::Up => {
+                if let Mode::Switcher { selected, .. } = &mut self.mode {
+                    *selected = selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                let count = self.switcher_matches(&query).len();
+                if let Mode::Switcher { selected, .. } = &mut self.mode {
+                    *selected = selected.saturating_add(1).min(count.saturating_sub(1));
+                }
+            }
+            KeyCode::Backspace => {
+                if let Mode::Switcher { query, selected } = &mut self.mode {
+                    query.pop();
+                    *selected = 0;
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Mode::Switcher { query, selected } = &mut self.mode {
+                    query.push(c);
+                    *selected = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Return in the switcher: goes to the highlighted match, the way
+    /// activating a repository row in the Contents pane at the Repos
+    /// Directory itself would - every match is a direct child of the root,
+    /// so this reselects the root row rather than re-rooting the whole tree
+    /// the way Find and All Repositories jump to an arbitrary folder.
+    fn confirm_switcher(&mut self) {
+        let Mode::Switcher { query, selected } = std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
+            return;
+        };
+        if let Some(node) = self.switcher_matches(&query).get(selected) {
+            self.reselect = Some(node.name.clone());
+            self.tree_selected = 0;
+            self.load_contents_for_selected();
+        }
+    }
+
+    /// Opens the cross-repository Find prompt (#647). Refused while another
+    /// prompt or the editor already has the keyboard.
+    fn begin_find(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing.is_some() {
+            return;
+        }
+        self.mode = Mode::FindInput {
+            query: String::new(),
+        };
+    }
+
+    /// One key while typing a Find query.
+    fn handle_find_input_key(&mut self, code: KeyCode) {
+        let Mode::FindInput { query } = &mut self.mode else {
+            return;
+        };
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => self.submit_find(),
+            KeyCode::Backspace => {
+                query.pop();
+            }
+            KeyCode::Char(c) => query.push(c),
+            _ => {}
+        }
+    }
+
+    /// The most matches `Request::FindNames` returns at once.
+    const FIND_LIMIT: usize = 200;
+
+    /// Enter in the Find prompt: sends the query to the service and shows
+    /// its results once they answer.
+    fn submit_find(&mut self) {
+        let Mode::FindInput { query } = std::mem::replace(&mut self.mode, Mode::Normal) else {
+            return;
+        };
+        let request = Request::FindNames {
+            query: query.clone(),
+            limit: Self::FIND_LIMIT,
+        };
+        self.pending_find = Some((query.clone(), spawn_request(request)));
+        self.status = Some("finding...".to_owned());
+        self.mode = Mode::Found {
+            query,
+            matches: Vec::new(),
+            truncated: false,
+            selected: 0,
+        };
+    }
+
+    /// Applies the service's answer to `Request::FindNames`.
+    fn apply_find_result(&mut self, result: io::Result<Response>) {
+        let Mode::Found {
+            matches, truncated, ..
+        } = &mut self.mode
+        else {
+            return;
+        };
+        match result {
+            Ok(Response::Names {
+                matches: found,
+                cut_short,
+                ..
+            }) => {
+                let count = found.len();
+                *matches = found;
+                *truncated = cut_short;
+                self.status = Some(if cut_short {
+                    format!("{count} found (more not shown)")
+                } else {
+                    format!("{count} found")
+                });
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("expected find results".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// One key while Find's results are showing.
+    fn handle_found_key(&mut self, code: KeyCode) {
+        let Mode::Found {
+            matches, selected, ..
+        } = &mut self.mode
+        else {
+            return;
+        };
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => self.confirm_found(),
+            KeyCode::Up => *selected = selected.saturating_sub(1),
+            KeyCode::Down => {
+                *selected = selected
+                    .saturating_add(1)
+                    .min(matches.len().saturating_sub(1));
+            }
+            _ => {}
+        }
+    }
+
+    /// Return on a Find result: goes to the folder holding it, with it
+    /// selected - re-rooting the tree there the way [`App::navigate_above_root`]
+    /// already does for a step above the root, since a match can be nested
+    /// anywhere below the Repos Directory rather than only a direct child
+    /// of it.
+    fn confirm_found(&mut self) {
+        let Mode::Found {
+            matches, selected, ..
+        } = std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
+            return;
+        };
+        let Some(found_match) = matches.into_iter().nth(selected) else {
+            return;
+        };
+        let path = self.root.path.join(&found_match.path);
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let (folder, name) = (folder.to_path_buf(), name.to_string_lossy().into_owned());
+        self.remember_current();
+        self.push_history(folder.clone());
+        self.reselect = Some(name);
+        self.browse(folder);
+    }
+
+    /// Opens the All Repositories view (#647/#591). Refused while another
+    /// prompt or the editor already has the keyboard.
+    fn begin_all_repositories(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing.is_some() {
+            return;
+        }
+        self.mode = Mode::AllRepositoriesView {
+            entries: Vec::new(),
+            done: false,
+            selected: 0,
+        };
+        self.status = Some("Looking for repositories...".to_owned());
+        self.pending_all_repositories = Some(spawn_request(Request::AllRepositories {
+            root: self.root.path.to_string_lossy().into_owned(),
+            refresh: false,
+        }));
+    }
+
+    /// Applies the service's answer to `Request::AllRepositories`, asking
+    /// again with `refresh: false` while the scan is not yet done - the
+    /// whole of the view's progressive "still looking" behaviour, since the
+    /// service keeps the scan itself; a front end only polls it.
+    fn apply_all_repositories_result(&mut self, result: io::Result<Response>) {
+        let Mode::AllRepositoriesView { entries, done, .. } = &mut self.mode else {
+            return;
+        };
+        match result {
+            Ok(Response::AllRepositories {
+                entries: found,
+                done: finished,
+            }) => {
+                *entries = found;
+                *done = finished;
+                self.status = if finished {
+                    None
+                } else {
+                    let count = entries.len();
+                    self.pending_all_repositories = Some(spawn_request(Request::AllRepositories {
+                        root: self.root.path.to_string_lossy().into_owned(),
+                        refresh: false,
+                    }));
+                    Some(format!("Looking for repositories... {count} found"))
+                };
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("expected repositories".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// One key while All Repositories is showing.
+    fn handle_all_repositories_key(&mut self, code: KeyCode) {
+        let Mode::AllRepositoriesView {
+            entries, selected, ..
+        } = &mut self.mode
+        else {
+            return;
+        };
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => self.confirm_all_repositories(),
+            KeyCode::Up => *selected = selected.saturating_sub(1),
+            KeyCode::Down => {
+                *selected = selected
+                    .saturating_add(1)
+                    .min(entries.len().saturating_sub(1));
+            }
+            KeyCode::F(5) => self.refresh_all_repositories(),
+            _ => {}
+        }
+    }
+
+    /// F5 in the All Repositories view: discards the scan and starts a
+    /// fresh one, the same as the graphical front end's own Refresh.
+    fn refresh_all_repositories(&mut self) {
+        let Mode::AllRepositoriesView {
+            entries,
+            done,
+            selected,
+        } = &mut self.mode
+        else {
+            return;
+        };
+        entries.clear();
+        *done = false;
+        *selected = 0;
+        self.status = Some("Looking for repositories...".to_owned());
+        self.pending_all_repositories = Some(spawn_request(Request::AllRepositories {
+            root: self.root.path.to_string_lossy().into_owned(),
+            refresh: true,
+        }));
+    }
+
+    /// The path `entry` names, relative to `root`: `root/location/name`, or
+    /// `root/name` for a direct child, matching the graphical front end's
+    /// own `all_repository_path`.
+    fn all_repository_path(root: &Path, entry: &protocol::AllRepositoryEntry) -> PathBuf {
+        if entry.location.is_empty() {
+            root.join(&entry.name)
+        } else {
+            root.join(&entry.location).join(&entry.name)
+        }
+    }
+
+    /// Return on an All Repositories row: goes to that repository in its
+    /// real folder, the same way [`App::confirm_found`] goes to a search
+    /// result's.
+    fn confirm_all_repositories(&mut self) {
+        let Mode::AllRepositoriesView {
+            entries, selected, ..
+        } = std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
+            return;
+        };
+        let Some(entry) = entries.into_iter().nth(selected) else {
+            return;
+        };
+        let path = Self::all_repository_path(&self.root.path, &entry);
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let (folder, name) = (folder.to_path_buf(), name.to_string_lossy().into_owned());
+        self.remember_current();
+        self.push_history(folder.clone());
+        self.reselect = Some(name);
+        self.browse(folder);
     }
 
     /// Asks the service for the working-tree status of each repository row
@@ -1412,6 +1882,18 @@ impl App {
             self.pending_open = None;
             self.apply_open_result(result);
         }
+        if let Some((_, rx)) = &self.pending_find
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_find = None;
+            self.apply_find_result(result);
+        }
+        if let Some(rx) = &self.pending_all_repositories
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_all_repositories = None;
+            self.apply_all_repositories_result(result);
+        }
         let mut still_pending = Vec::with_capacity(self.pending_statuses.len());
         let mut answered = Vec::new();
         for (name, rx) in self.pending_statuses.drain(..) {
@@ -1558,6 +2040,22 @@ impl App {
                 self.handle_filter_key(key.code);
                 return;
             }
+            Mode::Switcher { .. } => {
+                self.handle_switcher_key(key.code);
+                return;
+            }
+            Mode::FindInput { .. } => {
+                self.handle_find_input_key(key.code);
+                return;
+            }
+            Mode::Found { .. } => {
+                self.handle_found_key(key.code);
+                return;
+            }
+            Mode::AllRepositoriesView { .. } => {
+                self.handle_all_repositories_key(key.code);
+                return;
+            }
             Mode::Normal => {}
         }
         if self.editing.is_some() {
@@ -1653,6 +2151,9 @@ impl App {
                     Some(self.focus)
                 };
             }
+            Action::OpenSwitcher => self.begin_switcher(),
+            Action::StartFind => self.begin_find(),
+            Action::OpenAllRepositories => self.begin_all_repositories(),
         }
     }
 
@@ -1948,7 +2449,11 @@ impl App {
             Mode::Normal
             | Mode::ConfirmDelete { .. }
             | Mode::ConfirmDiscardEdit { .. }
-            | Mode::FilterInput => None,
+            | Mode::FilterInput
+            | Mode::Switcher { .. }
+            | Mode::FindInput { .. }
+            | Mode::Found { .. }
+            | Mode::AllRepositoriesView { .. } => None,
         }
     }
 
@@ -2016,7 +2521,12 @@ impl App {
     /// GUIDANCE.md §2.1.5 is about.
     fn modal(&self) -> Option<Modal> {
         match &self.mode {
-            Mode::Normal | Mode::FilterInput => None,
+            Mode::Normal
+            | Mode::FilterInput
+            | Mode::Switcher { .. }
+            | Mode::FindInput { .. }
+            | Mode::Found { .. }
+            | Mode::AllRepositoriesView { .. } => None,
             Mode::ConfirmDelete { paths, name } => Some(Modal {
                 title: format!("Delete {name}?"),
                 subject: paths
@@ -2077,6 +2587,80 @@ impl App {
                 input: None,
                 keys: "y/n",
             }),
+        }
+    }
+
+    /// What the open switcher, Find, or All Repositories prompt draws as a
+    /// list-shaped overlay (#647), the same cleared-box treatment
+    /// [`App::modal`] gives a fixed prompt, but tall enough for a
+    /// navigable list. `None` outside those three modes.
+    fn list_overlay(&self) -> Option<ListOverlay> {
+        match &self.mode {
+            Mode::Switcher { query, selected } => {
+                let rows = self
+                    .switcher_matches(query)
+                    .into_iter()
+                    .map(switcher_row_text)
+                    .collect();
+                Some(ListOverlay {
+                    title: "Go to Repository".to_owned(),
+                    query: Some((query.clone(), query.chars().count())),
+                    note: None,
+                    rows,
+                    selected: *selected,
+                    keys: "Enter/Esc",
+                })
+            }
+            Mode::FindInput { query } => Some(ListOverlay {
+                title: "Find".to_owned(),
+                query: Some((query.clone(), query.chars().count())),
+                note: None,
+                rows: Vec::new(),
+                selected: 0,
+                keys: "Enter/Esc",
+            }),
+            Mode::Found {
+                query,
+                matches,
+                truncated,
+                selected,
+            } => Some(ListOverlay {
+                title: format!("Find: {query}"),
+                query: None,
+                note: Some(if *truncated {
+                    format!("{} found (more not shown)", matches.len())
+                } else {
+                    format!("{} found", matches.len())
+                }),
+                rows: matches.iter().map(found_row_text).collect(),
+                selected: *selected,
+                keys: "Enter/Esc",
+            }),
+            Mode::AllRepositoriesView {
+                entries,
+                done,
+                selected,
+            } => Some(ListOverlay {
+                title: "All Repositories".to_owned(),
+                query: None,
+                note: Some(if *done {
+                    format!("{} found", entries.len())
+                } else {
+                    format!("{} found so far - still looking...", entries.len())
+                }),
+                rows: entries.iter().map(all_repository_row_text).collect(),
+                selected: *selected,
+                keys: "Enter/Esc, F5 refreshes",
+            }),
+            Mode::Normal
+            | Mode::ConfirmDelete { .. }
+            | Mode::RenameInput { .. }
+            | Mode::CopyInput { .. }
+            | Mode::ExtractInput { .. }
+            | Mode::CreateDirectoryInput { .. }
+            | Mode::CreateFileInput { .. }
+            | Mode::ConfirmDiscardEdit { .. }
+            | Mode::FilterInput => None,
         }
     }
 
@@ -2714,6 +3298,7 @@ pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 
     render_modal(frame, area, app);
+    render_list_overlay(frame, area, app);
 }
 
 /// Draws the open prompt, if there is one, as a real modal (#646): a
@@ -2766,6 +3351,113 @@ fn render_modal(frame: &mut Frame<'_>, area: Rect, app: &App) {
         let y = inner.y + u16::try_from(row).unwrap_or(0);
         frame.set_cursor_position((x, y));
     }
+}
+
+/// A "Go to Repository" switcher row's own text: its name, branch and
+/// provider, the way a Contents row shows them.
+fn switcher_row_text(node: &FolderNode) -> String {
+    let branch = node.branch.clone().unwrap_or_else(|| "detached".to_owned());
+    match &node.provider {
+        Some(provider) => format!("{}  [{branch}] · {provider}", node.name),
+        None => format!("{}  [{branch}]", node.name),
+    }
+}
+
+/// A Find result row's own text: its path, and which working copy holds it
+/// - `-` when none does.
+fn found_row_text(found_match: &protocol::NameMatch) -> String {
+    let repository = match found_match.repository.as_deref() {
+        Some("") => "Repos Directory".to_owned(),
+        Some(name) => name.to_owned(),
+        None => "-".to_owned(),
+    };
+    format!("{}  ({repository})", found_match.path)
+}
+
+/// An All Repositories row's own text: its name, branch and provider, and
+/// its location below the Repos Directory (#647/#591).
+fn all_repository_row_text(entry: &protocol::AllRepositoryEntry) -> String {
+    let branch = entry
+        .repository
+        .branch
+        .clone()
+        .unwrap_or_else(|| "detached".to_owned());
+    let location = if entry.location.is_empty() {
+        ".".to_owned()
+    } else {
+        entry.location.clone()
+    };
+    match &entry.repository.provider {
+        Some(provider) => format!("{}  [{branch}] · {provider}  ({location})", entry.name),
+        None => format!("{}  [{branch}]  ({location})", entry.name),
+    }
+}
+
+/// Draws the open switcher, Find, or All Repositories overlay (#647), if
+/// there is one - a cleared box over the panes and status line alike, the
+/// same shape [`render_modal`] draws a prompt in, but tall enough for a
+/// navigable list of rows rather than a handful of fixed lines.
+fn render_list_overlay(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let Some(overlay) = app.list_overlay() else {
+        return;
+    };
+
+    let width = area.width.saturating_sub(4).max(20.min(area.width));
+    let height = area.height.saturating_sub(2).max(3.min(area.height));
+    let overlay_area = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+
+    frame.render_widget(ratatui::widgets::Clear, overlay_area);
+    let block = Block::bordered().title(format!("{} ({})", overlay.title, overlay.keys));
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    let mut constraints = Vec::with_capacity(3);
+    if overlay.query.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
+    if overlay.note.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Min(0));
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+    let mut next = 0;
+
+    if let Some((text, column)) = &overlay.query {
+        let query_area = rows[next];
+        next += 1;
+        frame.render_widget(Paragraph::new(text.clone()), query_area);
+        let x = query_area.x
+            + u16::try_from(*column)
+                .unwrap_or(u16::MAX)
+                .min(query_area.width.saturating_sub(1));
+        frame.set_cursor_position((x, query_area.y));
+    }
+
+    if let Some(note) = &overlay.note {
+        let note_area = rows[next];
+        next += 1;
+        frame.render_widget(Paragraph::new(note.clone()), note_area);
+    }
+
+    let items: Vec<ListItem<'_>> = overlay
+        .rows
+        .iter()
+        .map(|row| ListItem::new(row.clone()))
+        .collect();
+    let mut state = ListState::default();
+    if !overlay.rows.is_empty() {
+        state.select(Some(overlay.selected));
+    }
+    let list = List::new(items).highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+    frame.render_stateful_widget(list, rows[next], &mut state);
 }
 
 /// The Folders/Contents/File column constraints [`render_app`] splits the
@@ -4265,6 +4957,10 @@ mod tests {
             Mode::CreateFileInput { .. } => "create-file",
             Mode::ConfirmDiscardEdit { .. } => "confirm-discard-edit",
             Mode::FilterInput => "filter",
+            Mode::Switcher { .. } => "switcher",
+            Mode::FindInput { .. } => "find-input",
+            Mode::Found { .. } => "found",
+            Mode::AllRepositoriesView { .. } => "all-repositories",
         }
     }
 
@@ -4299,7 +4995,11 @@ mod tests {
             | Mode::CreateFileInput { .. }
             | Mode::Normal
             | Mode::ConfirmDiscardEdit { .. }
-            | Mode::FilterInput => None,
+            | Mode::FilterInput
+            | Mode::Switcher { .. }
+            | Mode::FindInput { .. }
+            | Mode::Found { .. }
+            | Mode::AllRepositoriesView { .. } => None,
         }
     }
 
@@ -7465,5 +8165,248 @@ mod tests {
             restored_rows.iter().any(|row| row.contains("Folders")),
             "restoring brings the three-pane layout back: {restored_rows:?}"
         );
+    }
+
+    /// A directory entry for a working copy named `name`, with `branch` and
+    /// `provider`, for a switcher/All Repositories test.
+    fn repo_entry(name: &str, branch: Option<&str>, provider: Option<&str>) -> DirectoryEntry {
+        DirectoryEntry {
+            name: name.to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: provider.map(str::to_owned),
+                branch: branch.map(str::to_owned),
+                remote: None,
+                kind: protocol::RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn ctrl_p_opens_the_switcher_which_ranks_like_the_graphical_front_end_and_enter_goes_there() {
+        let root = notional_root("switcher-rank");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    repo_entry("TankSwarmCode", Some("main"), None),
+                    repo_entry("atscode", Some("main"), None),
+                    repo_entry("xtxsxc", Some("main"), None),
+                ],
+            }),
+        );
+        app.pending_contents = None;
+        app.pending_file = None;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        assert!(
+            matches!(app.mode, Mode::Switcher { .. }),
+            "Ctrl+P should open the switcher"
+        );
+        for c in "tsc".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+
+        let ranked: Vec<&str> = app
+            .switcher_matches("tsc")
+            .into_iter()
+            .map(|node| node.name.as_str())
+            .collect();
+        assert_eq!(
+            ranked,
+            vec!["TankSwarmCode", "atscode", "xtxsxc"],
+            "word-start, then contiguous, then scattered - the same order the \
+             graphical front end's own switcher ranks: {ranked:?}"
+        );
+
+        app.handle_key(KeyCode::Enter);
+        assert!(
+            matches!(app.mode, Mode::Normal),
+            "Enter closes the switcher"
+        );
+        assert_eq!(
+            app.reselect.as_deref(),
+            Some("TankSwarmCode"),
+            "and goes to the top-ranked match"
+        );
+    }
+
+    #[test]
+    fn typing_into_the_switcher_sends_no_listing_or_find_request() {
+        let root = notional_root("switcher-no-request");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        for c in "abc".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+
+        assert!(
+            app.pending_contents.is_none(),
+            "typing into the switcher must not list anything"
+        );
+        assert!(
+            app.pending_find.is_none(),
+            "typing into the switcher must not search anything"
+        );
+    }
+
+    #[test]
+    fn find_shows_results_with_their_repository_and_truncated_flag_and_enter_goes_there() {
+        let root = notional_root("find-results");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert!(matches!(app.mode, Mode::FindInput { .. }));
+        for c in "note".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+        app.handle_key(KeyCode::Enter);
+        assert!(
+            app.pending_find.is_some(),
+            "Enter in the Find prompt should send FindNames"
+        );
+
+        app.apply_find_result(Ok(Response::Names {
+            root: root.to_string_lossy().into_owned(),
+            matches: vec![protocol::NameMatch {
+                path: "repo-one/notes.txt".to_owned(),
+                is_dir: false,
+                repository: Some("repo-one".to_owned()),
+            }],
+            cut_short: true,
+        }));
+
+        let Mode::Found {
+            matches, truncated, ..
+        } = &app.mode
+        else {
+            panic!("the service's answer should show as Found results");
+        };
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].repository.as_deref(), Some("repo-one"));
+        assert!(
+            *truncated,
+            "the service's cut_short flag should carry through"
+        );
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or_default()
+                .contains("more not shown"),
+            "the truncated flag should be shown, not dropped: {:?}",
+            app.status
+        );
+
+        app.handle_key(KeyCode::Enter);
+        assert!(
+            matches!(app.mode, Mode::Normal),
+            "Enter on a result closes Find"
+        );
+        assert_eq!(
+            app.reselect.as_deref(),
+            Some("notes.txt"),
+            "and goes to the match, with it selected"
+        );
+    }
+
+    #[test]
+    fn all_repositories_fills_in_progressively_with_a_still_looking_line_and_refreshes() {
+        let root = notional_root("all-repositories");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert!(
+            app.pending_all_repositories.is_some(),
+            "opening the view should ask the service"
+        );
+
+        let entry = protocol::AllRepositoryEntry {
+            name: "repo-one".to_owned(),
+            location: String::new(),
+            repository: protocol::RepositoryInfo {
+                provider: None,
+                branch: Some("main".to_owned()),
+                remote: None,
+                kind: protocol::RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch: None,
+            },
+        };
+        app.apply_all_repositories_result(Ok(Response::AllRepositories {
+            entries: vec![entry.clone()],
+            done: false,
+        }));
+
+        let Mode::AllRepositoriesView { entries, done, .. } = &app.mode else {
+            panic!("expected the All Repositories view");
+        };
+        assert_eq!(entries.len(), 1, "the row that has arrived so far is shown");
+        assert!(!done);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Looking for repositories"),
+            "not done yet should say so: {:?}",
+            app.status
+        );
+        assert!(
+            app.pending_all_repositories.is_some(),
+            "not done yet should poll again"
+        );
+        let overlay = app.list_overlay().expect("the view is open");
+        assert!(
+            overlay.note.unwrap_or_default().contains("still looking"),
+            "the view itself should say \"still looking\" until it is done"
+        );
+
+        app.apply_all_repositories_result(Ok(Response::AllRepositories {
+            entries: vec![entry],
+            done: true,
+        }));
+        let Mode::AllRepositoriesView { done, .. } = &app.mode else {
+            panic!("expected the All Repositories view");
+        };
+        assert!(*done);
+        assert!(app.status.is_none());
+
+        app.handle_key(KeyCode::F(5));
+        let Mode::AllRepositoriesView { entries, done, .. } = &app.mode else {
+            panic!("expected the All Repositories view");
+        };
+        assert!(entries.is_empty(), "F5 discards what was found before");
+        assert!(!done, "and starts the scan over");
+        assert!(
+            app.pending_all_repositories.is_some(),
+            "F5 should ask the service again"
+        );
+    }
+
+    #[test]
+    fn escape_leaves_the_switcher_find_and_all_repositories_exactly_as_they_were() {
+        let root = notional_root("escape-restores");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+        let before = app.contents_selected;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.contents_selected, before);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.contents_selected, before);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.contents_selected, before);
     }
 }

@@ -137,6 +137,12 @@ pub enum Action {
     /// Maximises the focused pane to the whole terminal, or restores the
     /// three-pane layout if it is already maximised (#650).
     ToggleMaximize,
+    /// Opens the "Go to Repository" switcher (#647).
+    OpenSwitcher,
+    /// Opens the cross-repository Find prompt (#647).
+    StartFind,
+    /// Opens the All Repositories view (#647/#591).
+    OpenAllRepositories,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -580,6 +586,27 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Maximise/restore the focused pane",
         action: Action::ToggleMaximize,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('p'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Go to a repository",
+        action: Action::OpenSwitcher,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('f'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Find by name",
+        action: Action::StartFind,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('r'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "All repositories",
+        action: Action::OpenAllRepositories,
     },
 ];
 
