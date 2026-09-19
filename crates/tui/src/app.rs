@@ -11,6 +11,7 @@
 use crate::bindings::{self, Action};
 use crate::colour::{self, Run};
 use crate::document::Document;
+use crate::settings;
 use crate::{
     classify, editable_text, editor, facts, graphic, present, present_folder, present_view,
     render_with_block, views,
@@ -24,7 +25,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Cell, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Table, TableState, Tabs,
+    ScrollbarState, Table, TableState, Tabs, Wrap,
 };
 use std::collections::HashMap;
 use std::io;
@@ -293,6 +294,11 @@ enum Mode {
         /// Its display name, for the confirmation prompt.
         name: String,
     },
+    /// Typing into the Contents pane's filter field (#650). Unlike the
+    /// other prompts above, each keystroke here narrows the listing at
+    /// once rather than waiting for Enter, so the text lives on
+    /// [`App::filter`] itself rather than in this variant.
+    FilterInput,
 }
 
 /// A file open in the terminal File pane's editor (#645), on the same
@@ -454,6 +460,30 @@ fn canonicalize_root(root: PathBuf) -> PathBuf {
 /// extend it before the next letter starts a fresh one.
 const TYPE_AHEAD_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// The Contents pane's filter state (#650): a name typed into the filter
+/// field, and/or narrowed to the repositories with uncommitted changes.
+/// Mirrors the graphical front end's own `Filter`
+/// (`crates/gui/src/app.rs`), without its keyboard-focus bookkeeping - a
+/// terminal binding either is or is not in [`Mode::FilterInput`], so there
+/// is no separate "focused" flag to keep in step with it.
+#[derive(Default)]
+struct ContentsFilter {
+    /// Typed into the filter field, matched case-insensitively as a
+    /// substring of the entry's name. Empty when nothing is typed.
+    text: String,
+    /// Whether the listing is narrowed to just the repositories with
+    /// uncommitted changes.
+    changed_only: bool,
+}
+
+impl ContentsFilter {
+    /// Whether either half of the filter is currently narrowing the
+    /// listing - what Escape has to undo before it cancels or quits.
+    fn is_active(&self) -> bool {
+        !self.text.is_empty() || self.changed_only
+    }
+}
+
 /// The three-pane explorer's state: a folders tree, the selected folder's
 /// contents, and the selected file's preview.
 pub struct App {
@@ -568,6 +598,23 @@ pub struct App {
     /// process-global environment variable another test reads at the same
     /// time.
     colour_enabled: bool,
+    /// The Contents pane's filter (#650): a typed name and/or the
+    /// changed-only narrowing, combined.
+    filter: ContentsFilter,
+    /// The Folders and Contents pane widths, in columns, once the reader
+    /// has resized them this session or a settings file supplied them
+    /// (#650). `None` draws [`render_app`]'s original 25%/35%/40% split -
+    /// the same default as before this existed.
+    pane_widths: Option<settings::PaneWidths>,
+    /// The width [`render_app`] last split the three panes across, read
+    /// back so a resize has a starting point to nudge even before
+    /// `pane_widths` holds one of its own - the same "read back after a
+    /// draw" shape [`App::drawn_file_content_width`] already uses.
+    drawn_panes_width: std::cell::Cell<u16>,
+    /// The pane drawn alone, filling the whole terminal, if any (#650).
+    /// Not a `bool` (`clippy::struct_excessive_bools`, this struct's
+    /// fourth): which pane is the one worth naming here.
+    maximized: Option<Focus>,
 }
 
 impl App {
@@ -608,6 +655,10 @@ impl App {
             type_ahead_at: None,
             should_quit: false,
             colour_enabled: colour::terminal_colour_enabled(),
+            filter: ContentsFilter::default(),
+            pane_widths: None,
+            drawn_panes_width: std::cell::Cell::new(0),
+            maximized: None,
         };
         app.load_contents_for_selected();
         app
@@ -638,6 +689,22 @@ impl App {
     #[must_use]
     pub fn address_path(&self) -> String {
         self.selected_dir_path().to_string_lossy().into_owned()
+    }
+
+    /// The Folders and Contents pane widths, in columns, if the reader has
+    /// resized them this session or a settings file supplied them - what
+    /// `main` saves for the next launch (#650). `None` before either has
+    /// happened, the same as a settings file with nothing usable in it.
+    #[must_use]
+    pub fn pane_widths(&self) -> Option<settings::PaneWidths> {
+        self.pane_widths
+    }
+
+    /// Applies pane widths read from a settings file, before the first
+    /// draw - what `main` calls in place of leaving [`App::pane_widths`]
+    /// at its default (#650).
+    pub fn set_pane_widths(&mut self, widths: settings::PaneWidths) {
+        self.pane_widths = Some(widths);
     }
 
     fn selected_dir_path(&self) -> PathBuf {
@@ -729,6 +796,112 @@ impl App {
         self.load_file_view();
     }
 
+    /// Whether `entry` passes the Contents pane's current filter (#650):
+    /// its name contains the typed text, case-insensitively, and/or it is
+    /// a repository with uncommitted changes when the changed-only filter
+    /// is on - both at once when both are set, so the two combine rather
+    /// than one overriding the other.
+    fn passes_filter(&self, entry: &DirectoryEntry) -> bool {
+        let name_matches = self.filter.text.is_empty()
+            || entry
+                .name
+                .to_lowercase()
+                .contains(&self.filter.text.to_lowercase());
+        let changed_matches =
+            !self.filter.changed_only || self.marker_for(&entry.name) == CHANGED_MARKER;
+        name_matches && changed_matches
+    }
+
+    /// The indices into [`App::contents`] that pass the current filter, in
+    /// the listing's own (already sorted) order. Identical to every index
+    /// in order when no filter is active, so nothing downstream needs a
+    /// separate unfiltered path (#650).
+    fn filtered_indices(&self) -> Vec<usize> {
+        self.contents
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| self.passes_filter(entry))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Where [`App::contents_selected`] sits within [`App::filtered_indices`],
+    /// or `None` on the one step between the filter changing and
+    /// [`App::resync_filtered_selection`] moving the cursor off a row it
+    /// just hid.
+    fn selected_filtered_position(&self) -> Option<usize> {
+        self.filtered_indices()
+            .iter()
+            .position(|&index| index == self.contents_selected)
+    }
+
+    /// Keeps [`App::contents_selected`] on a row the filter still shows,
+    /// moving it to the first match when the row it held is no longer one.
+    /// Called after anything that changes what the filter matches (#650).
+    fn resync_filtered_selection(&mut self) {
+        if self.selected_filtered_position().is_none()
+            && let Some(&first) = self.filtered_indices().first()
+        {
+            self.contents_selected = first;
+            self.load_file_view();
+        }
+        self.clamp_contents_scroll();
+    }
+
+    /// What the Contents pane shows instead of a table when the current
+    /// filter matches nothing (#650): which half of the filter is
+    /// responsible, so it is never mistaken for an empty Repos Directory
+    /// (GUIDANCE.md §3.5). `None` when the listing is short for any other
+    /// reason - nothing to filter, or nothing filtered out.
+    fn filter_empty_message(&self) -> Option<String> {
+        if self.contents.is_empty() || !self.filtered_indices().is_empty() {
+            return None;
+        }
+        if !self.filter.text.is_empty() {
+            Some(format!("No name matches `{}`", self.filter.text))
+        } else if self.filter.changed_only {
+            Some("No repositories with uncommitted changes".to_owned())
+        } else {
+            None
+        }
+    }
+
+    /// Starts typing into the filter field (#650).
+    fn start_filter(&mut self) {
+        self.mode = Mode::FilterInput;
+    }
+
+    /// Handles one key while [`Mode::FilterInput`] is open: Enter keeps
+    /// what has been typed and returns to browsing the narrowed listing;
+    /// Escape clears the filter entirely, the way GUIDANCE.md expects a
+    /// reader to always have one key back to where they started (#650).
+    fn handle_filter_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Enter => self.mode = Mode::Normal,
+            KeyCode::Esc => {
+                self.filter = ContentsFilter::default();
+                self.resync_filtered_selection();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Backspace => {
+                self.filter.text.pop();
+                self.resync_filtered_selection();
+            }
+            KeyCode::Char(c) => {
+                self.filter.text.push(c);
+                self.resync_filtered_selection();
+            }
+            _ => {}
+        }
+    }
+
+    /// Narrows the listing to repositories with uncommitted changes, or
+    /// lifts that narrowing if it is already applied (#650).
+    fn toggle_changed_filter(&mut self) {
+        self.filter.changed_only = !self.filter.changed_only;
+        self.resync_filtered_selection();
+    }
+
     /// Asks the service for the working-tree status of each repository row
     /// in `range` that has not been asked about since the listing landed -
     /// one request per row, after the listing is already on screen: the
@@ -736,11 +909,14 @@ impl App {
     /// a checkout's tracked files that a listing of forty checkouts must
     /// not wait for (GUIDANCE.md §3.5, #640). `range` is the rows currently
     /// on screen (#641): a row outside it is never asked about until it
-    /// scrolls into view.
+    /// scrolls into view. Positions within [`App::filtered_indices`]
+    /// (#650), identical to raw listing indices while no filter narrows it.
     fn ask_for_statuses(&mut self, range: Range<usize>) {
-        let end = range.end.min(self.contents.len());
+        let filtered = self.filtered_indices();
+        let end = range.end.min(filtered.len());
         let start = range.start.min(end);
-        for entry in self.contents.get(start..end).unwrap_or_default() {
+        for &index in filtered.get(start..end).unwrap_or_default() {
+            let entry = &self.contents[index];
             if entry.repository.is_none() || self.row_statuses.contains_key(&entry.name) {
                 continue;
             }
@@ -772,12 +948,16 @@ impl App {
     /// status requests (#641), and what a test can hold against the rows
     /// actually drawn. The two were separate models once, agreeing only
     /// while a reader scrolled steadily downward (the review of #672).
+    /// Positions within [`App::filtered_indices`] (#650) - identical to raw
+    /// listing indices while no filter narrows the listing, which is why
+    /// nothing written against this before #650 needed to change.
     #[must_use]
     pub fn visible_rows(&self) -> Range<usize> {
         self.visible_content_range()
     }
 
     fn visible_content_range(&self) -> Range<usize> {
+        let filtered_len = self.filtered_indices().len();
         // What the table drew, when it has drawn: the clamp below is only
         // the answer before the first frame, and in a unit test that never
         // renders one.
@@ -785,27 +965,32 @@ impl App {
             .drawn_contents_offset
             .get()
             .unwrap_or(self.contents_scroll)
-            .min(self.contents.len());
+            .min(filtered_len);
         let end = start
             .saturating_add(self.contents_viewport_rows)
-            .min(self.contents.len());
+            .min(filtered_len);
         start..end
     }
 
     /// Keeps `contents_selected` inside the rows [`App::visible_content_range`]
     /// reports, the way a reader expects the cursor's own row to always be
     /// on screen: scrolling up when it moves above the top, and down when
-    /// it moves past the bottom.
+    /// it moves past the bottom. A no-op when the filter (#650) currently
+    /// hides the selected row - [`App::resync_filtered_selection`] is what
+    /// moves it back onto a shown one.
     fn clamp_contents_scroll(&mut self) {
-        if self.contents_selected < self.contents_scroll {
-            self.contents_scroll = self.contents_selected;
+        let Some(position) = self.selected_filtered_position() else {
+            return;
+        };
+        if position < self.contents_scroll {
+            self.contents_scroll = position;
         } else if self.contents_viewport_rows > 0
-            && self.contents_selected
+            && position
                 >= self
                     .contents_scroll
                     .saturating_add(self.contents_viewport_rows)
         {
-            self.contents_scroll = self.contents_selected + 1 - self.contents_viewport_rows;
+            self.contents_scroll = position + 1 - self.contents_viewport_rows;
         }
     }
 
@@ -1152,6 +1337,9 @@ impl App {
                 self.sort_contents();
                 self.contents_selected = 0;
                 self.contents_scroll = 0;
+                // A filter narrows one folder's listing; a different one is
+                // not what it was narrowing (#650).
+                self.filter = ContentsFilter::default();
                 self.load_file_view();
                 self.ask_for_statuses(self.visible_content_range());
             }
@@ -1192,6 +1380,10 @@ impl App {
             }
             Mode::ConfirmDiscardEdit { .. } => {
                 self.handle_confirm_discard_edit_key(key.code);
+                return;
+            }
+            Mode::FilterInput => {
+                self.handle_filter_key(key.code);
                 return;
             }
             Mode::Normal => {}
@@ -1265,10 +1457,27 @@ impl App {
             Action::FileViewPrevious => self.select_previous_file_view(),
             Action::FileViewNext => self.select_next_file_view(),
             Action::FileActivateView => self.activate_file_view(),
+            Action::StartFilter => self.start_filter(),
+            Action::ToggleChangedFilter => self.toggle_changed_filter(),
+            Action::WidenPane => self.widen_focused_pane(),
+            Action::NarrowPane => self.narrow_focused_pane(),
+            Action::ToggleMaximize => {
+                self.maximized = if self.maximized.is_some() {
+                    None
+                } else {
+                    Some(self.focus)
+                };
+            }
         }
     }
 
     fn cancel_or_quit(&mut self) {
+        if self.filter.is_active() {
+            self.filter = ContentsFilter::default();
+            self.resync_filtered_selection();
+            self.status = Some("filter cleared".to_owned());
+            return;
+        }
         let cancelled = self.pending_contents.take().is_some()
             | self.pending_file.take().is_some()
             | self.pending_operation.take().is_some();
@@ -1278,6 +1487,60 @@ impl App {
         } else {
             self.should_quit = true;
         }
+    }
+
+    /// The Folders and Contents pane widths a resize starts nudging from
+    /// when neither a settings file nor an earlier resize this session has
+    /// set one (#650): [`render_app`]'s own default 25%/35% split, scaled
+    /// to the last width it actually drew - or, before that has happened
+    /// even once (most of this module's own tests), a fallback wide enough
+    /// for both panes to clear [`settings::MIN_WIDTH`].
+    fn default_pane_widths(&self) -> settings::PaneWidths {
+        const FALLBACK_TOTAL_WIDTH: u16 = 80;
+        let total = match self.drawn_panes_width.get() {
+            0 => FALLBACK_TOTAL_WIDTH,
+            width => width,
+        };
+        settings::PaneWidths {
+            folders: (total.saturating_mul(25) / 100).max(settings::MIN_WIDTH),
+            contents: (total.saturating_mul(35) / 100).max(settings::MIN_WIDTH),
+        }
+    }
+
+    /// Widens the focused pane by one column, narrowing its neighbour to
+    /// make room (#650): Folders takes from Contents, Contents takes from
+    /// Folders, and File - which has no stored width of its own; it is
+    /// whatever [`render_app`] has left - takes from Contents.
+    fn widen_focused_pane(&mut self) {
+        let mut widths = self
+            .pane_widths
+            .unwrap_or_else(|| self.default_pane_widths());
+        match self.focus {
+            Focus::Folders => widths.folders = widths.folders.saturating_add(1),
+            Focus::Contents => widths.contents = widths.contents.saturating_add(1),
+            Focus::File => {
+                widths.contents = widths.contents.saturating_sub(1).max(settings::MIN_WIDTH);
+            }
+        }
+        self.pane_widths = Some(widths);
+    }
+
+    /// As [`App::widen_focused_pane`], the other way - never below
+    /// [`settings::MIN_WIDTH`].
+    fn narrow_focused_pane(&mut self) {
+        let mut widths = self
+            .pane_widths
+            .unwrap_or_else(|| self.default_pane_widths());
+        match self.focus {
+            Focus::Folders => {
+                widths.folders = widths.folders.saturating_sub(1).max(settings::MIN_WIDTH);
+            }
+            Focus::Contents => {
+                widths.contents = widths.contents.saturating_sub(1).max(settings::MIN_WIDTH);
+            }
+            Focus::File => widths.contents = widths.contents.saturating_add(1),
+        }
+        self.pane_widths = Some(widths);
     }
 
     fn start_delete_confirmation(&mut self) {
@@ -1371,7 +1634,10 @@ impl App {
             Mode::RenameInput { input, .. }
             | Mode::CopyInput { input, .. }
             | Mode::ExtractInput { input, .. } => Some(input),
-            Mode::Normal | Mode::ConfirmDelete { .. } | Mode::ConfirmDiscardEdit { .. } => None,
+            Mode::Normal
+            | Mode::ConfirmDelete { .. }
+            | Mode::ConfirmDiscardEdit { .. }
+            | Mode::FilterInput => None,
         }
     }
 
@@ -1414,6 +1680,7 @@ impl App {
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
             Mode::ConfirmDiscardEdit { name } => format!("Discard changes to {name}? y/n"),
+            Mode::FilterInput => format!("Filter: {}_  (Enter/Esc)", self.filter.text),
             Mode::Normal => self.status.clone().unwrap_or_else(|| self.ambient_status()),
         }
     }
@@ -1436,6 +1703,7 @@ impl App {
             | Mode::CopyInput { .. }
             | Mode::ExtractInput { .. }
             | Mode::ConfirmDiscardEdit { .. }
+            | Mode::FilterInput
             | Mode::Normal => self.status_line(),
         }
     }
@@ -1464,14 +1732,16 @@ impl App {
 
     /// `{N} item(s), {M} repositor(y|ies){not known}{with uncommitted
     /// changes}` - what the Contents pane's listing holds, e.g. `17 items,
-    /// 16 repositories, 3 with uncommitted changes` (#641). Empty when the
-    /// listing holds no repository row, so a plain folder's status line
-    /// keeps its keyboard hints instead of a bare item count nobody asked
-    /// for.
+    /// 16 repositories, 3 with uncommitted changes` (#641). Counts the
+    /// filtered listing (#650), identical to the raw one while no filter
+    /// narrows it. Empty when the listing holds no repository row, so a
+    /// plain folder's status line keeps its keyboard hints instead of a
+    /// bare item count nobody asked for.
     fn contents_summary(&self) -> String {
-        let repository_names: Vec<&str> = self
-            .contents
+        let filtered = self.filtered_indices();
+        let repository_names: Vec<&str> = filtered
             .iter()
+            .map(|&index| &self.contents[index])
             .filter(|entry| entry.repository.is_some())
             .map(|entry| entry.name.as_str())
             .collect();
@@ -1479,7 +1749,7 @@ impl App {
             return String::new();
         }
 
-        let items = self.contents.len();
+        let items = filtered.len();
         let item_noun = if items == 1 { "item" } else { "items" };
         let repos = repository_names.len();
         let repo_noun = if repos == 1 {
@@ -1712,12 +1982,14 @@ impl App {
         }
     }
 
-    /// As [`App::jump_folders_to`], for the Contents pane's listing.
+    /// As [`App::jump_folders_to`], for the Contents pane's listing -
+    /// among the rows the current filter shows (#650); identical to every
+    /// row while no filter narrows it.
     fn jump_contents_to(&mut self, prefix: &str) {
-        let Some(index) = self
-            .contents
+        let Some(&index) = self
+            .filtered_indices()
             .iter()
-            .position(|entry| entry.name.to_lowercase().starts_with(prefix))
+            .find(|&&index| self.contents[index].name.to_lowercase().starts_with(prefix))
         else {
             return;
         };
@@ -1728,17 +2000,35 @@ impl App {
         }
     }
 
+    /// Moves the cursor to the previous row the current filter shows
+    /// (#650) - the previous row outright while no filter narrows the
+    /// listing.
     fn move_up_in_contents(&mut self) {
-        if self.contents_selected > 0 {
-            self.contents_selected -= 1;
+        let filtered = self.filtered_indices();
+        let Some(position) = filtered
+            .iter()
+            .position(|&index| index == self.contents_selected)
+        else {
+            return;
+        };
+        if position > 0 {
+            self.contents_selected = filtered[position - 1];
             self.clamp_contents_scroll();
             self.load_file_view();
         }
     }
 
+    /// As [`App::move_up_in_contents`], the other way.
     fn move_down_in_contents(&mut self) {
-        if self.contents_selected + 1 < self.contents.len() {
-            self.contents_selected += 1;
+        let filtered = self.filtered_indices();
+        let Some(position) = filtered
+            .iter()
+            .position(|&index| index == self.contents_selected)
+        else {
+            return;
+        };
+        if position + 1 < filtered.len() {
+            self.contents_selected = filtered[position + 1];
             self.clamp_contents_scroll();
             self.load_file_view();
         }
@@ -1895,23 +2185,54 @@ pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
         );
     }
 
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
-        ])
-        .split(panes_area);
+    app.drawn_panes_width.set(panes_area.width);
 
-    render_folders(frame, columns[0], app);
-    render_contents(frame, columns[1], app);
-    render_file(frame, columns[2], app);
+    if let Some(pane) = app.maximized {
+        render_pane(frame, panes_area, app, pane);
+    } else {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(pane_constraints(app))
+            .split(panes_area);
+
+        render_folders(frame, columns[0], app);
+        render_contents(frame, columns[1], app);
+        render_file(frame, columns[2], app);
+    }
 
     frame.render_widget(
         Paragraph::new(app.status_line_at(status_area.width.into())),
         status_area,
     );
+}
+
+/// The Folders/Contents/File column constraints [`render_app`] splits the
+/// panes area with: the reader's own chosen widths (#650) once there are
+/// any, in columns; the original 25%/35%/40% split otherwise, unchanged
+/// from before this existed.
+fn pane_constraints(app: &App) -> [Constraint; 3] {
+    match app.pane_widths {
+        Some(widths) => [
+            Constraint::Length(widths.folders),
+            Constraint::Length(widths.contents),
+            Constraint::Min(0),
+        ],
+        None => [
+            Constraint::Percentage(25),
+            Constraint::Percentage(35),
+            Constraint::Percentage(40),
+        ],
+    }
+}
+
+/// Renders only `pane`, filling `area` - what a maximised pane draws into
+/// instead of its usual third of [`render_app`]'s own layout (#650).
+fn render_pane(frame: &mut Frame<'_>, area: Rect, app: &App, pane: Focus) {
+    match pane {
+        Focus::Folders => render_folders(frame, area, app),
+        Focus::Contents => render_contents(frame, area, app),
+        Focus::File => render_file(frame, area, app),
+    }
 }
 
 fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -2222,8 +2543,21 @@ fn contents_row(app: &App, entry: &DirectoryEntry, columns: &ContentsColumns) ->
 
 /// Renders the Contents pane as a table fitted to what the listing holds
 /// (#578, #640): Name, then Branch, Type, Size and Modified as room and
-/// the listing's own contents allow, sorted by [`App::sort_key`].
+/// the listing's own contents allow, sorted by [`App::sort_key`], and
+/// narrowed to what the current filter shows (#650) - a message in place
+/// of the table when that filter matches nothing.
 fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let block = pane_block("Contents", app.focus == Focus::Contents);
+    if let Some(message) = app.filter_empty_message() {
+        frame.render_widget(
+            Paragraph::new(message)
+                .wrap(Wrap { trim: false })
+                .block(block),
+            area,
+        );
+        return;
+    }
+
     let holds_file = app.contents.iter().any(|entry| !entry.is_dir);
     let holds_repository = app.contents.iter().any(|entry| entry.repository.is_some());
     let inner_width = area.width.saturating_sub(2);
@@ -2248,10 +2582,10 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
         header_cells.push(sort_header("Modified", app, SortKey::Modified));
     }
 
-    let rows: Vec<Row<'static>> = app
-        .contents
+    let filtered = app.filtered_indices();
+    let rows: Vec<Row<'static>> = filtered
         .iter()
-        .map(|entry| contents_row(app, entry, &columns))
+        .map(|&index| contents_row(app, &app.contents[index], &columns))
         .collect();
 
     let mut state = TableState::default();
@@ -2259,16 +2593,19 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
     // expects rather than re-deriving its window from the selected row
     // each time - and so what it draws can be read back below.
     if let Some(offset) = app.drawn_contents_offset.get() {
-        *state.offset_mut() = offset.min(app.contents.len());
+        *state.offset_mut() = offset.min(filtered.len());
     }
-    if !app.contents.is_empty() {
-        state.select(Some(app.contents_selected));
+    if let Some(position) = filtered
+        .iter()
+        .position(|&index| index == app.contents_selected)
+    {
+        state.select(Some(position));
     }
 
     let table = Table::new(rows, widths)
         .header(Row::new(header_cells))
         .column_spacing(COLUMN_SPACING)
-        .block(pane_block("Contents", app.focus == Focus::Contents))
+        .block(block)
         .row_highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
     frame.render_stateful_widget(table, area, &mut state);
     // The widget has just decided which rows fit; that decision is what
@@ -2811,7 +3148,7 @@ mod tests {
     use super::{
         App, CHANGED_MARKER, Document, Editing, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER,
         RowStatus, STALE_FETCH_MARKER, breadcrumb_line, render_app, render_contents,
-        render_file_editing,
+        render_file_editing, settings,
     };
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
@@ -3337,6 +3674,7 @@ mod tests {
             Mode::CopyInput { .. } => "copy",
             Mode::ExtractInput { .. } => "extract",
             Mode::ConfirmDiscardEdit { .. } => "confirm-discard-edit",
+            Mode::FilterInput => "filter",
         }
     }
 
@@ -3349,6 +3687,16 @@ mod tests {
             .collect()
     }
 
+    /// The entry names the current filter (#650) actually leaves standing,
+    /// in listing order - what a filter test compares against, as opposed
+    /// to [`content_names`]'s unfiltered raw listing.
+    fn filtered_content_names(app: &App) -> Vec<&str> {
+        app.filtered_indices()
+            .iter()
+            .map(|&index| app.contents[index].name.as_str())
+            .collect()
+    }
+
     /// The path the open prompt is about, whichever prompt it is.
     fn prompt_path(app: &App) -> Option<&Path> {
         match &app.mode {
@@ -3356,7 +3704,7 @@ mod tests {
             | Mode::RenameInput { path, .. }
             | Mode::CopyInput { path, .. }
             | Mode::ExtractInput { path, .. } => Some(path.as_path()),
-            Mode::Normal | Mode::ConfirmDiscardEdit { .. } => None,
+            Mode::Normal | Mode::ConfirmDiscardEdit { .. } | Mode::FilterInput => None,
         }
     }
 
@@ -6026,6 +6374,275 @@ mod tests {
         assert!(
             drawn.starts_with("héllo wörld"),
             "the multibyte line should draw whole, without panicking or mangling: {drawn}"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Filtering the listing, and letting the reader choose the shape of
+    // the panes (#650).
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn typing_into_the_filter_narrows_the_listing() {
+        let root = notional_root("filter-narrows");
+        let mut app = app_showing(
+            &root,
+            &[("alpha", false), ("bravo", false), ("charlie", false)],
+        );
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('/'));
+        assert_eq!(mode_of(&app), "filter");
+        app.handle_key(KeyCode::Char('a'));
+        app.handle_key(KeyCode::Char('l'));
+
+        assert_eq!(filtered_content_names(&app), vec!["alpha"]);
+        assert_eq!(
+            app.contents.len(),
+            3,
+            "the raw listing itself is untouched by the filter"
+        );
+    }
+
+    #[test]
+    fn enter_keeps_the_filter_and_returns_to_browsing() {
+        let root = notional_root("filter-enter-commits");
+        let mut app = app_showing(
+            &root,
+            &[("alpha", false), ("bravo", false), ("charlie", false)],
+        );
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('/'));
+        app.handle_key(KeyCode::Char('a'));
+        app.handle_key(KeyCode::Char('l'));
+
+        app.handle_key(KeyCode::Enter);
+
+        assert_eq!(mode_of(&app), "normal");
+        assert_eq!(
+            filtered_content_names(&app),
+            vec!["alpha"],
+            "the filter stays applied after Enter"
+        );
+    }
+
+    #[test]
+    fn escape_while_typing_clears_the_filter_entirely() {
+        let root = notional_root("filter-escape-typing");
+        let mut app = app_showing(
+            &root,
+            &[("alpha", false), ("bravo", false), ("charlie", false)],
+        );
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('/'));
+        app.handle_key(KeyCode::Char('a'));
+        app.handle_key(KeyCode::Char('l'));
+
+        app.handle_key(KeyCode::Esc);
+
+        assert_eq!(mode_of(&app), "normal");
+        assert_eq!(
+            filtered_content_names(&app),
+            vec!["alpha", "bravo", "charlie"]
+        );
+    }
+
+    #[test]
+    fn escape_after_committing_a_filter_clears_it_without_quitting() {
+        let root = notional_root("filter-escape-committed");
+        let mut app = app_showing(
+            &root,
+            &[("alpha", false), ("bravo", false), ("charlie", false)],
+        );
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('/'));
+        app.handle_key(KeyCode::Char('a'));
+        app.handle_key(KeyCode::Char('l'));
+        app.handle_key(KeyCode::Enter);
+
+        app.handle_key(KeyCode::Esc);
+
+        assert!(!app.should_quit, "clearing the filter should not also quit");
+        assert_eq!(
+            filtered_content_names(&app),
+            vec!["alpha", "bravo", "charlie"]
+        );
+    }
+
+    #[test]
+    fn changing_folder_drops_the_filter() {
+        let root = notional_root("filter-folder-change");
+        let mut app = app_showing(&root, &[("alpha", false), ("bravo", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('/'));
+        app.handle_key(KeyCode::Char('a'));
+        app.handle_key(KeyCode::Char('l'));
+        app.handle_key(KeyCode::Enter);
+        assert_eq!(filtered_content_names(&app), vec!["alpha"]);
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("delta", false)]),
+            }),
+        );
+
+        assert_eq!(
+            filtered_content_names(&app),
+            vec!["delta"],
+            "a fresh listing drops the filter the old one had"
+        );
+    }
+
+    #[test]
+    fn a_filter_matching_nothing_says_so_rather_than_reporting_an_empty_repos_directory() {
+        let root = notional_root("filter-no-match");
+        let mut app = app_showing(&root, &[("alpha", false), ("bravo", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Char('/'));
+        for c in "zzz".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+        app.handle_key(KeyCode::Enter);
+
+        let text = drawn_contents(40, 6, &app).concat();
+
+        assert!(
+            text.contains("No name matches `zzz`"),
+            "should name the filter, not read as an empty Repos Directory: {text}"
+        );
+    }
+
+    #[test]
+    fn the_changed_only_filter_and_the_name_filter_combine() {
+        let root = notional_root("filter-combine");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    repository_entry("alpha-repo", "main"),
+                    repository_entry("beta-repo", "main"),
+                ],
+            }),
+        );
+        app.pending_contents = None;
+        app.pending_file = None;
+        app.row_statuses.insert(
+            "alpha-repo".to_owned(),
+            RowStatus::Answered(Some(protocol::WorkingTreeSummary {
+                changed: 2,
+                partial: false,
+                summary: "2 tracked files changed".to_owned(),
+            })),
+        );
+        app.row_statuses.insert(
+            "beta-repo".to_owned(),
+            RowStatus::Answered(Some(protocol::WorkingTreeSummary {
+                changed: 0,
+                partial: false,
+                summary: "clean".to_owned(),
+            })),
+        );
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('u'));
+        assert_eq!(
+            filtered_content_names(&app),
+            vec!["alpha-repo"],
+            "changed-only alone narrows to the dirty repository"
+        );
+
+        app.handle_key(KeyCode::Char('/'));
+        app.handle_key(KeyCode::Char('b'));
+        app.handle_key(KeyCode::Enter);
+
+        assert!(
+            filtered_content_names(&app).is_empty(),
+            "combined with a name filter matching only the clean repository, nothing passes both"
+        );
+
+        app.handle_key(KeyCode::Char('u'));
+        assert_eq!(
+            filtered_content_names(&app),
+            vec!["beta-repo"],
+            "lifting changed-only leaves the name filter alone"
+        );
+    }
+
+    #[test]
+    fn widening_the_focused_pane_grows_it_and_narrows_its_neighbour() {
+        let mut app = App::new(std::env::temp_dir());
+        app.focus = Focus::Folders;
+        app.drawn_panes_width.set(100);
+
+        app.handle_key(KeyCode::Char(']'));
+
+        let widths = app.pane_widths().expect("a resize sets explicit widths");
+        assert_eq!(widths.folders, 26, "25% of 100, then widened by one column");
+        assert_eq!(
+            widths.contents, 35,
+            "unaffected - Folders is the one resized"
+        );
+    }
+
+    #[test]
+    fn narrowing_the_focused_pane_stops_at_the_minimum() {
+        let mut app = App::new(std::env::temp_dir());
+        app.focus = Focus::Folders;
+        app.set_pane_widths(settings::PaneWidths {
+            folders: settings::MIN_WIDTH,
+            contents: 30,
+        });
+
+        app.handle_key(KeyCode::Char('['));
+
+        assert_eq!(
+            app.pane_widths().unwrap().folders,
+            settings::MIN_WIDTH,
+            "a pane never narrows past the minimum"
+        );
+    }
+
+    #[test]
+    fn the_widths_a_resize_chose_are_what_a_later_run_would_load_back() {
+        // What `main` does with `App::pane_widths`/`App::set_pane_widths`
+        // and `settings::save_pane_widths`/`load_pane_widths`, without
+        // touching a real settings file (#650).
+        let mut app = App::new(std::env::temp_dir());
+        app.focus = Focus::Contents;
+        app.drawn_panes_width.set(100);
+        app.handle_key(KeyCode::Char(']'));
+        let chosen = app.pane_widths().expect("a resize sets explicit widths");
+
+        let mut next_run = App::new(std::env::temp_dir());
+        next_run.set_pane_widths(chosen);
+
+        assert_eq!(next_run.pane_widths(), Some(chosen));
+    }
+
+    #[test]
+    fn maximising_draws_only_the_focused_pane_and_restoring_brings_the_others_back() {
+        let root = notional_root("maximize");
+        let mut app = app_showing(&root, &[("alpha", false)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('z'));
+        let maximized_rows = drawn_rows(60, 10, &app);
+        assert!(
+            maximized_rows.iter().any(|row| row.contains("Contents")),
+            "the maximised pane still draws: {maximized_rows:?}"
+        );
+        assert!(
+            !maximized_rows.iter().any(|row| row.contains("Folders")),
+            "the other panes are not drawn while maximised: {maximized_rows:?}"
+        );
+
+        app.handle_key(KeyCode::Char('z'));
+        let restored_rows = drawn_rows(60, 10, &app);
+        assert!(
+            restored_rows.iter().any(|row| row.contains("Folders")),
+            "restoring brings the three-pane layout back: {restored_rows:?}"
         );
     }
 }

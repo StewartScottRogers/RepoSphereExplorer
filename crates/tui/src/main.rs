@@ -156,10 +156,22 @@ fn self_update() -> ExitCode {
 /// Runs the three-pane explorer's event loop until the user quits.
 fn run(opening: tui::app::Opening) -> io::Result<()> {
     let mut app = App::new_with_notice(opening.root, opening.notice);
+    // Before the first draw, the same "restore before anything shows"
+    // shape the graphical front end's own pane widths follow (#650).
+    if let Some(widths) = tui::settings::load_pane_widths() {
+        app.set_pane_widths(widths);
+    }
     let mut terminal = ratatui::init();
     // Held for its `Drop`, which restores the terminal - so an early return
     // out of `tui::run`, below, cannot leave it in raw mode inside the
     // alternate screen.
     let _restore = tui::TerminalGuard::new(ratatui::restore);
-    tui::run(&mut terminal, &mut app, &mut tui::CrosstermEvents)
+    let result = tui::run(&mut terminal, &mut app, &mut tui::CrosstermEvents);
+    // Saved on the way out, best-effort, whether or not a resize ever
+    // happened - the folder browsed to is never remembered (D7), but which
+    // pane is wide is (D16).
+    if let Some(widths) = app.pane_widths() {
+        tui::settings::save_pane_widths(widths);
+    }
+    result
 }

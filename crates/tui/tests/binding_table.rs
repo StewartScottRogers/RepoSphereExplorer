@@ -186,9 +186,77 @@ fn every_global_binding_reaches_the_action_it_names() {
                     binding.description
                 );
             }
+            Action::WidenPane => assert_widen_pane(&mut terminal, &mut app, binding),
+            Action::NarrowPane => assert_narrow_pane(&mut terminal, &mut app, binding),
+            Action::ToggleMaximize => assert_toggle_maximize(&mut terminal, &mut app, binding),
             other => panic!("no assertion written for the global action {other:?}"),
         }
     }
+}
+
+/// [`Action::WidenPane`]'s own assertion, split out of
+/// `every_global_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650).
+fn assert_widen_pane(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
+    press_binding(terminal, app, binding);
+    let first = app
+        .pane_widths()
+        .expect("a resize should set explicit widths")
+        .folders;
+    press_binding(terminal, app, binding);
+    let second = app
+        .pane_widths()
+        .expect("still set after a second press")
+        .folders;
+    assert!(
+        second > first,
+        "{} should grow the focused pane each press: {first} then {second}",
+        binding.description
+    );
+}
+
+/// As [`assert_widen_pane`], for [`Action::NarrowPane`].
+fn assert_narrow_pane(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
+    press_binding(terminal, app, binding);
+    let first = app
+        .pane_widths()
+        .expect("a resize should set explicit widths")
+        .folders;
+    press_binding(terminal, app, binding);
+    let second = app
+        .pane_widths()
+        .expect("still set after a second press")
+        .folders;
+    assert!(
+        second < first,
+        "{} should shrink the focused pane each press: {first} then {second}",
+        binding.description
+    );
+}
+
+/// As [`assert_widen_pane`], for [`Action::ToggleMaximize`].
+fn assert_toggle_maximize(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
+    let before = drawn(terminal);
+    assert!(
+        before.contains("Folders") && before.contains("Contents"),
+        "{before:?}"
+    );
+
+    let maximized = press_binding(terminal, app, binding);
+    assert!(
+        maximized.contains("Folders"),
+        "the maximised pane should still draw: {maximized:?}"
+    );
+    assert!(
+        !maximized.contains("Contents"),
+        "the other panes should not draw while maximised: {maximized:?}"
+    );
+
+    let restored = press_binding(terminal, app, binding);
+    assert!(
+        restored.contains("Contents"),
+        "pressing it again should restore the three-pane layout: {restored:?}"
+    );
 }
 
 #[test]
@@ -299,9 +367,52 @@ fn every_contents_binding_reaches_the_action_it_names() {
                     binding.action
                 );
             }
+            Action::StartFilter => assert_start_filter(&mut terminal, &mut app, binding),
+            Action::ToggleChangedFilter => {
+                assert_toggle_changed_filter(&mut terminal, &mut app, binding);
+            }
             other => panic!("no assertion written for the contents action {other:?}"),
         }
     }
+}
+
+/// [`Action::StartFilter`]'s own assertion, split out of
+/// `every_contents_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650).
+fn assert_start_filter(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
+    let shown = press_binding(terminal, app, binding);
+    assert!(
+        shown.contains("Filter:"),
+        "{shown:?} should show the filter prompt"
+    );
+    let shown = press(terminal, app, KeyCode::Char('z'));
+    assert!(
+        shown.contains("zzz.txt") && !shown.contains("aaa.txt") && !shown.contains("mmm.txt"),
+        "typing into the filter should narrow the listing to the matching name: {shown:?}"
+    );
+}
+
+/// As [`assert_start_filter`], for [`Action::ToggleChangedFilter`].
+fn assert_toggle_changed_filter(
+    terminal: &mut Terminal<TestBackend>,
+    app: &mut App,
+    binding: &Binding,
+) {
+    let shown = press_binding(terminal, app, binding);
+    // The pane is too narrow here to keep the whole sentence on one row,
+    // so this checks the words rather than the exact phrase - and that
+    // the narrowing itself took hold.
+    assert!(
+        shown.contains("No repositories")
+            && shown.contains("uncommitted changes")
+            && !shown.contains("aaa.txt"),
+        "narrowing to changed repositories where none are tracked should say so: {shown:?}"
+    );
+    let shown = press_binding(terminal, app, binding);
+    assert!(
+        shown.contains("aaa.txt"),
+        "pressing it again should lift the narrowing: {shown:?}"
+    );
 }
 
 #[test]

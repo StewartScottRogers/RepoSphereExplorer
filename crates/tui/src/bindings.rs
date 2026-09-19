@@ -96,6 +96,20 @@ pub enum Action {
     /// Activates the File pane's currently shown view - starts editing
     /// when it is the `"Edit"` view (#645).
     FileActivateView,
+    /// Starts typing into the Contents pane's filter field (#650).
+    StartFilter,
+    /// Narrows the Contents pane to repositories with uncommitted changes,
+    /// or lifts that narrowing if it is already applied (#650).
+    ToggleChangedFilter,
+    /// Widens the focused pane by one column, narrowing its neighbour
+    /// (#650).
+    WidenPane,
+    /// Narrows the focused pane by one column, widening its neighbour
+    /// (#650).
+    NarrowPane,
+    /// Maximises the focused pane to the whole terminal, or restores the
+    /// three-pane layout if it is already maximised (#650).
+    ToggleMaximize,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -413,6 +427,41 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Edit",
         action: Action::FileActivateView,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('/'),
+        modifiers: KeyModifiers::NONE,
+        description: "Filter",
+        action: Action::StartFilter,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('u'),
+        modifiers: KeyModifiers::NONE,
+        description: "Filter to uncommitted changes",
+        action: Action::ToggleChangedFilter,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char(']'),
+        modifiers: KeyModifiers::NONE,
+        description: "Widen the focused pane",
+        action: Action::WidenPane,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('['),
+        modifiers: KeyModifiers::NONE,
+        description: "Narrow the focused pane",
+        action: Action::NarrowPane,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('z'),
+        modifiers: KeyModifiers::NONE,
+        description: "Maximise/restore the focused pane",
+        action: Action::ToggleMaximize,
     },
 ];
 

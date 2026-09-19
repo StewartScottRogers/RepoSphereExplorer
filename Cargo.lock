@@ -10691,6 +10691,7 @@ dependencies = [
 name = "tui"
 version = "0.8.0"
 dependencies = [
+ "dirs",
  "icon",
  "interprocess",
  "plugin-ada",
