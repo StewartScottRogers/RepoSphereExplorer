@@ -23,12 +23,27 @@ use slint::{ComponentHandle, Model as _};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Mutex, MutexGuard};
 
 mod common;
 use common::ensure_service;
 
 /// A scratch directory of this test's own, holding a `.pem` file nested a
 /// folder down (so selecting its row has somewhere real to navigate to)
+/// One window and one service at a time: Slint's testing backend is a
+/// process-wide platform, and these tests share a service. Without this
+/// they pass alone and fail together - which is how the fifth test added
+/// here first showed up (the review of #663).
+static SERIAL: Mutex<()> = Mutex::new(());
+
+/// Takes the shared lock, tolerating a previous test having panicked while
+/// holding it - a poisoned lock would otherwise turn one failure into many.
+fn serially() -> MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// and a plain `.rs` file the Certificates tool has nothing to say about.
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir()
@@ -224,6 +239,7 @@ fn now_epoch_seconds() -> i64 {
 
 #[test]
 fn view_certificates_shows_rows_the_default_order_and_the_counts_line() {
+    let _serial = serially();
     let root = scratch("rows-order-counts");
     let (ui, app) = window_at(&root);
 
@@ -269,6 +285,7 @@ fn view_certificates_shows_rows_the_default_order_and_the_counts_line() {
 
 #[test]
 fn selecting_a_row_selects_that_file_in_contents_and_the_tool_stays_active() {
+    let _serial = serially();
     let root = scratch("select-a-row");
     let (ui, app) = window_at(&root);
 
@@ -306,6 +323,7 @@ fn selecting_a_row_selects_that_file_in_contents_and_the_tool_stays_active() {
 
 #[test]
 fn the_picker_offers_certificates_for_a_pem_file_and_not_for_an_rs_file() {
+    let _serial = serially();
     let root = scratch("picker");
     let (ui, app) = window_at(&root);
 
@@ -355,8 +373,67 @@ fn the_picker_offers_certificates_for_a_pem_file_and_not_for_an_rs_file() {
     );
 }
 
+/// Choosing Certificates from the picker - #622 requirement 1's other
+/// entry point - has to start the search, not show an empty table for
+/// ever. It did: the picker set the active tool and nothing else, so the
+/// pane reported "0 expired, 0 expiring within 30 days, 0 valid" whatever
+/// was on disk, never asked the service anything, and F5 did not help
+/// either (the review of #663). Every other test here goes in through the
+/// View menu, which is why nothing caught it.
+#[test]
+fn choosing_certificates_from_the_picker_starts_the_search() {
+    let _serial = serially();
+    let root = scratch("picker-loads");
+    let (ui, app) = window_at(&root);
+
+    let sub = app
+        .borrow()
+        .content_rows()
+        .iter()
+        .position(|row| row.name == "sub/")
+        .expect("the sub folder is listed");
+    app.borrow_mut().select_content(sub);
+    app.borrow_mut().open_content(sub);
+    settle(&ui, &app);
+    let leaf = app
+        .borrow()
+        .content_rows()
+        .iter()
+        .position(|row| row.name == "leaf.pem")
+        .expect("leaf.pem is listed inside sub/");
+    app.borrow_mut().select_content(leaf);
+    sync_ui(&ui, &app.borrow());
+
+    // The picker's own click: "Certificates" is its second entry for a
+    // certificate file, after the editor.
+    ui.invoke_tool_selected(1);
+    sync_ui(&ui, &app.borrow());
+
+    assert!(
+        app.borrow().active_tool_is_certificates(),
+        "the picker chose the Certificates tool"
+    );
+    assert!(
+        app.borrow().certificates_loading(),
+        "and it is looking - rather than showing a table that never fills"
+    );
+
+    // The answer lands the same way the menu path's does.
+    let now = 1_800_000_000;
+    app.borrow_mut()
+        .apply_certificates_result_for_test(sample_certificates(now));
+    sync_ui(&ui, &app.borrow());
+
+    assert!(
+        !app.borrow().certificate_rows().is_empty(),
+        "the rows arrive: {}",
+        app.borrow().certificates_summary_line()
+    );
+}
+
 #[test]
 fn the_certificates_tool_pops_out_and_docks_back_with_its_own_table() {
+    let _serial = serially();
     let root = scratch("pop-out");
     ensure_service();
     init_backend();

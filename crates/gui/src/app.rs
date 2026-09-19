@@ -6468,8 +6468,17 @@ impl App {
     /// what the picker's click reports.
     pub fn choose_tool(&mut self, visible_index: usize) {
         let selection = self.selection();
-        if let Some(&index) = self.tool_registry.applicable(&selection).get(visible_index) {
-            self.chosen_tool = Some(index);
+        let Some(&index) = self.tool_registry.applicable(&selection).get(visible_index) else {
+            return;
+        };
+        self.chosen_tool = Some(index);
+        // The Certificates tool has a search behind it, and choosing it
+        // from the picker has to start that search the same way View >
+        // Certificates does. Without this the picker showed a table that
+        // was permanently empty - no rows, no "looking", and a summary
+        // line of three zeroes whatever was on disk (the review of #663).
+        if self.certificate_tool_index() == Some(index) && self.certificates.is_none() {
+            self.open_certificates_tool();
         }
     }
 
