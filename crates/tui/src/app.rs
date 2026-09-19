@@ -17,7 +17,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
 /// A directory node in the folders pane's tree. Only directories appear
@@ -276,6 +276,23 @@ enum Mode {
     },
 }
 
+/// What the File pane says when `path`, the row it just asked to view,
+/// failed - a reader-facing sentence in place of the operating system's
+/// own wording (#625), when `path` is confirmed gone. Checked directly
+/// against the filesystem rather than by parsing `message`: a service
+/// error's text is not something a front end can reliably tell "gone"
+/// apart from "unreadable" by parsing.
+fn classify_file_problem(path: &Path, message: &str) -> String {
+    if !matches!(std::fs::metadata(path), Err(err) if err.kind() == io::ErrorKind::NotFound) {
+        return message.to_owned();
+    }
+    let name = path.file_name().map_or_else(
+        || path.to_string_lossy().into_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    format!("{name} is no longer there - press F5 to reload the folder")
+}
+
 /// The three-pane explorer's state: a folders tree, the selected folder's
 /// contents, and the selected file's preview.
 pub struct App {
@@ -300,6 +317,10 @@ pub struct App {
     /// can follow the entries rather than the cursor.
     pending_contents_dir: Option<PathBuf>,
     pending_file: Option<Receiver<io::Result<Response>>>,
+    /// The path the outstanding file view was asked for, so a failed
+    /// answer can be checked against the filesystem under its own name
+    /// rather than whatever row the cursor has moved to since (#625).
+    pending_file_path: Option<PathBuf>,
     pending_operation: Option<Receiver<io::Result<Response>>>,
     /// Set once the user has asked to quit.
     pub should_quit: bool,
@@ -323,6 +344,7 @@ impl App {
             pending_contents: None,
             pending_contents_dir: None,
             pending_file: None,
+            pending_file_path: None,
             pending_operation: None,
             should_quit: false,
         };
@@ -368,12 +390,14 @@ impl App {
         let Some(entry) = self.contents.get(self.contents_selected) else {
             self.file_view = None;
             self.pending_file = None;
+            self.pending_file_path = None;
             return;
         };
         let path = self.contents_dir.join(&entry.name);
         let request = Request::ViewFile {
             path: path.to_string_lossy().into_owned(),
         };
+        self.pending_file_path = Some(path);
         self.pending_file = Some(spawn_request(request));
     }
 
@@ -391,9 +415,14 @@ impl App {
             && let Ok(result) = rx.try_recv()
         {
             self.pending_file = None;
-            self.file_view = Some(result.unwrap_or_else(|err| Response::Error {
+            let asked_for = self.pending_file_path.take();
+            let mut view = result.unwrap_or_else(|err| Response::Error {
                 message: err.to_string(),
-            }));
+            });
+            if let (Response::Error { message }, Some(path)) = (&mut view, &asked_for) {
+                *message = classify_file_problem(path, message);
+            }
+            self.file_view = Some(view);
         }
         if let Some(rx) = &self.pending_operation
             && let Ok(result) = rx.try_recv()
@@ -2447,5 +2476,28 @@ mod tests {
             opening.notice, None,
             "nothing to explain: the reader said where"
         );
+    }
+
+    // ---- #625: a folder or file that has vanished since it was listed ----
+
+    #[test]
+    fn classify_file_problem_names_a_row_confirmed_gone() {
+        let gone = notional_root("625-gone").join("alpha");
+
+        let message = super::classify_file_problem(&gone, "the operating system's own words");
+
+        assert_eq!(
+            message,
+            "alpha is no longer there - press F5 to reload the folder"
+        );
+    }
+
+    #[test]
+    fn classify_file_problem_leaves_an_unrelated_error_alone() {
+        let dir = std::env::temp_dir();
+
+        let message = super::classify_file_problem(&dir, "permission denied");
+
+        assert_eq!(message, "permission denied");
     }
 }

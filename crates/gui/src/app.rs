@@ -2187,6 +2187,24 @@ fn classify_root_problem(root: &Path, message: &str) -> RootProblem {
     }
 }
 
+/// What the File pane says when `path`, the row it just asked to view,
+/// failed - a reader-facing sentence in place of the operating system's
+/// own wording (#625), when `path` is confirmed gone. Checked directly
+/// against the filesystem rather than by parsing `message`, the same
+/// reasoning [`classify_root_problem`] and [`PinnedWindow::gone`] give:
+/// the service's error strings are not something a front end can reliably
+/// tell "gone" apart from "unreadable" by parsing.
+fn classify_file_problem(path: &Path, message: &str) -> String {
+    if !matches!(std::fs::metadata(path), Err(err) if err.kind() == io::ErrorKind::NotFound) {
+        return message.to_owned();
+    }
+    let name = path.file_name().map_or_else(
+        || path.to_string_lossy().into_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    format!("{name} is no longer there - press F5 to reload the folder")
+}
+
 /// What the Contents pane's centred message (#592) says, and which
 /// buttons it offers - the pane draws its listing normally when this is
 /// `None`.
@@ -2450,6 +2468,16 @@ impl App {
             .map_or_else(|| self.root.path.clone(), |node| node.path.clone())
     }
 
+    /// The Folders tree's own index path to whichever row is currently
+    /// selected there - not to be confused with [`Self::selected_indices`],
+    /// which is the Contents pane's multi-selection.
+    fn tree_selected_indices(&self) -> Vec<usize> {
+        self.root
+            .flatten()
+            .get(self.folder_selected)
+            .map_or_else(Vec::new, |(_, indices)| indices.clone())
+    }
+
     fn load_contents_for_selected(&mut self) {
         // Any navigation, a refresh included, puts the listing back.
         self.found = None;
@@ -2556,9 +2584,12 @@ impl App {
         {
             self.pending_file = None;
             let asked_for = self.pending_file_path.take();
-            let view = result.unwrap_or_else(|err| Response::Error {
+            let mut view = result.unwrap_or_else(|err| Response::Error {
                 message: err.to_string(),
             });
+            if let (Response::Error { message }, Some(path)) = (&mut view, &asked_for) {
+                *message = classify_file_problem(path, message);
+            }
             self.show_file_view_of(Some(view), asked_for);
         }
         if let Some(rx) = &self.pending_operation
@@ -2898,11 +2929,24 @@ impl App {
             self.root_problem = None;
             self.listing_message_ticks = 0;
         }
+        if let Ok(Response::Directory { entries }) = &result
+            && let Some(node) = self.root.node_at_mut(indices)
+        {
+            node.set_children_from(entries);
+        }
+        // A listing answers whichever folder was selected when it was
+        // asked for. Below, `load_file_view` reads the *current* tree
+        // selection to build the path for each row's name, so applying an
+        // answer that has since fallen behind it would pair this folder's
+        // entries with a different folder's path and produce the same
+        // "not there" error the stale row was trying to fix (#625). It is
+        // dropped instead - the tree node above already has this folder's
+        // entries cached for whenever the reader returns to it.
+        if self.tree_selected_indices() != indices {
+            return;
+        }
         match result {
             Ok(Response::Directory { entries }) => {
-                if let Some(node) = self.root.node_at_mut(indices) {
-                    node.set_children_from(&entries);
-                }
                 // A new listing, even of the same folder, starts its
                 // statuses again: what was known belonged to the rows it
                 // replaces.
@@ -12097,6 +12141,66 @@ third",
             super::RootProblem::NotReadable {
                 message: err.to_string(),
             }
+        );
+    }
+
+    // ---- #625: a folder or file that has vanished since it was listed ----
+
+    #[test]
+    fn classify_file_problem_names_a_row_confirmed_gone() {
+        let gone = std::env::temp_dir()
+            .join("repos-explorer-625-gone")
+            .join("alpha");
+        let _ = std::fs::remove_dir_all(gone.parent().unwrap());
+
+        let message = super::classify_file_problem(&gone, "the operating system's own words");
+
+        assert_eq!(
+            message,
+            "alpha is no longer there - press F5 to reload the folder"
+        );
+    }
+
+    #[test]
+    fn classify_file_problem_leaves_an_unrelated_error_alone() {
+        let dir = scratch("625-classify-unrelated");
+
+        let message = super::classify_file_problem(&dir, "permission denied");
+
+        assert_eq!(message, "permission denied");
+    }
+
+    #[test]
+    fn a_listing_for_a_folder_no_longer_selected_is_dropped() {
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("src", true)]),
+            }),
+        );
+        // Selects "src" in the tree, which starts a listing request for it
+        // - never answered in this test, standing in for one still on the
+        // way when the reader moves on.
+        app.select_folder(1);
+
+        // The reader leaves "src" for the root again before that request's
+        // answer lands.
+        app.select_folder(0);
+        let before = app.content_rows();
+
+        app.apply_contents_result(
+            &[0],
+            Ok(Response::Directory {
+                entries: entries(&[("stale.txt", false)]),
+            }),
+        );
+
+        assert_eq!(
+            app.content_rows(),
+            before,
+            "a listing for the folder the reader has left must not overwrite \
+             what the root - the folder actually selected now - is showing"
         );
     }
 

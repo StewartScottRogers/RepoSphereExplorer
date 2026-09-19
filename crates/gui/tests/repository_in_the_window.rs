@@ -1613,3 +1613,36 @@ fn a_stale_repositorys_row_carries_the_clock_glyph_and_a_fresh_ones_does_not() {
         app.borrow().status_text()
     );
 }
+
+// ---------------------------------------------------------------------
+// #625: a row that has vanished from disk since the listing was drawn.
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_folder_removed_from_disk_says_so_instead_of_the_operating_systems_own_words() {
+    let _serial = serially();
+    let root = scratch("folder-removed");
+    let alpha = plain_folder(&root, "alpha", 2);
+    plain_folder(&root, "beta", 1);
+    let (ui, app) = window_at(&root);
+
+    select_and_wait(&ui, &app, "alpha", "2 entries");
+
+    std::fs::remove_dir_all(&alpha).expect("alpha is removed from disk");
+
+    // Selecting another row and back, without a refresh, is exactly what
+    // leaves the listing still holding a row whose folder is gone.
+    select_and_wait(&ui, &app, "beta", "1 entry");
+    click_row(&ui, row_of(&ui, "alpha"));
+    settle_until_pane_says(&ui, &app, "no longer there");
+
+    let pane = pane_text(&ui);
+    assert!(
+        pane.contains("alpha is no longer there"),
+        "the pane should name the folder that vanished; it reads:\n{pane}"
+    );
+    assert!(
+        !pane.to_lowercase().contains("os error"),
+        "the operating system's own wording must not reach the reader; it reads:\n{pane}"
+    );
+}
