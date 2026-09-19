@@ -97,6 +97,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("the window has not been dropped yet");
     let windows = Rc::new(RefCell::new(gui::PaneWindows::new(ui)));
     gui::wire_pop_out(windows.borrow().main(), None, &windows, &app);
+    // Restored before any window is shown, the same as the pane widths and
+    // zoom above (#620): a pane that was popped out reopens popped out, at
+    // the window it remembers.
+    gui::restore_pane_layout(gui::settings::load_pane_layout(), &windows, &app);
 
     let timer = Timer::default();
     let tick_app = app.clone();
@@ -115,6 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         gui::fit_pane_widths_to_window(windows.main());
         gui::observe_window_geometry(windows.main(), &tick_geometry_tracker);
+        windows.observe_pane_geometries();
     });
 
     run_handle.run()?;
@@ -128,6 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         gui::settings::save_window_geometry(geometry);
     }
     gui::settings::save_zoom(app.borrow().zoom_percent());
+    gui::settings::save_pane_layout(windows.borrow().pane_layout());
     Ok(())
 }
 

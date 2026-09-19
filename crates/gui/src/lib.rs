@@ -725,7 +725,13 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
 /// `main`'s timer and `sync_ui`.
 pub struct PaneWindows {
     main: MainWindow,
-    popped: HashMap<Pane, MainWindow>,
+    /// Each popped-out pane's own window, alongside the tracker that keeps
+    /// its geometry up to date for [`PaneWindows::pane_layout`] to save
+    /// (#620) - the same `GeometryTracker` the main window carries in
+    /// `main`'s own local, since a popped-out window needs the same "last
+    /// normal bounds, in case the platform hands it back maximised or off a
+    /// display that has since gone" bookkeeping.
+    popped: HashMap<Pane, (MainWindow, Rc<RefCell<GeometryTracker>>)>,
     /// Windows a File pop-out has been pinned into (#619), by the id
     /// `App::pin_current`/`App::pin_extra_window` hands out - present here
     /// whether or not `App` still counts that id as pinned right now.
@@ -753,7 +759,7 @@ impl PaneWindows {
     /// each window a pin ever opened.
     pub fn windows(&self) -> impl Iterator<Item = &MainWindow> {
         std::iter::once(&self.main)
-            .chain(self.popped.values())
+            .chain(self.popped.values().map(|(ui, _)| ui))
             .chain(self.pinned.values())
     }
 
@@ -764,7 +770,7 @@ impl PaneWindows {
     /// says which).
     pub fn windows_with_pin(&self) -> impl Iterator<Item = (&MainWindow, Option<app::PinId>)> {
         std::iter::once((&self.main, None))
-            .chain(self.popped.values().map(|ui| (ui, None)))
+            .chain(self.popped.values().map(|(ui, _)| (ui, None)))
             .chain(self.pinned.iter().map(|(&id, ui)| (ui, Some(id))))
     }
 
@@ -772,7 +778,7 @@ impl PaneWindows {
     /// the main window if it has not.
     #[must_use]
     pub fn window_for(&self, pane: Pane) -> &MainWindow {
-        self.popped.get(&pane).unwrap_or(&self.main)
+        self.popped.get(&pane).map_or(&self.main, |(ui, _)| ui)
     }
 
     /// Whether `pane` is currently popped out of the main window.
@@ -785,6 +791,50 @@ impl PaneWindows {
     #[must_use]
     pub fn pinned_window(&self, id: app::PinId) -> Option<&MainWindow> {
         self.pinned.get(&id)
+    }
+
+    /// The pane layout to remember at exit (#620): every pane currently
+    /// popped out, at the last normal bounds its own tracker saw, with
+    /// `maximized` as the window is right now. A pinned window is never in
+    /// `popped` in the first place (pinning removes it - see
+    /// `pin_the_popped_file_window`), so it is never part of this layout,
+    /// matching the work order's "pins are not restored". `main` calls
+    /// this on the way out, alongside saving the main window's own
+    /// geometry (#583).
+    #[must_use]
+    pub fn pane_layout(&self) -> settings::PaneLayout {
+        let geometry_for = |pane: Pane| {
+            let (ui, tracker) = self.popped.get(&pane)?;
+            let maximized = ui.window().is_maximized();
+            normal_window_geometry(ui)
+                .map(|geometry| settings::WindowGeometry {
+                    maximized,
+                    ..geometry
+                })
+                .or_else(|| tracker.borrow().closing_at(maximized))
+        };
+        settings::PaneLayout {
+            folders: geometry_for(Pane::Folders),
+            contents: geometry_for(Pane::Contents),
+            file: geometry_for(Pane::File),
+        }
+    }
+
+    /// Keeps every popped-out pane window's geometry tracker up to date,
+    /// and puts one back onto a connected display the moment it stops
+    /// being maximised - the popped-out-pane counterpart of
+    /// [`observe_window_geometry`] for the main window (#583, extended by
+    /// #620). `main` calls this on every tick.
+    pub fn observe_pane_geometries(&self) {
+        for (ui, tracker) in self.popped.values() {
+            let just_restored = tracker
+                .borrow_mut()
+                .observed(normal_window_geometry(ui), ui.window().is_maximized());
+            if just_restored && let Some(resolved) = settle_pane_onto_a_display_now(ui, &self.main)
+            {
+                tracker.borrow_mut().corrected_to(resolved);
+            }
+        }
     }
 }
 
@@ -859,7 +909,15 @@ fn refresh_pane_menus(windows: &Rc<RefCell<PaneWindows>>, app: &App) {
 fn place_beside_main(main: &MainWindow, ui: &slint::Window) {
     const DEFAULT_WIDTH: f32 = 480.0;
     const DEFAULT_HEIGHT: f32 = 600.0;
-    ui.set_size(slint::LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT));
+    place_beside_main_sized(main, ui, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+}
+
+/// [`place_beside_main`], at a size the caller chose: what a pane window
+/// whose remembered position is on no connected display is moved to, since
+/// #620 requirement 5 asks for it to keep its remembered size, shrunk to
+/// fit, rather than be reset to the size a freshly popped-out pane gets.
+fn place_beside_main_sized(main: &MainWindow, ui: &slint::Window, width: f32, height: f32) {
+    ui.set_size(slint::LogicalSize::new(width, height));
     if let Some(geometry) = normal_window_geometry(main) {
         ui.set_position(slint::LogicalPosition::new(
             geometry.x + geometry.width,
@@ -869,10 +927,18 @@ fn place_beside_main(main: &MainWindow, ui: &slint::Window) {
 }
 
 /// Pops `pane` out of the window that currently holds it into a new window
-/// of its own (#617): titled for the pane, sized and placed beside the
-/// main window, wired the same as any other window - a no-op if it is
-/// already out.
-fn pop_out(pane: Pane, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
+/// of its own (#617): titled for the pane, wired the same as any other
+/// window - a no-op if it is already out. Placed and sized beside the main
+/// window when `remembered` is `None`, a pane popped out during this run,
+/// or restored to `remembered`'s own position, size and maximised state
+/// when it is `Some`, a layout `restore_pane_layout` is replaying at
+/// launch (#620).
+fn pop_out(
+    pane: Pane,
+    remembered: Option<settings::WindowGeometry>,
+    windows: &Rc<RefCell<PaneWindows>>,
+    app: &Rc<RefCell<App>>,
+) {
     if windows.borrow().popped.contains_key(&pane) {
         return;
     }
@@ -883,10 +949,10 @@ fn pop_out(pane: Pane, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>
     new_ui.set_show_contents_pane(pane == Pane::Contents);
     new_ui.set_show_file_pane(pane == Pane::File);
     new_ui.set_window_title(format!("Repos Explorer - {title}").into());
-    {
+    let tracker = {
         let main_window = windows.borrow();
-        place_beside_main(&main_window.main, new_ui.window());
-    }
+        wire_pane_geometry(&new_ui, &main_window.main, remembered)
+    };
     wire_callbacks(&new_ui, app);
     wire_pop_out(&new_ui, Some(pane), windows, app);
     sync_ui(&new_ui, &app.borrow());
@@ -900,14 +966,113 @@ fn pop_out(pane: Pane, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>
             Pane::File => main_window.main.set_show_file_pane(false),
         }
     }
-    windows.borrow_mut().popped.insert(pane, new_ui);
+    windows.borrow_mut().popped.insert(pane, (new_ui, tracker));
     refresh_pane_menus(windows, &app.borrow());
+}
+
+/// Applies `remembered` to a freshly created popped-out window, or places
+/// it beside `main` when there is none - #617's original placement, still
+/// used for a pane popped out live rather than restored from a remembered
+/// layout - and returns the tracker that keeps its bounds up to date from
+/// here on, the same bookkeeping [`GeometryTracker`] already does for the
+/// main window (#583, extended to a popped-out pane's own window by #620).
+fn wire_pane_geometry(
+    new_ui: &MainWindow,
+    main: &MainWindow,
+    remembered: Option<settings::WindowGeometry>,
+) -> Rc<RefCell<GeometryTracker>> {
+    match remembered {
+        Some(geometry) => {
+            let window = new_ui.window();
+            window.set_position(slint::LogicalPosition::new(geometry.x, geometry.y));
+            window.set_size(slint::LogicalSize::new(geometry.width, geometry.height));
+            if geometry.maximized {
+                window.set_maximized(true);
+            }
+        }
+        None => place_beside_main(main, new_ui.window()),
+    }
+    let tracker = Rc::new(RefCell::new(GeometryTracker::opening_at(remembered)));
+    if let Some(geometry) = remembered {
+        let ui_weak = new_ui.as_weak();
+        let main_weak = main.as_weak();
+        let settle_tracker = tracker.clone();
+        // Zero delay, the same as `wire_window_geometry`'s own settle timer:
+        // as soon as the event loop is running, which is when the
+        // connected displays can be asked for at all.
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if let (Some(ui), Some(main)) = (ui_weak.upgrade(), main_weak.upgrade())
+                && let Some(resolved) = settle_pane_onto_a_display(&ui, &main, geometry)
+            {
+                settle_tracker.borrow_mut().corrected_to(resolved);
+            }
+        });
+    }
+    tracker
+}
+
+/// The popped-out-pane counterpart of [`settle_remembered_geometry`]: the
+/// same "correct once the event loop is running" shape, but a pane window
+/// that has lost its display moves beside the main window (#620
+/// requirement 5) rather than centring on the primary one, since a lone
+/// pane window belongs next to the window it came from.
+fn settle_pane_onto_a_display(
+    ui: &MainWindow,
+    main: &MainWindow,
+    remembered: settings::WindowGeometry,
+) -> Option<settings::WindowGeometry> {
+    let (displays, primary) = connected_displays(ui.window())?;
+    if !settings::on_any_display(remembered, &displays) && !ui.window().is_maximized() {
+        // Its own remembered size, shrunk to whatever the primary display
+        // can hold (#620 requirement 5) - the same shrink-to-fit the main
+        // window's `geometry_on_a_display` does, rather than the size a
+        // pane popped out live is given.
+        let (width, height) = settings::shrunk_to_fit(remembered, primary);
+        place_beside_main_sized(main, ui.window(), width, height);
+    }
+    normal_window_geometry(ui).or(Some(remembered))
+}
+
+/// [`settle_pane_onto_a_display`] against the window's own current bounds
+/// rather than a specific remembered value - what
+/// [`PaneWindows::observe_pane_geometries`] calls the moment a pane window
+/// stops being maximised, the same way [`settle_window_onto_a_display`]
+/// does for the main window.
+fn settle_pane_onto_a_display_now(
+    ui: &MainWindow,
+    main: &MainWindow,
+) -> Option<settings::WindowGeometry> {
+    let current = normal_window_geometry(ui)?;
+    settle_pane_onto_a_display(ui, main, current)
+}
+
+/// Restores a remembered pane layout (#620) at launch: pops each pane
+/// `layout` names out, into its own window at the geometry it remembers. A
+/// pinned window is never part of `layout` in the first place
+/// ([`settings::PaneLayout`]'s own doc explains why), so there is nothing
+/// here to reopen pinned - every restored window opens docked-turned-popped,
+/// following the shared selection. `main` calls this once, with what
+/// `settings::load_pane_layout` read, before the windows are shown.
+pub fn restore_pane_layout(
+    layout: settings::PaneLayout,
+    windows: &Rc<RefCell<PaneWindows>>,
+    app: &Rc<RefCell<App>>,
+) {
+    for (pane, geometry) in [
+        (Pane::Folders, layout.folders),
+        (Pane::Contents, layout.contents),
+        (Pane::File, layout.file),
+    ] {
+        if let Some(geometry) = geometry {
+            pop_out(pane, Some(geometry), windows, app);
+        }
+    }
 }
 
 /// Docks `pane` back into the main window, closing the window it had
 /// popped out into (#617) - a no-op if it is not out.
 fn dock(pane: Pane, windows: &Rc<RefCell<PaneWindows>>, app: &Rc<RefCell<App>>) {
-    let Some(popped_ui) = windows.borrow_mut().popped.remove(&pane) else {
+    let Some((popped_ui, _tracker)) = windows.borrow_mut().popped.remove(&pane) else {
         return;
     };
     let _ = popped_ui.hide();
@@ -965,7 +1130,7 @@ pub fn wire_pop_out(
         let app = app.clone();
         ui.on_pop_out_requested(move |index| {
             if let Some(pane) = pane_from_index(index) {
-                pop_out(pane, &windows, &app);
+                pop_out(pane, None, &windows, &app);
             }
         });
     }
@@ -1122,9 +1287,12 @@ fn pin_the_popped_file_window(
     windows: &Rc<RefCell<PaneWindows>>,
     app: &Rc<RefCell<App>>,
 ) -> Option<app::PinId> {
-    let ui = windows.borrow_mut().popped.remove(&Pane::File)?;
+    let (ui, tracker) = windows.borrow_mut().popped.remove(&Pane::File)?;
     let Some(id) = app.borrow_mut().pin_current() else {
-        windows.borrow_mut().popped.insert(Pane::File, ui);
+        windows
+            .borrow_mut()
+            .popped
+            .insert(Pane::File, (ui, tracker));
         return None;
     };
     wire_file_pane_pinned(&ui, id, app);
