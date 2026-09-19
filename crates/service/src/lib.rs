@@ -367,21 +367,7 @@ pub fn find_names(root: &Path, query: &str, limit: usize) -> (Vec<NameMatch>, bo
             return (matches, true);
         }
         let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
-        let nearest = if is_dir {
-            Some(entry.path())
-        } else {
-            entry.path().parent()
-        };
-        let repository = nearest
-            .into_iter()
-            .flat_map(Path::ancestors)
-            .take_while(|folder| folder.starts_with(root))
-            .find(|folder| {
-                *working_copies
-                    .entry(folder.to_path_buf())
-                    .or_insert_with(|| repos::describe(folder).is_some())
-            })
-            .map(|folder| relative_to(root, folder));
+        let repository = nearest_repository(root, entry.path(), is_dir, &mut working_copies);
         matches.push(NameMatch {
             path: relative_to(root, entry.path()),
             is_dir,
@@ -389,6 +375,33 @@ pub fn find_names(root: &Path, query: &str, limit: usize) -> (Vec<NameMatch>, bo
         });
     }
     (matches, false)
+}
+
+/// The nearest working copy holding `path` under `root` - `path` itself
+/// when it is one - as a path relative to `root`, `/`-separated. `None`
+/// when no working copy holds it.
+///
+/// `working_copies` memoizes [`repos::describe`] across one walk, since
+/// several entries under the same folder ask the same question of it.
+/// Shared by [`find_names`] and [`find_certificates`], which walk the same
+/// way and attribute matches to a repository the same way.
+fn nearest_repository(
+    root: &Path,
+    path: &Path,
+    is_dir: bool,
+    working_copies: &mut std::collections::HashMap<PathBuf, bool>,
+) -> Option<String> {
+    let nearest = if is_dir { Some(path) } else { path.parent() };
+    nearest
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .take_while(|folder| folder.starts_with(root))
+        .find(|folder| {
+            *working_copies
+                .entry(folder.to_path_buf())
+                .or_insert_with(|| repos::describe(folder).is_some())
+        })
+        .map(|folder| relative_to(root, folder))
 }
 
 /// `path` relative to `root`, with `/` between its components on every
@@ -402,12 +415,96 @@ pub(crate) fn relative_to(root: &Path, path: &Path) -> String {
         .join("/")
 }
 
-/// Reads a bounded prefix from the start of the file at `path`.
-fn read_prefix(path: &Path) -> io::Result<Vec<u8>> {
+/// Reads at most `limit` bytes from the start of the file at `path`.
+fn read_capped(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     let file = fs::File::open(path)?;
     let mut buf = Vec::new();
-    file.take(SNIFF_PREFIX_LEN).read_to_end(&mut buf)?;
+    file.take(limit).read_to_end(&mut buf)?;
     Ok(buf)
+}
+
+/// Reads a bounded prefix from the start of the file at `path`, for
+/// sniffing its type.
+fn read_prefix(path: &Path) -> io::Result<Vec<u8>> {
+    read_capped(path, SNIFF_PREFIX_LEN)
+}
+
+/// Largest prefix read from a candidate certificate/key file while
+/// [`find_certificates`] scans it (#621): a PEM chain plus its key rarely
+/// exceeds a few kilobytes, but a mis-tagged multi-megabyte binary file
+/// must not be read whole.
+const CERTIFICATE_SCAN_PREFIX: u64 = 1024 * 1024;
+
+/// Every certificate, private key and certificate signing request
+/// committed under `root` (#621), read-only (D10, rule 8).
+///
+/// Walked with the same rules [`find_names`] uses: no `.git`, unreadable
+/// folders skipped, not following symbolic links. Only files whose
+/// extension the certificate plugin claims are opened, and only their
+/// first [`CERTIFICATE_SCAN_PREFIX`] bytes are read.
+#[must_use]
+pub fn find_certificates(root: &Path) -> Vec<protocol::CertificateFinding> {
+    let walk = ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .parents(false)
+        .follow_links(false)
+        .sort_by_file_name(std::cmp::Ord::cmp)
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .build();
+
+    let mut working_copies = std::collections::HashMap::new();
+    let mut findings = Vec::new();
+    for entry in walk.flatten() {
+        if entry.file_type().is_some_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let path = entry.path();
+        let claimed = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .is_some_and(|extension| plugin_certificate::EXTENSIONS.contains(&extension.as_str()));
+        if !claimed {
+            continue;
+        }
+        let kind = read_capped(path, CERTIFICATE_SCAN_PREFIX)
+            .ok()
+            .and_then(|bytes| plugin_certificate::scan(&bytes).ok())
+            .filter(|blocks| !blocks.is_empty())
+            .map_or(protocol::CertificateFindingKind::Unreadable, |blocks| {
+                protocol::CertificateFindingKind::Blocks(
+                    blocks.into_iter().map(certificate_block).collect(),
+                )
+            });
+        findings.push(protocol::CertificateFinding {
+            path: relative_to(root, path),
+            repository: nearest_repository(root, path, false, &mut working_copies),
+            kind,
+        });
+    }
+    findings
+}
+
+/// Converts one plugin-side [`plugin_certificate::ScannedBlock`] into the
+/// wire type [`find_certificates`] sends.
+fn certificate_block(block: plugin_certificate::ScannedBlock) -> protocol::CertificateBlock {
+    match block {
+        plugin_certificate::ScannedBlock::Certificate(summary) => {
+            protocol::CertificateBlock::Certificate(protocol::CertificateSummary {
+                subject: summary.subject,
+                issuer: summary.issuer,
+                serial: summary.serial,
+                not_before: summary.not_before,
+                not_after: summary.not_after,
+                self_signed: summary.self_signed,
+            })
+        }
+        plugin_certificate::ScannedBlock::PrivateKey => protocol::CertificateBlock::PrivateKey,
+        plugin_certificate::ScannedBlock::CertificateRequest => {
+            protocol::CertificateBlock::CertificateRequest
+        }
+        plugin_certificate::ScannedBlock::Unreadable => protocol::CertificateBlock::Unreadable,
+    }
 }
 
 /// Runs one call into a plugin behind a boundary that catches an unwind.
@@ -1143,6 +1240,15 @@ pub fn handle_request(request: &Request) -> Response {
             let (entries, done) = all_repositories::poll(Path::new(root), *refresh);
             Response::AllRepositories { entries, done }
         }
+        Request::FindCertificates => match repos::active_root() {
+            Some(root) => Response::Certificates {
+                certificates: find_certificates(&root),
+                complete: true,
+            },
+            None => Response::Error {
+                message: "no Repos Directory is configured to search".to_owned(),
+            },
+        },
     }
 }
 
@@ -1232,9 +1338,10 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 mod tests {
     use super::{
         CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, bind, copy, create_directory,
-        create_file, delete, extract, find_names, folder_plugins_among, guarded, handle_request,
-        journal_to, list_directory, most_specific, open, rename, repos, serve_one, sniff_among,
-        undo, view_file, with_source_text, working_tree_status, write_atomically, write_file,
+        create_file, delete, extract, find_certificates, find_names, folder_plugins_among, guarded,
+        handle_request, journal_to, list_directory, most_specific, open, rename, repos, serve_one,
+        sniff_among, undo, view_file, with_source_text, working_tree_status, write_atomically,
+        write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -4455,6 +4562,125 @@ public class OrderBook {
         let _ = fs::remove_dir_all(&root);
         assert!(empty.is_empty());
         assert!(blank.is_empty());
+    }
+
+    /// A real, `rcgen`-generated self-signed EC certificate, subject
+    /// `CN=Test Root CA, O=RepoSphereExplorer Test`, valid 1975-01-01 to
+    /// 4096-01-01 - the same fixture `plugin-certificate`'s own tests use.
+    const CERTIFICATE_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIBkTCCATagAwIBAgIUf1zOrArsGiN2arJZNkQIT3HL6w4wCgYIKoZIzj0EAwIw
+OTEVMBMGA1UEAwwMVGVzdCBSb290IENBMSAwHgYDVQQKDBdSZXBvU3BoZXJlRXhw
+bG9yZXIgVGVzdDAgFw03NTAxMDEwMDAwMDBaGA80MDk2MDEwMTAwMDAwMFowOTEV
+MBMGA1UEAwwMVGVzdCBSb290IENBMSAwHgYDVQQKDBdSZXBvU3BoZXJlRXhwbG9y
+ZXIgVGVzdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABMMAKU4Arv7N+K5Xl/uo
+GONeVXtrOhCcAUOf4StBpmlkgDo6hUfFTRj7IV5Txom86+qU5Jd6ADvPTzKeedWo
+kuOjGjAYMBYGA1UdEQQPMA2CC2V4YW1wbGUuY29tMAoGCCqGSM49BAMCA0kAMEYC
+IQCLgSlLPiOqHmY6oBKfdbCFqLHqgoZPgOGIdxzkiio+4AIhAJUvavI81fz1qqiW
+Q8c1CP8QZQZVYgnOSYqC2s/Wyr6i
+-----END CERTIFICATE-----
+";
+
+    /// A real, `rsa`-crate-generated 512-bit PKCS#8 private key - the same
+    /// fixture `plugin-certificate`'s own tests use.
+    const PRIVATE_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA3RNJt9hafRyQ7kep
+vIo+NOPMCH06/hDiNlSx9U5B8qzmUpy8O6JDeUaL6Zmuc0MYs3jGKqjlRS4jUbJv
+s28Y8QIDAQABAkACPyHuplo1D0dBxKSq79S2AOKf63XgAxfpaW7tiUAOUUKn3O/N
+UZgxrOOCKZKNAARiqZTZqqq8L6TZt3eVcFgBAiEA8t19Xc77fVrRqnp3SHj/hWve
+RwuHl1pU8eY16gEddUECIQDpCB0w+AfTd/x/ZX5gYEq6/pVNcM4fdp5eQRUB44xH
+sQIhANm20HHN4QkI5zfKPTBMt9NlVYeewFhf9BI960rw4PWBAiEAyGEjyNHe2OZa
+Bqoda34hhH4ZoEeZ1tBHCcFo8QDbxWECIDNwkmvUEJEkNDKc+kxZj3fVUXbUhbze
+Mo8hvqlfr/IR
+-----END PRIVATE KEY-----
+";
+
+    #[test]
+    fn finds_certificates_across_repositories_skips_git_and_reports_the_unreadable() {
+        let root = scratch();
+        let alpha = checkout(&root, "alpha");
+        fs::write(alpha.join("server.pem"), CERTIFICATE_PEM).unwrap();
+        fs::write(alpha.join(".git").join("hook.pem"), CERTIFICATE_PEM).unwrap();
+        let beta = checkout(&root, "beta");
+        fs::write(beta.join("server-key.pem"), PRIVATE_KEY_PEM).unwrap();
+        fs::write(beta.join("broken.pem"), "not a pem file at all").unwrap();
+
+        let findings = find_certificates(&root);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            paths_of_certificates(&findings),
+            ["alpha/server.pem", "beta/broken.pem", "beta/server-key.pem"],
+            "nothing under .git is ever found"
+        );
+
+        let certificate = &findings[0];
+        assert_eq!(certificate.repository.as_deref(), Some("alpha"));
+        match &certificate.kind {
+            protocol::CertificateFindingKind::Blocks(blocks) => match &blocks[..] {
+                [protocol::CertificateBlock::Certificate(summary)] => {
+                    assert_eq!(
+                        summary.subject,
+                        "CN=Test Root CA, O=RepoSphereExplorer Test"
+                    );
+                    assert_eq!(summary.issuer, summary.subject);
+                    assert!(summary.self_signed);
+                    assert!(!summary.serial.is_empty());
+                    assert!(summary.not_before < summary.not_after);
+                }
+                other => panic!("expected one certificate, got {other:?}"),
+            },
+            unreadable @ protocol::CertificateFindingKind::Unreadable => {
+                panic!("expected blocks, got {unreadable:?}")
+            }
+        }
+
+        let unreadable = &findings[1];
+        assert_eq!(unreadable.repository.as_deref(), Some("beta"));
+        assert_eq!(
+            unreadable.kind,
+            protocol::CertificateFindingKind::Unreadable
+        );
+
+        let key = &findings[2];
+        assert_eq!(key.repository.as_deref(), Some("beta"));
+        assert_eq!(
+            key.kind,
+            protocol::CertificateFindingKind::Blocks(vec![protocol::CertificateBlock::PrivateKey])
+        );
+    }
+
+    /// The paths of [`find_certificates`]' findings, in order.
+    fn paths_of_certificates(findings: &[protocol::CertificateFinding]) -> Vec<&str> {
+        findings.iter().map(|found| found.path.as_str()).collect()
+    }
+
+    #[test]
+    fn no_certificates_response_carries_a_private_keys_own_material() {
+        let root = scratch();
+        let alpha = checkout(&root, "alpha");
+        fs::write(alpha.join("server-key.pem"), PRIVATE_KEY_PEM).unwrap();
+        fs::write(alpha.join("server.pem"), CERTIFICATE_PEM).unwrap();
+
+        let certificates = find_certificates(&root);
+        let _ = fs::remove_dir_all(&root);
+
+        let mut wire = Vec::new();
+        protocol::write_message(
+            &mut wire,
+            &protocol::Response::Certificates {
+                certificates,
+                complete: true,
+            },
+        )
+        .unwrap();
+        let json = String::from_utf8(wire[4..].to_vec()).unwrap();
+
+        // A snippet unique to the private key's own base64 body: if this
+        // shows up on the wire, the key's bytes leaked with it.
+        assert!(
+            !json.contains("3RNJt9hafRyQ7kep"),
+            "the response carries the private key's own material: {json}"
+        );
     }
 
     #[test]
