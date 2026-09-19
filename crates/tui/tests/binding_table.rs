@@ -119,8 +119,8 @@ fn every_global_binding_reaches_the_action_it_names() {
     common::ensure_service();
 
     for binding in BINDINGS.iter().filter(|b| b.owner == Owner::Global) {
-        let (mut terminal, mut app) =
-            new_app_and_terminal(common::scratch(&format!("global-{}", binding.description)));
+        let root = common::scratch(&format!("global-{}", binding.description));
+        let (mut terminal, mut app) = new_app_and_terminal(root.clone());
         common::settle(&mut terminal, &mut app);
 
         match binding.action {
@@ -141,6 +141,36 @@ fn every_global_binding_reaches_the_action_it_names() {
                 assert_eq!(app.focus(), Focus::Folders);
                 press_binding(&mut terminal, &mut app, binding);
                 assert_eq!(app.focus(), Focus::File);
+            }
+            Action::GoBack => {
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.contains("nowhere to go back to"),
+                    "with nothing visited yet, {} should say so: {shown:?}",
+                    binding.description
+                );
+            }
+            Action::GoForward => {
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.contains("nowhere to go forward to"),
+                    "with nothing visited yet, {} should say so: {shown:?}",
+                    binding.description
+                );
+            }
+            Action::NavigateAboveRoot => {
+                let parent = root
+                    .parent()
+                    .expect("a scratch root under the temp directory has a parent")
+                    .to_string_lossy()
+                    .into_owned();
+                press_binding(&mut terminal, &mut app, binding);
+                assert_eq!(
+                    app.address_path(),
+                    parent,
+                    "{} should step above the root, to its parent",
+                    binding.description
+                );
             }
             other => panic!("no assertion written for the global action {other:?}"),
         }
