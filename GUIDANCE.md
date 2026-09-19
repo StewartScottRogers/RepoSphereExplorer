@@ -187,7 +187,36 @@ The realistic compromise is a malicious document the user merely previews.
 
 ### 2.2 Terminal front end (Ratatui)
 
-Cross-platform, and a good citizen inside another multiplexer such as herdr:
+A peer to the graphical front end within its medium, not a reduced client
+(D16): it reaches the same standard for everything a terminal can do.
+
+**What it draws.** The same three panes as §2.4 - Folders, Folder contents,
+and the tool slot - laid out side by side, plus a status line. There is no
+docking or floating (§2.6 is a graphical front end concept); the terminal
+front end's layout is fixed. Which pane is wide is remembered between
+launches, the way the graphical front end remembers pane widths; the
+folder it opens at is not (D7). A prompt draws over the panes as a cleared
+box, never as a one-row status line, and names the full path of what it
+will act on (§2.1.5).
+
+**Keyboard.** The terminal front end does not capture the mouse; everything
+reachable by mouse in the graphical front end is reachable by keyboard
+here, which inverts §2.4's "mouse-first, keyboard as a peer" for this front
+end alone. A binding table the front end owns reads key modifiers, so
+Ctrl+C is never mistaken for a Copy prompt, and never steals what a host
+multiplexer needs (Ctrl+B, Ctrl+A).
+
+**Colour and glyphs.** Degrade cleanly to 16 colours by default; `NO_COLOR`
+in the environment, or a terminal reporting no colour, gives a monochrome
+drawing where nothing is told apart by colour alone (#574's rule, doubly).
+Unicode where the terminal accepts it, with an ASCII fallback for every
+mark; no nerd font, ever.
+
+**Editing.** The File pane edits text files, through the service's
+`WriteFile`, on the same terms as §3.6 - see §3.6's own paragraph on this.
+
+**Cross-platform, and a good citizen inside another multiplexer such as
+herdr:**
 
 - Never fight for the alternate screen; restore terminal state on every exit
   path, including panic and the host pane closing.
@@ -195,6 +224,15 @@ Cross-platform, and a good citizen inside another multiplexer such as herdr:
 - Mouse capture must be releasable so the host's own selection still works.
 - Degrade cleanly to 16 colours and to plain American Standard Code for
   Information Interchange (ASCII) text; do not require a nerd font.
+
+**Platforms.** Windows console (Windows Terminal and `conhost` with virtual
+terminal processing), macOS and Linux terminals, and inside a multiplexer.
+With no terminal attached, it prints what it cannot do and exits non-zero
+rather than drawing.
+
+**The Repos Directory.** The terminal front end can read and set the
+active root (§2.5), so a terminal user never has to open the graphical one
+to configure the application.
 
 ### 2.3 Graphical front end (Slint)
 
@@ -212,7 +250,11 @@ Native *feel* per platform — two behaviour profiles, not one averaged one.
 ### 2.4 The panes
 
 Windows Explorer-inspired in its handling, mouse-first, keyboard as a peer —
-but pointed at the Repos Directory rather than at the machine. Each of the
+but pointed at the Repos Directory rather than at the machine. This section,
+and its "mouse-first, keyboard as a peer" sentence in particular, describes
+the graphical front end (§2.3); the terminal front end (§2.2) has no mouse
+to be first with, and answers the same requirement - everything reachable
+one way is reachable the other - with the keyboard alone (D16). Each of the
 three below docks in the main window or floats in a window of its own; see
 §2.6 for what popping one out means and what stays true while it is out:
 
@@ -519,6 +561,21 @@ and a paste over a selection. Slint keeps its own clipboard on the
 through `copypasta`, which Slint's own windowing backend already
 depends on.
 
+**The terminal File pane is an editor too, on the same terms (D16).** The
+boundary above - what is included, what is excluded, and syntax colouring
+coming from the plugin's `classify` rather than being invented per front
+end - binds the terminal front end exactly as it binds the graphical one,
+and a save goes through the same `WriteFile` request. What differs is only
+what the graphical editor surface had to give up to draw colour while
+typing: §3.6's three "knowingly given up" items - input method editor
+(IME) composition, screen-reader accessibility, and right-to-left text -
+are handled by the host terminal itself for the terminal front end, which
+never draws its own glyphs the way Slint's hand-written surface does. That
+reverses this section's reasoning for why the graphical surface had to
+give them up, and is why the terminal front end does not need the same
+`editor::code_editor_suits` fallback to a plainer editor: the host terminal
+already carries what the graphical front end had to write from scratch.
+
 ## 4. Distribution — GitHub is the whole supply chain
 
 ### 4.1 The web page
@@ -675,6 +732,13 @@ Windows File Explorer should not have to learn new gestures. What does not
 survive is the scope: parity was never a licence to browse the whole machine,
 and after D7 the panes are pointed at the Repos Directory (§2.5).
 
+**Amended 2026-09-18 by D16.** D6's parenthetical excluded the terminal
+front end from this decision - "§2.2's TUI is not in scope for this
+decision" - naming it only to rule it out. D16 lifts that exclusion: the
+terminal front end now reaches the same standard as the graphical one for
+everything a terminal can do, and D4's "view plus operations only" no
+longer bounds it either. See DECISIONS.md D16 for what that settles.
+
 **D7 — What the application is for.** Settled 2026-09-08, replacing the
 general-purpose file explorer this began as.
 
@@ -713,7 +777,11 @@ read it?
    TUI that renders it.
 3. `plugin-api` and the text plugin, both halves, end to end.
 4. Three-pane TUI over real directories, with cancellable listing.
-5. GUI to parity with the TUI, then the Pages site, updater, film, statistics.
+5. GUI built out from the TUI's foundation, then the Pages site, updater,
+   film, statistics. What actually happened next was the graphical front
+   end's own growth (D6, D15) well past the terminal front end's, which D16
+   requires the terminal front end now be brought up to match, within its
+   medium.
 6. Realignment to the Repos Explorer mission (D7–D10): the Repos Directory
    anchor and its first-run experience, repository detection with provider and
    branch, and the documentation that describes all of it.

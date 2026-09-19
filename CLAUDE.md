@@ -122,7 +122,9 @@ which records why each was settled and what it would take to revisit it.
     events;
     `crates/gui/tests/editing_in_the_window.rs` is the pattern. Wiring the
     application does must live in the library, not in `main.rs`, or the
-    test is exercising a copy of it that can drift.
+    test is exercising a copy of it that can drift. The terminal front
+    end's event loop is library code for the same reason, so a test can
+    drive it too.
 15. **The README opens with "Repository history".** It is the first section
     under the title, holding the link to the history film, and no change
     moves it down or puts anything above it. `crates/gui/tests/readme.rs`
