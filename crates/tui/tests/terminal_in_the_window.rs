@@ -167,8 +167,8 @@ fn a_key_that_opens_a_prompt_draws_it() {
     let prompted = press(&mut terminal, &mut app, KeyCode::Delete);
 
     assert!(
-        prompted.contains("Delete notes.txt? y/n"),
-        "the confirmation prompt should be drawn: {prompted}"
+        prompted.contains("Delete notes.txt?") && prompted.contains("y/n"),
+        "the confirmation modal should be drawn: {prompted}"
     );
 }
 
@@ -404,7 +404,9 @@ fn leaving_the_editor_with_unsaved_changes_asks_first_and_declining_keeps_them()
 
     let prompted = press(&mut terminal, &mut app, KeyCode::Esc);
     assert!(
-        prompted.contains("Discard changes to notes.txt? y/n"),
+        prompted.contains("Discard changes?")
+            && prompted.contains("notes.txt")
+            && prompted.contains("y/n"),
         "leaving with unsaved changes should ask first, naming the file: {prompted}"
     );
 

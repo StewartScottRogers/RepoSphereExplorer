@@ -264,15 +264,16 @@ enum Mode {
         /// The paths that would be deleted.
         paths: Vec<PathBuf>,
         /// The single entry's name, or `"{N} items"` for several, for the
-        /// confirmation prompt.
+        /// confirmation prompt's title.
         name: String,
     },
     /// Editing a new name to rename `path` to, within its own directory.
     RenameInput {
         /// The path being renamed.
         path: PathBuf,
-        /// The new name typed so far.
-        input: String,
+        /// The new name typed so far, and the caret within it (#646):
+        /// movement, Backspace and Delete, not append-and-Backspace only.
+        document: Document,
     },
     /// Editing a destination name to copy `path` to, within its own
     /// directory.
@@ -280,7 +281,7 @@ enum Mode {
         /// The path being copied.
         path: PathBuf,
         /// The destination name typed so far.
-        input: String,
+        document: Document,
     },
     /// Editing a destination directory name to extract the archive at
     /// `path` into, within its own directory.
@@ -288,7 +289,22 @@ enum Mode {
         /// The archive being extracted.
         path: PathBuf,
         /// The destination directory name typed so far.
-        input: String,
+        document: Document,
+    },
+    /// Editing the name of a new, empty directory to create inside `dir`
+    /// (#646).
+    CreateDirectoryInput {
+        /// The directory the new one would be created inside.
+        dir: PathBuf,
+        /// The name typed so far.
+        document: Document,
+    },
+    /// Editing the name of a new, empty file to create inside `dir` (#646).
+    CreateFileInput {
+        /// The directory the new file would be created inside.
+        dir: PathBuf,
+        /// The name typed so far.
+        document: Document,
     },
     /// Asking whether to discard unsaved changes to the file open in the
     /// editor, named `name`, before leaving it (#645).
@@ -301,6 +317,42 @@ enum Mode {
     /// once rather than waiting for Enter, so the text lives on
     /// [`App::filter`] itself rather than in this variant.
     FilterInput,
+}
+
+/// What a real modal (#646) shows, drawn in a cleared box over the panes
+/// rather than squeezed onto the one-row status line - the shape
+/// GUIDANCE.md §2.1.5 and D16 ask for: a title, the full path of what it
+/// acts on (never just the row it grew from - the wrong-folder defect
+/// pull request #524 fixed once already), the text being typed where
+/// there is any, and the keys that answer it.
+struct Modal {
+    /// What the prompt is doing, drawn as the box's title.
+    title: String,
+    /// The full path(s) it acts on, one per line.
+    subject: Vec<String>,
+    /// The text being typed, and the column the caret sits at within it,
+    /// for a prompt that collects one.
+    input: Option<(String, usize)>,
+    /// The keys that answer it, e.g. `"Enter/Esc"` or `"y/n"`.
+    keys: &'static str,
+}
+
+/// Which way [`App::clipboard`] would move its held paths on paste (#646).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClipboardMode {
+    /// Paste duplicates the held paths.
+    Copy,
+    /// Paste moves the held paths, clearing the clipboard once it lands.
+    Cut,
+}
+
+/// A prompt's typed name, with the caret placed at its end (#646) - so
+/// Backspace removes the last character the way it always has, rather than
+/// a fresh [`Document`] leaving the caret at the start of a prefilled name.
+fn prompt_document(initial: impl Into<String>) -> Document {
+    let mut document = Document::new(initial);
+    document.move_document_end(false);
+    document
 }
 
 /// A file open in the terminal File pane's editor (#645), on the same
@@ -546,6 +598,28 @@ pub struct App {
     /// rather than whatever row the cursor has moved to since (#625).
     pending_file_path: Option<PathBuf>,
     pending_operation: Option<Receiver<io::Result<Response>>>,
+    /// The name [`App::apply_contents_result`] should select once the
+    /// listing an operation just reloaded lands (#646) - taken from
+    /// [`App::pending_reselect`] the moment [`App::apply_operation_result`]
+    /// sees that operation succeed, so a failed create or paste never
+    /// leaves a stale name waiting to be applied to some unrelated, later
+    /// listing.
+    reselect: Option<String>,
+    /// The name [`App::reselect`] is set to if the operation behind
+    /// [`App::pending_operation`] succeeds - a new folder or file's own
+    /// name, or the last path a paste lands, so the row it created is the
+    /// one already under the cursor once it appears.
+    pending_reselect: Option<String>,
+    /// The entries cut or copied to the clipboard (#646): their full paths
+    /// at the moment it was set, and whether pasting should move them
+    /// (`Cut`) or duplicate them (`Copy`).
+    clipboard: Option<(Vec<PathBuf>, ClipboardMode)>,
+    /// An outstanding `Open` request (#646), asked for by
+    /// [`App::start_open`].
+    pending_open: Option<Receiver<io::Result<Response>>>,
+    /// The path the outstanding `Open` request named, so the status line
+    /// can say what was handed over once it answers.
+    pending_open_path: Option<PathBuf>,
     /// Which column the Contents pane is sorted by.
     sort_key: SortKey,
     /// Whether the current sort is ascending.
@@ -653,6 +727,11 @@ impl App {
             pending_file: None,
             pending_file_path: None,
             pending_operation: None,
+            reselect: None,
+            pending_reselect: None,
+            clipboard: None,
+            pending_open: None,
+            pending_open_path: None,
             sort_key: SortKey::Name,
             sort_ascending: true,
             row_statuses: HashMap::new(),
@@ -1327,6 +1406,12 @@ impl App {
             self.pending_operation = None;
             self.apply_operation_result(result);
         }
+        if let Some(rx) = &self.pending_open
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_open = None;
+            self.apply_open_result(result);
+        }
         let mut still_pending = Vec::with_capacity(self.pending_statuses.len());
         let mut answered = Vec::new();
         for (name, rx) in self.pending_statuses.drain(..) {
@@ -1350,12 +1435,44 @@ impl App {
         match result {
             Ok(Response::Done) => {
                 self.status = None;
+                self.reselect = self.pending_reselect.take();
                 self.load_contents_for_selected();
             }
-            Ok(Response::Error { message }) => self.status = Some(message),
-            Ok(_) => self.status = Some("unexpected response to operation".to_owned()),
-            Err(err) => self.status = Some(err.to_string()),
+            Ok(Response::Error { message }) => {
+                self.pending_reselect = None;
+                self.status = Some(message);
+            }
+            Ok(_) => {
+                self.pending_reselect = None;
+                self.status = Some("unexpected response to operation".to_owned());
+            }
+            Err(err) => {
+                self.pending_reselect = None;
+                self.status = Some(err.to_string());
+            }
         }
+    }
+
+    /// Applies the answer to an `Open` request (#646): unlike every other
+    /// operation, a successful `Open` is not [`Response::Done`] - it lists
+    /// a directory or views a file through its plugin, the same replies
+    /// [`Request::ListDirectory`] and [`Request::ViewFile`] give, so it is
+    /// handled on its own rather than folded into
+    /// [`App::apply_operation_result`], which treats either as "unexpected".
+    fn apply_open_result(&mut self, result: io::Result<Response>) {
+        let path = self.pending_open_path.take();
+        let subject = path
+            .as_deref()
+            .map_or_else(String::new, |path| path.display().to_string());
+        self.status = Some(match result {
+            Ok(Response::Directory { entries }) => {
+                format!("opened {subject}: {} item(s)", entries.len())
+            }
+            Ok(Response::FileView { plugin, .. }) => format!("opened {subject} as {plugin}"),
+            Ok(Response::Error { message }) => message,
+            Ok(_) => "unexpected response to open".to_owned(),
+            Err(err) => err.to_string(),
+        });
     }
 
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
@@ -1380,7 +1497,11 @@ impl App {
                 self.row_statuses.clear();
                 self.pending_statuses.clear();
                 self.sort_contents();
-                self.contents_selected = 0;
+                self.contents_selected = self
+                    .reselect
+                    .take()
+                    .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+                    .unwrap_or(0);
                 self.anchor = 0;
                 self.selection.clear();
                 self.contents_scroll = 0;
@@ -1421,8 +1542,12 @@ impl App {
                 self.handle_confirm_delete_key(key.code);
                 return;
             }
-            Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
-                self.handle_text_input_key(key.code);
+            Mode::RenameInput { .. }
+            | Mode::CopyInput { .. }
+            | Mode::ExtractInput { .. }
+            | Mode::CreateDirectoryInput { .. }
+            | Mode::CreateFileInput { .. } => {
+                self.handle_prompt_key(key);
                 return;
             }
             Mode::ConfirmDiscardEdit { .. } => {
@@ -1481,6 +1606,13 @@ impl App {
             Action::StartRename => self.start_rename_input(),
             Action::StartCopy => self.start_copy_input(),
             Action::StartExtract => self.start_extract_input(),
+            Action::StartCreateDirectory => self.start_create_directory_input(),
+            Action::StartCreateFile => self.start_create_file_input(),
+            Action::StartUndo => self.start_undo(),
+            Action::StartOpen => self.start_open(),
+            Action::ClipboardCopy => self.set_clipboard(ClipboardMode::Copy),
+            Action::ClipboardCut => self.set_clipboard(ClipboardMode::Cut),
+            Action::ClipboardPaste => self.paste_clipboard(),
             Action::FoldersUp => self.move_up_in_tree(),
             Action::FoldersDown => self.move_down_in_tree(),
             Action::FoldersExpand => self.expand_selected(),
@@ -1533,7 +1665,9 @@ impl App {
         }
         let cancelled = self.pending_contents.take().is_some()
             | self.pending_file.take().is_some()
-            | self.pending_operation.take().is_some();
+            | self.pending_operation.take().is_some()
+            | self.pending_open.take().is_some();
+        self.pending_reselect = None;
         self.mode = Mode::Normal;
         if cancelled {
             self.status = Some("cancelled".to_owned());
@@ -1650,7 +1784,7 @@ impl App {
         let path = self.contents_dir.join(&entry.name);
         self.mode = Mode::RenameInput {
             path,
-            input: entry.name.clone(),
+            document: prompt_document(entry.name.clone()),
         };
     }
 
@@ -1661,7 +1795,7 @@ impl App {
         let path = self.contents_dir.join(&entry.name);
         self.mode = Mode::CopyInput {
             path,
-            input: entry.name.clone(),
+            document: prompt_document(entry.name.clone()),
         };
     }
 
@@ -1676,33 +1810,141 @@ impl App {
         );
         self.mode = Mode::ExtractInput {
             path,
-            input: suggested,
+            document: prompt_document(suggested),
         };
     }
 
-    fn handle_text_input_key(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Enter => self.confirm_text_input(),
+    /// Starts naming a new, empty directory inside the folder currently
+    /// shown (#646) - the same folder every row in it is listed from,
+    /// regardless of which one, if any, the cursor sits on.
+    fn start_create_directory_input(&mut self) {
+        self.mode = Mode::CreateDirectoryInput {
+            dir: self.contents_dir.clone(),
+            document: Document::new(String::new()),
+        };
+    }
+
+    /// As [`App::start_create_directory_input`], for a new, empty file.
+    fn start_create_file_input(&mut self) {
+        self.mode = Mode::CreateFileInput {
+            dir: self.contents_dir.clone(),
+            document: Document::new(String::new()),
+        };
+    }
+
+    /// Sends `Undo` (#646): the service holds what the immediately
+    /// preceding operation was and answers accordingly, including "nothing
+    /// to undo" when there is none - a front end only asks.
+    fn start_undo(&mut self) {
+        self.pending_operation = Some(spawn_request(Request::Undo));
+        self.status = Some("undoing...".to_owned());
+    }
+
+    /// Sends `Open` for the selected row (#646): the service lists it if
+    /// it is a directory, or views it through its recognised plugin
+    /// otherwise, and the status line says which once it answers (see
+    /// [`App::apply_open_result`]).
+    fn start_open(&mut self) {
+        let Some(entry) = self.contents.get(self.contents_selected) else {
+            return;
+        };
+        let path = self.contents_dir.join(&entry.name);
+        self.pending_open_path = Some(path.clone());
+        self.pending_open = Some(spawn_request(Request::Open {
+            path: path.to_string_lossy().into_owned(),
+        }));
+        self.status = Some("opening...".to_owned());
+    }
+
+    /// Cuts or copies every selected row's full path onto the clipboard
+    /// (#646), using the same whole-selection reading [`App::selected_indices`]
+    /// gives every other operation (#676).
+    fn set_clipboard(&mut self, mode: ClipboardMode) {
+        let paths: Vec<PathBuf> = self
+            .selected_indices()
+            .iter()
+            .filter_map(|&index| self.contents.get(index))
+            .map(|entry| self.contents_dir.join(&entry.name))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let verb = match mode {
+            ClipboardMode::Copy => "copied",
+            ClipboardMode::Cut => "cut",
+        };
+        self.status = Some(match paths.len() {
+            1 => format!("1 item {verb}"),
+            count => format!("{count} items {verb}"),
+        });
+        self.clipboard = Some((paths, mode));
+    }
+
+    /// Pastes the clipboard into the folder currently shown (#646): a copy
+    /// through `Copy`, a cut through `Rename` (a move), each into a
+    /// destination of the same name - so a name already there comes back
+    /// as the same refusal the service gives any other collision, worded
+    /// exactly as it is.
+    fn paste_clipboard(&mut self) {
+        let Some((paths, mode)) = self.clipboard.clone() else {
+            self.status = Some("nothing to paste".to_owned());
+            return;
+        };
+        let items: Vec<(String, String)> = paths
+            .iter()
+            .filter_map(|path| {
+                let name = path.file_name()?.to_string_lossy().into_owned();
+                Some((
+                    path.to_string_lossy().into_owned(),
+                    self.contents_dir.join(&name).to_string_lossy().into_owned(),
+                ))
+            })
+            .collect();
+        if items.is_empty() {
+            return;
+        }
+        self.pending_reselect = paths
+            .last()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+        let request = match mode {
+            ClipboardMode::Copy => Request::Copy { items },
+            ClipboardMode::Cut => Request::Rename { items },
+        };
+        if mode == ClipboardMode::Cut {
+            self.clipboard = None;
+        }
+        self.pending_operation = Some(spawn_request(request));
+        self.status = Some("working...".to_owned());
+    }
+
+    /// Handles one key while a prompt that collects typed text is open
+    /// (#646): Enter confirms, Escape dismisses, Tab is left to the pane
+    /// switch it would otherwise mean rather than becoming four spaces in
+    /// a name, and everything else - movement, Backspace, Delete, word
+    /// movement - goes through the same [`editor::handle_key`] the File
+    /// pane's own editor uses (#645), on a single line rather than a
+    /// scrollable file.
+    fn handle_prompt_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.confirm_prompt(),
             KeyCode::Esc => self.mode = Mode::Normal,
-            KeyCode::Backspace => {
-                if let Some(input) = self.input_mut() {
-                    input.pop();
+            KeyCode::Tab | KeyCode::BackTab => {}
+            _ => {
+                if let Some(document) = self.document_mut() {
+                    editor::handle_key(document, key.code, key.modifiers, 1);
                 }
             }
-            KeyCode::Char(c) => {
-                if let Some(input) = self.input_mut() {
-                    input.push(c);
-                }
-            }
-            _ => {}
         }
     }
 
-    fn input_mut(&mut self) -> Option<&mut String> {
+    fn document_mut(&mut self) -> Option<&mut Document> {
         match &mut self.mode {
-            Mode::RenameInput { input, .. }
-            | Mode::CopyInput { input, .. }
-            | Mode::ExtractInput { input, .. } => Some(input),
+            Mode::RenameInput { document, .. }
+            | Mode::CopyInput { document, .. }
+            | Mode::ExtractInput { document, .. }
+            | Mode::CreateDirectoryInput { document, .. }
+            | Mode::CreateFileInput { document, .. } => Some(document),
             Mode::Normal
             | Mode::ConfirmDelete { .. }
             | Mode::ConfirmDiscardEdit { .. }
@@ -1710,75 +1952,167 @@ impl App {
         }
     }
 
-    fn confirm_text_input(&mut self) {
+    fn confirm_prompt(&mut self) {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
-        let request = match mode {
-            Mode::RenameInput { path, input } if !input.is_empty() => Some(Request::Rename {
-                items: vec![(
-                    path.to_string_lossy().into_owned(),
-                    sibling_path(&path, &input),
-                )],
-            }),
-            Mode::CopyInput { path, input } if !input.is_empty() => Some(Request::Copy {
-                items: vec![(
-                    path.to_string_lossy().into_owned(),
-                    sibling_path(&path, &input),
-                )],
-            }),
-            Mode::ExtractInput { path, input } if !input.is_empty() => Some(Request::Extract {
-                archive: path.to_string_lossy().into_owned(),
-                destination: sibling_path(&path, &input),
-            }),
-            _ => None,
+        let (request, reselect) = match mode {
+            Mode::RenameInput { path, document } if !document.text().is_empty() => (
+                Some(Request::Rename {
+                    items: vec![(
+                        path.to_string_lossy().into_owned(),
+                        sibling_path(&path, document.text()),
+                    )],
+                }),
+                None,
+            ),
+            Mode::CopyInput { path, document } if !document.text().is_empty() => (
+                Some(Request::Copy {
+                    items: vec![(
+                        path.to_string_lossy().into_owned(),
+                        sibling_path(&path, document.text()),
+                    )],
+                }),
+                None,
+            ),
+            Mode::ExtractInput { path, document } if !document.text().is_empty() => (
+                Some(Request::Extract {
+                    archive: path.to_string_lossy().into_owned(),
+                    destination: sibling_path(&path, document.text()),
+                }),
+                None,
+            ),
+            Mode::CreateDirectoryInput { dir, document } if !document.text().is_empty() => {
+                let name = document.text().to_owned();
+                (
+                    Some(Request::CreateDirectory {
+                        path: dir.join(&name).to_string_lossy().into_owned(),
+                    }),
+                    Some(name),
+                )
+            }
+            Mode::CreateFileInput { dir, document } if !document.text().is_empty() => {
+                let name = document.text().to_owned();
+                (
+                    Some(Request::CreateFile {
+                        path: dir.join(&name).to_string_lossy().into_owned(),
+                    }),
+                    Some(name),
+                )
+            }
+            _ => (None, None),
         };
         if let Some(request) = request {
+            self.pending_reselect = reselect;
             self.pending_operation = Some(spawn_request(request));
             self.status = Some("working...".to_owned());
         }
     }
 
-    /// The text shown on the status line: a prompt if a confirmation or
-    /// text input is pending, otherwise the current status or the ambient
-    /// one - the Contents pane's counts, or the default help text when it
-    /// holds no repository - in full. See [`App::status_line_at`] for the
-    /// version that fits a given terminal width.
+    /// What the open prompt, if any, draws as a real modal (#646): a
+    /// title, the full path(s) it acts on, the text being typed where
+    /// there is any, and the keys that answer it. `None` for
+    /// [`Mode::Normal`] and [`Mode::FilterInput`], which the Contents
+    /// pane's filter field still answers on the status line, unchanged
+    /// (#650) - narrowing a listing is not the kind of confirmed intent
+    /// GUIDANCE.md §2.1.5 is about.
+    fn modal(&self) -> Option<Modal> {
+        match &self.mode {
+            Mode::Normal | Mode::FilterInput => None,
+            Mode::ConfirmDelete { paths, name } => Some(Modal {
+                title: format!("Delete {name}?"),
+                subject: paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect(),
+                input: None,
+                keys: "y/n",
+            }),
+            Mode::RenameInput { path, document } => Some(Modal {
+                title: "Rename".to_owned(),
+                subject: vec![path.display().to_string()],
+                input: Some((
+                    document.text().to_owned(),
+                    document.column_of(document.caret()),
+                )),
+                keys: "Enter/Esc",
+            }),
+            Mode::CopyInput { path, document } => Some(Modal {
+                title: "Copy".to_owned(),
+                subject: vec![path.display().to_string()],
+                input: Some((
+                    document.text().to_owned(),
+                    document.column_of(document.caret()),
+                )),
+                keys: "Enter/Esc",
+            }),
+            Mode::ExtractInput { path, document } => Some(Modal {
+                title: "Extract".to_owned(),
+                subject: vec![path.display().to_string()],
+                input: Some((
+                    document.text().to_owned(),
+                    document.column_of(document.caret()),
+                )),
+                keys: "Enter/Esc",
+            }),
+            Mode::CreateDirectoryInput { dir, document } => Some(Modal {
+                title: "New folder".to_owned(),
+                subject: vec![dir.display().to_string()],
+                input: Some((
+                    document.text().to_owned(),
+                    document.column_of(document.caret()),
+                )),
+                keys: "Enter/Esc",
+            }),
+            Mode::CreateFileInput { dir, document } => Some(Modal {
+                title: "New file".to_owned(),
+                subject: vec![dir.display().to_string()],
+                input: Some((
+                    document.text().to_owned(),
+                    document.column_of(document.caret()),
+                )),
+                keys: "Enter/Esc",
+            }),
+            Mode::ConfirmDiscardEdit { name } => Some(Modal {
+                title: "Discard changes?".to_owned(),
+                subject: vec![name.clone()],
+                input: None,
+                keys: "y/n",
+            }),
+        }
+    }
+
+    /// The text shown on the status line: the current status or the
+    /// ambient one - the Contents pane's counts, or the default help text
+    /// when it holds no repository - in full, or the filter field while it
+    /// is open (#650). A prompt's own text lives in the real modal
+    /// [`App::modal`] describes (#646), drawn over the panes rather than
+    /// squeezed in here, so it does not shorten or hide whatever the
+    /// status line was already saying underneath it. See
+    /// [`App::status_line_at`] for the version that fits a given terminal
+    /// width.
     fn status_line(&self) -> String {
         match &self.mode {
-            Mode::ConfirmDelete { name, .. } => format!("Delete {name}? y/n"),
-            Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
-            Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
-            Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
-            Mode::ConfirmDiscardEdit { name } => format!("Discard changes to {name}? y/n"),
             Mode::FilterInput => format!("Filter: {}_  (Enter/Esc)", self.filter.text),
-            Mode::Normal => self.status.clone().unwrap_or_else(|| self.ambient_status()),
+            _ => self.status.clone().unwrap_or_else(|| self.ambient_status()),
         }
     }
 
     /// As [`App::status_line`], but the default help text is shortened to
     /// fit `width` columns rather than being cut off wherever the terminal
     /// happens to end - the bug #638 reported: a truncated help line on an
-    /// 80-column terminal, hiding three of its own bindings. A prompt, a
-    /// custom status message, or the Contents pane's counts (#641) is
-    /// returned exactly as `status_line` gives it, since none of those is
-    /// this front end's to shorten (a full reference for the help text is
-    /// #649's job).
+    /// 80-column terminal, hiding three of its own bindings. A custom
+    /// status message, the filter field, or the Contents pane's counts
+    /// (#641) is returned exactly as `status_line` gives it, since none of
+    /// those is this front end's to shorten (a full reference for the help
+    /// text is #649's job).
     fn status_line_at(&self, width: usize) -> String {
-        match &self.mode {
-            Mode::Normal
-                if self.status.is_none()
-                    && self.contents_summary().is_empty()
-                    && self.selection.len() <= 1 =>
-            {
-                fit_help_line(width)
-            }
-            Mode::ConfirmDelete { .. }
-            | Mode::RenameInput { .. }
-            | Mode::CopyInput { .. }
-            | Mode::ExtractInput { .. }
-            | Mode::ConfirmDiscardEdit { .. }
-            | Mode::FilterInput
-            | Mode::Normal => self.status_line(),
+        if matches!(self.mode, Mode::FilterInput) {
+            return self.status_line();
         }
+        if self.status.is_none() && self.contents_summary().is_empty() && self.selection.len() <= 1
+        {
+            return fit_help_line(width);
+        }
+        self.status_line()
     }
 
     /// The breadcrumb line drawn above the panes (#642): the folder
@@ -2378,6 +2712,60 @@ pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(app.status_line_at(status_area.width.into())),
         status_area,
     );
+
+    render_modal(frame, area, app);
+}
+
+/// Draws the open prompt, if there is one, as a real modal (#646): a
+/// cleared box (`Clear`) over the panes and status line alike, rather than
+/// squeezed onto the one-row status line, so the full path it names is
+/// never cut short by whatever the rest of the frame is doing.
+fn render_modal(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let Some(modal) = app.modal() else { return };
+
+    let mut lines: Vec<Line<'static>> = modal.subject.into_iter().map(Line::from).collect();
+    let input_row = modal.input.as_ref().map(|(text, _)| {
+        lines.push(Line::from(text.clone()));
+        lines.len() - 1
+    });
+    lines.push(Line::from(modal.keys));
+
+    let content_width = lines
+        .iter()
+        .map(ratatui::text::Line::width)
+        .max()
+        .unwrap_or(0)
+        .max(modal.title.len());
+    let width = u16::try_from(content_width.saturating_add(4))
+        .unwrap_or(u16::MAX)
+        .min(area.width.saturating_sub(2))
+        .max(20.min(area.width));
+    let height = u16::try_from(lines.len().saturating_add(2))
+        .unwrap_or(u16::MAX)
+        .min(area.height.saturating_sub(2))
+        .max(3.min(area.height));
+
+    let modal_area = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+
+    frame.render_widget(ratatui::widgets::Clear, modal_area);
+    let block = Block::bordered().title(modal.title);
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    if let (Some((_, column)), Some(row)) = (&modal.input, input_row) {
+        let x = inner.x
+            + u16::try_from(*column)
+                .unwrap_or(u16::MAX)
+                .min(inner.width.saturating_sub(1));
+        let y = inner.y + u16::try_from(row).unwrap_or(0);
+        frame.set_cursor_position((x, y));
+    }
 }
 
 /// The Folders/Contents/File column constraints [`render_app`] splits the
@@ -3509,7 +3897,12 @@ mod tests {
 
         app.handle_key(KeyCode::Delete);
 
-        assert_eq!(app.status_line(), "Delete note.txt? y/n");
+        let expected = app.contents_dir.join("note.txt");
+        assert_eq!(
+            app.modal().unwrap().subject,
+            vec![expected.display().to_string()],
+            "the modal must name the full path, not just the row (#524)"
+        );
         assert!(app.pending_operation.is_none());
     }
 
@@ -3521,7 +3914,7 @@ mod tests {
         app.handle_key(KeyCode::Char('n'));
 
         assert!(app.pending_operation.is_none());
-        assert_ne!(app.status_line(), "Delete note.txt? y/n");
+        assert!(app.modal().is_none());
     }
 
     #[test]
@@ -3532,7 +3925,7 @@ mod tests {
         app.handle_key(KeyCode::Esc);
 
         assert!(!app.should_quit);
-        assert_ne!(app.status_line(), "Delete note.txt? y/n");
+        assert!(app.modal().is_none());
     }
 
     #[test]
@@ -3576,7 +3969,7 @@ mod tests {
 
         app.handle_key(KeyCode::Char('r'));
 
-        assert_eq!(app.status_line(), "Rename to: note.txt_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("note.txt"));
     }
 
     #[test]
@@ -3587,7 +3980,7 @@ mod tests {
         app.handle_key(KeyCode::Backspace);
         app.handle_key(KeyCode::Char('!'));
 
-        assert_eq!(app.status_line(), "Rename to: note.tx!_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("note.tx!"));
     }
 
     #[test]
@@ -3615,7 +4008,7 @@ mod tests {
         app.handle_key(KeyCode::Esc);
 
         assert!(app.pending_operation.is_none());
-        assert_ne!(app.status_line(), "Rename to: note.txt_  (Enter/Esc)");
+        assert!(app.modal().is_none());
     }
 
     #[test]
@@ -3624,7 +4017,7 @@ mod tests {
 
         app.handle_key(KeyCode::Char('c'));
 
-        assert_eq!(app.status_line(), "Copy to: note.txt_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("note.txt"));
     }
 
     #[test]
@@ -3651,7 +4044,7 @@ mod tests {
 
         app.handle_key(KeyCode::Char('x'));
 
-        assert_eq!(app.status_line(), "Extract to: bundle_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("bundle"));
     }
 
     #[test]
@@ -3868,6 +4261,8 @@ mod tests {
             Mode::RenameInput { .. } => "rename",
             Mode::CopyInput { .. } => "copy",
             Mode::ExtractInput { .. } => "extract",
+            Mode::CreateDirectoryInput { .. } => "create-directory",
+            Mode::CreateFileInput { .. } => "create-file",
             Mode::ConfirmDiscardEdit { .. } => "confirm-discard-edit",
             Mode::FilterInput => "filter",
         }
@@ -3900,7 +4295,11 @@ mod tests {
             Mode::RenameInput { path, .. }
             | Mode::CopyInput { path, .. }
             | Mode::ExtractInput { path, .. } => Some(path.as_path()),
-            Mode::Normal | Mode::ConfirmDiscardEdit { .. } | Mode::FilterInput => None,
+            Mode::CreateDirectoryInput { .. }
+            | Mode::CreateFileInput { .. }
+            | Mode::Normal
+            | Mode::ConfirmDiscardEdit { .. }
+            | Mode::FilterInput => None,
         }
     }
 
@@ -3911,6 +4310,16 @@ mod tests {
             Mode::ConfirmDelete { paths, .. } => paths.iter().map(PathBuf::as_path).collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// The text currently typed into the open modal's prompt, if it has
+    /// one (#646) - what a prompt-editing test compares against, now that
+    /// it lives in [`App::modal`]'s own input rather than being spelled
+    /// onto the status line.
+    fn modal_input(app: &App) -> Option<String> {
+        app.modal()
+            .and_then(|modal| modal.input)
+            .map(|(text, _)| text)
     }
 
     /// What `render_app` puts on a `width` x `height` terminal, one string
@@ -4339,7 +4748,7 @@ mod tests {
 
         app.handle_key(KeyCode::Delete);
 
-        assert_eq!(app.status_line(), "Delete 3 items? y/n");
+        assert_eq!(app.modal().unwrap().title, "Delete 3 items?");
         assert_eq!(
             prompt_delete_paths(&app).len(),
             3,
@@ -4438,23 +4847,26 @@ mod tests {
             Some(root.join("notes.txt").as_path()),
             "but the question is still about the file it was asked about"
         );
-        assert_eq!(app.status_line(), "Delete notes.txt? y/n");
+        assert_eq!(
+            app.modal().unwrap().subject,
+            vec![root.join("notes.txt").display().to_string()]
+        );
     }
 
     #[test]
-    fn the_prompt_sits_on_the_last_row_and_names_the_file_it_holds() {
+    fn the_delete_modal_draws_over_the_panes_and_names_the_full_path() {
         let root = notional_root("prompt-on-the-status-row");
         let mut app = app_showing(&root, &[("alpha", true), ("notes.txt", false)]);
         app.focus = Focus::Contents;
         app.handle_key(KeyCode::Down);
         app.handle_key(KeyCode::Delete);
 
-        let rows = drawn_rows(40, 8, &app);
+        let text = drawn(80, 20, &app);
+        let expected = root.join("notes.txt").display().to_string();
 
         assert!(
-            rows[7].starts_with("Delete notes.txt? y/n"),
-            "the question belongs on the status row, naming its own file: {:?}",
-            rows[7]
+            text.contains(&expected),
+            "a real modal (#646) must name the full path, not just the row: {text:?}"
         );
     }
 
@@ -4511,7 +4923,10 @@ mod tests {
             app.pending_operation.is_none(),
             "no command ran while the question stood"
         );
-        assert_eq!(app.status_line(), "Delete notes.txt? y/n");
+        assert_eq!(
+            app.modal().unwrap().subject,
+            vec![root.join("notes.txt").display().to_string()]
+        );
     }
 
     #[test]
@@ -4529,15 +4944,15 @@ mod tests {
             "Delete inside a rename turned it into a deletion"
         );
         assert_eq!(
-            app.status_line(),
-            "Rename to: notes.txt_  (Enter/Esc)",
+            modal_input(&app).as_deref(),
+            Some("notes.txt"),
             "and it must not have edited the name either"
         );
 
         // The next keystroke belongs to the rename, not to a question that
         // was never asked.
         app.handle_key(KeyCode::Char('y'));
-        assert_eq!(app.status_line(), "Rename to: notes.txty_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("notes.txty"));
         assert!(app.pending_operation.is_none());
     }
 
@@ -4551,7 +4966,7 @@ mod tests {
         app.handle_key(KeyCode::Char('q'));
 
         assert!(!app.should_quit, "q while typing a name must not quit");
-        assert_eq!(app.status_line(), "Rename to: notes.txtq_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("notes.txtq"));
     }
 
     #[test]
@@ -4573,8 +4988,8 @@ mod tests {
         assert_eq!(app.focus, Focus::Contents);
         assert_eq!(mode_of(&app), "copy");
         assert_eq!(
-            app.status_line(),
-            "Copy to: notes.txt_  (Enter/Esc)",
+            modal_input(&app).as_deref(),
+            Some("notes.txt"),
             "and they must not have been typed into the name either"
         );
     }
@@ -4887,20 +5302,54 @@ mod tests {
         app.focus = Focus::Contents;
 
         app.handle_key(KeyCode::Char('x'));
-        assert_eq!(app.status_line(), "Extract to: 日本語.tar_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("日本語.tar"));
 
         // Backspace takes a character off, not a byte: taking a byte off the
         // end of "語" is where a name like this panics.
         app.handle_key(KeyCode::Backspace);
-        assert_eq!(app.status_line(), "Extract to: 日本語.ta_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("日本語.ta"));
 
         app.handle_key(KeyCode::Esc);
         app.handle_key(KeyCode::Char('r'));
-        assert_eq!(app.status_line(), "Rename to: 日本語.tar.gz_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("日本語.tar.gz"));
         for _ in 0..7 {
             app.handle_key(KeyCode::Backspace);
         }
-        assert_eq!(app.status_line(), "Rename to: 日本語_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("日本語"));
+    }
+
+    #[test]
+    fn a_prompt_supports_movement_and_forward_delete_on_a_multibyte_name() {
+        // #646, item 2: editing inside a prompt the way a reader expects -
+        // not append-and-Backspace only. Left steps a whole grapheme, not a
+        // byte, and Delete removes forward from wherever the caret landed.
+        let root = notional_root("multibyte-prompt-movement");
+        let mut app = app_showing(&root, &[("日本語.txt", false)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('r'));
+        assert_eq!(modal_input(&app).as_deref(), Some("日本語.txt"));
+
+        // The caret starts after the final "t" (#524's "why" section: a
+        // prefilled name is edited from its end). Four Lefts land it right
+        // after "語", ahead of the extension.
+        for _ in 0..4 {
+            app.handle_key(KeyCode::Left);
+        }
+        app.handle_key(KeyCode::Delete);
+        assert_eq!(
+            modal_input(&app).as_deref(),
+            Some("日本語txt"),
+            "Delete removed the separator, not half of the character beside it"
+        );
+
+        app.handle_key(KeyCode::Left);
+        app.handle_key(KeyCode::Delete);
+        assert_eq!(
+            modal_input(&app).as_deref(),
+            Some("日本txt"),
+            "Delete took a whole character forward, not a byte"
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -4959,7 +5408,7 @@ mod tests {
             app.handle_key(KeyCode::Backspace);
         }
         app.handle_key(KeyCode::Char(' '));
-        assert_eq!(app.status_line(), "Rename to:  _  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some(" "));
 
         app.handle_key(KeyCode::Enter);
 
@@ -5008,10 +5457,7 @@ mod tests {
 
             app.handle_key(KeyCode::Char('x'));
 
-            assert_eq!(
-                app.status_line(),
-                format!("Extract to: {suggested}_  (Enter/Esc)")
-            );
+            assert_eq!(modal_input(&app).as_deref(), Some(suggested));
         }
     }
 
@@ -5027,7 +5473,7 @@ mod tests {
 
         app.handle_key(KeyCode::Char('x'));
 
-        assert_eq!(app.status_line(), "Extract to: src_  (Enter/Esc)");
+        assert_eq!(modal_input(&app).as_deref(), Some("src"));
         assert_eq!(
             super::sibling_path(&root.join("src"), "src"),
             root.join("src").to_string_lossy(),
@@ -5040,20 +5486,25 @@ mod tests {
     // ---------------------------------------------------------------------
 
     #[test]
-    fn a_prompt_covers_the_status_it_was_opened_over_and_gives_it_back() {
+    fn a_prompt_leaves_the_status_line_alone_underneath_the_modal() {
+        // The prompt now draws as a real modal (#646), a box over the
+        // panes and the status line alike - it no longer has to borrow the
+        // status line's text to show anything, so opening or leaving one
+        // does not disturb whatever message was already there.
         let root = notional_root("status-under-a-prompt");
         let mut app = app_showing(&root, &[("notes.txt", false)]);
         app.focus = Focus::Contents;
         app.status = Some("permission denied".to_owned());
 
         app.handle_key(KeyCode::Char('c'));
-        assert_eq!(app.status_line(), "Copy to: notes.txt_  (Enter/Esc)");
+        assert_eq!(app.status_line(), "permission denied");
+        assert_eq!(modal_input(&app).as_deref(), Some("notes.txt"));
 
         app.handle_key(KeyCode::Esc);
         assert_eq!(
             app.status_line(),
             "permission denied",
-            "the message the prompt covered is still true underneath it"
+            "the message is still there once the modal closes"
         );
     }
 
@@ -6616,8 +7067,8 @@ mod tests {
 
         app.handle_key(KeyCode::Esc);
         assert_eq!(
-            app.status_line(),
-            "Discard changes to selected? y/n",
+            app.modal().unwrap().subject,
+            vec!["selected".to_owned()],
             "the prompt should name the file"
         );
         assert!(app.editing.is_some(), "nothing should be discarded yet");
