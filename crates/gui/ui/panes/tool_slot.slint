@@ -1,16 +1,31 @@
 import { Palette } from "std-widgets.slint";
 import { FilePane } from "file_pane.slint";
+import { CertificatesView } from "certificates_view.slint";
+import { CertificateRow } from "../types.slint";
 
 // The right-hand pane's tool slot (#616): the editor - today's `FilePane`,
 // unchanged - is the first tool, so `ToolSlot` inherits it directly rather
-// than repeating its properties. `tool-showing-editor` is false only while
-// a different tool is active; none exists yet beyond a window test's own,
-// so this is the one place that stands in for a tool's own view until one
-// is built - #622's certificate tool among them.
+// than repeating its properties. `tool-showing-editor` is false while a
+// different tool is active; the Certificates tool (#622) is the first of
+// those, drawn in place of the inherited `FilePane` content whenever
+// `tool-showing-certificates` is set. A tool with no view of its own yet
+// falls back to the placeholder title text below.
 export component ToolSlot inherits FilePane {
     in property <bool> tool-showing-editor: true;
+    in property <bool> tool-showing-certificates;
+    in property <[CertificateRow]> certificate-rows;
+    in property <string> certificates-summary-line;
+    in property <string> certificates-private-key-line;
+    in property <bool> certificates-private-keys-shown;
+    in property <[string]> certificates-private-key-files;
+    in property <bool> certificates-loading;
+    in property <int> certificates-sort-column;
+    in property <bool> certificates-sort-ascending;
+    callback certificates-sort-requested(int);
+    callback certificate-row-activated(int);
+    callback certificates-private-keys-toggled();
 
-    if !tool-showing-editor: Rectangle {
+    if !tool-showing-editor && !tool-showing-certificates: Rectangle {
         VerticalLayout {
             padding: 8px;
             alignment: start;
@@ -19,6 +34,30 @@ export component ToolSlot inherits FilePane {
                 font-weight: 700;
                 color: Palette.foreground;
             }
+        }
+    }
+
+    // No background of its own on this outer element: it is auto-sized to
+    // the whole pane, the same as the placeholder above, so a plain
+    // spacer the title row's own height leaves that row - and its
+    // pop-out/dock/pin buttons - visible and clickable through the gap,
+    // with `CertificatesView`'s own content starting cleanly below it.
+    if tool-showing-certificates: VerticalLayout {
+        Rectangle {
+            height: 22px;
+        }
+        CertificatesView {
+            rows: certificate-rows;
+            summary-line: certificates-summary-line;
+            private-key-line: certificates-private-key-line;
+            private-keys-shown: certificates-private-keys-shown;
+            private-key-files: certificates-private-key-files;
+            loading: certificates-loading;
+            sort-column: certificates-sort-column;
+            sort-ascending: certificates-sort-ascending;
+            sort-requested(column) => { certificates-sort-requested(column); }
+            row-activated(index) => { certificate-row-activated(index); }
+            private-keys-toggled => { certificates-private-keys-toggled(); }
         }
     }
 }

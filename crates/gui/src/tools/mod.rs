@@ -2,7 +2,7 @@
 //! or does not, the registry lists the compiled-in tools in a fixed order,
 //! and the editor - today's File pane, unchanged - is the first one.
 
-use crate::app::Selection;
+use crate::app::{Selection, Target};
 
 /// A tool the slot can show for the current selection: what decides whether
 /// it applies, and what identifies and labels it once it does.
@@ -43,6 +43,39 @@ impl Tool for EditorTool {
     }
 }
 
+/// The certificate tool (#622): a read-only table of every certificate,
+/// certificate signing request and private key committed under the Repos
+/// Directory. Applies to a certificate file - so the picker offers it
+/// beside the editor - and is also reachable through View > Certificates
+/// for the whole Repos Directory regardless of the selection, which
+/// [`crate::app::App::open_certificates_tool`] chooses directly rather
+/// than through [`ToolRegistry::applicable`].
+pub struct CertificatesTool;
+
+impl Tool for CertificatesTool {
+    fn id(&self) -> &'static str {
+        "certificates"
+    }
+
+    fn title(&self) -> &'static str {
+        "Certificates"
+    }
+
+    fn applies_to(&self, selection: &Selection) -> bool {
+        matches!(
+            &selection.target,
+            Some(Target::File { name })
+                if std::path::Path::new(name)
+                    .extension()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .is_some_and(|extension| {
+                        plugin_certificate::EXTENSIONS
+                            .contains(&extension.to_ascii_lowercase().as_str())
+                    })
+        )
+    }
+}
+
 /// The compiled-in tools, in the fixed order the picker lists them and the
 /// order [`Self::default_index`] searches for the first one that applies.
 pub struct ToolRegistry {
@@ -52,7 +85,7 @@ pub struct ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self {
-            tools: vec![Box::new(EditorTool)],
+            tools: vec![Box::new(EditorTool), Box::new(CertificatesTool)],
         }
     }
 }
@@ -108,7 +141,7 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{EditorTool, Tool, ToolRegistry};
+    use super::{CertificatesTool, EditorTool, Tool, ToolRegistry};
     use crate::app::{Pane, Selection, Target};
 
     fn selection(target: Option<Target>) -> Selection {
@@ -173,26 +206,49 @@ mod tests {
     }
 
     #[test]
+    fn the_certificates_tool_applies_only_to_a_certificate_file() {
+        assert!(CertificatesTool.applies_to(&selection(Some(file("chain.pem")))));
+        assert!(CertificatesTool.applies_to(&selection(Some(file("server.CRT")))));
+        assert!(!CertificatesTool.applies_to(&selection(Some(file("main.rs")))));
+        assert!(!CertificatesTool.applies_to(&selection(Some(Target::Folder))));
+        assert!(!CertificatesTool.applies_to(&selection(None)));
+    }
+
+    #[test]
+    fn the_picker_offers_the_certificates_tool_beside_the_editor_for_a_certificate_file() {
+        let registry = ToolRegistry::default();
+        assert_eq!(
+            registry.applicable(&selection(Some(file("chain.pem")))),
+            vec![0, 1]
+        );
+        assert_eq!(
+            registry.applicable(&selection(Some(file("main.rs")))),
+            vec![0]
+        );
+    }
+
+    #[test]
     fn a_tool_that_stops_applying_hands_back_to_the_default() {
         let mut registry = ToolRegistry::default();
         registry.register(Box::new(TxtTool));
 
         // Chosen while a `.txt` file is selected: it applies, and stays
-        // active.
+        // active. Index 2: 0 is the editor, 1 the compiled-in certificates
+        // tool, so `TxtTool` lands at 2.
         assert_eq!(
-            registry.active_index(1, &selection(Some(file("notes.txt")))),
-            1
+            registry.active_index(2, &selection(Some(file("notes.txt")))),
+            2
         );
 
         // The selection moves to a file `TxtTool` has nothing to say
         // about: the slot falls back to the editor rather than keeping a
         // tool that no longer applies.
         assert_eq!(
-            registry.active_index(1, &selection(Some(file("main.rs")))),
+            registry.active_index(2, &selection(Some(file("main.rs")))),
             0
         );
         assert_eq!(
-            registry.active_index(1, &selection(Some(Target::Folder))),
+            registry.active_index(2, &selection(Some(Target::Folder))),
             0
         );
     }
