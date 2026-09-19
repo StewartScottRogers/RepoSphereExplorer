@@ -12,7 +12,7 @@ use crate::bindings::{self, Action};
 use crate::render_with_block;
 use protocol::{DirectoryEntry, ReposRoot, Request, Response};
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -22,6 +22,7 @@ use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
 
 /// A directory node in the folders pane's tree. Only directories appear
 /// here; files live in the contents pane.
@@ -385,6 +386,45 @@ fn now_epoch_seconds() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
+/// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
+/// `fs::canonicalize` adds one there, and it then travels through every
+/// request into the messages the status bar shows, where `\\?\C:\dir\file`
+/// is noise the reader has to look past. Only a drive path is unwrapped: a
+/// verbatim UNC path (`\\?\UNC\server\share`) needs its prefix to keep
+/// resolving, and paths on other platforms never carry one. Mirrors the
+/// graphical front end's own `strip_verbatim_prefix`.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let unwrapped = {
+        let text = path.to_string_lossy();
+        text.strip_prefix(r"\\?\")
+            .filter(|rest| {
+                let mut chars = rest.chars();
+                matches!(
+                    (chars.next(), chars.next(), chars.next()),
+                    (Some(drive), Some(':'), Some('\\')) if drive.is_ascii_alphabetic()
+                )
+            })
+            .map(str::to_owned)
+    };
+    unwrapped.map_or(path, PathBuf::from)
+}
+
+/// Canonicalizes `root` for [`App::new`], so its ancestors are well-formed:
+/// a relative root such as "." has `Path::parent()` return `Some("")` (an
+/// empty path, not `None`), which stepping above the root (#642) would
+/// otherwise treat as a real, requestable directory - re-rooting the tree
+/// at "" and leaving every future request targeting a path that resolves to
+/// nothing. Falls back to the given root if it doesn't exist yet or
+/// canonicalization otherwise fails. Mirrors the graphical front end's own
+/// canonicalizing of its root in `App::new`.
+fn canonicalize_root(root: PathBuf) -> PathBuf {
+    strip_verbatim_prefix(std::fs::canonicalize(&root).unwrap_or(root))
+}
+
+/// How long a type-ahead search (#642) stays open for another keystroke to
+/// extend it before the next letter starts a fresh one.
+const TYPE_AHEAD_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// The three-pane explorer's state: a folders tree, the selected folder's
 /// contents, and the selected file's preview.
 pub struct App {
@@ -448,6 +488,23 @@ pub struct App {
     /// row's status asked for, matching the behaviour before scrolling was
     /// scoped at all.
     contents_viewport_rows: usize,
+    /// Roots visited by stepping above the tree's own root (#642), oldest
+    /// first, with [`App::history_index`] naming the one currently shown -
+    /// what Back and Forward walk. Empty until the first step above the
+    /// root; ordinary movement within the tree is never recorded here, the
+    /// same asymmetry the graphical front end's own history keeps.
+    history: Vec<PathBuf>,
+    /// Which entry of [`App::history`] is currently shown.
+    history_index: usize,
+    /// Letters typed since [`App::type_ahead_at`], narrowing a jump to the
+    /// first Folders or Contents row whose name starts with them (#642).
+    /// Cleared once [`TYPE_AHEAD_TIMEOUT`] passes without another letter,
+    /// or Escape is pressed.
+    type_ahead_buffer: String,
+    /// When the last letter was added to [`App::type_ahead_buffer`], so the
+    /// next one can tell whether it extends that search or starts a fresh
+    /// one.
+    type_ahead_at: Option<Instant>,
     /// Set once the user has asked to quit.
     pub should_quit: bool,
 }
@@ -458,7 +515,7 @@ impl App {
     #[must_use]
     pub fn new(root: PathBuf) -> Self {
         let mut app = Self {
-            root: FolderNode::root(root),
+            root: FolderNode::root(canonicalize_root(root)),
             tree_selected: 0,
             contents: Vec::new(),
             contents_dir: PathBuf::new(),
@@ -479,6 +536,10 @@ impl App {
             contents_scroll: 0,
             drawn_contents_offset: std::cell::Cell::new(None),
             contents_viewport_rows: usize::MAX,
+            history: Vec::new(),
+            history_index: 0,
+            type_ahead_buffer: String::new(),
+            type_ahead_at: None,
             should_quit: false,
         };
         app.load_contents_for_selected();
@@ -501,6 +562,15 @@ impl App {
     #[must_use]
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    /// The browsed folder as one string - so a test outside this module
+    /// can tell that stepping above the root (#642) actually moved it,
+    /// without scraping a rendered pane a long enough name would scroll
+    /// out of. Mirrors the graphical front end's own `address_path`.
+    #[must_use]
+    pub fn address_path(&self) -> String {
+        self.selected_dir_path().to_string_lossy().into_owned()
     }
 
     fn selected_dir_path(&self) -> PathBuf {
@@ -831,8 +901,33 @@ impl App {
             Mode::Normal => {}
         }
         if let Some(action) = bindings::find(key, self.focus) {
+            if matches!(action, Action::CancelOrQuit) {
+                self.end_type_ahead();
+            }
             self.dispatch(action);
+            return;
         }
+        // A letter the binding table does not already claim in this pane
+        // starts or extends a type-ahead search (#642); one it does claim
+        // keeps running that command instead, so a reader typing "readme"
+        // in the Contents pane still gets Rename out of the leading `r`
+        // rather than having it swallowed by the search.
+        if let KeyCode::Char(c) = key.code
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && matches!(self.focus, Focus::Folders | Focus::Contents)
+        {
+            self.type_ahead_key(c);
+        }
+    }
+
+    /// Clears any type-ahead search in progress, without touching anything
+    /// else - what Escape does to it (#642), alongside whatever the key
+    /// also cancels or quits.
+    fn end_type_ahead(&mut self) {
+        self.type_ahead_buffer.clear();
+        self.type_ahead_at = None;
     }
 
     /// Runs what a matched [`Action`] from the binding table means for this
@@ -858,6 +953,9 @@ impl App {
             Action::ContentsSortType => self.set_sort_key(SortKey::Kind),
             Action::ContentsSortSize => self.set_sort_key(SortKey::Size),
             Action::ContentsSortModified => self.set_sort_key(SortKey::Modified),
+            Action::NavigateAboveRoot => self.navigate_above_root(),
+            Action::GoBack => self.go_back(),
+            Action::GoForward => self.go_forward(),
         }
     }
 
@@ -1031,6 +1129,12 @@ impl App {
         }
     }
 
+    /// The breadcrumb line drawn above the panes (#642): the folder
+    /// currently shown, fitted to `width` columns.
+    fn breadcrumb_text(&self, width: usize) -> String {
+        breadcrumb_line(&self.selected_dir_path(), width)
+    }
+
     /// What [`App::status_line`] shows in [`Mode::Normal`] with nothing
     /// else to say: the Contents pane's counts (#641) when it holds a
     /// repository, with the selected row's stale-fetch words appended when
@@ -1153,6 +1257,163 @@ impl App {
                 self.tree_selected = row;
                 self.load_contents_for_selected();
             }
+            return;
+        }
+        // At the tree's own root, with nothing left to collapse: the old
+        // dead end (#642) - step above it instead, exactly as the
+        // dedicated parent key does.
+        self.navigate_above_root();
+    }
+
+    /// Steps above the tree's own root, to its filesystem parent - "Above
+    /// the root" (#642). D8's soft boundary means the Repos Directory is
+    /// one configuration point, not a hard ceiling the reader cannot pass;
+    /// nothing about where a fresh launch opens changes (D7), because
+    /// nothing here is persisted between runs. A no-op at the filesystem
+    /// root, which has no parent to step to.
+    fn navigate_above_root(&mut self) {
+        let Some(parent) = self.root.path.parent().map(PathBuf::from) else {
+            return;
+        };
+        self.remember_current();
+        self.push_history(parent.clone());
+        self.browse(parent);
+    }
+
+    /// Re-roots the tree at `path` and browses it, without touching
+    /// history - what [`App::go_back`] and [`App::go_forward`] land on,
+    /// and what [`App::navigate_above_root`] does once history has
+    /// recorded where it came from.
+    fn browse(&mut self, path: PathBuf) {
+        self.root = FolderNode::root(path);
+        self.tree_selected = 0;
+        self.load_contents_for_selected();
+    }
+
+    /// Records the root currently shown as the newest history entry -
+    /// unless it is already there, which it is whenever nothing has moved
+    /// the root since the last time this ran.
+    fn remember_current(&mut self) {
+        let current = self.root.path.clone();
+        if self.history.is_empty() {
+            self.history.push(current);
+            self.history_index = 0;
+        } else {
+            self.push_history(current);
+        }
+    }
+
+    /// Records `path` as the newest history entry. Anything ahead of the
+    /// current position is dropped, the way a browser discards the forward
+    /// stack once you navigate somewhere new. A repeat of the current entry
+    /// is not recorded.
+    fn push_history(&mut self, path: PathBuf) {
+        if self.history.get(self.history_index) == Some(&path) {
+            return;
+        }
+        if !self.history.is_empty() {
+            self.history.truncate(self.history_index + 1);
+        }
+        self.history.push(path);
+        self.history_index = self.history.len() - 1;
+    }
+
+    /// Whether Back has an earlier root to return to.
+    fn can_go_back(&self) -> bool {
+        self.history_index > 0
+    }
+
+    /// Whether Forward has a root to return to.
+    fn can_go_forward(&self) -> bool {
+        self.history_index + 1 < self.history.len()
+    }
+
+    /// Goes back one root in history, noting on the status line when there
+    /// is nowhere to go (#642).
+    fn go_back(&mut self) {
+        if !self.can_go_back() {
+            self.status = Some("nowhere to go back to".to_owned());
+            return;
+        }
+        self.remember_current();
+        self.history_index -= 1;
+        if let Some(path) = self.history.get(self.history_index).cloned() {
+            self.browse(path);
+        }
+    }
+
+    /// Goes forward one root in history, noting on the status line when
+    /// there is nowhere to go (#642).
+    fn go_forward(&mut self) {
+        if !self.can_go_forward() {
+            self.status = Some("nowhere to go forward to".to_owned());
+            return;
+        }
+        self.history_index += 1;
+        if let Some(path) = self.history.get(self.history_index).cloned() {
+            self.browse(path);
+        }
+    }
+
+    /// Adds `c` to the type-ahead search, starting a fresh one if more
+    /// than [`TYPE_AHEAD_TIMEOUT`] has passed since the last letter, then
+    /// jumps the focused pane to the first row matching it (#642). Split
+    /// from [`App::type_ahead_key`] so a test can supply `now` instead of
+    /// waiting a real second for the timeout to matter.
+    fn type_ahead_key_at(&mut self, c: char, now: Instant) {
+        let stale = match self.type_ahead_at {
+            Some(at) => now.saturating_duration_since(at) >= TYPE_AHEAD_TIMEOUT,
+            None => true,
+        };
+        if stale {
+            self.type_ahead_buffer.clear();
+        }
+        self.type_ahead_buffer.push(c.to_ascii_lowercase());
+        self.type_ahead_at = Some(now);
+        let prefix = self.type_ahead_buffer.clone();
+        match self.focus {
+            Focus::Folders => self.jump_folders_to(&prefix),
+            Focus::Contents => self.jump_contents_to(&prefix),
+            Focus::File => {}
+        }
+    }
+
+    /// As [`App::type_ahead_key_at`], timed against the real clock.
+    fn type_ahead_key(&mut self, c: char) {
+        self.type_ahead_key_at(c, Instant::now());
+    }
+
+    /// Moves the Folders tree cursor to the first visible row whose name
+    /// starts with `prefix`, matched without regard to case. Does nothing
+    /// when no row matches, or the match is the row already selected.
+    fn jump_folders_to(&mut self, prefix: &str) {
+        let rows = self.root.flatten();
+        let Some(index) = rows.iter().position(|(_, indices)| {
+            self.root
+                .node_at(indices)
+                .is_some_and(|node| node.name.to_lowercase().starts_with(prefix))
+        }) else {
+            return;
+        };
+        if index != self.tree_selected {
+            self.tree_selected = index;
+            self.load_contents_for_selected();
+        }
+    }
+
+    /// As [`App::jump_folders_to`], for the Contents pane's listing.
+    fn jump_contents_to(&mut self, prefix: &str) {
+        let Some(index) = self
+            .contents
+            .iter()
+            .position(|entry| entry.name.to_lowercase().starts_with(prefix))
+        else {
+            return;
+        };
+        if index != self.contents_selected {
+            self.contents_selected = index;
+            self.clamp_contents_scroll();
+            self.load_file_view();
         }
     }
 
@@ -1259,6 +1520,31 @@ fn fit_help_line(width: usize) -> String {
     line
 }
 
+/// The breadcrumb line above the panes (#642): `path`, fitted to `width`
+/// columns. Shortened from the left with a leading ellipsis when it does
+/// not fit, so the folder currently shown stays visible - the root that
+/// anchors it is what a reader needs least once the path has grown long.
+fn breadcrumb_line(path: &Path, width: usize) -> String {
+    const ELLIPSIS: char = '\u{2026}';
+    if width == 0 {
+        return String::new();
+    }
+    let full = path.display().to_string();
+    if full.chars().count() <= width {
+        return full;
+    }
+    let budget = width.saturating_sub(1);
+    let tail: String = full
+        .chars()
+        .rev()
+        .take(budget)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{ELLIPSIS}{tail}")
+}
+
 fn pane_block(title: &str, focused: bool) -> Block<'_> {
     let style = if focused {
         Style::default().fg(Color::Yellow)
@@ -1269,11 +1555,34 @@ fn pane_block(title: &str, focused: bool) -> Block<'_> {
 }
 
 /// Renders the three-pane explorer into `area` of `frame`.
+///
+/// A one-row-tall terminal keeps its one row for the status line, matching
+/// the behaviour before #642's breadcrumb line existed: below two rows
+/// there is no room to spare it one.
 pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let show_breadcrumb = area.height >= 2;
+    let mut constraints = Vec::with_capacity(3);
+    if show_breadcrumb {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Min(0));
+    constraints.push(Constraint::Length(1));
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints(constraints)
         .split(area);
+    let (breadcrumb_area, panes_area, status_area) = if show_breadcrumb {
+        (Some(rows[0]), rows[1], rows[2])
+    } else {
+        (None, rows[0], rows[1])
+    };
+
+    if let Some(breadcrumb_area) = breadcrumb_area {
+        frame.render_widget(
+            Paragraph::new(app.breadcrumb_text(breadcrumb_area.width.into())),
+            breadcrumb_area,
+        );
+    }
 
     let columns = Layout::default()
         .direction(Direction::Horizontal)
@@ -1282,15 +1591,15 @@ pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Constraint::Percentage(35),
             Constraint::Percentage(40),
         ])
-        .split(rows[0]);
+        .split(panes_area);
 
     render_folders(frame, columns[0], app);
     render_contents(frame, columns[1], app);
     render_file(frame, columns[2], app);
 
     frame.render_widget(
-        Paragraph::new(app.status_line_at(rows[1].width.into())),
-        rows[1],
+        Paragraph::new(app.status_line_at(status_area.width.into())),
+        status_area,
     );
 }
 
@@ -1732,7 +2041,7 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 mod tests {
     use super::{
         App, CHANGED_MARKER, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER, RowStatus,
-        STALE_FETCH_MARKER, render_app, render_contents,
+        STALE_FETCH_MARKER, breadcrumb_line, render_app, render_contents,
     };
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
@@ -2997,6 +3306,44 @@ mod tests {
     }
 
     #[test]
+    fn breadcrumb_line_shows_the_full_path_when_it_fits_a_wide_terminal() {
+        let path = Path::new("/repos/project");
+
+        assert_eq!(breadcrumb_line(path, 40), "/repos/project");
+    }
+
+    #[test]
+    fn breadcrumb_line_is_shortened_from_the_left_on_a_narrow_terminal() {
+        let path = Path::new("/very/deeply/nested/repos/project");
+
+        let line = breadcrumb_line(path, 15);
+
+        assert_eq!(line.chars().count(), 15);
+        assert!(
+            line.starts_with('\u{2026}'),
+            "a leading ellipsis marks where it was cut: {line:?}"
+        );
+        assert!(
+            line.ends_with("project"),
+            "the folder being shown stays visible: {line:?}"
+        );
+    }
+
+    #[test]
+    fn the_breadcrumb_line_is_drawn_above_the_panes() {
+        let root = notional_root("breadcrumb-wired-in");
+        let app = app_showing(&root, &[("alpha", true)]);
+
+        let rows = drawn_rows(80, 8, &app);
+
+        assert!(
+            rows[0].contains(&root.display().to_string()),
+            "the browsed folder's path is the first row, at a wide enough terminal: {:?}",
+            rows[0]
+        );
+    }
+
+    #[test]
     fn a_name_wider_than_its_pane_is_cut_to_the_pane() {
         let long = "an-extremely-long-file-name-that-no-pane-here-could-possibly-hold.txt";
         let app = app_showing(&notional_root("long-names"), &[(long, false)]);
@@ -3408,7 +3755,7 @@ mod tests {
     }
 
     #[test]
-    fn a_collapsed_root_hides_everything_below_it_and_left_again_does_nothing() {
+    fn a_collapsed_root_hides_everything_below_it_and_left_again_steps_above_it() {
         let root = notional_root("collapse-the-root");
         let mut app = app_showing(&root, &[("alpha", true)]);
         assert_eq!(app.root.flatten().len(), 2);
@@ -3419,13 +3766,80 @@ mod tests {
 
         app.handle_key(KeyCode::Left);
         assert_eq!(
-            app.tree_selected, 0,
-            "there is nothing above the root to step out to"
+            app.root.path,
+            root.parent().expect("a notional root has a parent"),
+            "left again, with nothing left to collapse, steps above the root (#642)"
         );
+        assert_eq!(app.tree_selected, 0);
         assert!(
-            app.pending_contents.is_none(),
-            "and nothing was fetched for a move that did not happen"
+            app.pending_contents.is_some(),
+            "and the parent's own listing is fetched"
         );
+    }
+
+    #[test]
+    fn the_dedicated_parent_key_steps_above_the_root_from_any_pane() {
+        let root = notional_root("above-root-parent-key");
+        let mut app = app_showing(&root, &[("alpha", true)]);
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+
+        assert_eq!(
+            app.root.path,
+            root.parent().expect("a notional root has a parent"),
+            "the parent key steps above the root even with Contents focused"
+        );
+    }
+
+    #[test]
+    fn navigating_above_the_root_does_not_change_where_a_fresh_launch_opens() {
+        // D7: every launch opens at the configured Repos Directory, and
+        // nothing about a run's own navigation is remembered between runs.
+        let root = notional_root("d7-anchor-holds");
+        let mut app = app_showing(&root, &[("alpha", true)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+        assert_ne!(app.root.path, root, "sanity: navigation actually moved");
+
+        let fresh = App::new(root.clone());
+
+        assert_eq!(
+            fresh.root.path, root,
+            "a fresh launch still opens at the configured root"
+        );
+    }
+
+    #[test]
+    fn back_and_forward_have_nowhere_to_go_until_something_steps_above_the_root() {
+        let root = notional_root("nowhere-to-go");
+        let mut app = app_showing(&root, &[("alpha", true)]);
+
+        app.go_back();
+        assert_eq!(app.status_line(), "nowhere to go back to");
+
+        app.go_forward();
+        assert_eq!(app.status_line(), "nowhere to go forward to");
+    }
+
+    #[test]
+    fn back_and_forward_walk_the_roots_that_stepping_above_the_root_visited() {
+        let root = notional_root("walk-history");
+        let mut app = app_showing(&root, &[("alpha", true)]);
+        assert!(!app.can_go_back(), "nowhere to go back to yet");
+        assert!(!app.can_go_forward());
+
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+        let parent = app.root.path.clone();
+        assert!(app.can_go_back());
+        assert!(!app.can_go_forward());
+
+        app.go_back();
+        assert_eq!(app.root.path, root, "back returns to where this started");
+        assert!(app.can_go_forward(), "and forward returns");
+
+        app.go_forward();
+        assert_eq!(app.root.path, parent);
     }
 
     #[test]
@@ -3538,13 +3952,15 @@ mod tests {
             .expect("a draw into the test backend");
         let buffer = terminal.backend().buffer().clone();
 
+        // Row 0 is the breadcrumb line (#642); the panes' own top border
+        // sits on row 1.
         assert_ne!(
-            buffer[(0, 0)].fg,
+            buffer[(0, 1)].fg,
             Color::Yellow,
             "the folders pane does not have focus"
         );
         assert_eq!(
-            buffer[(10, 0)].fg,
+            buffer[(10, 1)].fg,
             Color::Yellow,
             "the contents pane does, and its border is how a reader can tell"
         );
@@ -3557,21 +3973,22 @@ mod tests {
         app.focus = Focus::Contents;
         app.handle_key(KeyCode::Down);
         assert_eq!(app.contents_selected, 1);
-        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("a test terminal");
+        let mut terminal = Terminal::new(TestBackend::new(40, 7)).expect("a test terminal");
         terminal
             .draw(|frame| render_app(frame, frame.area(), &app))
             .expect("a draw into the test backend");
         let buffer = terminal.backend().buffer().clone();
 
-        // Row 0 is the pane's top border, row 1 is the table header, so
-        // the first entry sits at row 2 and the second at row 3.
+        // Row 0 is the breadcrumb line (#642), row 1 the pane's top
+        // border, row 2 the table header, so the first entry sits at row
+        // 3 and the second at row 4.
         assert_eq!(
-            buffer[(11, 3)].bg,
+            buffer[(11, 4)].bg,
             Color::Cyan,
             "the second row is the selected one"
         );
         assert_ne!(
-            buffer[(11, 2)].bg,
+            buffer[(11, 3)].bg,
             Color::Cyan,
             "and the first one is not, or the reader cannot tell them apart"
         );
@@ -3695,6 +4112,97 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
 
         assert!(app.should_quit, "Ctrl+Q should quit, the same as plain q");
+    }
+
+    // ---- #642: type-ahead does not swallow a command key ----
+
+    #[test]
+    fn typing_a_letter_not_bound_to_a_command_jumps_the_contents_selection() {
+        let root = notional_root("type-ahead-contents");
+        let mut app = app_showing(
+            &root,
+            &[
+                ("alpha.txt", false),
+                ("beta.txt", false),
+                ("gamma.txt", false),
+            ],
+        );
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('g'));
+
+        assert_eq!(app.contents_selected, 2, "typing g jumped to gamma.txt");
+    }
+
+    #[test]
+    fn a_command_key_still_runs_its_command_instead_of_being_swallowed_by_type_ahead() {
+        let root = notional_root("type-ahead-does-not-swallow-r");
+        let mut app = app_showing(&root, &[("readme.txt", false)]);
+        app.focus = Focus::Contents;
+
+        // `r` is bound to Rename in the Contents pane; it must still rename
+        // even though a row starts with it (#642's own acceptance check).
+        app.handle_key(KeyCode::Char('r'));
+
+        assert_eq!(
+            mode_of(&app),
+            "rename",
+            "a bound command key must not be swallowed by type-ahead"
+        );
+    }
+
+    #[test]
+    fn typing_a_letter_jumps_the_folders_selection_too() {
+        let root = notional_root("type-ahead-folders");
+        let mut app = app_showing(&root, &[("apple", true), ("banana", true)]);
+
+        app.handle_key(KeyCode::Char('b'));
+
+        assert_eq!(
+            app.tree_selected, 2,
+            "row 0 is the root, row 1 apple, row 2 banana"
+        );
+    }
+
+    #[test]
+    fn letters_typed_within_a_second_extend_the_search_and_a_pause_starts_fresh() {
+        let root = notional_root("type-ahead-timeout");
+        let mut app = app_showing(&root, &[("alpha.txt", false), ("apricot.txt", false)]);
+        app.focus = Focus::Contents;
+        let start = std::time::Instant::now();
+
+        app.type_ahead_key_at('a', start);
+        assert_eq!(app.contents_selected, 0, "the first a matches alpha.txt");
+
+        app.type_ahead_key_at('p', start + std::time::Duration::from_millis(200));
+        assert_eq!(
+            app.contents_selected, 1,
+            "ap, typed quickly, narrows to apricot.txt"
+        );
+
+        app.type_ahead_key_at('a', start + std::time::Duration::from_secs(2));
+        assert_eq!(
+            app.contents_selected, 0,
+            "typed after the timeout, a starts a fresh search rather than extending \"apa\""
+        );
+    }
+
+    #[test]
+    fn escape_ends_a_type_ahead_search_in_progress() {
+        let root = notional_root("type-ahead-escape");
+        let mut app = app_showing(&root, &[("alpha.txt", false), ("apricot.txt", false)]);
+        app.focus = Focus::Contents;
+        let start = std::time::Instant::now();
+        app.type_ahead_key_at('a', start);
+        app.contents_selected = 0;
+
+        app.handle_key(KeyCode::Esc);
+        app.type_ahead_key_at('p', start + std::time::Duration::from_millis(200));
+
+        assert_eq!(
+            app.contents_selected, 0,
+            "Escape ended the search, so p alone matches nothing starting with it"
+        );
     }
 
     #[test]

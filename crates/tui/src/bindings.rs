@@ -68,6 +68,12 @@ pub enum Action {
     /// Sorts the contents by Modified, reversing direction if already
     /// sorted by it.
     ContentsSortModified,
+    /// Steps above the tree's own root, to its parent (#642).
+    NavigateAboveRoot,
+    /// Returns to the previously visited root.
+    GoBack,
+    /// Returns to the root Back moved away from.
+    GoForward,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -286,6 +292,27 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Sort by modified",
         action: Action::ContentsSortModified,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Up,
+        modifiers: KeyModifiers::ALT,
+        description: "Go to the parent folder",
+        action: Action::NavigateAboveRoot,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Left,
+        modifiers: KeyModifiers::ALT,
+        description: "Go back",
+        action: Action::GoBack,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Right,
+        modifiers: KeyModifiers::ALT,
+        description: "Go forward",
+        action: Action::GoForward,
     },
 ];
 
