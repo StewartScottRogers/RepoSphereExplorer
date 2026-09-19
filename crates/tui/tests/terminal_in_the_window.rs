@@ -189,3 +189,122 @@ fn tests_do_not_reach_the_developers_own_service() {
          own service listens on: {debug}"
     );
 }
+
+/// Every repository row on screen is asked about, however the reader got
+/// there (#641).
+///
+/// `App` used to keep a scroll model of its own while the table re-derived
+/// its window from the selected row on each frame. The two agree while a
+/// reader holds Down and part company after a jump: sort the listing, step
+/// back up one, and a row plainly on screen had never been asked about and
+/// kept the not-known marker for ever (the review of #672). The table's own
+/// offset is the one answer now, and this drives it through a real terminal
+/// rather than through `App` alone.
+#[test]
+fn a_row_that_comes_into_view_after_a_sort_is_asked_about() {
+    let _serial = serially();
+    common::ensure_service();
+    let root = common::scratch("statuses-after-a-sort");
+    // Enough rows to need scrolling in a short terminal, named so that
+    // sorting the other way moves the selection a long way.
+    for index in 0..20u32 {
+        let repository = root.join(format!("repo-{index:02}"));
+        std::fs::create_dir_all(&repository).expect("a fixture directory");
+        // Real checkouts: the working-tree status of a hand-made `.git`
+        // answers at once, which would hide the very marker this test is
+        // about.
+        let made = std::process::Command::new("git")
+            .args(["init", "--quiet", "--initial-branch", "main", "."])
+            .current_dir(&repository)
+            .status()
+            .expect("git should be on PATH");
+        assert!(made.success(), "git init should make the fixture");
+        std::fs::write(repository.join("tracked.txt"), "a file\n").expect("a tracked file");
+        // Committed, so the working tree has an answer to give: an
+        // uncommitted checkout answers "cannot tell" at once, which is not
+        // the marker this test is about.
+        for arguments in [
+            vec!["add", "--all"],
+            vec![
+                "-c",
+                "user.name=Repos Explorer Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--message",
+                "a commit",
+            ],
+        ] {
+            let ran = std::process::Command::new("git")
+                .args(&arguments)
+                .current_dir(&repository)
+                .status()
+                .expect("git should be on PATH");
+            assert!(ran.success(), "git {arguments:?} should make the fixture");
+        }
+    }
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 12)).expect("a test terminal");
+    let mut app = App::new(root.clone());
+    common::settle(&mut terminal, &mut app);
+
+    // Into the listing, then a long way down it.
+    press(&mut terminal, &mut app, KeyCode::Tab);
+    for _ in 0..14 {
+        press(&mut terminal, &mut app, KeyCode::Down);
+    }
+    // Sort the other way: the selected row keeps its place in the listing
+    // and everything around it moves.
+    press(&mut terminal, &mut app, KeyCode::Char('n'));
+    let after_a_step_back = press(&mut terminal, &mut app, KeyCode::Up);
+    assert!(
+        !after_a_step_back.is_empty(),
+        "the listing is drawn after the sort"
+    );
+
+    // What the front end believes is on screen has to be what it drew:
+    // its status requests are scoped by that belief, so a row it has wrong
+    // is a row nobody ever asks about.
+    let settled = wait_for(&mut terminal, &mut app, "repo-");
+    // The Contents pane's own columns, inside its borders: the Folders
+    // tree down the left holds the same names, and the three panes are laid
+    // out 25/35/40 with a one-column border each side.
+    let contents_columns = |row: &str| row.chars().skip(26).take(33).collect::<String>();
+    let drawn_names: Vec<String> = drawn_rows(&terminal)
+        .into_iter()
+        .filter_map(|row| {
+            contents_columns(&row)
+                .split_whitespace()
+                .find(|word| word.starts_with("repo-"))
+                .map(|name| name.trim_end_matches('/').to_owned())
+        })
+        .collect();
+    assert!(
+        !drawn_names.is_empty(),
+        "repository rows are on screen: {settled}"
+    );
+
+    let believed: Vec<String> = app
+        .visible_rows()
+        .filter_map(|index| app.content_name_at(index))
+        .map(|name| name.trim_end_matches('/').to_owned())
+        .collect();
+    assert_eq!(
+        drawn_names, believed,
+        "the rows the front end asks about are the rows it drew"
+    );
+
+    let unanswered: Vec<String> = drawn_rows(&terminal)
+        .into_iter()
+        .map(|row| contents_columns(&row))
+        .filter(|row| row.contains("repo-") && row.contains('\u{2026}'))
+        .collect();
+    assert!(
+        unanswered.is_empty(),
+        "and every one of them has an answer; these do not:\n{}",
+        unanswered.join("\n")
+    );
+}
