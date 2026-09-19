@@ -924,6 +924,34 @@ struct AllRepositoriesView {
     previous_selected: usize,
 }
 
+/// The Certificates tool's own state (#622): every certificate-bearing
+/// file found under the Repos Directory, shown in the tool slot in place
+/// of the editor, alongside the ordinary Folders/Contents browsing rather
+/// than replacing it the way [`Found`] and [`AllRepositoriesView`] replace
+/// the Contents pane.
+struct CertificatesView {
+    /// The Repos Directory the search was run against, captured at request
+    /// time: [`App::root`] can move on to a different folder - a
+    /// certificate row's own selection does exactly that - while this scan
+    /// stays about the directory it was asked for, the same reason
+    /// [`AllRepositoriesView::root`] is captured rather than read again
+    /// later.
+    root: PathBuf,
+    /// What the search has found so far.
+    entries: Vec<protocol::CertificateFinding>,
+    /// Whether the answer is still on its way.
+    loading: bool,
+    /// Which column [`App::certificate_rows`] is sorted by, and which way.
+    /// Kept here rather than on `App` itself, alongside `loading` and
+    /// `private_keys_shown` below, so a bool that only means anything while
+    /// this view exists is not a fourth bool field on `App` (rule 3:
+    /// `clippy::struct_excessive_bools`).
+    sort_key: CertificateSortKey,
+    sort_ascending: bool,
+    /// Whether the private keys line's own file list is expanded.
+    private_keys_shown: bool,
+}
+
 /// What to do once a pending operation completes successfully, beyond the
 /// reload every operation already triggers.
 #[derive(Debug)]
@@ -1221,6 +1249,141 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
+/// Where a [`plugin_certificate::CertificateStatus`] sorts among the
+/// Certificates tool's rows: expired first, then soonest to expire, an
+/// unreadable block or file last of all (#622's own rank, one higher than
+/// every real status - there is no [`plugin_certificate::CertificateStatus`]
+/// variant for it).
+const fn certificate_status_rank(status: plugin_certificate::CertificateStatus) -> u8 {
+    match status {
+        plugin_certificate::CertificateStatus::Expired => 0,
+        plugin_certificate::CertificateStatus::Expiring => 1,
+        plugin_certificate::CertificateStatus::NotYetValid => 2,
+        plugin_certificate::CertificateStatus::Valid => 3,
+    }
+}
+
+/// The rank an unreadable block or file sorts at - after every real status
+/// (#622).
+const CERTIFICATE_UNREADABLE_RANK: u8 = 4;
+
+/// `status`, in the words the Certificates tool's Status column shows.
+fn certificate_status_text(
+    status: plugin_certificate::CertificateStatus,
+    not_after: i64,
+    now: i64,
+) -> String {
+    match status {
+        plugin_certificate::CertificateStatus::Expired => "Expired".to_owned(),
+        plugin_certificate::CertificateStatus::Expiring => {
+            let seconds_left = (not_after - now).max(0);
+            let days = (seconds_left + 86_399) / 86_400;
+            format!("Expires in {days} day{}", if days == 1 { "" } else { "s" })
+        }
+        plugin_certificate::CertificateStatus::NotYetValid => "Not yet valid".to_owned(),
+        plugin_certificate::CertificateStatus::Valid => "Valid".to_owned(),
+    }
+}
+
+/// The material one Certificates row is sorted on - kept apart from
+/// [`CertificateRow`] itself, which is only ever what the reader sees.
+struct CertificateRowKey {
+    status_rank: u8,
+    not_after: Option<i64>,
+    subject: String,
+    repository: String,
+    file: String,
+}
+
+/// The row (and its sort key) for a block that did not decode - a
+/// [`protocol::CertificateBlock::Unreadable`], or a whole file reported as
+/// [`protocol::CertificateFindingKind::Unreadable`].
+fn unreadable_certificate_row(
+    finding: &protocol::CertificateFinding,
+    repository: &str,
+) -> (CertificateRowKey, CertificateRow) {
+    (
+        CertificateRowKey {
+            status_rank: CERTIFICATE_UNREADABLE_RANK,
+            not_after: None,
+            subject: String::new(),
+            repository: repository.to_owned(),
+            file: finding.path.clone(),
+        },
+        CertificateRow {
+            status: "Unreadable".to_owned(),
+            status_warning: false,
+            subject: String::new(),
+            expires: String::new(),
+            repository: repository.to_owned(),
+            file: finding.path.clone(),
+        },
+    )
+}
+
+/// The row (and its sort key) for one parsed certificate.
+fn certificate_summary_row(
+    finding: &protocol::CertificateFinding,
+    repository: &str,
+    summary: &protocol::CertificateSummary,
+    now: i64,
+) -> (CertificateRowKey, CertificateRow) {
+    let status = plugin_certificate::certificate_status(summary.not_before, summary.not_after, now);
+    (
+        CertificateRowKey {
+            status_rank: certificate_status_rank(status),
+            not_after: Some(summary.not_after),
+            subject: summary.subject.clone(),
+            repository: repository.to_owned(),
+            file: finding.path.clone(),
+        },
+        CertificateRow {
+            status: certificate_status_text(status, summary.not_after, now),
+            status_warning: matches!(
+                status,
+                plugin_certificate::CertificateStatus::Expired
+                    | plugin_certificate::CertificateStatus::Expiring
+            ),
+            subject: summary.subject.clone(),
+            expires: format_timestamp(u64::try_from(summary.not_after).ok()),
+            repository: repository.to_owned(),
+            file: finding.path.clone(),
+        },
+    )
+}
+
+/// Orders `rows` by `key`, reversing the whole order when `ascending` is
+/// `false` - the same shape [`App::sort_contents`] uses, without a fixed
+/// grouping ahead of the column: [`CertificateSortKey::Status`] already
+/// carries "expired first, then soonest to expire" as its own tiebreak.
+fn sort_certificate_rows(
+    rows: &mut [(CertificateRowKey, CertificateRow)],
+    key: CertificateSortKey,
+    ascending: bool,
+) {
+    rows.sort_by(|(a, _), (b, _)| {
+        let ordering = match key {
+            CertificateSortKey::Status => a
+                .status_rank
+                .cmp(&b.status_rank)
+                .then_with(|| a.not_after.cmp(&b.not_after)),
+            CertificateSortKey::Subject => a.subject.to_lowercase().cmp(&b.subject.to_lowercase()),
+            CertificateSortKey::Expires => a.not_after.cmp(&b.not_after),
+            CertificateSortKey::Repository => a
+                .repository
+                .to_lowercase()
+                .cmp(&b.repository.to_lowercase()),
+            CertificateSortKey::File => a.file.to_lowercase().cmp(&b.file.to_lowercase()),
+        }
+        .then_with(|| a.file.cmp(&b.file));
+        if ascending {
+            ordering
+        } else {
+            ordering.reverse()
+        }
+    });
+}
+
 /// Whether a clipboard entry was copied or cut.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClipboardMode {
@@ -1261,6 +1424,49 @@ impl SortKey {
             1 => Some(Self::Size),
             2 => Some(Self::Kind),
             3 => Some(Self::Modified),
+            _ => None,
+        }
+    }
+}
+
+/// Which column the Certificates tool's table (#622) is sorted by. The
+/// default, [`Self::Status`] ascending, is "expired first, then soonest to
+/// expire": [`certificate_status_rank`] orders the four statuses that way,
+/// and this key's own tiebreak is `not_after` ascending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertificateSortKey {
+    /// Status rank, then soonest to expire.
+    Status,
+    /// Subject, case-insensitively.
+    Subject,
+    /// Expiry date.
+    Expires,
+    /// Repository, case-insensitively.
+    Repository,
+    /// File path, case-insensitively.
+    File,
+}
+
+impl CertificateSortKey {
+    /// The column index the UI uses for this key.
+    const fn index(self) -> i32 {
+        match self {
+            Self::Status => 0,
+            Self::Subject => 1,
+            Self::Expires => 2,
+            Self::Repository => 3,
+            Self::File => 4,
+        }
+    }
+
+    /// The key a column index names, if any.
+    const fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(Self::Status),
+            1 => Some(Self::Subject),
+            2 => Some(Self::Expires),
+            3 => Some(Self::Repository),
+            4 => Some(Self::File),
             _ => None,
         }
     }
@@ -1799,6 +2005,43 @@ pub struct ContentRow {
     pub stale_tooltip: String,
 }
 
+/// One row of the Certificates tool's table (#622), one per certificate -
+/// so a file with several PEM blocks (a chain) contributes one row per
+/// certificate within it, not one row for the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateRow {
+    /// `Expired`, `Expires in 12 days`, `Not yet valid`, `Valid` or
+    /// `Unreadable`, in words.
+    pub status: String,
+    /// Whether `status` should draw in the warning colour - `Expired` and
+    /// `Expiring` - rather than the dim text colour.
+    pub status_warning: bool,
+    /// The certificate subject's distinguished name, empty for an
+    /// unreadable block or file.
+    pub subject: String,
+    /// The formatted expiry date, empty for an unreadable block or file.
+    pub expires: String,
+    /// The nearest working copy holding the file, empty when none.
+    pub repository: String,
+    /// The file's path relative to the Repos Directory.
+    pub file: String,
+}
+
+/// The Certificates tool's summary counts (#622): how many rows carry each
+/// status, and how many private keys were found - not a row, since a
+/// private key carries no status of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CertificateCounts {
+    /// Rows whose status is `Expired`.
+    pub expired: usize,
+    /// Rows whose status is `Expiring`.
+    pub expiring: usize,
+    /// Rows whose status is `Valid`.
+    pub valid: usize,
+    /// Private key blocks found, across every file.
+    pub private_keys: usize,
+}
+
 /// One match in the Go to Repository switcher (#590).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitcherRow {
@@ -2094,6 +2337,11 @@ pub struct App {
     /// applies to the selection - [`Self::active_tool_index`] is what falls
     /// back to the registry's default once it stops.
     chosen_tool: Option<usize>,
+    /// The Certificates tool's own state (#622), while it has been opened
+    /// through the picker or View > Certificates.
+    certificates: Option<CertificatesView>,
+    /// The Certificates tool's search, in flight.
+    pending_certificates: Option<Receiver<io::Result<Response>>>,
     /// Tool windows pinned to a file or folder (#619), by the id their own
     /// window is tracked under - present exactly while pinned; the window
     /// stays open and keyed the same way once unpinned, following the
@@ -2186,6 +2434,8 @@ impl App {
             zoom_percent: crate::zoom::DEFAULT,
             tool_registry: tools::ToolRegistry::default(),
             chosen_tool: None,
+            certificates: None,
+            pending_certificates: None,
             pinned: HashMap::new(),
             next_pin_id: 0,
         };
@@ -2328,6 +2578,12 @@ impl App {
         {
             self.pending_all_repositories = None;
             self.apply_all_repositories_result(result);
+        }
+        if let Some(rx) = &self.pending_certificates
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_certificates = None;
+            self.apply_certificates_result(result);
         }
         let mut answered = Vec::new();
         self.pending_statuses
@@ -4192,7 +4448,8 @@ impl App {
     }
 
     /// F5: re-reads the folder being browsed, or, while All Repositories
-    /// (#591) is open, discards its cached scan and starts another.
+    /// (#591) is open, discards its cached scan and starts another - or,
+    /// while the Certificates tool (#622) is open, asks the search again.
     pub fn refresh(&mut self) {
         if let Some(view) = &mut self.all_repositories {
             view.entries.clear();
@@ -4203,6 +4460,13 @@ impl App {
                 root: root.to_string_lossy().into_owned(),
                 refresh: true,
             }));
+            return;
+        }
+        if let Some(view) = &mut self.certificates {
+            view.entries.clear();
+            view.loading = true;
+            self.status = Some("Looking for certificates…".to_owned());
+            self.pending_certificates = Some(spawn_request(Request::FindCertificates));
             return;
         }
         self.reselect = self
@@ -6129,9 +6393,17 @@ impl App {
     /// The tool the slot is showing now: whichever the picker last chose,
     /// for as long as it still applies to the selection, otherwise the
     /// registry's default (#616 requirement 5's "hands back to the
-    /// default").
+    /// default") - unless the Certificates tool (#622) was opened through
+    /// View > Certificates, which stays active for the whole Repos
+    /// Directory regardless of the selection until the reader chooses a
+    /// different tool from the picker.
     fn active_tool_index(&self) -> usize {
         let selection = self.selection();
+        if self.certificates.is_some()
+            && let Some(chosen) = self.chosen_tool
+        {
+            return chosen;
+        }
         self.chosen_tool.map_or_else(
             || self.tool_registry.default_index(&selection),
             |chosen| self.tool_registry.active_index(chosen, &selection),
@@ -6152,6 +6424,13 @@ impl App {
     #[must_use]
     pub fn active_tool_is_editor(&self) -> bool {
         self.tool_registry.tools()[self.active_tool_index()].id() == "editor"
+    }
+
+    /// Whether the active tool is the Certificates tool (#622) - the slot
+    /// draws its table in place of the editor only then.
+    #[must_use]
+    pub fn active_tool_is_certificates(&self) -> bool {
+        self.tool_registry.tools()[self.active_tool_index()].id() == "certificates"
     }
 
     /// The titles of every tool that applies to the current selection, in
@@ -6192,6 +6471,274 @@ impl App {
         if let Some(&index) = self.tool_registry.applicable(&selection).get(visible_index) {
             self.chosen_tool = Some(index);
         }
+    }
+
+    /// The registered Certificates tool's own index, or `None` if it was
+    /// never compiled in - only true in a test that builds its own
+    /// registry without it.
+    fn certificate_tool_index(&self) -> Option<usize> {
+        self.tool_registry
+            .tools()
+            .iter()
+            .position(|tool| tool.id() == "certificates")
+    }
+
+    /// View > Certificates (#622): opens the Certificates tool in the slot
+    /// for the whole Repos Directory, regardless of the current selection -
+    /// unlike the picker's own offer, which only appears for a certificate
+    /// file. A no-op if the tool was never compiled in.
+    pub fn open_certificates_tool(&mut self) {
+        let Some(index) = self.certificate_tool_index() else {
+            return;
+        };
+        self.chosen_tool = Some(index);
+        self.certificates = Some(CertificatesView {
+            root: self.root.path.clone(),
+            entries: Vec::new(),
+            loading: true,
+            sort_key: CertificateSortKey::Status,
+            sort_ascending: true,
+            private_keys_shown: false,
+        });
+        self.status = Some("Looking for certificates…".to_owned());
+        self.pending_certificates = Some(spawn_request(Request::FindCertificates));
+    }
+
+    /// Plants `response` as if it had just arrived for the Certificates
+    /// tool's own search, for a test that does not run a real service.
+    pub fn apply_certificates_result_for_test(&mut self, response: Response) {
+        self.apply_certificates_result(Ok(response));
+    }
+
+    fn apply_certificates_result(&mut self, result: io::Result<Response>) {
+        let Some(view) = &mut self.certificates else {
+            return;
+        };
+        match result {
+            Ok(Response::Certificates {
+                certificates,
+                complete,
+            }) => {
+                view.entries = certificates;
+                view.loading = !complete;
+                if complete {
+                    self.status = None;
+                }
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("unexpected response to Certificates".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// Whether the Certificates tool's search is still in flight - the
+    /// slot shows "Looking for certificates…" while this is true.
+    #[must_use]
+    pub fn certificates_loading(&self) -> bool {
+        self.certificates.as_ref().is_some_and(|view| view.loading)
+    }
+
+    /// The Certificates tool's table, one row per certificate, sorted by
+    /// [`Self::certificates_sort_column`]. Empty while the tool has never
+    /// been opened.
+    #[must_use]
+    pub fn certificate_rows(&self) -> Vec<CertificateRow> {
+        let Some(view) = &self.certificates else {
+            return Vec::new();
+        };
+        let now = i64::try_from(now_epoch_seconds()).unwrap_or(i64::MAX);
+        let mut rows = Vec::new();
+        for finding in &view.entries {
+            let repository = finding.repository.clone().unwrap_or_default();
+            match &finding.kind {
+                protocol::CertificateFindingKind::Unreadable => {
+                    rows.push(unreadable_certificate_row(finding, &repository));
+                }
+                protocol::CertificateFindingKind::Blocks(blocks) => {
+                    for block in blocks {
+                        match block {
+                            protocol::CertificateBlock::Certificate(summary) => {
+                                rows.push(certificate_summary_row(
+                                    finding,
+                                    &repository,
+                                    summary,
+                                    now,
+                                ));
+                            }
+                            protocol::CertificateBlock::Unreadable => {
+                                rows.push(unreadable_certificate_row(finding, &repository));
+                            }
+                            protocol::CertificateBlock::PrivateKey
+                            | protocol::CertificateBlock::CertificateRequest => {}
+                        }
+                    }
+                }
+            }
+        }
+        sort_certificate_rows(&mut rows, view.sort_key, view.sort_ascending);
+        rows.into_iter().map(|(_, row)| row).collect()
+    }
+
+    /// How many of [`Self::certificate_rows`] carry each status, and how
+    /// many private keys were found alongside them (#622).
+    #[must_use]
+    pub fn certificate_counts(&self) -> CertificateCounts {
+        let Some(view) = &self.certificates else {
+            return CertificateCounts::default();
+        };
+        let now = i64::try_from(now_epoch_seconds()).unwrap_or(i64::MAX);
+        let mut counts = CertificateCounts::default();
+        for finding in &view.entries {
+            let protocol::CertificateFindingKind::Blocks(blocks) = &finding.kind else {
+                continue;
+            };
+            for block in blocks {
+                match block {
+                    protocol::CertificateBlock::Certificate(summary) => {
+                        match plugin_certificate::certificate_status(
+                            summary.not_before,
+                            summary.not_after,
+                            now,
+                        ) {
+                            plugin_certificate::CertificateStatus::Expired => counts.expired += 1,
+                            plugin_certificate::CertificateStatus::Expiring => {
+                                counts.expiring += 1;
+                            }
+                            plugin_certificate::CertificateStatus::Valid => counts.valid += 1,
+                            plugin_certificate::CertificateStatus::NotYetValid => {}
+                        }
+                    }
+                    protocol::CertificateBlock::PrivateKey => counts.private_keys += 1,
+                    protocol::CertificateBlock::CertificateRequest
+                    | protocol::CertificateBlock::Unreadable => {}
+                }
+            }
+        }
+        counts
+    }
+
+    /// The counts line above the table: `3 expired, 2 expiring within 30
+    /// days, 14 valid`.
+    #[must_use]
+    pub fn certificates_summary_line(&self) -> String {
+        let counts = self.certificate_counts();
+        format!(
+            "{} expired, {} expiring within {} days, {} valid",
+            counts.expired,
+            counts.expiring,
+            plugin_certificate::EXPIRING_WITHIN_DAYS,
+            counts.valid
+        )
+    }
+
+    /// The `N private keys are committed` line, empty when none were found
+    /// - which hides it.
+    #[must_use]
+    pub fn certificates_private_key_line(&self) -> String {
+        let count = self.certificate_counts().private_keys;
+        if count == 0 {
+            String::new()
+        } else {
+            format!(
+                "{count} private key{} committed",
+                if count == 1 { "" } else { "s" }
+            )
+        }
+    }
+
+    /// Whether the private keys line's own file list is expanded.
+    #[must_use]
+    pub fn certificates_private_keys_shown(&self) -> bool {
+        self.certificates
+            .as_ref()
+            .is_some_and(|view| view.private_keys_shown)
+    }
+
+    /// Toggles the private keys line's own file list, clicked open.
+    pub fn toggle_certificates_private_keys_shown(&mut self) {
+        if let Some(view) = &mut self.certificates {
+            view.private_keys_shown = !view.private_keys_shown;
+        }
+    }
+
+    /// Every file a private key was found in, in the order the search met
+    /// them - what the private keys line lists once clicked open.
+    #[must_use]
+    pub fn certificates_private_key_files(&self) -> Vec<String> {
+        let Some(view) = &self.certificates else {
+            return Vec::new();
+        };
+        view.entries
+            .iter()
+            .filter(|finding| {
+                matches!(&finding.kind, protocol::CertificateFindingKind::Blocks(blocks)
+                    if blocks.iter().any(|block| matches!(block, protocol::CertificateBlock::PrivateKey)))
+            })
+            .map(|finding| finding.path.clone())
+            .collect()
+    }
+
+    /// The column the Certificates table is currently sorted on - the
+    /// default, [`CertificateSortKey::Status`], while the tool has never
+    /// been opened.
+    #[must_use]
+    pub fn certificates_sort_column(&self) -> i32 {
+        self.certificates
+            .as_ref()
+            .map_or(CertificateSortKey::Status.index(), |view| {
+                view.sort_key.index()
+            })
+    }
+
+    /// Whether the Certificates table's current sort is ascending.
+    #[must_use]
+    pub fn certificates_sort_ascending(&self) -> bool {
+        self.certificates
+            .as_ref()
+            .is_none_or(|view| view.sort_ascending)
+    }
+
+    /// Sorts the Certificates table by `column`, reversing direction if it
+    /// is already the sort column. Out-of-range columns are ignored, as is
+    /// a call before the tool has ever been opened.
+    pub fn certificates_sort_by_column(&mut self, column: i32) {
+        let Some(view) = &mut self.certificates else {
+            return;
+        };
+        let Some(key) = CertificateSortKey::from_index(column) else {
+            return;
+        };
+        if view.sort_key == key {
+            view.sort_ascending = !view.sort_ascending;
+        } else {
+            view.sort_key = key;
+            view.sort_ascending = true;
+        }
+    }
+
+    /// Selecting a Certificates row (#622 requirement 4): selects that
+    /// file in Contents, navigating Folders to its folder, while the
+    /// Certificates tool stays active in the slot.
+    pub fn select_certificate_row(&mut self, index: usize) {
+        let Some(root) = self.certificates.as_ref().map(|view| view.root.clone()) else {
+            return;
+        };
+        let Some(relative) = self
+            .certificate_rows()
+            .get(index)
+            .map(|row| row.file.clone())
+        else {
+            return;
+        };
+        let full = root.join(relative);
+        let (Some(folder), Some(name)) = (full.parent(), full.file_name()) else {
+            return;
+        };
+        let (folder, name) = (folder.to_path_buf(), name.to_string_lossy().into_owned());
+        self.remember_current();
+        self.push_history(folder.clone());
+        self.reselect = Some(name);
+        self.browse(folder);
     }
 
     /// Pins what the tool slot is showing now into a new window of its own
@@ -11173,6 +11720,322 @@ third",
         app.select_folder(0);
 
         assert!(!app.showing_all_repositories());
+    }
+
+    // ---- #622: the Certificates tool ----
+
+    fn certificate_finding(
+        path: &str,
+        repository: Option<&str>,
+        kind: protocol::CertificateFindingKind,
+    ) -> protocol::CertificateFinding {
+        protocol::CertificateFinding {
+            path: path.to_owned(),
+            repository: repository.map(str::to_owned),
+            kind,
+        }
+    }
+
+    fn certificate_summary(
+        subject: &str,
+        not_before: i64,
+        not_after: i64,
+    ) -> protocol::CertificateSummary {
+        protocol::CertificateSummary {
+            subject: subject.to_owned(),
+            issuer: subject.to_owned(),
+            serial: "01".to_owned(),
+            not_before,
+            not_after,
+            self_signed: true,
+        }
+    }
+
+    #[test]
+    fn opening_the_certificates_tool_asks_the_service_and_shows_a_looking_status() {
+        let mut app = App::new(std::env::temp_dir());
+
+        app.open_certificates_tool();
+
+        assert!(app.pending_certificates.is_some());
+        assert!(app.active_tool_is_certificates());
+        assert!(app.certificates_loading());
+        assert!(app.status_text().contains("Looking for certificates"));
+    }
+
+    #[test]
+    fn rows_are_flattened_one_per_certificate_and_sorted_expired_first_then_soonest() {
+        let mut app = App::new(std::env::temp_dir());
+        app.open_certificates_tool();
+        let now = i64::try_from(now_epoch_seconds()).unwrap();
+
+        app.apply_certificates_result_for_test(Response::Certificates {
+            certificates: vec![
+                certificate_finding(
+                    "valid.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "valid",
+                            now - 1_000,
+                            now + 400 * 86_400,
+                        )),
+                    ]),
+                ),
+                certificate_finding(
+                    "expired.pem",
+                    Some("repo"),
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "expired",
+                            now - 2_000,
+                            now - 1_000,
+                        )),
+                    ]),
+                ),
+                certificate_finding(
+                    "expiring.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "expiring",
+                            now - 1_000,
+                            now + 5 * 86_400,
+                        )),
+                    ]),
+                ),
+            ],
+            complete: true,
+        });
+
+        assert!(!app.certificates_loading());
+        let rows = app.certificate_rows();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].status, "Expired");
+        assert!(rows[0].status_warning);
+        assert_eq!(rows[0].repository, "repo");
+        assert_eq!(rows[1].status, "Expires in 5 days");
+        assert!(rows[1].status_warning);
+        assert_eq!(rows[2].status, "Valid");
+        assert!(!rows[2].status_warning);
+    }
+
+    #[test]
+    fn a_chain_file_contributes_one_row_per_certificate_and_private_keys_are_counted_not_rowed() {
+        let mut app = App::new(std::env::temp_dir());
+        app.open_certificates_tool();
+        let now = i64::try_from(now_epoch_seconds()).unwrap();
+
+        app.apply_certificates_result_for_test(Response::Certificates {
+            certificates: vec![certificate_finding(
+                "chain.pem",
+                None,
+                protocol::CertificateFindingKind::Blocks(vec![
+                    protocol::CertificateBlock::Certificate(certificate_summary(
+                        "leaf",
+                        now - 1_000,
+                        now + 400 * 86_400,
+                    )),
+                    protocol::CertificateBlock::Certificate(certificate_summary(
+                        "ca",
+                        now - 1_000,
+                        now + 400 * 86_400,
+                    )),
+                    protocol::CertificateBlock::PrivateKey,
+                ]),
+            )],
+            complete: true,
+        });
+
+        let rows = app.certificate_rows();
+        assert_eq!(rows.len(), 2, "one row per certificate, not per file");
+        assert_eq!(app.certificate_counts().private_keys, 1);
+        assert_eq!(
+            app.certificates_private_key_line(),
+            "1 private key committed"
+        );
+        assert_eq!(app.certificates_private_key_files(), vec!["chain.pem"]);
+    }
+
+    #[test]
+    fn an_unreadable_block_or_file_is_a_row_with_no_status_that_counts_as_neither() {
+        let mut app = App::new(std::env::temp_dir());
+        app.open_certificates_tool();
+
+        app.apply_certificates_result_for_test(Response::Certificates {
+            certificates: vec![
+                certificate_finding(
+                    "broken.pem",
+                    None,
+                    protocol::CertificateFindingKind::Unreadable,
+                ),
+                certificate_finding(
+                    "partly-broken.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Unreadable,
+                    ]),
+                ),
+            ],
+            complete: true,
+        });
+
+        let rows = app.certificate_rows();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.status == "Unreadable"));
+        let counts = app.certificate_counts();
+        assert_eq!((counts.expired, counts.expiring, counts.valid), (0, 0, 0));
+    }
+
+    #[test]
+    fn the_summary_line_counts_expired_expiring_and_valid() {
+        let mut app = App::new(std::env::temp_dir());
+        app.open_certificates_tool();
+        let now = i64::try_from(now_epoch_seconds()).unwrap();
+
+        app.apply_certificates_result_for_test(Response::Certificates {
+            certificates: vec![
+                certificate_finding(
+                    "a.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "a",
+                            now - 2_000,
+                            now - 1_000,
+                        )),
+                    ]),
+                ),
+                certificate_finding(
+                    "b.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "b",
+                            now - 1_000,
+                            now + 400 * 86_400,
+                        )),
+                    ]),
+                ),
+                certificate_finding(
+                    "c.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "c",
+                            now - 1_000,
+                            now + 400 * 86_400,
+                        )),
+                    ]),
+                ),
+            ],
+            complete: true,
+        });
+
+        assert_eq!(
+            app.certificates_summary_line(),
+            "1 expired, 0 expiring within 30 days, 2 valid"
+        );
+        assert_eq!(app.certificates_private_key_line(), "");
+    }
+
+    #[test]
+    fn every_column_sorts_and_the_same_column_twice_reverses() {
+        let mut app = App::new(std::env::temp_dir());
+        app.open_certificates_tool();
+        let now = i64::try_from(now_epoch_seconds()).unwrap();
+        app.apply_certificates_result_for_test(Response::Certificates {
+            certificates: vec![
+                certificate_finding(
+                    "b.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "Bravo",
+                            now - 1_000,
+                            now + 400 * 86_400,
+                        )),
+                    ]),
+                ),
+                certificate_finding(
+                    "a.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "Alpha",
+                            now - 1_000,
+                            now + 400 * 86_400,
+                        )),
+                    ]),
+                ),
+            ],
+            complete: true,
+        });
+
+        app.certificates_sort_by_column(1); // Subject
+        assert_eq!(app.certificates_sort_column(), 1);
+        assert!(app.certificates_sort_ascending());
+        let rows = app.certificate_rows();
+        assert_eq!(rows[0].subject, "Alpha");
+        assert_eq!(rows[1].subject, "Bravo");
+
+        app.certificates_sort_by_column(1);
+        assert!(!app.certificates_sort_ascending());
+        let rows = app.certificate_rows();
+        assert_eq!(rows[0].subject, "Bravo");
+        assert_eq!(rows[1].subject, "Alpha");
+    }
+
+    #[test]
+    fn f5_discards_the_stale_list_and_asks_again() {
+        let mut app = App::new(std::env::temp_dir());
+        app.open_certificates_tool();
+        app.apply_certificates_result_for_test(Response::Certificates {
+            certificates: vec![certificate_finding(
+                "a.pem",
+                None,
+                protocol::CertificateFindingKind::Unreadable,
+            )],
+            complete: true,
+        });
+
+        app.refresh();
+
+        assert!(
+            app.certificate_rows().is_empty(),
+            "the stale list is cleared"
+        );
+        assert!(app.certificates_loading());
+        assert!(app.pending_certificates.is_some());
+        assert!(app.status_text().contains("Looking for certificates"));
+    }
+
+    #[test]
+    fn selecting_a_row_navigates_to_its_file_and_the_certificates_tool_stays_active() {
+        let root = std::env::temp_dir().join("rse-app-certificates-select");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).expect("a scratch folder");
+        std::fs::write(root.join("sub").join("leaf.pem"), "content").expect("a scratch file");
+
+        let mut app = App::new(root.clone());
+        app.open_certificates_tool();
+        app.apply_certificates_result_for_test(Response::Certificates {
+            certificates: vec![certificate_finding(
+                "sub/leaf.pem",
+                None,
+                protocol::CertificateFindingKind::Unreadable,
+            )],
+            complete: true,
+        });
+
+        app.select_certificate_row(0);
+
+        assert_eq!(PathBuf::from(app.current_path()), root.join("sub"));
+        assert_eq!(app.reselect.as_deref(), Some("leaf.pem"));
+        assert!(
+            app.active_tool_is_certificates(),
+            "the Certificates tool stays active in the slot"
+        );
     }
 
     // ---- #592: what is wrong with the Repos Directory itself ----

@@ -1,8 +1,8 @@
 import { ScrollView, Palette } from "std-widgets.slint";
 import { Theme, Zoom } from "theme.slint";
 export { Theme, Zoom }
-import { ColouredRun, ContentRow, FactRow, FolderRow, PaneMenuRow, ShortcutRow, SwitcherRow } from "types.slint";
-export { ColouredRun, ContentRow, FactRow, FolderRow, PaneMenuRow, ShortcutRow, SwitcherRow }
+import { CertificateRow, ColouredRun, ContentRow, FactRow, FolderRow, PaneMenuRow, ShortcutRow, SwitcherRow } from "types.slint";
+export { CertificateRow, ColouredRun, ContentRow, FactRow, FolderRow, PaneMenuRow, ShortcutRow, SwitcherRow }
 export { CodeEditorHarness } from "code_editor.slint";
 import {
     ChromeEdge, CommandButton, CommandSeparator, ContextMenuItem, Crumb, MenuTitle, NavButton,
@@ -109,6 +109,22 @@ export component MainWindow inherits Window {
     in property <int> tool-index;
     callback tool-selected(int);
     in property <bool> tool-showing-editor: true;
+    // The Certificates tool (#622): its own table, above the editor's own
+    // properties since it draws in the same slot. View > Certificates
+    // opens it for the whole Repos Directory regardless of the selection.
+    in property <bool> tool-showing-certificates;
+    in property <[CertificateRow]> certificate-rows;
+    in property <string> certificates-summary-line;
+    in property <string> certificates-private-key-line;
+    in property <bool> certificates-private-keys-shown;
+    in property <[string]> certificates-private-key-files;
+    in property <bool> certificates-loading;
+    in property <int> certificates-sort-column;
+    in property <bool> certificates-sort-ascending;
+    callback certificates-sort-requested(int);
+    callback certificate-row-activated(int);
+    callback certificates-private-keys-toggled();
+    callback certificates-requested();
     // The editor's own commands, shown in the File pane while it is
     // open. The window's toolbar is about managing files, which is not
     // where anybody looks while typing into one.
@@ -905,6 +921,18 @@ export component MainWindow inherits Window {
                     tool-index: tool-index;
                     tool-selected(i) => { tool-selected(i); }
                     tool-showing-editor: tool-showing-editor;
+                    tool-showing-certificates: tool-showing-certificates;
+                    certificate-rows: certificate-rows;
+                    certificates-summary-line: certificates-summary-line;
+                    certificates-private-key-line: certificates-private-key-line;
+                    certificates-private-keys-shown: certificates-private-keys-shown;
+                    certificates-private-key-files: certificates-private-key-files;
+                    certificates-loading: certificates-loading;
+                    certificates-sort-column: certificates-sort-column;
+                    certificates-sort-ascending: certificates-sort-ascending;
+                    certificates-sort-requested(column) => { certificates-sort-requested(column); }
+                    certificate-row-activated(index) => { certificate-row-activated(index); }
+                    certificates-private-keys-toggled => { certificates-private-keys-toggled(); }
                     focused: focus-pane == 2;
                     popped-out: !root.is-main-window;
                     pop-out-clicked => { pop-out-requested(2); }
@@ -1172,6 +1200,11 @@ export component MainWindow inherits Window {
                     label: "All Repositories";
                     item-height: menu-item-h;
                     activated => { open-menu = -1; all-repositories-requested(); }
+                }
+                ContextMenuItem {
+                    label: "Certificates";
+                    item-height: menu-item-h;
+                    activated => { open-menu = -1; certificates-requested(); }
                 }
                 ContextMenuItem {
                     label: "Up One Level";

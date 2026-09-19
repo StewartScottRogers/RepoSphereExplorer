@@ -8,8 +8,8 @@ mod generated {
     slint::include_modules!();
 }
 pub use generated::{
-    CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow, PaneMenuRow,
-    ShortcutRow, SwitcherRow, Theme, Zoom,
+    CertificateRow, CodeEditorHarness, ColouredRun, ContentRow, FactRow, FolderRow, MainWindow,
+    PaneMenuRow, ShortcutRow, SwitcherRow, Theme, Zoom,
 };
 
 pub mod app;
@@ -712,6 +712,7 @@ pub fn wire_callbacks(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     wire_related_repository_link(ui, app);
     wire_switcher(ui, app);
     wire_all_repositories(ui, app);
+    wire_certificates(ui, app);
     wire_tools(ui, app);
 }
 
@@ -1518,6 +1519,55 @@ fn wire_all_repositories(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             sync_ui(&ui, &app);
         }
     });
+}
+
+/// Wires View > Certificates (#622), and the tool's own table: sorting,
+/// selecting a row, and expanding the private keys line.
+fn wire_certificates(ui: &MainWindow, app: &Rc<RefCell<App>>) {
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_certificates_requested(move || {
+            let mut app = app.borrow_mut();
+            app.open_certificates_tool();
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_certificates_sort_requested(move |column| {
+            let mut app = app.borrow_mut();
+            app.certificates_sort_by_column(column);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_certificate_row_activated(move |index| {
+            let mut app = app.borrow_mut();
+            app.select_certificate_row(usize::try_from(index).unwrap_or(usize::MAX));
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_certificates_private_keys_toggled(move || {
+            let mut app = app.borrow_mut();
+            app.toggle_certificates_private_keys_shown();
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_ui(&ui, &app);
+            }
+        });
+    }
 }
 
 /// Wires Ctrl+P / Cmd+P's Go to Repository switcher (#590): opening it, and
@@ -2335,6 +2385,7 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     sync_editor(ui, app);
     ui.set_location_icon(icon_image(app::icon_for("", true), true, None));
     sync_tools(ui, app);
+    sync_certificates(ui, app);
 }
 
 /// Copies the tool slot's picker state (#616) into `ui`'s bound properties:
@@ -2346,6 +2397,33 @@ fn sync_tools(ui: &MainWindow, app: &App) {
     ui.set_tool_showing_editor(app.active_tool_is_editor());
     ui.set_tool_titles(string_model(app.tool_titles()));
     ui.set_tool_index(row_index(app.tool_index()));
+}
+
+/// Copies the Certificates tool's own state (#622) into `ui`'s bound
+/// properties: whether it is the active tool, its table, the counts and
+/// private keys line above it, and the current sort.
+fn sync_certificates(ui: &MainWindow, app: &App) {
+    ui.set_tool_showing_certificates(app.active_tool_is_certificates());
+    ui.set_certificate_rows(ModelRc::new(VecModel::from(
+        app.certificate_rows()
+            .into_iter()
+            .map(|row| CertificateRow {
+                status: row.status.into(),
+                status_warning: row.status_warning,
+                subject: row.subject.into(),
+                expires: row.expires.into(),
+                repository: row.repository.into(),
+                file: row.file.into(),
+            })
+            .collect::<Vec<_>>(),
+    )));
+    ui.set_certificates_summary_line(app.certificates_summary_line().into());
+    ui.set_certificates_private_key_line(app.certificates_private_key_line().into());
+    ui.set_certificates_private_keys_shown(app.certificates_private_keys_shown());
+    ui.set_certificates_private_key_files(string_model(app.certificates_private_key_files()));
+    ui.set_certificates_loading(app.certificates_loading());
+    ui.set_certificates_sort_column(app.certificates_sort_column());
+    ui.set_certificates_sort_ascending(app.certificates_sort_ascending());
 }
 
 /// The File pane's fact table rows, converted from `app`'s own

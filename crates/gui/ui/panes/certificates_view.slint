@@ -1,0 +1,180 @@
+import { Palette, ScrollView } from "std-widgets.slint";
+import { Theme, Zoom } from "../theme.slint";
+import { CertificateRow } from "../types.slint";
+import { ColumnHeader } from "../widgets.slint";
+
+// The Certificates tool's own view (#622): a table, one row per
+// certificate, above it the counts and the private keys line. Drawn by
+// `ToolSlot` in place of the editor while the Certificates tool is active -
+// this component itself carries no pop-out, dock or pin code of its own;
+// that chrome is `PaneFrame`'s, drawn once for whichever tool is active.
+export component CertificatesView inherits Rectangle {
+    in property <[CertificateRow]> rows;
+    in property <string> summary-line;
+    in property <string> private-key-line;
+    in property <bool> private-keys-shown;
+    in property <[string]> private-key-files;
+    in property <bool> loading;
+    in property <int> sort-column;
+    in property <bool> sort-ascending;
+    callback sort-requested(int);
+    callback row-activated(int);
+    callback private-keys-toggled();
+
+    property <length> row-height: 20px * Zoom.factor;
+    property <length> header-height: 20px * Zoom.factor;
+    property <length> status-column: 130px * Zoom.factor;
+    property <length> expires-column: 110px * Zoom.factor;
+    property <length> repository-column: 110px * Zoom.factor;
+
+    background: Palette.background;
+
+    VerticalLayout {
+        VerticalLayout {
+            padding: 4px;
+            spacing: 2px;
+            if loading: Text {
+                text: "Looking for certificates…";
+                color: Theme.dim-text;
+                accessible-role: text;
+            }
+            if !loading: Text {
+                text: summary-line;
+                color: Palette.foreground;
+                accessible-role: text;
+            }
+            if !loading && private-key-line != "": Text {
+                text: private-key-line;
+                color: Theme.accent;
+                accessible-role: text;
+                private-key-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { private-keys-toggled(); }
+                }
+            }
+            if !loading && private-keys-shown: VerticalLayout {
+                for path in private-key-files: Text {
+                    text: path;
+                    color: Theme.dim-text;
+                    accessible-role: text;
+                }
+            }
+        }
+
+        Rectangle {
+            height: header-height;
+            background: Theme.panel;
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                ColumnHeader {
+                    width: status-column;
+                    horizontal-stretch: 0;
+                    label: "Status";
+                    active: sort-column == 0;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(0); }
+                }
+                ColumnHeader {
+                    horizontal-stretch: 1;
+                    min-width: 40px;
+                    label: "Subject";
+                    active: sort-column == 1;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(1); }
+                }
+                ColumnHeader {
+                    width: expires-column;
+                    horizontal-stretch: 0;
+                    align-right: true;
+                    label: "Expires";
+                    active: sort-column == 2;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(2); }
+                }
+                ColumnHeader {
+                    width: repository-column;
+                    horizontal-stretch: 0;
+                    label: "Repository";
+                    active: sort-column == 3;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(3); }
+                }
+                ColumnHeader {
+                    horizontal-stretch: 1;
+                    min-width: 40px;
+                    label: "File";
+                    active: sort-column == 4;
+                    ascending: sort-ascending;
+                    activated => { sort-requested(4); }
+                }
+            }
+        }
+
+        ScrollView {
+            VerticalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 100%;
+                    min-height: rows.length * row-height;
+                    for row[i] in rows: Rectangle {
+                        y: i * row-height;
+                        height: row-height;
+                        width: 100%;
+                        background: row-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: text;
+                        accessible-label: row.status + " " + row.subject + " " + row.file;
+                        HorizontalLayout {
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            Text {
+                                text: row.status;
+                                width: status-column;
+                                color: row.status-warning ? Theme.warning : Theme.dim-text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: row.subject;
+                                horizontal-stretch: 1;
+                                min-width: 40px;
+                                color: Palette.foreground;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: row.expires;
+                                width: expires-column;
+                                horizontal-alignment: right;
+                                color: Theme.dim-text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: row.repository;
+                                width: repository-column;
+                                color: Theme.dim-text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: row.file;
+                                horizontal-stretch: 1;
+                                min-width: 40px;
+                                color: Theme.dim-text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        row-touch := TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { row-activated(i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

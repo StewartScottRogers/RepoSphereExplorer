@@ -26,6 +26,20 @@ export struct FactRow {
     dim: bool,
 }
 
+/// One row of the Certificates tool's table. Mirrors `app::CertificateRow`
+/// (#622).
+export struct CertificateRow {
+    status: string,
+    // Whether `status` should draw in the warning colour rather than the
+    // dim text colour - true for "Expired" and an "Expires in N days"
+    // close to running out.
+    status-warning: bool,
+    subject: string,
+    expires: string,
+    repository: string,
+    file: string,
+}
+
 /// One row of the Help > Keyboard shortcuts sheet. Mirrors
 /// `shortcuts::Binding` (#585). `group` is the heading to draw above this
 /// row, or empty to continue the previous row's group - computed in Rust
