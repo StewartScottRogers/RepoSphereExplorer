@@ -190,6 +190,142 @@ fn entry_for(label: &str, der: &[u8]) -> PemEntry {
     }
 }
 
+/// How many days before a certificate's `not_after` counts as "expiring",
+/// for [`certificate_status`] (#621). The one place this is decided.
+pub const EXPIRING_WITHIN_DAYS: i64 = 30;
+
+/// Seconds in a day, for comparing [`EXPIRING_WITHIN_DAYS`] against a
+/// difference of two Unix timestamps.
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
+/// A certificate's standing as of `now`, decided in this one place (#621)
+/// so a front end never re-derives the rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CertificateStatus {
+    /// `not_after` has already passed.
+    Expired,
+    /// `not_after` is within [`EXPIRING_WITHIN_DAYS`] days from now.
+    Expiring,
+    /// `not_before` has not yet arrived.
+    NotYetValid,
+    /// Neither of the above.
+    Valid,
+}
+
+/// Where a certificate valid from `not_before` to `not_after` (Unix
+/// seconds) stands as of `now` (also Unix seconds).
+///
+/// A certificate whose validity period has not started yet is
+/// [`CertificateStatus::NotYetValid`], checked before expiry: a sane
+/// certificate never has `not_before` in the future and `not_after` in the
+/// past at once, so the order only matters for malformed input, where
+/// "not yet valid" is the more useful thing to say.
+#[must_use]
+pub fn certificate_status(not_before: i64, not_after: i64, now: i64) -> CertificateStatus {
+    if now < not_before {
+        CertificateStatus::NotYetValid
+    } else if now >= not_after {
+        CertificateStatus::Expired
+    } else if not_after - now <= EXPIRING_WITHIN_DAYS * SECONDS_PER_DAY {
+        CertificateStatus::Expiring
+    } else {
+        CertificateStatus::Valid
+    }
+}
+
+/// One certificate's fields, as found by [`scan`] (#621) - distinct from
+/// [`PemEntry::Certificate`]: validity as Unix seconds rather than a
+/// formatted display string, ready for [`certificate_status`], and a
+/// self-signed flag.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertificateSummary {
+    /// The certificate subject's distinguished name.
+    pub subject: String,
+    /// The issuing certificate authority's distinguished name.
+    pub issuer: String,
+    /// The certificate's serial number, as colon-separated hex.
+    pub serial: String,
+    /// Start of the certificate's validity period, Unix seconds.
+    pub not_before: i64,
+    /// End of the certificate's validity period, Unix seconds.
+    pub not_after: i64,
+    /// Whether the certificate's subject and issuer distinguished names are
+    /// identical - a description read off the certificate, not a
+    /// cryptographic signature check (D10, rule 8: detect, do not drive).
+    pub self_signed: bool,
+}
+
+/// One PEM block found by [`scan`] (#621). A certificate carries full
+/// detail; a private key or certificate signing request is only ever
+/// counted, never detailed, so no key material reaches the caller.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScannedBlock {
+    /// A certificate that parsed.
+    Certificate(CertificateSummary),
+    /// A private key: present, and nothing more.
+    PrivateKey,
+    /// A certificate signing request: present, and nothing more.
+    CertificateRequest,
+    /// A `CERTIFICATE`-labelled block whose content did not decode as
+    /// X.509, reported rather than dropped.
+    Unreadable,
+}
+
+/// Reads a certificate's fields into a [`ScannedBlock::Certificate`], or
+/// `None` if `der` doesn't decode as an X.509 certificate.
+fn certificate_summary(der: &[u8]) -> Option<CertificateSummary> {
+    let (_, cert) = X509Certificate::from_der(der).ok()?;
+    let subject = cert.subject().to_string();
+    let issuer = cert.issuer().to_string();
+    Some(CertificateSummary {
+        self_signed: subject == issuer,
+        subject,
+        issuer,
+        serial: cert.raw_serial_as_string(),
+        not_before: cert.validity().not_before.timestamp(),
+        not_after: cert.validity().not_after.timestamp(),
+    })
+}
+
+/// The [`ScannedBlock`] for one PEM block, or `None` for a block a
+/// certificate scan has no use for - a public key, or a label it does not
+/// recognise at all - which is not "unreadable": nothing tried and failed
+/// to parse it.
+fn scanned_block(label: &str, der: &[u8]) -> Option<ScannedBlock> {
+    match label {
+        _ if label.contains("CERTIFICATE REQUEST") => Some(ScannedBlock::CertificateRequest),
+        _ if label.contains("CERTIFICATE") => Some(
+            certificate_summary(der).map_or(ScannedBlock::Unreadable, ScannedBlock::Certificate),
+        ),
+        "RSA PRIVATE KEY" | "EC PRIVATE KEY" | "DSA PRIVATE KEY" | "PRIVATE KEY" => {
+            Some(ScannedBlock::PrivateKey)
+        }
+        _ => None,
+    }
+}
+
+/// Scans `bytes` - the (possibly truncated) content of a candidate
+/// certificate/key file - into one [`ScannedBlock`] per certificate,
+/// private key or certificate signing request found, for
+/// `Request::FindCertificates` (#621).
+///
+/// Distinct from [`CertificateCore::view`], which serves the file's own
+/// preview tab and keeps every block, including ones this scan has no use
+/// for.
+///
+/// # Errors
+/// Returns an error if `bytes` cannot be split into PEM blocks at all - not
+/// PEM-encoded, rather than one block within it failing to decode as
+/// X.509, which is instead a [`ScannedBlock::Unreadable`] entry.
+pub fn scan(bytes: &[u8]) -> io::Result<Vec<ScannedBlock>> {
+    let blocks =
+        pem::parse_many(bytes).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    Ok(blocks
+        .iter()
+        .filter_map(|block| scanned_block(block.tag(), block.contents()))
+        .collect())
+}
+
 /// The certificate/key plugin's core half.
 #[derive(Debug, Default)]
 pub struct CertificateCore;
@@ -316,7 +452,10 @@ impl PluginPresentation for CertificatePresentation {
 
 #[cfg(test)]
 mod tests {
-    use super::{CertificateCore, CertificateKeyView, CertificatePresentation, PemEntry};
+    use super::{
+        CertificateCore, CertificateKeyView, CertificatePresentation, CertificateStatus,
+        EXPIRING_WITHIN_DAYS, PemEntry, ScannedBlock, certificate_status, scan,
+    };
     use plugin_api::{PluginCore, PluginPresentation};
 
     fn unique_temp_file(name: &str) -> std::path::PathBuf {
@@ -617,5 +756,122 @@ nAFDn+ErQaZpZIA6OoVHxU0Y+yFeU8aJvOvqlOSXegA7z08ynnnVqJLj
             plugin_api::PluginPresentation::extensions(&crate::CertificatePresentation),
             "one list, or a listing marks a file with a type its viewer will not open"
         );
+    }
+
+    #[test]
+    fn a_certificate_that_expires_now_is_expired() {
+        assert_eq!(
+            certificate_status(0, 1_000, 1_000),
+            CertificateStatus::Expired
+        );
+    }
+
+    #[test]
+    fn a_certificate_expiring_in_exactly_thirty_days_is_expiring() {
+        let now = 1_700_000_000;
+        let not_after = now + EXPIRING_WITHIN_DAYS * 24 * 60 * 60;
+
+        assert_eq!(
+            certificate_status(0, not_after, now),
+            CertificateStatus::Expiring
+        );
+    }
+
+    #[test]
+    fn a_certificate_expiring_in_thirty_one_days_is_valid() {
+        let now = 1_700_000_000;
+        let not_after = now + (EXPIRING_WITHIN_DAYS + 1) * 24 * 60 * 60;
+
+        assert_eq!(
+            certificate_status(0, not_after, now),
+            CertificateStatus::Valid
+        );
+    }
+
+    #[test]
+    fn a_certificate_whose_validity_starts_now_is_valid() {
+        let now = 1_700_000_000;
+        let not_after = now + 365 * 24 * 60 * 60;
+
+        assert_eq!(
+            certificate_status(now, not_after, now),
+            CertificateStatus::Valid
+        );
+    }
+
+    #[test]
+    fn scans_a_real_certificate_with_unix_seconds_and_self_signed() {
+        let blocks = scan(CERT_PEM.as_bytes()).unwrap();
+
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            ScannedBlock::Certificate(summary) => {
+                assert_eq!(
+                    summary.subject,
+                    "CN=Test Root CA, O=RepoSphereExplorer Test"
+                );
+                assert_eq!(summary.issuer, summary.subject);
+                assert!(summary.self_signed);
+                assert!(summary.not_before < summary.not_after);
+            }
+            other => panic!("expected a certificate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scans_a_private_key_as_present_only() {
+        let blocks = scan(PKCS8_RSA_KEY_PEM.as_bytes()).unwrap();
+
+        assert_eq!(blocks, vec![ScannedBlock::PrivateKey]);
+    }
+
+    #[test]
+    fn scans_a_certificate_signing_request_as_present_only() {
+        let blocks = scan(CSR_PEM.as_bytes()).unwrap();
+
+        assert_eq!(blocks, vec![ScannedBlock::CertificateRequest]);
+    }
+
+    #[test]
+    fn scans_a_public_key_as_nothing_a_certificate_scan_wants() {
+        let blocks = scan(SPKI_PUBLIC_KEY_PEM.as_bytes()).unwrap();
+
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn a_file_with_no_pem_markers_at_all_scans_as_nothing_found() {
+        let blocks = scan(b"not a pem file at all").unwrap();
+
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn mismatched_begin_and_end_tags_are_an_error() {
+        let malformed = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END RSA PRIVATE KEY-----\n";
+
+        let err = scan(malformed.as_bytes()).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_certificate_block_with_bad_der_scans_as_unreadable_rather_than_dropped() {
+        let bad = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
+
+        let blocks = scan(bad.as_bytes()).unwrap();
+
+        assert_eq!(blocks, vec![ScannedBlock::Unreadable]);
+    }
+
+    #[test]
+    fn scans_every_block_in_a_file_that_mixes_a_certificate_and_a_key() {
+        let combined = format!("{CERT_PEM}{PKCS8_RSA_KEY_PEM}");
+
+        let blocks = scan(combined.as_bytes()).unwrap();
+
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(blocks[0], ScannedBlock::Certificate(_)));
+        assert_eq!(blocks[1], ScannedBlock::PrivateKey);
     }
 }

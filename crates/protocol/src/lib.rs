@@ -154,6 +154,14 @@ pub enum Request {
         /// one that finished, and start a new one.
         refresh: bool,
     },
+    /// Finds every certificate, certificate signing request and private key
+    /// committed under the active Repos Directory (#621) - read-only (D10,
+    /// rule 8): nothing here issues, renews, revokes or deploys.
+    ///
+    /// Walked with the same rules [`Request::FindNames`] uses.
+    ///
+    /// The reply is [`Response::Certificates`].
+    FindCertificates,
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -270,6 +278,69 @@ pub struct NameMatch {
     pub repository: Option<String>,
 }
 
+/// One certificate's fields, as [`Request::FindCertificates`] reports them.
+///
+/// Mirrors `plugin_certificate::CertificateSummary`, duplicated here rather
+/// than shared: this crate carries the wire format for both front ends and
+/// takes no dependency on a plugin crate to describe it (see
+/// [`RepositoryKind`]'s own note on the same choice).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertificateSummary {
+    /// The certificate subject's distinguished name.
+    pub subject: String,
+    /// The issuing certificate authority's distinguished name.
+    pub issuer: String,
+    /// The certificate's serial number, as colon-separated hex.
+    pub serial: String,
+    /// Start of the certificate's validity period, Unix seconds.
+    pub not_before: i64,
+    /// End of the certificate's validity period, Unix seconds.
+    pub not_after: i64,
+    /// Whether the certificate's subject and issuer distinguished names are
+    /// identical - a description read off the certificate, not a
+    /// cryptographic signature check (D10, rule 8: detect, do not drive).
+    pub self_signed: bool,
+}
+
+/// One PEM block within a [`CertificateFindingKind::Blocks`] list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CertificateBlock {
+    /// A parsed certificate.
+    Certificate(CertificateSummary),
+    /// A private key - present, and nothing more: no response carries key
+    /// material.
+    PrivateKey,
+    /// A certificate signing request - present, and nothing more.
+    CertificateRequest,
+    /// A `CERTIFICATE`-labelled block whose content did not decode as
+    /// X.509, reported rather than dropped.
+    Unreadable,
+}
+
+/// What one PEM-encoded file held, found by [`Request::FindCertificates`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CertificateFindingKind {
+    /// Every certificate, private key and certificate signing request block
+    /// the file held, in file order.
+    Blocks(Vec<CertificateBlock>),
+    /// The file's extension claimed it, but nothing PEM-encoded could be
+    /// read from it.
+    Unreadable,
+}
+
+/// One certificate-bearing file found by [`Request::FindCertificates`]
+/// (#621).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertificateFinding {
+    /// The file's path relative to the Repos Directory, `/`-separated.
+    pub path: String,
+    /// The nearest working copy holding it, as [`NameMatch::repository`] is
+    /// described.
+    pub repository: Option<String>,
+    /// What the file held.
+    pub kind: CertificateFindingKind,
+}
+
 /// One view of a path, and the plugin that should present it.
 ///
 /// Named separately from [`Response::FileView`]'s own fields because a
@@ -354,6 +425,16 @@ pub enum Response {
         /// Whether the scan has finished. While this is `false`, a later
         /// poll of the same root returns a longer (or equal) list.
         done: bool,
+    },
+    /// The answer to [`Request::FindCertificates`].
+    Certificates {
+        /// Every certificate-bearing file found, in the order the walk met
+        /// them.
+        certificates: Vec<CertificateFinding>,
+        /// Whether the walk finished rather than being cut short. Always
+        /// `true`: unlike [`Self::Names`]'s `cut_short`, nothing here
+        /// imposes a limit.
+        complete: bool,
     },
 }
 
@@ -510,6 +591,7 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::{
+        CertificateBlock, CertificateFinding, CertificateFindingKind, CertificateSummary,
         DirectoryEntry, MAX_MESSAGE_BYTES, NameMatch, PluginView, ReposRoot, RepositoryInfo,
         RepositoryKind, Request, Response, VERSION, WorkingTreeSummary, read_message, socket_name,
         write_message,
@@ -648,6 +730,48 @@ mod tests {
         write_message(&mut buf, &response).unwrap();
 
         let decoded: Response = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn round_trips_the_certificates_found_through_the_wire_format() {
+        let request = Request::FindCertificates;
+        let response = Response::Certificates {
+            certificates: vec![
+                CertificateFinding {
+                    path: "explorer/certs/chain.pem".to_owned(),
+                    repository: Some("explorer".to_owned()),
+                    kind: CertificateFindingKind::Blocks(vec![
+                        CertificateBlock::Certificate(CertificateSummary {
+                            subject: "CN=example.com".to_owned(),
+                            issuer: "CN=Test Root CA".to_owned(),
+                            serial: "01:02:03".to_owned(),
+                            not_before: 1_700_000_000,
+                            not_after: 1_800_000_000,
+                            self_signed: false,
+                        }),
+                        CertificateBlock::PrivateKey,
+                        CertificateBlock::CertificateRequest,
+                        CertificateBlock::Unreadable,
+                    ]),
+                },
+                CertificateFinding {
+                    path: "scratch/broken.pem".to_owned(),
+                    repository: None,
+                    kind: CertificateFindingKind::Unreadable,
+                },
+            ],
+            complete: true,
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+        write_message(&mut buf, &response).unwrap();
+
+        let mut reader = buf.as_slice();
+        let decoded: Request = read_message(&mut reader).unwrap();
+        assert_eq!(decoded, request);
+        let decoded: Response = read_message(&mut reader).unwrap();
         assert_eq!(decoded, response);
     }
 
@@ -1166,6 +1290,7 @@ mod tests {
             Request::CreateFile {
                 path: "f".to_owned(),
             },
+            Request::FindCertificates,
         ];
 
         for request in requests {
@@ -1217,6 +1342,10 @@ mod tests {
                 default: String::new(),
             },
             Response::Done,
+            Response::Certificates {
+                certificates: Vec::new(),
+                complete: true,
+            },
         ];
 
         for response in responses {

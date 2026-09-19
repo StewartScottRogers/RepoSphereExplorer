@@ -493,7 +493,8 @@ fn file_text_of(file_view: Option<&Response>, file_view_index: usize) -> String 
             | Response::ReposRoots { .. }
             | Response::Names { .. }
             | Response::WorkingTree { .. }
-            | Response::AllRepositories { .. },
+            | Response::AllRepositories { .. }
+            | Response::Certificates { .. },
         )
         | None => String::new(),
     }
@@ -2683,7 +2684,8 @@ impl App {
                 | Response::ReposRoots { .. }
                 | Response::Names { .. }
                 | Response::WorkingTree { .. }
-                | Response::AllRepositories { .. },
+                | Response::AllRepositories { .. }
+                | Response::Certificates { .. },
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }

@@ -279,11 +279,24 @@ pub(crate) fn render_with_block(
         Response::Done => {
             frame.render_widget(Paragraph::new("done").block(block), area);
         }
+        response => {
+            frame.render_widget(Paragraph::new(unasked_text(response)).block(block), area);
+        }
+    }
+}
+
+/// What the terminal front end draws for a reply it never asks for.
+///
+/// It sends seven of the protocol's requests; the rest answer questions
+/// only the graphical front end asks. A reply that arrives anyway is shown
+/// as what it holds rather than as nothing, and keeping those together
+/// here leaves `render_with_block` about the panes it does draw.
+fn unasked_text(response: &Response) -> String {
+    match response {
         // The terminal front end keeps its own path argument until its own
-        // realignment work order; it has no reason to ask for the roots, and
-        // renders the reply as what it is if it somehow receives one.
+        // realignment work order; it has no reason to ask for the roots.
         Response::ReposRoots { roots, default } => {
-            let text = roots.iter().map(|root| root.path.as_str()).fold(
+            roots.iter().map(|root| root.path.as_str()).fold(
                 format!("Repos Directory (default {default}):"),
                 |text, path| {
                     format!(
@@ -291,25 +304,20 @@ pub(crate) fn render_with_block(
 {path}"
                     )
                 },
-            );
-            frame.render_widget(Paragraph::new(text).block(block), area);
+            )
         }
         // Nor does it ask for working-tree status; a reply is shown as its
         // summary.
-        Response::WorkingTree { status, .. } => {
-            let text = status
-                .as_ref()
-                .map_or("working tree status unknown", |status| {
-                    status.summary.as_str()
-                })
-                .to_owned();
-            frame.render_widget(Paragraph::new(text).block(block), area);
-        }
+        Response::WorkingTree { status, .. } => status
+            .as_ref()
+            .map_or("working tree status unknown", |status| {
+                status.summary.as_str()
+            })
+            .to_owned(),
         // Nor does it list the working copies nested below the Repos
-        // Directory (#591); a reply is shown as the paths it found, with
-        // a line saying whether the scan had finished.
+        // Directory (#591), with a line while the scan is still going.
         Response::AllRepositories { entries, done } => {
-            let mut text = entries
+            let found = entries
                 .iter()
                 .map(|entry| {
                     if entry.location.is_empty() {
@@ -323,27 +331,50 @@ pub(crate) fn render_with_block(
                     "
 ",
                 );
-            if !done {
-                text.push_str(
-                    "
-still looking...",
-                );
+            if *done {
+                found
+            } else {
+                format!(
+                    "{found}
+still looking..."
+                )
             }
-            frame.render_widget(Paragraph::new(text).block(block), area);
         }
-        // The terminal front end does not search yet; a reply that somehow
-        // arrives is shown as the paths it names.
-        Response::Names { matches, .. } => {
-            let text = matches
+        // Nor the certificates committed under it (#621).
+        Response::Certificates {
+            certificates,
+            complete,
+        } => {
+            let found = certificates
                 .iter()
-                .map(|found| found.path.as_str())
+                .map(|finding| finding.path.as_str())
                 .collect::<Vec<_>>()
                 .join(
                     "
 ",
                 );
-            frame.render_widget(Paragraph::new(text).block(block), area);
+            if *complete {
+                found
+            } else {
+                format!(
+                    "{found}
+still looking..."
+                )
+            }
         }
+        // Nor does it search; a reply is shown as the paths it names.
+        Response::Names { matches, .. } => matches
+            .iter()
+            .map(|found| found.path.as_str())
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            ),
+        Response::Directory { .. }
+        | Response::FileView { .. }
+        | Response::Error { .. }
+        | Response::Done => String::new(),
     }
 }
 
