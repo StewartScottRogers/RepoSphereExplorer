@@ -2105,6 +2105,12 @@ struct Filter {
     /// Whether the filter field has the keyboard: a typed character
     /// narrows the listing instead of jumping to a name.
     focused: bool,
+    /// Whether Tab has moved the keyboard onto whichever status-bar link
+    /// (#629) is currently showing - only one of the two ever is, so this
+    /// is a flag rather than an index. Kept here rather than as a fourth
+    /// bool on `App` itself (rule 3: `clippy::struct_excessive_bools`,
+    /// the same reason `CertificatesView` keeps its own bools apart).
+    link_focused: bool,
 }
 
 /// Why the Repos Directory itself could not be listed (#592): decided by
@@ -3354,6 +3360,9 @@ impl App {
             // The filter (#582) already narrows as it is typed; Return
             // just hands the keyboard back to the listing.
             Mode::Normal if self.filter.focused => self.filter.focused = false,
+            // Tab has moved the keyboard onto the status bar's link
+            // (#629); Return activates it exactly as a click does.
+            Mode::Normal if self.filter.link_focused => self.activate_focused_status_link(),
             // The Contents pane's message (#592) is showing, so Return
             // activates whichever button Tab highlighted rather than
             // renaming or opening a row that is not there.
@@ -3406,6 +3415,13 @@ impl App {
             // While the filter field has the keyboard (#582), a typed
             // character narrows the listing rather than jumping to a name.
             Mode::Normal if self.filter.focused => self.type_into_filter(text),
+            // Space, while Tab has moved the keyboard onto the status
+            // bar's link (#629): activates it exactly as Return does,
+            // rather than starting a type-ahead jump on a space no name
+            // here begins with.
+            Mode::Normal if self.filter.link_focused && text == " " => {
+                self.activate_focused_status_link();
+            }
             // Explorer's type-ahead: a typed letter jumps to a name, it is
             // not a command. Rename, copy and extract are on F2, Ctrl+C and
             // the context menu.
@@ -3465,6 +3481,9 @@ impl App {
         if !matches!(self.mode, Mode::Normal) {
             return;
         }
+        // An arrow key means the reader wants a row, not the status
+        // bar's link Tab last moved onto (#629).
+        self.filter.link_focused = false;
         let (len, current) = match self.focus {
             Pane::Folders => (self.root.flatten().len(), self.folder_selected),
             Pane::Contents | Pane::File => (self.listed_len(), self.content_selected),
@@ -3492,6 +3511,9 @@ impl App {
         if !matches!(self.mode, Mode::Normal) {
             return;
         }
+        // Moving to another pane leaves the status bar's link behind
+        // (#629), the same as an arrow key moving the selection does.
+        self.filter.link_focused = false;
         self.focus = match (self.focus, delta < 0) {
             (Pane::Folders, false) | (Pane::File, true) => Pane::Contents,
             (Pane::Contents, false) | (Pane::Folders, true) => Pane::File,
@@ -5575,6 +5597,70 @@ impl App {
     #[must_use]
     pub fn status_show_clear_link(&self) -> bool {
         matches!(self.mode, Mode::Normal) && self.status.is_none() && self.filter.changed_only
+    }
+
+    /// [`Self::status_changed_label`], in the fuller words a screen reader
+    /// speaks (#629) - GUIDANCE.md §2.4 asks for the link to be readable by
+    /// assistive technology as well as reachable by keyboard, and "3 with
+    /// uncommitted changes" reads oddly on its own with nothing above it
+    /// to supply "repositories".
+    #[must_use]
+    pub fn status_changed_accessible_label(&self) -> String {
+        if self.status_changed_label().is_empty() {
+            return String::new();
+        }
+        format!(
+            "{} repositories with uncommitted changes",
+            self.changed_marker_count()
+        )
+    }
+
+    /// Whether Tab has moved the keyboard onto whichever status-bar link
+    /// (#629) is currently showing, so the front end can draw its focus
+    /// ring and a window test can ask without re-deriving it from `focus`.
+    #[must_use]
+    pub const fn status_link_focused(&self) -> bool {
+        self.filter.link_focused
+    }
+
+    /// Tab from the Contents pane (#629): moves the keyboard onto
+    /// whichever status-bar link is currently showing. A no-op when
+    /// neither is, when the keyboard is not already in Contents, or when
+    /// the Contents pane's own message (#592) has already claimed Tab for
+    /// its own buttons.
+    pub fn focus_status_link(&mut self) {
+        if !matches!(self.mode, Mode::Normal)
+            || self.focus != Pane::Contents
+            || self.contents_message().is_some()
+        {
+            return;
+        }
+        if self.status_show_clear_link() || !self.status_changed_label().is_empty() {
+            self.filter.link_focused = true;
+        }
+    }
+
+    /// Return or Space while [`Self::status_link_focused`] holds the
+    /// keyboard (#629): activates whichever status-bar link is currently
+    /// showing, exactly as clicking it does.
+    fn activate_focused_status_link(&mut self) {
+        if self.status_show_clear_link() {
+            self.clear_filters();
+        } else if !self.status_changed_label().is_empty() {
+            self.filter_to_changed();
+        }
+    }
+
+    /// Ctrl+Shift+U (#629): toggles the changed-only filter from anywhere
+    /// in the window, the same filter "N with uncommitted changes" and
+    /// "clear" narrow and widen, for a reader who has not tabbed to the
+    /// link itself.
+    pub fn toggle_changed_filter(&mut self) {
+        if self.filter.changed_only {
+            self.clear_filters();
+        } else {
+            self.filter_to_changed();
+        }
     }
 
     /// The Contents pane's centred message (#592) - what is wrong with
@@ -11047,6 +11133,101 @@ third",
             app.status_text()
         );
         assert_eq!(app.status_changed_label(), "1 with uncommitted changes");
+        assert_eq!(
+            app.status_changed_accessible_label(),
+            "1 repositories with uncommitted changes",
+            "a screen reader hears the fuller phrase (#629)"
+        );
+    }
+
+    // ---- the status bar's link takes the keyboard too (#629) ------------
+
+    #[test]
+    fn tab_from_contents_focuses_the_status_link_and_return_activates_it() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        app.select_content(0);
+        assert!(!app.status_link_focused());
+
+        app.focus_status_link();
+
+        assert!(app.status_link_focused(), "Tab should reach the link");
+
+        app.handle_return();
+
+        assert!(
+            app.status_show_clear_link(),
+            "Return should activate the changed-count link exactly as a \
+             click does"
+        );
+        // The same flag now points at "clear", showing in the link's place.
+        assert!(app.status_link_focused());
+
+        app.handle_key_text(" ");
+
+        assert!(
+            !app.status_show_clear_link(),
+            "Space should activate \"clear\" exactly as a click does"
+        );
+    }
+
+    #[test]
+    fn focus_status_link_is_a_no_op_outside_the_contents_pane() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        app.select_folder(0);
+
+        app.focus_status_link();
+
+        assert!(
+            !app.status_link_focused(),
+            "Tab should not reach the link while the Folders pane has the \
+             keyboard"
+        );
+    }
+
+    #[test]
+    fn moving_the_selection_or_the_pane_drops_the_links_focus() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        app.select_content(0);
+        app.focus_status_link();
+        assert!(app.status_link_focused());
+
+        app.move_selection(1);
+
+        assert!(
+            !app.status_link_focused(),
+            "an arrow key means the reader wants a row again"
+        );
+
+        app.focus_status_link();
+        assert!(app.status_link_focused());
+
+        app.cycle_focus(1);
+
+        assert!(
+            !app.status_link_focused(),
+            "moving to another pane leaves the link behind"
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_u_toggles_the_changed_filter_from_anywhere() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        assert_eq!(
+            app.selection().focus,
+            Pane::Folders,
+            "not the Contents pane"
+        );
+
+        app.toggle_changed_filter();
+
+        assert!(
+            app.status_show_clear_link(),
+            "the chord should work without the Contents pane's keyboard"
+        );
+
+        app.toggle_changed_filter();
+
+        assert!(!app.status_show_clear_link());
     }
 
     // ---- a last fetch too old to trust (#589) ---------------------------

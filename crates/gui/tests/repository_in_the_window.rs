@@ -22,7 +22,7 @@
 
 use gui::app::App;
 use gui::{MainWindow, sync_ui};
-use i_slint_backend_testing::ElementHandle;
+use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model as _};
 use std::cell::RefCell;
@@ -1207,6 +1207,116 @@ fn clicking_the_changed_count_narrows_the_pane_and_clear_restores_it() {
         "clear should restore every row the folder holds"
     );
     assert!(!ui.get_status_show_clear_link());
+}
+
+// ---------------------------------------------------------------------
+// The status bar's links take the keyboard too (#629).
+// ---------------------------------------------------------------------
+
+#[test]
+fn tab_from_contents_reaches_the_status_link_and_return_or_space_activates_it() {
+    let _serial = serially();
+    let root = scratch("status-link-keyboard");
+    checkout(&root, "alpha", "main", None, 1);
+    let beta = checkout(&root, "beta", "main", None, 1);
+    file(&beta, "tracked-0.txt", "edited so the checkout is dirty\n");
+    checkout(&root, "gamma", "main", None, 1);
+    let (ui, app) = window_at(&root);
+    settle_statuses(&ui, &app);
+    // A click on any row gives the Contents pane the keyboard, the same
+    // way `clicking_the_changed_count_narrows_the_pane_and_clear_restores_it`
+    // above starts from a real click rather than from `App` directly.
+    click_row(&ui, 0.0);
+
+    press_key(&ui, Key::Tab);
+    press_key(&ui, Key::Return);
+
+    assert_eq!(
+        listing(&ui),
+        vec!["beta".to_owned()],
+        "Tab then Return on the changed-count link should narrow the pane \
+         exactly as clicking it does"
+    );
+    assert!(ui.get_status_show_clear_link());
+
+    press_key(&ui, Key::Space);
+
+    assert_eq!(
+        listing(&ui).len(),
+        3,
+        "Tab then Space on the clear link should restore every row"
+    );
+    assert!(!ui.get_status_show_clear_link());
+}
+
+#[test]
+fn each_status_link_has_a_button_role_and_names_itself_in_full() {
+    let _serial = serially();
+    let root = scratch("status-link-accessible");
+    checkout(&root, "alpha", "main", None, 1);
+    let beta = checkout(&root, "beta", "main", None, 1);
+    file(&beta, "tracked-0.txt", "edited so the checkout is dirty\n");
+    let (ui, app) = window_at(&root);
+    settle_statuses(&ui, &app);
+
+    let changed_link = ElementHandle::find_by_element_type_name(&ui, "StatusLink")
+        .next()
+        .expect("the changed-count link is drawn");
+    assert_eq!(
+        changed_link.accessible_role(),
+        Some(AccessibleRole::Button),
+        "the link should read as a button to assistive technology (#629)"
+    );
+    assert_eq!(
+        changed_link
+            .accessible_label()
+            .map(|label| label.to_string()),
+        Some("1 repositories with uncommitted changes".to_owned()),
+        "a screen reader should hear the fuller words, not the terse count"
+    );
+
+    click_element(&ui, &the_status_links_link(&ui));
+
+    let clear_link = ElementHandle::find_by_element_type_name(&ui, "StatusLink")
+        .next()
+        .expect("the clear link is drawn");
+    assert_eq!(clear_link.accessible_role(), Some(AccessibleRole::Button));
+    assert_eq!(
+        clear_link.accessible_label().map(|label| label.to_string()),
+        Some("clear the filter".to_owned())
+    );
+}
+
+#[test]
+fn ctrl_shift_u_toggles_the_changed_filter_with_focus_in_any_pane() {
+    let _serial = serially();
+    let root = scratch("changed-filter-chord");
+    checkout(&root, "alpha", "main", None, 1);
+    let beta = checkout(&root, "beta", "main", None, 1);
+    file(&beta, "tracked-0.txt", "edited so the checkout is dirty\n");
+    let (ui, app) = window_at(&root);
+    settle_statuses(&ui, &app);
+
+    // Folders, then Contents, then File - `Key::RightArrow` with no
+    // modifier is `pane-cycled` (CLAUDE.md rule 14: a real key dispatch,
+    // not a direct call into `App`).
+    for _ in 0..3 {
+        assert!(!ui.get_status_show_clear_link());
+
+        press_with(&ui, "u", &[Key::Control, Key::Shift]);
+
+        assert!(
+            ui.get_status_show_clear_link(),
+            "Ctrl+Shift+U should toggle the filter regardless of which \
+             pane has the keyboard"
+        );
+
+        press_with(&ui, "u", &[Key::Control, Key::Shift]);
+
+        assert!(!ui.get_status_show_clear_link());
+
+        press_key(&ui, Key::RightArrow);
+    }
 }
 
 #[test]

@@ -139,6 +139,8 @@ pub enum Fires {
     ZoomOutRequested,
     /// `zoom-reset-requested()`.
     ZoomResetRequested,
+    /// `changed-filter-toggled()`.
+    ChangedFilterToggled,
 }
 
 impl Fires {
@@ -179,6 +181,7 @@ impl Fires {
             Fires::ZoomInRequested => "zoom-in-requested".to_owned(),
             Fires::ZoomOutRequested => "zoom-out-requested".to_owned(),
             Fires::ZoomResetRequested => "zoom-reset-requested".to_owned(),
+            Fires::ChangedFilterToggled => "changed-filter-toggled".to_owned(),
         }
     }
 }
@@ -633,6 +636,15 @@ pub const BINDINGS: &[Binding] = &[
         key: Physical::Named(Key::Escape, "Escape"),
         description: "Cancel a pending prompt, or clear the filter",
         fires: Fires::CancelRequested,
+    },
+    Binding {
+        owner: Owner::Find,
+        control: true,
+        alt: false,
+        shift: true,
+        key: Physical::Letter('U'),
+        description: "Toggle the status bar's changed-only filter",
+        fires: Fires::ChangedFilterToggled,
     },
 ];
 

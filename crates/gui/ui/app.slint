@@ -291,8 +291,20 @@ export component MainWindow inherits Window {
     in property <bool> filter-focused;
     callback filter-focus-requested();
     in property <string> status-changed-label;
+    // The fuller words a screen reader speaks for the link above (#629);
+    // kept apart from `status-changed-label` since that one stays terse
+    // for sighted eyes.
+    in property <string> status-changed-accessible-label;
     in property <bool> status-show-clear-link;
+    // Whether Tab has moved the keyboard onto whichever status-bar link
+    // is showing (#629), so both draw their focus ring off the one flag -
+    // only one of the two ever shows at a time.
+    in property <bool> status-link-focused;
     callback status-changed-link-clicked();
+    // Tab from the Contents pane (#629): a no-op unless a status-bar link
+    // is actually showing, decided in Rust the same way
+    // `message-focus-requested` already is.
+    callback status-link-focus-requested();
     // Help > Keyboard shortcuts (#585): the table's rows, grouped and
     // labelled for this platform once by `shortcuts::rows` rather than on
     // every sync, since the list does not change while the window runs.
@@ -312,6 +324,10 @@ export component MainWindow inherits Window {
     callback switcher-open-requested();
     callback switcher-row-clicked(int);
     callback status-clear-filter-clicked();
+    // Ctrl+Shift+U (#629): toggles the changed-only filter above from
+    // anywhere in the window, so a reader who has not tabbed to the link
+    // itself still has a keyboard way to reach it.
+    callback changed-filter-toggled();
     // The Contents pane's centred message (#592), threaded down into
     // `contents-pane` below.
     in property <string> message-title;
@@ -481,6 +497,13 @@ export component MainWindow inherits Window {
                 zoom-reset-requested();
                 return accept;
             }
+            // Ctrl+Shift+U (#629) toggles the changed-only filter from
+            // anywhere in the window, editing included, the same as F1
+            // and Zoom above.
+            if (event.modifiers.control && event.modifiers.shift && (event.text == "u" || event.text == "U")) {
+                changed-filter-toggled();
+                return accept;
+            }
             // A key that gets here while the editor has the keyboard is
             // one the editing surface did not want. Four of them still
             // mean something; the rest are the Contents pane's - rename,
@@ -518,6 +541,10 @@ export component MainWindow inherits Window {
                 // (#592); a no-op while no message is showing, the same
                 // as Tab did here before that pane existed.
                 message-focus-requested(event.modifiers.shift ? -1 : 1);
+                // Moves the keyboard onto the status bar's link (#629),
+                // in reading order after the Contents pane; a no-op the
+                // same way when none is showing.
+                status-link-focus-requested();
             } else if (event.text == Key.UpArrow && event.modifiers.alt) {
                 parent-requested();
             } else if (event.modifiers.control && event.modifiers.shift && (event.text == "f" || event.text == "F")) {
@@ -995,6 +1022,8 @@ export component MainWindow inherits Window {
                 }
                 if status-changed-label != "": StatusLink {
                     label: status-changed-label;
+                    accessible-text: status-changed-accessible-label;
+                    highlighted: status-link-focused;
                     activated => { status-changed-link-clicked(); }
                 }
                 if status-show-clear-link: Text {
@@ -1004,6 +1033,8 @@ export component MainWindow inherits Window {
                 }
                 if status-show-clear-link: StatusLink {
                     label: "clear";
+                    accessible-text: "clear the filter";
+                    highlighted: status-link-focused;
                     activated => { status-clear-filter-clicked(); }
                 }
             }
