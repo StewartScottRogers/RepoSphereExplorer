@@ -639,7 +639,9 @@ fn claimed_by_extension<'a>(
 /// # Errors
 /// Returns an error if `path` cannot be read.
 pub fn view_file(path: &Path) -> io::Result<Response> {
-    if fs::metadata(path)?.is_dir() {
+    let metadata = fs::metadata(path)
+        .map_err(|err| io::Error::new(err.kind(), format!("{}: {err}", path.display())))?;
+    if metadata.is_dir() {
         let name = DIRECTORY_PLUGIN.name();
         let mut also = Vec::new();
         for plugin in folder_plugins_for(path) {
@@ -3843,10 +3845,34 @@ public class OrderBook {
     #[test]
     fn viewing_a_file_that_is_not_there_is_an_error_rather_than_an_empty_view() {
         let dir = scratch();
+        let path = dir.join("gone.txt");
 
-        let err = view_file(&dir.join("gone.txt")).unwrap_err();
+        let err = view_file(&path).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            err.to_string().contains(&path.display().to_string()),
+            "the error should name the file that is not there: {err}"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_removed_after_being_viewed_names_itself_in_the_error() {
+        let dir = scratch();
+        let alpha = dir.join("alpha");
+        fs::create_dir(&alpha).unwrap();
+        assert!(view_file(&alpha).is_ok(), "a plain folder views fine");
+
+        fs::remove_dir(&alpha).unwrap();
+        let err = view_file(&alpha).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            err.to_string().contains(&alpha.display().to_string()),
+            "the error should name the folder that vanished: {err}"
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
