@@ -56,6 +56,18 @@ pub enum Action {
     ContentsDown,
     /// Opens the selected row if it is a folder.
     ContentsOpen,
+    /// Sorts the contents by Name, reversing direction if already sorted
+    /// by it.
+    ContentsSortName,
+    /// Sorts the contents by Type, reversing direction if already sorted
+    /// by it.
+    ContentsSortType,
+    /// Sorts the contents by Size, reversing direction if already sorted
+    /// by it.
+    ContentsSortSize,
+    /// Sorts the contents by Modified, reversing direction if already
+    /// sorted by it.
+    ContentsSortModified,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -246,6 +258,34 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Collapse",
         action: Action::FoldersCollapse,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('n'),
+        modifiers: KeyModifiers::NONE,
+        description: "Sort by name",
+        action: Action::ContentsSortName,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('t'),
+        modifiers: KeyModifiers::NONE,
+        description: "Sort by type",
+        action: Action::ContentsSortType,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('s'),
+        modifiers: KeyModifiers::NONE,
+        description: "Sort by size",
+        action: Action::ContentsSortSize,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('m'),
+        modifiers: KeyModifiers::NONE,
+        description: "Sort by modified",
+        action: Action::ContentsSortModified,
     },
 ];
 

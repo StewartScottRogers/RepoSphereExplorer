@@ -94,7 +94,8 @@ fn new_app_and_terminal(root: PathBuf) -> (Terminal<TestBackend>, App) {
 
 /// A scratch folder with two text files of distinguishable content, a
 /// subfolder, and a third file after it - laid out so the sorted Contents
-/// listing is `aaa.txt`, `mmm.txt`, `subdir/`, `zzz.txt`.
+/// listing is `subdir/`, `aaa.txt`, `mmm.txt`, `zzz.txt`: a folder always
+/// sorts before a file, whichever column the pane is sorted by (#640).
 fn contents_scratch(name: &str) -> PathBuf {
     let root = common::scratch(name);
     std::fs::write(root.join("aaa.txt"), "AAA-CONTENT").expect("aaa.txt is written");
@@ -163,6 +164,9 @@ fn every_contents_binding_reaches_the_action_it_names() {
 
         match binding.action {
             Action::StartDelete => {
+                // subdir/, aaa.txt, mmm.txt, zzz.txt - one row down lands
+                // on the first file among them.
+                press(&mut terminal, &mut app, KeyCode::Down);
                 let shown = press_binding(&mut terminal, &mut app, binding);
                 assert!(
                     shown.contains("Delete aaa.txt? y/n"),
@@ -170,6 +174,7 @@ fn every_contents_binding_reaches_the_action_it_names() {
                 );
             }
             Action::StartRename => {
+                press(&mut terminal, &mut app, KeyCode::Down);
                 let shown = press_binding(&mut terminal, &mut app, binding);
                 assert!(
                     shown.contains("Rename to: aaa.txt_"),
@@ -177,6 +182,7 @@ fn every_contents_binding_reaches_the_action_it_names() {
                 );
             }
             Action::StartCopy => {
+                press(&mut terminal, &mut app, KeyCode::Down);
                 let shown = press_binding(&mut terminal, &mut app, binding);
                 assert!(
                     shown.contains("Copy to: aaa.txt_"),
@@ -184,6 +190,7 @@ fn every_contents_binding_reaches_the_action_it_names() {
                 );
             }
             Action::StartExtract => {
+                press(&mut terminal, &mut app, KeyCode::Down);
                 let shown = press_binding(&mut terminal, &mut app, binding);
                 assert!(
                     shown.contains("Extract to: aaa_"),
@@ -191,6 +198,8 @@ fn every_contents_binding_reaches_the_action_it_names() {
                 );
             }
             Action::ContentsDown => {
+                // subdir/ is selected first; one row down reaches aaa.txt.
+                press(&mut terminal, &mut app, KeyCode::Down);
                 wait_for(&mut terminal, &mut app, "AAA-CONTENT");
                 press_binding(&mut terminal, &mut app, binding);
                 let shown = wait_for(&mut terminal, &mut app, "MMM-CONTENT");
@@ -200,6 +209,7 @@ fn every_contents_binding_reaches_the_action_it_names() {
                 );
             }
             Action::ContentsUp => {
+                press(&mut terminal, &mut app, KeyCode::Down);
                 wait_for(&mut terminal, &mut app, "AAA-CONTENT");
                 press(&mut terminal, &mut app, KeyCode::Down);
                 wait_for(&mut terminal, &mut app, "MMM-CONTENT");
@@ -211,15 +221,38 @@ fn every_contents_binding_reaches_the_action_it_names() {
                 );
             }
             Action::ContentsOpen => {
-                // aaa.txt, mmm.txt, subdir/, zzz.txt - two rows down lands
-                // on the one folder among them.
-                press(&mut terminal, &mut app, KeyCode::Down);
-                press(&mut terminal, &mut app, KeyCode::Down);
+                // subdir/ sorts first among subdir/, aaa.txt, mmm.txt,
+                // zzz.txt - it is already the selected row.
                 press_binding(&mut terminal, &mut app, binding);
                 assert_eq!(
                     app.focus(),
                     Focus::Folders,
                     "opening the subfolder row should hand focus to the tree"
+                );
+            }
+            Action::ContentsSortName => {
+                let shown = drawn(&terminal);
+                assert!(
+                    shown.find("aaa.txt").unwrap() < shown.find("zzz.txt").unwrap(),
+                    "the default sort is ascending by name: {shown:?}"
+                );
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.find("zzz.txt").unwrap() < shown.find("aaa.txt").unwrap(),
+                    "pressing the same sort key again should reverse the order: {shown:?}"
+                );
+            }
+            Action::ContentsSortType | Action::ContentsSortSize | Action::ContentsSortModified => {
+                // Every file here ties on type, size and modified time, so
+                // the name tiebreak decides the order - and is itself
+                // reversed along with everything else on the second press,
+                // proving the direction toggled.
+                press_binding(&mut terminal, &mut app, binding);
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.find("zzz.txt").unwrap() < shown.find("aaa.txt").unwrap(),
+                    "sorting by {:?} and pressing it again should reverse direction: {shown:?}",
+                    binding.action
                 );
             }
             other => panic!("no assertion written for the contents action {other:?}"),

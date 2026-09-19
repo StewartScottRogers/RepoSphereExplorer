@@ -15,7 +15,8 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState};
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -294,6 +295,48 @@ fn classify_file_problem(path: &Path, message: &str) -> String {
     format!("{name} is no longer there - press F5 to reload the folder")
 }
 
+/// Which column the Contents pane is sorted by (#640). Branch is not a
+/// sort key, the way the graphical front end's own `SortKey` has none
+/// either: a working copy's branch says nothing about the folder's own
+/// identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortKey {
+    /// Entry name, case-insensitively.
+    Name,
+    /// The Type column's text.
+    Kind,
+    /// Size in bytes.
+    Size,
+    /// Last modified time - a repository's last activity when it has one,
+    /// the folder's or file's own time otherwise.
+    Modified,
+}
+
+/// What the Contents pane knows about one repository row's working tree,
+/// asked for only after the listing lands, and only once per row - a
+/// listing of forty checkouts must not wait on forty passes over their
+/// tracked files (GUIDANCE.md §3.5, #640).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RowStatus {
+    /// Asked for, not answered yet.
+    Waiting,
+    /// Answered: the summary, or `None` when the service could not tell.
+    Answered(Option<protocol::WorkingTreeSummary>),
+}
+
+/// Drawn beside a repository row's branch when its tracked files have
+/// uncommitted changes - the shape itself reads "modified", the way `git
+/// status` already does, rather than relying on the colour it is also
+/// given (#574, #640).
+const CHANGED_MARKER: &str = "M";
+/// Drawn beside a repository row's branch until its status has been asked
+/// for and answered.
+const NOT_KNOWN_YET_MARKER: &str = "\u{2026}";
+/// Drawn beside a repository row's branch when the answer came back and
+/// cannot say: the index could not be read, or the count stopped short
+/// without finding a change.
+const CANNOT_TELL_MARKER: &str = "?";
+
 /// The three-pane explorer's state: a folders tree, the selected folder's
 /// contents, and the selected file's preview.
 pub struct App {
@@ -323,6 +366,16 @@ pub struct App {
     /// rather than whatever row the cursor has moved to since (#625).
     pending_file_path: Option<PathBuf>,
     pending_operation: Option<Receiver<io::Result<Response>>>,
+    /// Which column the Contents pane is sorted by.
+    sort_key: SortKey,
+    /// Whether the current sort is ascending.
+    sort_ascending: bool,
+    /// What each repository row's tracked files look like, by entry name -
+    /// cleared and asked for again on every fresh listing (#640).
+    row_statuses: HashMap<String, RowStatus>,
+    /// Working-tree status requests in flight, by the entry name they were
+    /// asked about.
+    pending_statuses: Vec<(String, Receiver<io::Result<Response>>)>,
     /// Set once the user has asked to quit.
     pub should_quit: bool,
 }
@@ -347,6 +400,10 @@ impl App {
             pending_file: None,
             pending_file_path: None,
             pending_operation: None,
+            sort_key: SortKey::Name,
+            sort_ascending: true,
+            row_statuses: HashMap::new(),
+            pending_statuses: Vec::new(),
             should_quit: false,
         };
         app.load_contents_for_selected();
@@ -410,6 +467,103 @@ impl App {
         self.pending_file = Some(spawn_request(request));
     }
 
+    /// Orders `contents` by the current sort column. A directory sorts
+    /// before a file whichever column is chosen, the way a file explorer
+    /// groups them, and the name is the tiebreak so the order is total -
+    /// mirrors the graphical front end's own `sort_contents` (#640).
+    fn sort_contents(&mut self) {
+        let key = self.sort_key;
+        let ascending = self.sort_ascending;
+        self.contents.sort_by(|a, b| {
+            let ordering = match key {
+                SortKey::Name => std::cmp::Ordering::Equal,
+                SortKey::Size => a.size.cmp(&b.size),
+                SortKey::Kind => format_kind(a).cmp(&format_kind(b)),
+                SortKey::Modified => effective_modified(a).cmp(&effective_modified(b)),
+            }
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name));
+            let ordering = if ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            };
+            b.is_dir.cmp(&a.is_dir).then(ordering)
+        });
+    }
+
+    /// Sorts the Contents pane by `key`, reversing direction if it is
+    /// already the sort key. The selected row keeps its selection across
+    /// the reorder by following its name, not its old position (#640).
+    fn set_sort_key(&mut self, key: SortKey) {
+        if self.sort_key == key {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_key = key;
+            self.sort_ascending = true;
+        }
+        let selected = self
+            .contents
+            .get(self.contents_selected)
+            .map(|entry| entry.name.clone());
+        self.sort_contents();
+        self.contents_selected = selected
+            .as_deref()
+            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .unwrap_or(0);
+        self.load_file_view();
+    }
+
+    /// Asks the service for the working-tree status of every repository
+    /// row in the current listing that has not been asked about since it
+    /// landed - one request per row, after the listing is already on
+    /// screen: the branch is in the listing already, and the changes cost
+    /// a pass over a checkout's tracked files that a listing of forty
+    /// checkouts must not wait for (GUIDANCE.md §3.5, #640).
+    fn ask_for_statuses(&mut self) {
+        for entry in &self.contents {
+            if entry.repository.is_none() || self.row_statuses.contains_key(&entry.name) {
+                continue;
+            }
+            self.row_statuses
+                .insert(entry.name.clone(), RowStatus::Waiting);
+            let request = Request::WorkingTreeStatus {
+                path: self
+                    .contents_dir
+                    .join(&entry.name)
+                    .to_string_lossy()
+                    .into_owned(),
+            };
+            self.pending_statuses
+                .push((entry.name.clone(), spawn_request(request)));
+        }
+    }
+
+    /// Records the answer for the row named `name`, if it was asked about
+    /// in the listing on screen.
+    fn apply_status_result(&mut self, name: &str, result: io::Result<Response>) {
+        let status = match result {
+            Ok(Response::WorkingTree { status, .. }) => status,
+            _ => None,
+        };
+        if let Some(row) = self.row_statuses.get_mut(name) {
+            *row = RowStatus::Answered(status);
+        }
+    }
+
+    /// The marker drawn beside a repository row's branch: [`CHANGED_MARKER`]
+    /// for uncommitted changes, [`CANNOT_TELL_MARKER`] when the answer came
+    /// back and could not say, [`NOT_KNOWN_YET_MARKER`] while still
+    /// waiting, or empty for a clean working tree (#574, #640).
+    fn marker_for(&self, name: &str) -> &'static str {
+        match self.row_statuses.get(name) {
+            None | Some(RowStatus::Waiting) => NOT_KNOWN_YET_MARKER,
+            Some(RowStatus::Answered(Some(status))) if status.changed > 0 => CHANGED_MARKER,
+            Some(RowStatus::Answered(Some(status))) if !status.partial => "",
+            Some(RowStatus::Answered(_)) => CANNOT_TELL_MARKER,
+        }
+    }
+
     /// Applies any background request results that have arrived since the
     /// last call. Call this once per event-loop iteration.
     pub fn tick(&mut self) {
@@ -438,6 +592,19 @@ impl App {
         {
             self.pending_operation = None;
             self.apply_operation_result(result);
+        }
+        let mut still_pending = Vec::with_capacity(self.pending_statuses.len());
+        let mut answered = Vec::new();
+        for (name, rx) in self.pending_statuses.drain(..) {
+            match rx.try_recv() {
+                Ok(result) => answered.push((name, result)),
+                Err(mpsc::TryRecvError::Empty) => still_pending.push((name, rx)),
+                Err(mpsc::TryRecvError::Disconnected) => {}
+            }
+        }
+        self.pending_statuses = still_pending;
+        for (name, result) in answered {
+            self.apply_status_result(&name, result);
         }
     }
 
@@ -469,8 +636,15 @@ impl App {
                     .pending_contents_dir
                     .take()
                     .unwrap_or_else(|| self.selected_dir_path());
+                // A new listing, even of the same folder, starts its
+                // statuses again: what was known belonged to the rows it
+                // replaces.
+                self.row_statuses.clear();
+                self.pending_statuses.clear();
+                self.sort_contents();
                 self.contents_selected = 0;
                 self.load_file_view();
+                self.ask_for_statuses();
             }
             Ok(Response::Error { message }) => self.status = Some(message),
             Ok(
@@ -533,6 +707,10 @@ impl App {
             Action::ContentsUp => self.move_up_in_contents(),
             Action::ContentsDown => self.move_down_in_contents(),
             Action::ContentsOpen => self.drill_into_selected(),
+            Action::ContentsSortName => self.set_sort_key(SortKey::Name),
+            Action::ContentsSortType => self.set_sort_key(SortKey::Kind),
+            Action::ContentsSortSize => self.set_sort_key(SortKey::Size),
+            Action::ContentsSortModified => self.set_sort_key(SortKey::Modified),
         }
     }
 
@@ -917,39 +1095,313 @@ fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-/// How one entry reads in the contents pane.
-///
-/// A working copy is what somebody opening their workspace is looking for,
-/// so it says it is one and names the provider it came from. A folder that
-/// is not one stays listed, with the trailing slash it always had - visible,
-/// and plainly different (GUIDANCE.md 2.5).
-fn contents_label(entry: &DirectoryEntry) -> String {
-    match &entry.repository {
-        Some(repository) => match &repository.provider {
-            Some(provider) => format!("{}/  [{provider}]", entry.name),
-            None => format!("{}/  [repository]", entry.name),
-        },
-        None if entry.is_dir => format!("{}/", entry.name),
-        None => entry.name.clone(),
+/// The entry's own name, with a trailing `/` for a directory.
+fn entry_display_name(entry: &DirectoryEntry) -> String {
+    if entry.is_dir {
+        format!("{}/", entry.name)
+    } else {
+        entry.name.clone()
     }
 }
 
+/// How many characters the Type column shows before shortening a working
+/// copy's own text - a character-cell budget, playing the same role the
+/// graphical front end's pixel one does (#578, #640).
+const KIND_COLUMN_BUDGET: usize = 18;
+
+/// The Contents pane's "Type" column: `"File folder"` for a directory,
+/// `"Git repository"` (with its provider, budget allowing) for a working
+/// copy - a worktree or submodule says so instead (#587) - or the
+/// uppercased extension as `"RS file"`, plain `"File"` when there is none.
+/// Mirrors the graphical front end's `format_kind_of`.
+fn format_kind(entry: &DirectoryEntry) -> String {
+    if let Some(repository) = &entry.repository {
+        return match &repository.kind {
+            protocol::RepositoryKind::Worktree { .. } => {
+                with_provider("Worktree", repository.provider.as_deref())
+            }
+            protocol::RepositoryKind::Submodule { .. } => {
+                with_provider("Submodule", repository.provider.as_deref())
+            }
+            protocol::RepositoryKind::Clone => match &repository.provider {
+                Some(provider) => {
+                    let named = format!("Git repository · {provider}");
+                    if named.chars().count() <= KIND_COLUMN_BUDGET {
+                        named
+                    } else {
+                        format!("Repository · {provider}")
+                    }
+                }
+                None => "Git repository".to_owned(),
+            },
+        };
+    }
+    if entry.is_dir {
+        return "File folder".to_owned();
+    }
+    Path::new(&entry.name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|extension| !extension.is_empty())
+        .map_or_else(
+            || "File".to_owned(),
+            |extension| format!("{} file", extension.to_uppercase()),
+        )
+}
+
+/// `noun`, with the provider appended after a middle dot when there is
+/// one: `"Worktree · github.com"`, or plain `"Worktree"` for a checkout
+/// with no remote configured (#587).
+fn with_provider(noun: &str, provider: Option<&str>) -> String {
+    match provider {
+        Some(provider) => format!("{noun} · {provider}"),
+        None => noun.to_owned(),
+    }
+}
+
+/// The time an entry's Modified column sorts and displays by: a
+/// repository's last activity when it has one, and the folder's or file's
+/// own modification time otherwise (#588).
+fn effective_modified(entry: &DirectoryEntry) -> Option<u64> {
+    entry
+        .repository
+        .as_ref()
+        .and_then(|repository| repository.last_activity)
+        .or(entry.modified)
+}
+
+/// Formats a byte count for the Size column, e.g. `1.2 MB`.
+#[allow(clippy::cast_precision_loss)]
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = "B";
+    for candidate in UNITS {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = candidate;
+    }
+    if unit == "B" {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {unit}")
+    }
+}
+
+/// A modified time as `YYYY-MM-DD HH:MM`, from seconds since the Unix
+/// epoch. Rendered in UTC: the service reports the timestamp in epoch
+/// seconds and this front end has no timezone database to convert it
+/// with, so a label that is unambiguous beats one that is quietly wrong
+/// by an offset.
+fn format_timestamp(seconds: Option<u64>) -> String {
+    let Some(seconds) = seconds else {
+        return String::new();
+    };
+    let days = i64::try_from(seconds / 86_400).unwrap_or(0);
+    let time_of_day = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute) = (time_of_day / 3_600, (time_of_day % 3_600) / 60);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+/// Converts days since 1970-01-01 into a civil `(year, month, day)`, by
+/// Howard Hinnant's `civil_from_days`. Avoids taking on a date library for
+/// one column.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = u32::try_from(day_of_year - (153 * mp + 2) / 5 + 1).unwrap_or(1);
+    let month = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// Which optional columns the Contents pane draws this frame, and how
+/// wide each shown column is - decided once from the pane's own width,
+/// never from a directory read that would make a listing crawl
+/// (GUIDANCE.md §3.5).
+struct ContentsColumns {
+    name: u16,
+    branch: Option<u16>,
+    kind: Option<u16>,
+    size: Option<u16>,
+    modified: Option<u16>,
+}
+
+const BRANCH_COLUMN_WIDTH: u16 = 16;
+const KIND_COLUMN_WIDTH: u16 = 18;
+const SIZE_COLUMN_WIDTH: u16 = 9;
+const MODIFIED_COLUMN_WIDTH: u16 = 16;
+/// The gap Ratatui's `Table` draws between two columns.
+const COLUMN_SPACING: u16 = 1;
+/// Below this many columns left for Name, an optional column gives up its
+/// own room instead (#573, #640): Modified, then Size, then Type, then
+/// Branch disappear - dropped from the right, in that order - rather than
+/// Name ever being the one elided.
+const NAME_FLOOR: u16 = 20;
+
+/// Fits the Contents pane's columns to `width` (the pane's inner width,
+/// borders already excluded). Size is never offered while `holds_file` is
+/// false (#578), and Branch is never offered while `holds_repository` is
+/// false, the same rule applied to the fact neither column would have
+/// anything to show. Whichever of Modified, Size, Type and Branch remain
+/// candidates give up their column in that order - right to left - before
+/// the Name column is ever squeezed below [`NAME_FLOOR`] (#573).
+fn plan_contents_columns(width: u16, holds_file: bool, holds_repository: bool) -> ContentsColumns {
+    let mut show_modified = true;
+    let mut show_size = holds_file;
+    let mut show_kind = true;
+    let mut show_branch = holds_repository;
+
+    loop {
+        let shown = u16::from(show_branch)
+            + u16::from(show_kind)
+            + u16::from(show_size)
+            + u16::from(show_modified);
+        let fixed = shown * COLUMN_SPACING
+            + if show_branch { BRANCH_COLUMN_WIDTH } else { 0 }
+            + if show_kind { KIND_COLUMN_WIDTH } else { 0 }
+            + if show_size { SIZE_COLUMN_WIDTH } else { 0 }
+            + if show_modified {
+                MODIFIED_COLUMN_WIDTH
+            } else {
+                0
+            };
+
+        if width.saturating_sub(fixed) >= NAME_FLOOR || shown == 0 {
+            return ContentsColumns {
+                name: width.saturating_sub(fixed),
+                branch: show_branch.then_some(BRANCH_COLUMN_WIDTH),
+                kind: show_kind.then_some(KIND_COLUMN_WIDTH),
+                size: show_size.then_some(SIZE_COLUMN_WIDTH),
+                modified: show_modified.then_some(MODIFIED_COLUMN_WIDTH),
+            };
+        }
+        if show_modified {
+            show_modified = false;
+        } else if show_size {
+            show_size = false;
+        } else if show_kind {
+            show_kind = false;
+        } else {
+            show_branch = false;
+        }
+    }
+}
+
+/// `title`, with an American Standard Code for Information Interchange
+/// (ASCII) arrow appended when the Contents pane is currently sorted by
+/// `key` - `^` ascending, `v` descending.
+fn sort_header(title: &'static str, app: &App, key: SortKey) -> Cell<'static> {
+    if app.sort_key == key {
+        let arrow = if app.sort_ascending { '^' } else { 'v' };
+        Cell::from(format!("{title} {arrow}"))
+    } else {
+        Cell::from(title)
+    }
+}
+
+/// The Branch column's cell: the branch name, then its change marker in
+/// the warning colour when it means uncommitted changes - a glyph, not
+/// colour alone (#574, #640).
+fn branch_cell(app: &App, entry: &DirectoryEntry) -> Cell<'static> {
+    let Some(repository) = &entry.repository else {
+        return Cell::from("");
+    };
+    let branch = repository
+        .branch
+        .clone()
+        .unwrap_or_else(|| "detached".to_owned());
+    let marker = app.marker_for(&entry.name);
+    if marker.is_empty() {
+        return Cell::from(branch);
+    }
+    let marker_style = if marker == CHANGED_MARKER {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    Cell::from(Line::from(vec![
+        Span::raw(format!("{branch} ")),
+        Span::styled(marker, marker_style),
+    ]))
+}
+
+/// One Contents row's cells, fitted to `columns`.
+fn contents_row(app: &App, entry: &DirectoryEntry, columns: &ContentsColumns) -> Row<'static> {
+    let mut cells = vec![Cell::from(entry_display_name(entry))];
+    if columns.branch.is_some() {
+        cells.push(branch_cell(app, entry));
+    }
+    if columns.kind.is_some() {
+        cells.push(Cell::from(format_kind(entry)));
+    }
+    if columns.size.is_some() {
+        let size = if entry.is_dir {
+            String::new()
+        } else {
+            format_size(entry.size)
+        };
+        cells.push(Cell::from(size));
+    }
+    if columns.modified.is_some() {
+        cells.push(Cell::from(format_timestamp(effective_modified(entry))));
+    }
+    Row::new(cells)
+}
+
+/// Renders the Contents pane as a table fitted to what the listing holds
+/// (#578, #640): Name, then Branch, Type, Size and Modified as room and
+/// the listing's own contents allow, sorted by [`App::sort_key`].
 fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let items: Vec<ListItem<'_>> = app
+    let holds_file = app.contents.iter().any(|entry| !entry.is_dir);
+    let holds_repository = app.contents.iter().any(|entry| entry.repository.is_some());
+    let inner_width = area.width.saturating_sub(2);
+    let columns = plan_contents_columns(inner_width, holds_file, holds_repository);
+
+    let mut widths = vec![Constraint::Length(columns.name)];
+    let mut header_cells = vec![sort_header("Name", app, SortKey::Name)];
+    if let Some(width) = columns.branch {
+        widths.push(Constraint::Length(width));
+        header_cells.push(Cell::from("Branch"));
+    }
+    if let Some(width) = columns.kind {
+        widths.push(Constraint::Length(width));
+        header_cells.push(sort_header("Type", app, SortKey::Kind));
+    }
+    if let Some(width) = columns.size {
+        widths.push(Constraint::Length(width));
+        header_cells.push(sort_header("Size", app, SortKey::Size));
+    }
+    if let Some(width) = columns.modified {
+        widths.push(Constraint::Length(width));
+        header_cells.push(sort_header("Modified", app, SortKey::Modified));
+    }
+
+    let rows: Vec<Row<'static>> = app
         .contents
         .iter()
-        .map(|entry| ListItem::new(contents_label(entry)))
+        .map(|entry| contents_row(app, entry, &columns))
         .collect();
 
-    let mut state = ListState::default();
+    let mut state = TableState::default();
     if !app.contents.is_empty() {
         state.select(Some(app.contents_selected));
     }
 
-    let list = List::new(items)
+    let table = Table::new(rows, widths)
+        .header(Row::new(header_cells))
+        .column_spacing(COLUMN_SPACING)
         .block(pane_block("Contents", app.focus == Focus::Contents))
-        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
-    frame.render_stateful_widget(list, area, &mut state);
+        .row_highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+    frame.render_stateful_widget(table, area, &mut state);
 }
 
 fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -962,7 +1414,9 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Focus, FolderNode, Mode, render_app};
+    use super::{
+        App, CHANGED_MARKER, Focus, FolderNode, Mode, RowStatus, render_app, render_contents,
+    };
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -1372,7 +1826,7 @@ mod tests {
     }
 
     #[test]
-    fn a_working_copy_is_labelled_apart_from_a_plain_folder() {
+    fn the_type_column_names_a_working_copy_and_its_provider() {
         let checkout = DirectoryEntry {
             name: "explorer".to_owned(),
             is_dir: true,
@@ -1395,12 +1849,18 @@ mod tests {
             repository: None,
         };
 
-        assert_eq!(super::contents_label(&checkout), "explorer/  [github.com]");
         assert_eq!(
-            super::contents_label(&folder),
-            "scratch/",
+            super::format_kind(&checkout),
+            "Repository · github.com",
+            "the full \"Git repository · provider\" already overruns an 18-character budget"
+        );
+        assert_eq!(
+            super::format_kind(&folder),
+            "File folder",
             "a folder that is not a checkout stays listed, and stays plain"
         );
+        assert_eq!(super::entry_display_name(&checkout), "explorer/");
+        assert_eq!(super::entry_display_name(&folder), "scratch/");
     }
 
     #[test]
@@ -1413,9 +1873,31 @@ mod tests {
             repository: Some(protocol::RepositoryInfo::default()),
         };
 
+        assert_eq!(super::format_kind(&checkout), "Git repository");
+    }
+
+    #[test]
+    fn a_long_provider_shortens_to_keep_the_type_column_readable() {
+        let checkout = DirectoryEntry {
+            name: "explorer".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("an-extremely-long-self-hosted-git-provider.example.com".to_owned()),
+                branch: None,
+                remote: None,
+                kind: protocol::RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch: None,
+            }),
+        };
+
         assert_eq!(
-            super::contents_label(&checkout),
-            "local-only/  [repository]"
+            super::format_kind(&checkout),
+            "Repository · an-extremely-long-self-hosted-git-provider.example.com",
+            "the full \"Git repository · provider\" still overruns the column, \
+             so it gives way to the shorter form that keeps the provider"
         );
     }
 
@@ -1460,6 +1942,15 @@ mod tests {
         }
     }
 
+    /// The Contents pane's entry names, in the order it currently shows
+    /// them - what a sort test compares against.
+    fn content_names(app: &App) -> Vec<&str> {
+        app.contents
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect()
+    }
+
     /// The path the open prompt is about, whichever prompt it is.
     fn prompt_path(app: &App) -> Option<&Path> {
         match &app.mode {
@@ -1487,6 +1978,261 @@ mod tests {
     /// As [`drawn_rows`], run together into one string.
     fn drawn(width: u16, height: u16, app: &App) -> String {
         drawn_rows(width, height, app).concat()
+    }
+
+    /// What [`render_contents`] alone draws into a `width` x `height`
+    /// rect, one string per row - the Contents pane's own table, without
+    /// the rest of the three-pane layout narrowing it further (#640).
+    fn drawn_contents(width: u16, height: u16, app: &App) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test terminal");
+        terminal
+            .draw(|frame| render_contents(frame, frame.area(), app))
+            .expect("a draw into the test backend");
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// A repository row for the table tests below: a checkout on `branch`,
+    /// with a provider so the Type column has something to shorten.
+    fn repository_entry(name: &str, branch: &str) -> DirectoryEntry {
+        DirectoryEntry {
+            name: name.to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                branch: Some(branch.to_owned()),
+                remote: Some("https://github.com/owner/repo.git".to_owned()),
+                kind: protocol::RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch: None,
+            }),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // The Contents pane as a table fitted to a Repos Directory, and it
+    // sorts (#640).
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn every_column_shows_at_120_columns_and_some_drop_as_it_narrows() {
+        let root = notional_root("column-widths");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    repository_entry("checkout", "main"),
+                    DirectoryEntry {
+                        name: "notes.txt".to_owned(),
+                        is_dir: false,
+                        size: 42,
+                        modified: Some(0),
+                        repository: None,
+                    },
+                ],
+            }),
+        );
+
+        let text_at = |width: u16| drawn_contents(width, 6, &app).concat();
+
+        let wide = text_at(120);
+        assert!(wide.contains("Branch"), "{wide}");
+        assert!(wide.contains("Type"), "{wide}");
+        assert!(wide.contains("Size"), "{wide}");
+        assert!(wide.contains("Modified"), "{wide}");
+
+        let medium = text_at(80);
+        assert!(
+            !medium.contains("Modified"),
+            "80 columns should already have dropped the least essential column: {medium}"
+        );
+
+        let narrow = text_at(40);
+        assert!(
+            !narrow.contains("Modified") && !narrow.contains("Size") && !narrow.contains("Type"),
+            "40 columns should hold only Name and Branch: {narrow}"
+        );
+        assert!(narrow.contains("checkout"), "{narrow}");
+    }
+
+    #[test]
+    fn a_long_branch_gives_up_its_room_before_the_name_is_touched() {
+        let root = notional_root("long-branch");
+        let mut app = App::new(root);
+        let long_branch = "an-extremely-long-branch-name-that-does-not-fit-in-any-column";
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![repository_entry("project", long_branch)],
+            }),
+        );
+
+        let text = drawn_contents(60, 6, &app).concat();
+
+        assert!(text.contains("project"), "the name must be whole: {text}");
+        assert!(
+            !text.contains(long_branch),
+            "the branch must have given up its room before the name was touched: {text}"
+        );
+    }
+
+    #[test]
+    fn the_size_column_shows_only_once_a_file_is_in_the_listing() {
+        let root = notional_root("size-column");
+        let mut app = app_showing(&root, &[("alpha", true), ("beta", true)]);
+        let folders_only = drawn_contents(60, 6, &app).concat();
+        assert!(!folders_only.contains("Size"), "{folders_only}");
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("alpha", true), ("notes.txt", false)]),
+            }),
+        );
+        let with_a_file = drawn_contents(60, 6, &app).concat();
+        assert!(with_a_file.contains("Size"), "{with_a_file}");
+    }
+
+    #[test]
+    fn sorting_by_size_orders_files_and_keeps_folders_first_both_directions() {
+        let root = notional_root("sort-by-size");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    DirectoryEntry {
+                        name: "z-folder".to_owned(),
+                        is_dir: true,
+                        size: 0,
+                        modified: None,
+                        repository: None,
+                    },
+                    DirectoryEntry {
+                        name: "small.txt".to_owned(),
+                        is_dir: false,
+                        size: 10,
+                        modified: None,
+                        repository: None,
+                    },
+                    DirectoryEntry {
+                        name: "large.txt".to_owned(),
+                        is_dir: false,
+                        size: 1000,
+                        modified: None,
+                        repository: None,
+                    },
+                ],
+            }),
+        );
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Char('s'));
+        assert_eq!(
+            app.contents
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z-folder", "small.txt", "large.txt"],
+            "folders first, then ascending by size"
+        );
+
+        app.handle_key(KeyCode::Char('s'));
+        assert_eq!(
+            app.contents
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z-folder", "large.txt", "small.txt"],
+            "pressing the same sort key again reverses direction, folders still first"
+        );
+    }
+
+    #[test]
+    fn sorting_by_name_type_and_modified_all_keep_folders_first_both_directions() {
+        let root = notional_root("sort-by-every-key");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    DirectoryEntry {
+                        name: "z-folder".to_owned(),
+                        is_dir: true,
+                        size: 0,
+                        modified: Some(1),
+                        repository: None,
+                    },
+                    DirectoryEntry {
+                        name: "a.md".to_owned(),
+                        is_dir: false,
+                        size: 0,
+                        modified: Some(200),
+                        repository: None,
+                    },
+                    DirectoryEntry {
+                        name: "b.txt".to_owned(),
+                        is_dir: false,
+                        size: 0,
+                        modified: Some(100),
+                        repository: None,
+                    },
+                ],
+            }),
+        );
+        app.focus = Focus::Contents;
+
+        // The listing is already sorted ascending by name (the default),
+        // so the first press of its own key reverses it to descending.
+        assert_eq!(content_names(&app), vec!["z-folder", "a.md", "b.txt"]);
+        app.handle_key(KeyCode::Char('n'));
+        assert_eq!(content_names(&app), vec!["z-folder", "b.txt", "a.md"]);
+        app.handle_key(KeyCode::Char('n'));
+        assert_eq!(content_names(&app), vec!["z-folder", "a.md", "b.txt"]);
+
+        // Type: "MD file" sorts before "TXT file".
+        app.handle_key(KeyCode::Char('t'));
+        assert_eq!(content_names(&app), vec!["z-folder", "a.md", "b.txt"]);
+        app.handle_key(KeyCode::Char('t'));
+        assert_eq!(content_names(&app), vec!["z-folder", "b.txt", "a.md"]);
+
+        // Modified: b.txt (100) is older than a.md (200).
+        app.handle_key(KeyCode::Char('m'));
+        assert_eq!(content_names(&app), vec!["z-folder", "b.txt", "a.md"]);
+        app.handle_key(KeyCode::Char('m'));
+        assert_eq!(content_names(&app), vec!["z-folder", "a.md", "b.txt"]);
+    }
+
+    #[test]
+    fn the_change_marker_reads_as_a_glyph_not_only_a_colour() {
+        let root = notional_root("change-marker");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![repository_entry("checkout", "main")],
+            }),
+        );
+        app.row_statuses.insert(
+            "checkout".to_owned(),
+            RowStatus::Answered(Some(protocol::WorkingTreeSummary {
+                changed: 3,
+                partial: false,
+                summary: "3 tracked files changed".to_owned(),
+            })),
+        );
+
+        let text = drawn_contents(60, 6, &app).concat();
+
+        assert!(
+            text.contains(CHANGED_MARKER),
+            "the marker must be a glyph a reader can see even with no colour drawn at all: {text}"
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -2487,13 +3233,15 @@ mod tests {
             .expect("a draw into the test backend");
         let buffer = terminal.backend().buffer().clone();
 
+        // Row 0 is the pane's top border, row 1 is the table header, so
+        // the first entry sits at row 2 and the second at row 3.
         assert_eq!(
-            buffer[(11, 2)].bg,
+            buffer[(11, 3)].bg,
             Color::Cyan,
             "the second row is the selected one"
         );
         assert_ne!(
-            buffer[(11, 1)].bg,
+            buffer[(11, 2)].bg,
             Color::Cyan,
             "and the first one is not, or the reader cannot tell them apart"
         );
@@ -2525,8 +3273,8 @@ mod tests {
     fn a_file_keeps_its_name_exactly_and_a_folder_gains_a_slash() {
         let listing = entries(&[("notes.txt", false), ("src", true)]);
 
-        assert_eq!(super::contents_label(&listing[0]), "notes.txt");
-        assert_eq!(super::contents_label(&listing[1]), "src/");
+        assert_eq!(super::entry_display_name(&listing[0]), "notes.txt");
+        assert_eq!(super::entry_display_name(&listing[1]), "src/");
     }
 
     #[test]
