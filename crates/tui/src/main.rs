@@ -3,13 +3,12 @@
 
 use interprocess::local_socket::Stream;
 use interprocess::local_socket::traits::Stream as _;
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
-use tui::app::{App, render_app};
+use tui::app::App;
 
 /// How long to wait for a freshly spawned service to come up, and how often
 /// to poll it while waiting.
@@ -152,16 +151,7 @@ fn self_update() -> ExitCode {
 fn run(opening: tui::app::Opening) -> io::Result<()> {
     let mut app = App::new_with_notice(opening.root, opening.notice);
     let mut terminal = ratatui::init();
-    while !app.should_quit {
-        terminal.draw(|frame| render_app(frame, frame.area(), &app))?;
-        app.tick();
-        if event::poll(Duration::from_millis(100))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            app.handle_key(key.code);
-        }
-    }
+    let result = tui::run(&mut terminal, &mut app, &mut tui::CrosstermEvents);
     ratatui::restore();
-    Ok(())
+    result
 }

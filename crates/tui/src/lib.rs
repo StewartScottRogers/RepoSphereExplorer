@@ -7,9 +7,15 @@ use interprocess::local_socket::{Name, Stream};
 use plugin_api::{FolderPresentation, PluginPresentation};
 use protocol::{Request, Response};
 use ratatui::Frame;
+use ratatui::Terminal;
+use ratatui::backend::Backend;
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
 use std::io;
+use std::time::Duration;
+
+use app::{App, render_app};
 
 /// Connects to the service's local socket and sends it `request`.
 ///
@@ -20,6 +26,86 @@ pub fn send_request(socket_name: Name<'_>, request: &Request) -> io::Result<Resp
     let mut conn = Stream::connect(socket_name)?;
     protocol::write_message(&mut conn, request)?;
     protocol::read_message(&mut conn)
+}
+
+/// A source of terminal input events for [`tick`] and [`run`].
+///
+/// The real event loop and a test that presses keys against a
+/// [`ratatui::backend::TestBackend`] differ only in where their events come
+/// from - what to draw, tick and dispatch is exactly the same either way.
+/// [`CrosstermEvents`] is the real terminal's answer; a test harness reads
+/// from a queue instead.
+pub trait Events {
+    /// Waits up to `timeout` for an event, returning whether one arrived.
+    ///
+    /// # Errors
+    /// Returns an error if polling the input source fails.
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool>;
+
+    /// Reads the event [`Events::poll`] said was ready.
+    ///
+    /// # Errors
+    /// Returns an error if reading from the input source fails.
+    fn read(&mut self) -> io::Result<Event>;
+}
+
+/// The real terminal's input, read through `crossterm`.
+pub struct CrosstermEvents;
+
+impl Events for CrosstermEvents {
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+        event::poll(timeout)
+    }
+
+    fn read(&mut self) -> io::Result<Event> {
+        event::read()
+    }
+}
+
+/// Runs one iteration of the terminal event loop: draws the current state,
+/// applies any background request results that have arrived, and handles
+/// one key press if `events` has one ready within `poll_timeout`.
+///
+/// # Errors
+/// Returns an error if the terminal cannot draw, or if `events` fails to
+/// poll or read.
+pub fn tick<B: Backend, E: Events>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    events: &mut E,
+    poll_timeout: Duration,
+) -> io::Result<()> {
+    terminal
+        .draw(|frame| render_app(frame, frame.area(), app))
+        .map_err(|err| io::Error::other(err.to_string()))?;
+    app.tick();
+    if events.poll(poll_timeout)?
+        && let Event::Key(key) = events.read()?
+        && key.kind == KeyEventKind::Press
+    {
+        app.handle_key(key.code);
+    }
+    Ok(())
+}
+
+/// How long [`run`] waits for an event on each iteration.
+const POLL_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Runs the three-pane explorer's event loop, reading from `events`, until
+/// the reader quits.
+///
+/// # Errors
+/// Returns an error if the terminal cannot draw, or if `events` fails to
+/// poll or read.
+pub fn run<B: Backend, E: Events>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    events: &mut E,
+) -> io::Result<()> {
+    while !app.should_quit {
+        tick(terminal, app, events, POLL_TIMEOUT)?;
+    }
+    Ok(())
 }
 
 /// Every presentation plugin linked into this front end.
