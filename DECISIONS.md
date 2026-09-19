@@ -154,12 +154,14 @@ no.
 
 **Amended 2026-09-08 by work order #304.** This entry deferred working-tree
 status along with the operations, on the grounds that reporting whether a
-clone is dirty needs the same walk of the work tree. That was true of the
-listing and not of the selected repository: read from the checkout's own
-index, for one repository at a time, the answer costs a pass over its
-tracked files and nothing more. Status is now reported in the File pane.
-What D10 still settles is unchanged - this application reads and never
-drives, and clone, fetch, pull and commit remain out of scope.
+clone is dirty needs the same walk of the work tree. That was true of a
+single pass over every checkout at once and not of a row asked for on its
+own: read from the checkout's own index, one repository at a time, after
+the listing itself is drawn, the answer costs a pass over its tracked files
+and nothing more. Status is now reported for every row on screen, and in
+the tool slot for the selected one. What D10 still settles is unchanged -
+this application reads and never drives, and clone, fetch, pull and commit
+remain out of scope.
 
 ### To revisit
 
@@ -242,7 +244,7 @@ fails if the `filter` there is ever replaced by a `find`.
 **What is deliberately not decided.** Whether a *listing* can show a project
 column. A `.git` check is one `metadata` call per row; a folder sniff is a
 full directory read per row. Today only the selected folder is sniffed. See
-GUIDANCE.md §3.4.
+GUIDANCE.md §3.5.
 
 ## D13 — A specialisation beats the format it specialises
 

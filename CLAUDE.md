@@ -52,9 +52,9 @@ Shared lints and the release profile live once in the workspace root
 
 [GUIDANCE.md](GUIDANCE.md) is the design this project is built from. Every work
 order should trace back to a line in it. If the guidance and the code disagree,
-change the guidance first. Decisions D1 to D10 in its section 7 gate the large
-work; [DECISIONS.md](DECISIONS.md) records why the settled ones were settled
-and what it would take to revisit them.
+change the guidance first. Decisions D1 to D15 gate the large work: D1 to D6 are
+settled in GUIDANCE.md's section 7, D7 to D15 in [DECISIONS.md](DECISIONS.md),
+which records why each was settled and what it would take to revisit it.
 
 ## Rules of the floor
 
@@ -85,7 +85,7 @@ and what it would take to revisit them.
    or loses. Every folder plugin that recognises a folder contributes, and its
    lines are added below what the folder already reports, never in place of
    them (D12). Sniff a folder only when it is the selected one — a full
-   directory read per row would make a listing crawl (GUIDANCE.md §3.4).
+   directory read per row would make a listing crawl (GUIDANCE.md §3.5).
 10. **Track plugins in [PLUGINS.md](PLUGINS.md).** Before proposing or building
     a plugin, check its Built, Folder and Rejected sections, plus
     `gh issue list --label work-order --state all`, for that format. When a
@@ -118,7 +118,8 @@ and what it would take to revisit them.
     the fault - opening the editor never gave it the keyboard - lived only
     where the two are wired together. Where behaviour needs both, build a
     real `MainWindow` on a real `App` through the same wiring `main` uses
-    (`gui::wire_editor`) and dispatch real events;
+    (`gui::wire_callbacks`, which wires the editor in turn) and dispatch real
+    events;
     `crates/gui/tests/editing_in_the_window.rs` is the pattern. Wiring the
     application does must live in the library, not in `main.rs`, or the
     test is exercising a copy of it that can drift.

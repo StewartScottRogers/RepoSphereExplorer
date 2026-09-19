@@ -31,19 +31,30 @@ pipeline assumes a human is watching.
   on Windows, `~/repos` elsewhere by default — and every launch starts there,
   wherever you were when you last closed it. Set it on first run, change it
   from the File menu.
-- **Knows a clone when it sees one.** A folder holding a `.git` marker is
-  marked as a repository and named with the provider it came from; a folder
-  that is not one stays visible and looks different.
-- **Reads the repository.** Select one and the File pane reports its provider,
-  the branch checked out, and the remote it tracks.
-- **Previews what is inside.** Eighty file types, each a plugin: source in
-  every language the workspace holds, images, archives, documents, databases,
+- **Knows a clone when it sees one.** A folder holding a `.git` marker carries
+  a provider-tinted branch badge in both panes, its name in the provider's
+  accent with its branch beside it, `Git repository · github.com` in Type,
+  and an `M` for uncommitted changes; a folder that is not one stays visible
+  and looks different.
+- **Reads the repository.** Select one and the tool slot shows a table of its
+  provider, branch, tracking, last fetched, remote and working tree, with the
+  folder's entry count and size dimmed below.
+- **Previews what is inside.** 180 file types, each a plugin: source in every
+  language the workspace holds, images, archives, documents, databases,
   fonts, media. A type may offer more than one view — its own rendering, and
-  the file's plain text — and text types can be edited in place.
+  the file's plain text — and text types can be edited in place, coloured by
+  the plugin's own classification of what each part of it is.
 - **Handles files the way you expect.** Rename, copy, move, delete, extract an
   archive, create, undo the last one; multi-select, marquee, context menus,
   sortable columns, an address bar with history, drag-and-drop between panes.
   Every operation is confirmed before it runs and journaled afterwards.
+- **Hands a repository to the tools you already use.** Open a terminal or
+  your configured editor at it, open it on the web, copy its path or remote
+  address, or reveal it in the platform's file manager.
+- **Finds things across the whole workspace.** A filter field narrows the
+  current listing, the status bar's changed-file count is a click away from
+  showing just those, and finding a file by name searches every repository
+  under the root, not only the one you are looking at.
 
 Two front ends: a terminal user interface (TUI, Ratatui) and a graphical user
 interface (GUI, Slint), both thin, over one service process that owns the
@@ -62,7 +73,7 @@ the design is in [GUIDANCE.md](GUIDANCE.md).
 | Last-location session restore | **Never built, and now ruled out** — every launch opens at the root (D7) |
 | Mounting network file sharing protocols | **Out of scope** — Server Message Block (SMB), Network File System (NFS) and their kin are the operating system's job. A Repos Directory on a drive the system has already mapped, such as `Z:`, is an ordinary path and works |
 | Source control operations: clone, fetch, pull, commit | **Out of scope this phase** (D10) — detection is built so they can sit behind it later |
-| Working-tree status (is this clone dirty?) | **Parked** — it needs the same walk of the work tree the operations will need; the field exists and reports unknown |
+| Working-tree status (is this clone dirty?) | **Built** — an `M` marker on every repository row, a working-tree fact in the tool slot, and a count and filter in the status bar (#535, #582) |
 | `explore` command line placeholder (`repo_sphere_explorer`) | **Parked** — an early stub, kept for its own tests, scheduled for removal or repurposing |
 
 ## Run it
@@ -216,6 +227,7 @@ These are not renamed yet, each for a reason:
 | Release binaries `RepoSphereExplorerGui` / `RepoSphereExplorerTui` | Installed copies self-update by name against the published manifest; renaming breaks the upgrade path for anyone already running one |
 | Settings and journal directory `RepoSphereExplorer/` | Holds live user data. A rename needs a migration that moves the existing directory rather than orphaning it |
 | Cargo package `repo_sphere_explorer` (the `explore` placeholder) | Parked rather than renamed, since it is scheduled for removal |
+| The Help menu's "About RepoSphereExplorer" item | Missed by the pivot's renaming pass; nothing else depends on the string, so it is a one-line fix whenever a work order touches that menu |
 
 ## The floor
 
@@ -336,8 +348,9 @@ GitHub Pages.
 
 ```bash
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
+cargo run -p gui                 # opens at the configured Repos Directory
 ```
 
 Toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (1.98,
