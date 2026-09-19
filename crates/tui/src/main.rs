@@ -156,6 +156,11 @@ fn self_update() -> ExitCode {
 /// Runs the three-pane explorer's event loop until the user quits.
 fn run(opening: tui::app::Opening) -> io::Result<()> {
     let mut app = App::new_with_notice(opening.root, opening.notice);
+    // A first run (#648): nothing is configured yet, so ask straight away
+    // instead of leaving the reader to find the binding themselves.
+    if opening.ask {
+        app.begin_repos_roots_view();
+    }
     // Before the first draw, the same "restore before anything shows"
     // shape the graphical front end's own pane widths follow (#650).
     if let Some(widths) = tui::settings::load_pane_widths() {

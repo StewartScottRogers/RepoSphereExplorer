@@ -143,6 +143,8 @@ pub enum Action {
     StartFind,
     /// Opens the All Repositories view (#647/#591).
     OpenAllRepositories,
+    /// Opens the Repos Directory roots view (#648).
+    OpenReposRoots,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -607,6 +609,13 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::CONTROL,
         description: "All repositories",
         action: Action::OpenAllRepositories,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('d'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Repos Directory",
+        action: Action::OpenReposRoots,
     },
 ];
 

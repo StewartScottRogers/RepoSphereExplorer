@@ -207,6 +207,11 @@ pub struct Opening {
     /// the reader knows this is the platform's suggestion rather than their
     /// choice. `None` once one is configured.
     pub notice: Option<String>,
+    /// Whether nothing is configured yet (#648), so the reader should be
+    /// offered the Repos Directory roots view - seeded with the platform
+    /// default in [`root`](Self::root) - to accept or change, rather than
+    /// being pointed at the graphical front end.
+    pub ask: bool,
 }
 
 /// Decides where to open, given what the service reports and what the
@@ -219,7 +224,11 @@ pub struct Opening {
 pub fn opening_from(explicit: Option<PathBuf>, reply: Option<(Vec<ReposRoot>, String)>) -> Opening {
     if let Some(root) = explicit {
         // An explicit instruction now, not a memory of where somebody was.
-        return Opening { root, notice: None };
+        return Opening {
+            root,
+            notice: None,
+            ask: false,
+        };
     }
 
     match reply {
@@ -227,12 +236,14 @@ pub fn opening_from(explicit: Option<PathBuf>, reply: Option<(Vec<ReposRoot>, St
             Some(active) => Opening {
                 root: PathBuf::from(active.path),
                 notice: None,
+                ask: false,
             },
             None => Opening {
                 root: PathBuf::from(&default),
                 notice: Some(format!(
-                    "No Repos Directory set - showing {default}. Set one in the graphical front end, under File."
+                    "No Repos Directory set - showing {default}. Press Ctrl+D to set one."
                 )),
+                ask: true,
             },
         },
         None => Opening {
@@ -241,6 +252,7 @@ pub fn opening_from(explicit: Option<PathBuf>, reply: Option<(Vec<ReposRoot>, St
                 "Could not ask the service where the Repos Directory is - showing the current directory."
                     .to_owned(),
             ),
+            ask: false,
         },
     }
 }
@@ -389,6 +401,22 @@ enum Mode {
         /// Whether the scan is finished.
         done: bool,
         /// Which entry is highlighted.
+        selected: usize,
+    },
+    /// The Repos Directory roots view (#648): every root this machine has
+    /// configured, the active one marked, as the service reports them, with
+    /// a path typed here to add or switch to. Up and Down move `selected`
+    /// among the rows; typing moves it to the typed row itself. Enter sends
+    /// `SetReposRoot` for the typed path if there is one, or the highlighted
+    /// row's otherwise; Escape leaves everything as it was.
+    ReposRootsView {
+        /// Every stored root, as the service last reported them.
+        roots: Vec<ReposRoot>,
+        /// The path typed so far - seeded with the platform default the
+        /// moment the service answers, while nothing is configured yet.
+        input: String,
+        /// Which row is highlighted: an index into `roots`, or `roots.len()`
+        /// for the typed row itself.
         selected: usize,
     },
 }
@@ -720,6 +748,10 @@ pub struct App {
     /// `refresh: false` each time one answers until it says `done`, which
     /// is the whole of the view's "still looking" progress.
     pending_all_repositories: Option<Receiver<io::Result<Response>>>,
+    /// An outstanding `ReposRoots` request (#648), asked for whenever the
+    /// roots view opens so it always shows what the service has now rather
+    /// than what was true when this front end started.
+    pending_repos_roots: Option<Receiver<io::Result<Response>>>,
     /// The path the outstanding `Open` request named, so the status line
     /// can say what was handed over once it answers.
     pending_open_path: Option<PathBuf>,
@@ -837,6 +869,7 @@ impl App {
             pending_open_path: None,
             pending_find: None,
             pending_all_repositories: None,
+            pending_repos_roots: None,
             sort_key: SortKey::Name,
             sort_ascending: true,
             row_statuses: HashMap::new(),
@@ -1496,6 +1529,128 @@ impl App {
         self.browse(folder);
     }
 
+    /// Opens the Repos Directory roots view (#648). Refused while another
+    /// prompt or the editor already has the keyboard. Always asks the
+    /// service afresh, so a root added since this front end started still
+    /// shows up.
+    ///
+    /// Public so a first run (#648, [`Opening::ask`]) can open straight into
+    /// it instead of pointing at the graphical front end, as well as being
+    /// reachable through the binding table once the application is running.
+    pub fn begin_repos_roots_view(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing.is_some() {
+            return;
+        }
+        self.mode = Mode::ReposRootsView {
+            roots: Vec::new(),
+            input: String::new(),
+            selected: 0,
+        };
+        self.pending_repos_roots = Some(spawn_request(Request::ReposRoots));
+    }
+
+    /// Applies the service's answer to `Request::ReposRoots`. An empty
+    /// list is what a first run looks like (per the request's own docs), so
+    /// the typed row is seeded with the platform default - letting Enter
+    /// alone accept it, the way GUIDANCE.md and #648 ask a first run to.
+    fn apply_repos_roots_result(&mut self, result: io::Result<Response>) {
+        let Mode::ReposRootsView {
+            roots: shown,
+            input,
+            selected,
+        } = &mut self.mode
+        else {
+            return;
+        };
+        match result {
+            Ok(Response::ReposRoots { roots, default }) => {
+                if roots.is_empty() {
+                    *input = default;
+                }
+                *selected = roots.iter().position(|root| root.active).unwrap_or(0);
+                *shown = roots;
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("expected the Repos Directory roots".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// One key while the Repos Directory roots view is open.
+    fn handle_repos_roots_key(&mut self, code: KeyCode) {
+        let Mode::ReposRootsView { roots, .. } = &self.mode else {
+            return;
+        };
+        let count = roots.len();
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => self.confirm_repos_root(),
+            KeyCode::Up => {
+                if let Mode::ReposRootsView { selected, .. } = &mut self.mode {
+                    *selected = selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Mode::ReposRootsView { selected, .. } = &mut self.mode {
+                    *selected = selected.saturating_add(1).min(count);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Mode::ReposRootsView {
+                    input, selected, ..
+                } = &mut self.mode
+                {
+                    input.pop();
+                    *selected = count;
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Mode::ReposRootsView {
+                    input, selected, ..
+                } = &mut self.mode
+                {
+                    input.push(c);
+                    *selected = count;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Enter in the Repos Directory roots view: makes the typed path active
+    /// if one is typed, or the highlighted row's otherwise, and reopens the
+    /// listing there at once - exactly as a launch at that root would
+    /// (D7), while `SetReposRoot` settles in the background so a refusal
+    /// (not a directory, or nowhere to store settings) still answers on the
+    /// status line.
+    fn confirm_repos_root(&mut self) {
+        let Mode::ReposRootsView {
+            roots,
+            input,
+            selected,
+            ..
+        } = std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
+            return;
+        };
+        let typed = input.trim();
+        let target = if typed.is_empty() {
+            match roots.into_iter().nth(selected) {
+                Some(root) => PathBuf::from(root.path),
+                None => return,
+            }
+        } else {
+            PathBuf::from(typed)
+        };
+        self.status = Some(format!("opening at {} from now on", target.display()));
+        self.pending_operation = Some(spawn_request(Request::SetReposRoot {
+            path: target.to_string_lossy().into_owned(),
+        }));
+        self.remember_current();
+        self.push_history(target.clone());
+        self.browse(target);
+    }
+
     /// Asks the service for the working-tree status of each repository row
     /// in `range` that has not been asked about since the listing landed -
     /// one request per row, after the listing is already on screen: the
@@ -1894,6 +2049,12 @@ impl App {
             self.pending_all_repositories = None;
             self.apply_all_repositories_result(result);
         }
+        if let Some(rx) = &self.pending_repos_roots
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_repos_roots = None;
+            self.apply_repos_roots_result(result);
+        }
         let mut still_pending = Vec::with_capacity(self.pending_statuses.len());
         let mut answered = Vec::new();
         for (name, rx) in self.pending_statuses.drain(..) {
@@ -2056,6 +2217,10 @@ impl App {
                 self.handle_all_repositories_key(key.code);
                 return;
             }
+            Mode::ReposRootsView { .. } => {
+                self.handle_repos_roots_key(key.code);
+                return;
+            }
             Mode::Normal => {}
         }
         if self.editing.is_some() {
@@ -2154,6 +2319,7 @@ impl App {
             Action::OpenSwitcher => self.begin_switcher(),
             Action::StartFind => self.begin_find(),
             Action::OpenAllRepositories => self.begin_all_repositories(),
+            Action::OpenReposRoots => self.begin_repos_roots_view(),
         }
     }
 
@@ -2453,7 +2619,8 @@ impl App {
             | Mode::Switcher { .. }
             | Mode::FindInput { .. }
             | Mode::Found { .. }
-            | Mode::AllRepositoriesView { .. } => None,
+            | Mode::AllRepositoriesView { .. }
+            | Mode::ReposRootsView { .. } => None,
         }
     }
 
@@ -2526,7 +2693,8 @@ impl App {
             | Mode::Switcher { .. }
             | Mode::FindInput { .. }
             | Mode::Found { .. }
-            | Mode::AllRepositoriesView { .. } => None,
+            | Mode::AllRepositoriesView { .. }
+            | Mode::ReposRootsView { .. } => None,
             Mode::ConfirmDelete { paths, name } => Some(Modal {
                 title: format!("Delete {name}?"),
                 subject: paths
@@ -2651,6 +2819,23 @@ impl App {
                 rows: entries.iter().map(all_repository_row_text).collect(),
                 selected: *selected,
                 keys: "Enter/Esc, F5 refreshes",
+            }),
+            Mode::ReposRootsView {
+                roots,
+                input,
+                selected,
+                ..
+            } => Some(ListOverlay {
+                title: "Repos Directory".to_owned(),
+                query: Some((input.clone(), input.chars().count())),
+                note: Some(if roots.is_empty() {
+                    "nothing configured yet - type a path, or accept the one shown".to_owned()
+                } else {
+                    format!("{} configured", roots.len())
+                }),
+                rows: roots.iter().map(repos_root_row_text).collect(),
+                selected: *selected,
+                keys: "Enter/Esc",
             }),
             Mode::Normal
             | Mode::ConfirmDelete { .. }
@@ -3390,6 +3575,16 @@ fn all_repository_row_text(entry: &protocol::AllRepositoryEntry) -> String {
     match &entry.repository.provider {
         Some(provider) => format!("{}  [{branch}] · {provider}  ({location})", entry.name),
         None => format!("{}  [{branch}]  ({location})", entry.name),
+    }
+}
+
+/// A Repos Directory roots row's own text (#648): the path, with the one
+/// the application opens at marked.
+fn repos_root_row_text(root: &ReposRoot) -> String {
+    if root.active {
+        format!("{}  (active)", root.path)
+    } else {
+        root.path.clone()
     }
 }
 
@@ -4961,6 +5156,7 @@ mod tests {
             Mode::FindInput { .. } => "find-input",
             Mode::Found { .. } => "found",
             Mode::AllRepositoriesView { .. } => "all-repositories",
+            Mode::ReposRootsView { .. } => "repos-roots",
         }
     }
 
@@ -4999,7 +5195,8 @@ mod tests {
             | Mode::Switcher { .. }
             | Mode::FindInput { .. }
             | Mode::Found { .. }
-            | Mode::AllRepositoriesView { .. } => None,
+            | Mode::AllRepositoriesView { .. }
+            | Mode::ReposRootsView { .. } => None,
         }
     }
 
@@ -8408,5 +8605,176 @@ mod tests {
         app.handle_key(KeyCode::Esc);
         assert!(matches!(app.mode, Mode::Normal));
         assert_eq!(app.contents_selected, before);
+    }
+
+    #[test]
+    fn repos_roots_view_lists_the_roots_with_the_active_one_marked() {
+        let root = notional_root("repos-roots-list");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert!(
+            app.pending_repos_roots.is_some(),
+            "opening the view should ask the service"
+        );
+
+        app.apply_repos_roots_result(Ok(Response::ReposRoots {
+            roots: vec![
+                ReposRoot {
+                    path: "/mnt/work/repos".to_owned(),
+                    active: false,
+                },
+                ReposRoot {
+                    path: "/home/ada/repos".to_owned(),
+                    active: true,
+                },
+            ],
+            default: "/home/ada/repos".to_owned(),
+        }));
+
+        let overlay = app.list_overlay().expect("the view is open");
+        assert_eq!(overlay.rows.len(), 2);
+        assert!(overlay.rows[1].contains("/home/ada/repos"));
+        assert!(
+            overlay.rows[1].contains("active"),
+            "the active root is marked: {:?}",
+            overlay.rows[1]
+        );
+        assert!(
+            !overlay.rows[0].contains("active"),
+            "the other root is not: {:?}",
+            overlay.rows[0]
+        );
+    }
+
+    #[test]
+    fn repos_roots_view_sets_the_active_root_and_reopens_the_listing_there() {
+        let root = notional_root("repos-roots-set");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        app.apply_repos_roots_result(Ok(Response::ReposRoots {
+            roots: vec![
+                ReposRoot {
+                    path: "/mnt/work/repos".to_owned(),
+                    active: false,
+                },
+                ReposRoot {
+                    path: "/home/ada/repos".to_owned(),
+                    active: true,
+                },
+            ],
+            default: "/home/ada/repos".to_owned(),
+        }));
+
+        // The active root starts highlighted; Up moves onto the other one.
+        app.handle_key(KeyCode::Up);
+        app.handle_key(KeyCode::Enter);
+
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(
+            app.root.path,
+            PathBuf::from("/mnt/work/repos"),
+            "the tree reopens at the chosen root, exactly as a launch would (D7)"
+        );
+        assert!(
+            app.pending_operation.is_some(),
+            "confirming should send SetReposRoot"
+        );
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or_default()
+                .contains("/mnt/work/repos"),
+            "and say where it is opening: {:?}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn repos_roots_view_adds_a_typed_root_and_shows_the_service_s_refusal() {
+        let root = notional_root("repos-roots-add");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        app.apply_repos_roots_result(Ok(Response::ReposRoots {
+            roots: vec![ReposRoot {
+                path: "/home/ada/repos".to_owned(),
+                active: true,
+            }],
+            default: "/home/ada/repos".to_owned(),
+        }));
+
+        for c in "/not/a/directory".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+        app.handle_key(KeyCode::Enter);
+
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(
+            app.pending_operation.is_some(),
+            "typing a path and confirming should send SetReposRoot too"
+        );
+
+        app.apply_operation_result(Ok(Response::Error {
+            message: "/not/a/directory is not a directory".to_owned(),
+        }));
+
+        assert_eq!(
+            app.status.as_deref(),
+            Some("/not/a/directory is not a directory"),
+            "the service's own refusal wording is shown as-is: {:?}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn a_first_run_offers_the_default_and_accepting_it_clears_the_notice() {
+        let root = notional_root("repos-roots-first-run");
+        let opening = super::opening_from(
+            None,
+            Some((Vec::new(), root.to_string_lossy().into_owned())),
+        );
+        assert!(opening.ask, "nothing configured yet should ask");
+
+        let mut app = App::new_with_notice(opening.root.clone(), opening.notice);
+        app.begin_repos_roots_view();
+
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap_or_default()
+                .contains("No Repos Directory set"),
+            "the notice stands until something changes: {:?}",
+            app.status
+        );
+
+        app.apply_repos_roots_result(Ok(Response::ReposRoots {
+            roots: Vec::new(),
+            default: root.to_string_lossy().into_owned(),
+        }));
+
+        let offered = app
+            .list_overlay()
+            .expect("the view is open")
+            .query
+            .map(|(text, _)| text);
+        assert_eq!(
+            offered.as_deref(),
+            Some(root.to_string_lossy().as_ref()),
+            "the platform default is offered, ready to accept with Enter alone"
+        );
+
+        app.handle_key(KeyCode::Enter);
+
+        assert!(
+            !app.status
+                .as_deref()
+                .unwrap_or_default()
+                .contains("No Repos Directory set"),
+            "accepting it clears the first-run notice: {:?}",
+            app.status
+        );
+        assert_eq!(app.root.path, root);
     }
 }
