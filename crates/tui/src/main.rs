@@ -5,6 +5,7 @@ use interprocess::local_socket::Stream;
 use interprocess::local_socket::traits::Stream as _;
 use std::env;
 use std::io;
+use std::io::IsTerminal as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -18,6 +19,11 @@ const SERVICE_START_POLL: Duration = Duration::from_millis(100);
 fn main() -> ExitCode {
     if env::args().any(|arg| arg == "--self-update") {
         return self_update();
+    }
+
+    if let Some(message) = tui::no_terminal_attached_message(io::stdout().is_terminal()) {
+        eprintln!("{message}");
+        return ExitCode::FAILURE;
     }
 
     let explicit = env::args().nth(1).map(PathBuf::from);
@@ -151,7 +157,9 @@ fn self_update() -> ExitCode {
 fn run(opening: tui::app::Opening) -> io::Result<()> {
     let mut app = App::new_with_notice(opening.root, opening.notice);
     let mut terminal = ratatui::init();
-    let result = tui::run(&mut terminal, &mut app, &mut tui::CrosstermEvents);
-    ratatui::restore();
-    result
+    // Held for its `Drop`, which restores the terminal - so an early return
+    // out of `tui::run`, below, cannot leave it in raw mode inside the
+    // alternate screen.
+    let _restore = tui::TerminalGuard::new(ratatui::restore);
+    tui::run(&mut terminal, &mut app, &mut tui::CrosstermEvents)
 }
