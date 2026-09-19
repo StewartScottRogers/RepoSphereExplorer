@@ -8,10 +8,11 @@
 //! cancellable from the UI", with true early-abort deferred alongside
 //! streaming itself.
 
+use crate::bindings::{self, Action};
 use crate::render_with_block;
 use protocol::{DirectoryEntry, ReposRoot, Request, Response};
 use ratatui::Frame;
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
@@ -362,6 +363,14 @@ impl App {
         app
     }
 
+    /// Which pane currently has keyboard focus - so a test outside this
+    /// module can tell a binding that moves it apart from one that does
+    /// not.
+    #[must_use]
+    pub fn focus(&self) -> Focus {
+        self.focus
+    }
+
     fn selected_dir_path(&self) -> PathBuf {
         let rows = self.root.flatten();
         rows.get(self.tree_selected)
@@ -480,32 +489,50 @@ impl App {
     }
 
     /// Handles one key press.
-    pub fn handle_key(&mut self, code: KeyCode) {
+    ///
+    /// Takes anything that converts to a full [`KeyEvent`] - the real event
+    /// loop hands it one straight from the terminal, modifiers and all; a
+    /// bare [`KeyCode`], as most of this module's own tests still pass,
+    /// converts to one with no modifiers held. Reading the whole event
+    /// rather than only its code is what lets a binding tell a plain `c`
+    /// apart from Ctrl+C (#638).
+    pub fn handle_key(&mut self, key: impl Into<KeyEvent>) {
+        let key = key.into();
         match self.mode {
             Mode::ConfirmDelete { .. } => {
-                self.handle_confirm_delete_key(code);
+                self.handle_confirm_delete_key(key.code);
                 return;
             }
             Mode::RenameInput { .. } | Mode::CopyInput { .. } | Mode::ExtractInput { .. } => {
-                self.handle_text_input_key(code);
+                self.handle_text_input_key(key.code);
                 return;
             }
             Mode::Normal => {}
         }
-        match code {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Esc => self.cancel_or_quit(),
-            KeyCode::Tab => self.focus = self.focus.next(),
-            KeyCode::BackTab => self.focus = self.focus.previous(),
-            KeyCode::Delete if self.focus == Focus::Contents => self.start_delete_confirmation(),
-            KeyCode::Char('r') if self.focus == Focus::Contents => self.start_rename_input(),
-            KeyCode::Char('c') if self.focus == Focus::Contents => self.start_copy_input(),
-            KeyCode::Char('x') if self.focus == Focus::Contents => self.start_extract_input(),
-            _ => match self.focus {
-                Focus::Folders => self.handle_folders_key(code),
-                Focus::Contents => self.handle_contents_key(code),
-                Focus::File => {}
-            },
+        if let Some(action) = bindings::find(key, self.focus) {
+            self.dispatch(action);
+        }
+    }
+
+    /// Runs what a matched [`Action`] from the binding table means for this
+    /// app.
+    fn dispatch(&mut self, action: Action) {
+        match action {
+            Action::Quit => self.should_quit = true,
+            Action::CancelOrQuit => self.cancel_or_quit(),
+            Action::FocusNext => self.focus = self.focus.next(),
+            Action::FocusPrevious => self.focus = self.focus.previous(),
+            Action::StartDelete => self.start_delete_confirmation(),
+            Action::StartRename => self.start_rename_input(),
+            Action::StartCopy => self.start_copy_input(),
+            Action::StartExtract => self.start_extract_input(),
+            Action::FoldersUp => self.move_up_in_tree(),
+            Action::FoldersDown => self.move_down_in_tree(),
+            Action::FoldersExpand => self.expand_selected(),
+            Action::FoldersCollapse => self.collapse_selected(),
+            Action::ContentsUp => self.move_up_in_contents(),
+            Action::ContentsDown => self.move_down_in_contents(),
+            Action::ContentsOpen => self.drill_into_selected(),
         }
     }
 
@@ -645,39 +672,51 @@ impl App {
 
     /// The text shown on the status line: a prompt if a confirmation or
     /// text input is pending, otherwise the current status or the default
-    /// help text.
+    /// help text, in full - see [`App::status_line_at`] for the version
+    /// that fits a given terminal width.
     fn status_line(&self) -> String {
         match &self.mode {
             Mode::ConfirmDelete { name, .. } => format!("Delete {name}? y/n"),
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
-            Mode::Normal => self.status.clone().unwrap_or_else(|| {
-                "Tab: switch pane  Up/Down: move  Enter/Right: open  Left: collapse  \
-                 Delete: delete  r: rename  c: copy  x: extract  Esc: cancel/quit  q: quit"
-                    .to_owned()
-            }),
+            Mode::Normal => self
+                .status
+                .clone()
+                .unwrap_or_else(|| HELP_SEGMENTS.join("  ")),
         }
     }
 
-    fn handle_folders_key(&mut self, code: KeyCode) {
+    /// As [`App::status_line`], but the default help text is shortened to
+    /// fit `width` columns rather than being cut off wherever the terminal
+    /// happens to end - the bug #638 reported: a truncated help line on an
+    /// 80-column terminal, hiding three of its own bindings. A prompt or a
+    /// custom status message is returned exactly as `status_line` gives it,
+    /// since neither is this front end's to shorten (a full reference for
+    /// the help text is #649's job).
+    fn status_line_at(&self, width: usize) -> String {
+        match &self.mode {
+            Mode::Normal if self.status.is_none() => fit_help_line(width),
+            Mode::ConfirmDelete { .. }
+            | Mode::RenameInput { .. }
+            | Mode::CopyInput { .. }
+            | Mode::ExtractInput { .. }
+            | Mode::Normal => self.status_line(),
+        }
+    }
+
+    fn move_up_in_tree(&mut self) {
+        if self.tree_selected > 0 {
+            self.tree_selected -= 1;
+            self.load_contents_for_selected();
+        }
+    }
+
+    fn move_down_in_tree(&mut self) {
         let len = self.root.flatten().len();
-        match code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.tree_selected > 0 {
-                    self.tree_selected -= 1;
-                    self.load_contents_for_selected();
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.tree_selected + 1 < len {
-                    self.tree_selected += 1;
-                    self.load_contents_for_selected();
-                }
-            }
-            KeyCode::Right | KeyCode::Enter => self.expand_selected(),
-            KeyCode::Left => self.collapse_selected(),
-            _ => {}
+        if self.tree_selected + 1 < len {
+            self.tree_selected += 1;
+            self.load_contents_for_selected();
         }
     }
 
@@ -711,22 +750,17 @@ impl App {
         }
     }
 
-    fn handle_contents_key(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.contents_selected > 0 {
-                    self.contents_selected -= 1;
-                    self.load_file_view();
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.contents_selected + 1 < self.contents.len() {
-                    self.contents_selected += 1;
-                    self.load_file_view();
-                }
-            }
-            KeyCode::Enter | KeyCode::Right => self.drill_into_selected(),
-            _ => {}
+    fn move_up_in_contents(&mut self) {
+        if self.contents_selected > 0 {
+            self.contents_selected -= 1;
+            self.load_file_view();
+        }
+    }
+
+    fn move_down_in_contents(&mut self) {
+        if self.contents_selected + 1 < self.contents.len() {
+            self.contents_selected += 1;
+            self.load_file_view();
         }
     }
 
@@ -766,6 +800,57 @@ impl App {
     }
 }
 
+/// The default help text's pieces, in the order they are shown, joined with
+/// two spaces for [`App::status_line`]'s unbounded form.
+const HELP_SEGMENTS: &[&str] = &[
+    "Tab: switch pane",
+    "Up/Down: move",
+    "Enter/Right: open",
+    "Left: collapse",
+    "Delete: delete",
+    "r: rename",
+    "c: copy",
+    "x: extract",
+    "Esc: cancel/quit",
+    "q: quit",
+];
+
+/// Shortens [`HELP_SEGMENTS`] to fit `width` columns, keeping the first
+/// segment (what a reader sees first) and the last (how to quit) and
+/// dropping whole segments from the middle - never a single character off
+/// a segment's end - until what remains fits.
+fn fit_help_line(width: usize) -> String {
+    let Some((first, rest)) = HELP_SEGMENTS.split_first() else {
+        return String::new();
+    };
+    let Some((last, middle)) = rest.split_last() else {
+        return (*first).to_owned();
+    };
+
+    let mut budget = width.saturating_sub(first.chars().count());
+    let suffix_cost = 2 + last.chars().count();
+    let show_suffix = budget >= suffix_cost;
+    if show_suffix {
+        budget -= suffix_cost;
+    }
+
+    let mut line = (*first).to_owned();
+    for segment in middle {
+        let cost = 2 + segment.chars().count();
+        if cost > budget {
+            break;
+        }
+        line.push_str("  ");
+        line.push_str(segment);
+        budget -= cost;
+    }
+    if show_suffix {
+        line.push_str("  ");
+        line.push_str(last);
+    }
+    line
+}
+
 fn pane_block(title: &str, focused: bool) -> Block<'_> {
     let style = if focused {
         Style::default().fg(Color::Yellow)
@@ -795,7 +880,10 @@ pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
     render_contents(frame, columns[1], app);
     render_file(frame, columns[2], app);
 
-    frame.render_widget(Paragraph::new(app.status_line()), rows[1]);
+    frame.render_widget(
+        Paragraph::new(app.status_line_at(rows[1].width.into())),
+        rows[1],
+    );
 }
 
 fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -878,7 +966,7 @@ mod tests {
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::crossterm::event::KeyCode;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::Color;
     use std::path::{Path, PathBuf};
 
@@ -2499,5 +2587,65 @@ mod tests {
         let message = super::classify_file_problem(&dir, "permission denied");
 
         assert_eq!(message, "permission denied");
+    }
+
+    // ---- #638: modifiers are read, not thrown away ----
+
+    #[test]
+    fn ctrl_c_does_not_open_the_copy_prompt_but_plain_c_does() {
+        let mut app = app_with_one_content_entry();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(
+            mode_of(&app),
+            "normal",
+            "Ctrl+C must not be read as the plain `c` copy binding"
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert_eq!(
+            mode_of(&app),
+            "copy",
+            "plain `c` should still open the copy prompt"
+        );
+    }
+
+    #[test]
+    fn ctrl_q_quits_the_same_as_plain_q() {
+        let mut app = App::new(notional_root("ctrl-q-quits"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
+
+        assert!(app.should_quit, "Ctrl+Q should quit, the same as plain q");
+    }
+
+    #[test]
+    fn the_default_help_line_fits_an_80_and_a_40_column_terminal_without_being_cut() {
+        // A fresh app's own "loading..." status would otherwise stand in
+        // for the help text this test means to measure.
+        let mut app = App::new(notional_root("help-line-width"));
+        app.status = None;
+
+        let wide = app.status_line_at(80);
+        assert!(
+            wide.chars().count() <= 80,
+            "an 80-column line must not overflow its own width: {wide:?}"
+        );
+        assert!(wide.starts_with("Tab: switch pane"));
+        assert!(
+            wide.ends_with("q: quit"),
+            "there is room to say how to quit: {wide:?}"
+        );
+
+        let narrow = app.status_line_at(40);
+        assert!(
+            narrow.chars().count() <= 40,
+            "a 40-column line must not overflow its own width: {narrow:?}"
+        );
+        assert!(narrow.starts_with("Tab: switch pane"));
+        assert!(
+            narrow.ends_with("q: quit"),
+            "even a narrow terminal should still say how to quit: {narrow:?}"
+        );
     }
 }

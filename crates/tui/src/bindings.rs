@@ -1,0 +1,329 @@
+//! The terminal front end's keyboard bindings, in one table (#638).
+//!
+//! Before this, a binding's keys and the pane it answered in were spread
+//! through `App::handle_key`'s own match arms, matched on `KeyCode` alone -
+//! so every modifier was thrown away before it got there, and Ctrl+C read
+//! the same as a plain `c`. Reading here instead, on the full key event
+//! (code and modifiers together), means a binding cannot exist in the
+//! dispatch code and be missing from the table a future keyboard reference
+//! (#649) would read. Modelled on `crates/gui/src/shortcuts.rs`.
+
+use crate::app::Focus;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+/// Which pane a binding answers in - a `Folders`- or `Contents`-owned
+/// binding only when that pane has focus, a `Global` one regardless.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Owner {
+    /// Answers regardless of which pane is focused.
+    Global,
+    /// The folders tree pane.
+    Folders,
+    /// The current folder's contents pane.
+    Contents,
+}
+
+/// What a matched binding does to the [`App`](crate::app::App).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    /// Quits immediately.
+    Quit,
+    /// Cancels whatever request is in flight, or quits if nothing is.
+    CancelOrQuit,
+    /// Moves keyboard focus to the next pane.
+    FocusNext,
+    /// Moves keyboard focus to the previous pane.
+    FocusPrevious,
+    /// Asks whether to delete the selected row.
+    StartDelete,
+    /// Starts renaming the selected row.
+    StartRename,
+    /// Starts copying the selected row.
+    StartCopy,
+    /// Starts extracting the selected archive.
+    StartExtract,
+    /// Moves the folders tree cursor up.
+    FoldersUp,
+    /// Moves the folders tree cursor down.
+    FoldersDown,
+    /// Expands the selected folder.
+    FoldersExpand,
+    /// Collapses the selected folder, or steps out to its parent.
+    FoldersCollapse,
+    /// Moves the contents cursor up.
+    ContentsUp,
+    /// Moves the contents cursor down.
+    ContentsDown,
+    /// Opens the selected row if it is a folder.
+    ContentsOpen,
+}
+
+/// One row of the table: the keys that trigger it, the pane it answers in,
+/// what it does in plain words, and the action dispatching it runs.
+pub struct Binding {
+    /// The pane this binding answers in.
+    pub owner: Owner,
+    /// The key itself.
+    pub code: KeyCode,
+    /// The modifiers that must be held, exactly - so a plain `c` and a
+    /// Ctrl+C are never the same binding.
+    pub modifiers: KeyModifiers,
+    /// What the binding does, in plain words.
+    pub description: &'static str,
+    /// What dispatching this binding runs.
+    pub action: Action,
+}
+
+impl Binding {
+    fn matches(&self, key: KeyEvent, focus: Focus) -> bool {
+        self.code == key.code
+            && self.modifiers == key.modifiers
+            && match self.owner {
+                Owner::Global => true,
+                Owner::Folders => focus == Focus::Folders,
+                Owner::Contents => focus == Focus::Contents,
+            }
+    }
+}
+
+/// Every keyboard binding `App::handle_key` answers while no prompt is
+/// open.
+///
+/// Nothing here binds Ctrl+A or Ctrl+B, which a host multiplexer needs
+/// (GUIDANCE.md §2.2, D16) - `no_binding_takes_a_host_multiplexer_s_key`
+/// below asserts it.
+pub const BINDINGS: &[Binding] = &[
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('q'),
+        modifiers: KeyModifiers::NONE,
+        description: "Quit",
+        action: Action::Quit,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('q'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Quit",
+        action: Action::Quit,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        description: "Cancel, or quit",
+        action: Action::CancelOrQuit,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Tab,
+        modifiers: KeyModifiers::NONE,
+        description: "Switch pane",
+        action: Action::FocusNext,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::BackTab,
+        modifiers: KeyModifiers::NONE,
+        description: "Switch pane backwards",
+        action: Action::FocusPrevious,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Delete,
+        modifiers: KeyModifiers::NONE,
+        description: "Delete",
+        action: Action::StartDelete,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('r'),
+        modifiers: KeyModifiers::NONE,
+        description: "Rename",
+        action: Action::StartRename,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('c'),
+        modifiers: KeyModifiers::NONE,
+        description: "Copy",
+        action: Action::StartCopy,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('x'),
+        modifiers: KeyModifiers::NONE,
+        description: "Extract",
+        action: Action::StartExtract,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Up,
+        modifiers: KeyModifiers::NONE,
+        description: "Move up",
+        action: Action::ContentsUp,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('k'),
+        modifiers: KeyModifiers::NONE,
+        description: "Move up",
+        action: Action::ContentsUp,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Down,
+        modifiers: KeyModifiers::NONE,
+        description: "Move down",
+        action: Action::ContentsDown,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('j'),
+        modifiers: KeyModifiers::NONE,
+        description: "Move down",
+        action: Action::ContentsDown,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        description: "Open",
+        action: Action::ContentsOpen,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Right,
+        modifiers: KeyModifiers::NONE,
+        description: "Open",
+        action: Action::ContentsOpen,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Up,
+        modifiers: KeyModifiers::NONE,
+        description: "Move up",
+        action: Action::FoldersUp,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Char('k'),
+        modifiers: KeyModifiers::NONE,
+        description: "Move up",
+        action: Action::FoldersUp,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Down,
+        modifiers: KeyModifiers::NONE,
+        description: "Move down",
+        action: Action::FoldersDown,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Char('j'),
+        modifiers: KeyModifiers::NONE,
+        description: "Move down",
+        action: Action::FoldersDown,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Right,
+        modifiers: KeyModifiers::NONE,
+        description: "Expand",
+        action: Action::FoldersExpand,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        description: "Expand",
+        action: Action::FoldersExpand,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Left,
+        modifiers: KeyModifiers::NONE,
+        description: "Collapse",
+        action: Action::FoldersCollapse,
+    },
+];
+
+/// The action `key` runs with `focus` currently held, if any binding
+/// answers it.
+#[must_use]
+pub fn find(key: KeyEvent, focus: Focus) -> Option<Action> {
+    BINDINGS
+        .iter()
+        .find(|binding| binding.matches(key, focus))
+        .map(|binding| binding.action)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, BINDINGS, find};
+    use crate::app::Focus;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn no_binding_takes_a_host_multiplexer_s_key() {
+        for binding in BINDINGS {
+            let steals_it = binding.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(binding.code, KeyCode::Char('a' | 'b' | 'A' | 'B'));
+            assert!(
+                !steals_it,
+                "a binding on Ctrl+{:?} would steal a key a host multiplexer needs \
+                 (GUIDANCE.md §2.2)",
+                binding.code
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_c_does_not_collide_with_the_plain_copy_binding() {
+        assert_eq!(
+            find(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                Focus::Contents
+            ),
+            None,
+            "Ctrl+C must not read as the plain `c` copy binding"
+        );
+        assert_eq!(
+            find(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+                Focus::Contents
+            ),
+            Some(Action::StartCopy)
+        );
+    }
+
+    #[test]
+    fn ctrl_q_and_plain_q_both_quit() {
+        assert_eq!(
+            find(
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+                Focus::Folders
+            ),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            find(
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL),
+                Focus::Folders
+            ),
+            Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn a_contents_owned_binding_does_not_answer_while_folders_has_focus() {
+        assert_eq!(
+            find(
+                KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+                Focus::Folders
+            ),
+            None
+        );
+    }
+}

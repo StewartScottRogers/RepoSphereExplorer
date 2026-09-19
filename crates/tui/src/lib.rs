@@ -1,6 +1,7 @@
 //! Ratatui front end: renders state and sends intents to the service.
 
 pub mod app;
+pub mod bindings;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
@@ -83,7 +84,7 @@ pub fn tick<B: Backend, E: Events>(
         && let Event::Key(key) = events.read()?
         && key.kind == KeyEventKind::Press
     {
-        app.handle_key(key.code);
+        app.handle_key(key);
     }
     Ok(())
 }
