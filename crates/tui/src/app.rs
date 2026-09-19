@@ -441,7 +441,8 @@ impl App {
                 | Response::ReposRoots { .. }
                 | Response::Names { .. }
                 | Response::WorkingTree { .. }
-                | Response::AllRepositories { .. },
+                | Response::AllRepositories { .. }
+                | Response::Certificates { .. },
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
