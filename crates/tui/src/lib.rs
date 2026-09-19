@@ -5,7 +5,7 @@ pub mod bindings;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
-use plugin_api::{FolderPresentation, PluginPresentation};
+use plugin_api::{Fact, FolderPresentation, Graphic, PluginPresentation};
 use protocol::{Request, Response};
 use ratatui::Frame;
 use ratatui::Terminal;
@@ -390,6 +390,47 @@ fn present(plugin: &str, data: &serde_json::Value) -> Vec<String> {
         Some(candidate) => candidate.present(data),
         None => vec![format!("no presentation for plugin `{plugin}`")],
     }
+}
+
+/// The File pane's fact table for `data`, via whichever registered
+/// presentation plugin matches `plugin`. Empty for an unrecognised plugin,
+/// the same as a plugin that has none of its own (#643).
+pub(crate) fn facts(plugin: &str, data: &serde_json::Value) -> Vec<Fact> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+        .map_or_else(Vec::new, |candidate| candidate.facts(data))
+}
+
+/// The views `plugin` offers for `data`, via whichever registered
+/// presentation plugin matches it. Empty for an unrecognised plugin - a
+/// registered one never returns an empty list itself (#643).
+pub(crate) fn views(plugin: &str, data: &serde_json::Value) -> Vec<&'static str> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+        .map_or_else(Vec::new, |candidate| candidate.views(data))
+}
+
+/// Renders the view named `view` of `data`, via whichever registered
+/// presentation plugin matches `plugin` (#643).
+pub(crate) fn present_view(plugin: &str, view: &str, data: &serde_json::Value) -> Vec<String> {
+    match PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+    {
+        Some(candidate) => candidate.present_view(view, data),
+        None => vec![format!("no presentation for plugin `{plugin}`")],
+    }
+}
+
+/// The picture `plugin` offers for `data`, for the file types that are one
+/// (#643). `None` for everything else, and for an unrecognised plugin.
+pub(crate) fn graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+        .and_then(|candidate| candidate.graphic(data))
 }
 
 /// Renders a directory listing, a file view, or an error, into `area` of
