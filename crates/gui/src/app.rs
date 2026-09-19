@@ -12291,15 +12291,42 @@ third",
 
     #[test]
     fn classify_root_problem_reports_a_drive_that_is_not_connected() {
-        // "Z:\repos" parses as a drive-letter path from its text alone
-        // (see `drive_letter`), so this is exercisable on any host - this
-        // Linux test runner included - without a real Windows drive.
-        let problem = super::classify_root_problem(Path::new(r"Z:\repos"), "not found");
+        // The letter is found, never named. A named one - this project's
+        // own "Z:" example - is a real mapped drive on some of the
+        // machines that run these tests, where the classifier rightly
+        // answers "unreadable" and the test fails, while a runner without
+        // that drive stays green. Do not write a constant back.
+        //
+        // "Lacks" has to mean the letter's root answers `NotFound`, not
+        // merely that it cannot be read: a drive that is present but not
+        // ready, such as an empty optical drive, answers otherwise and is
+        // classified unreadable, which is correct and is not the case
+        // under test.
+        let absent = ('A'..='Z').find(|letter| {
+            let mut root = format!("{letter}:");
+            root.push(std::path::MAIN_SEPARATOR);
+            std::fs::metadata(root)
+                .err()
+                .is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound)
+        });
+        let Some(absent) = absent else {
+            // Every drive letter answers on this host, so there is no
+            // missing drive to tell apart from a missing folder, and
+            // nothing to assert.
+            return;
+        };
+
+        let drive = format!("{absent}:");
+        let mut root = drive.clone();
+        root.push(std::path::MAIN_SEPARATOR);
+        root.push_str("repos");
+
+        let problem = super::classify_root_problem(Path::new(&root), "not found");
 
         assert_eq!(
             problem,
             super::RootProblem::NotThere {
-                cause: super::NotThereCause::DriveNotConnected("Z:".to_owned())
+                cause: super::NotThereCause::DriveNotConnected(drive)
             }
         );
     }
