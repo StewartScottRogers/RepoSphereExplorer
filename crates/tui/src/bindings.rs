@@ -11,8 +11,9 @@
 use crate::app::Focus;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// Which pane a binding answers in - a `Folders`- or `Contents`-owned
-/// binding only when that pane has focus, a `Global` one regardless.
+/// Which pane a binding answers in - a `Folders`-, `Contents`- or
+/// `File`-owned binding only when that pane has focus, a `Global` one
+/// regardless.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Owner {
     /// Answers regardless of which pane is focused.
@@ -21,6 +22,8 @@ pub enum Owner {
     Folders,
     /// The current folder's contents pane.
     Contents,
+    /// The selected file's preview pane.
+    File,
 }
 
 /// What a matched binding does to the [`App`](crate::app::App).
@@ -74,6 +77,22 @@ pub enum Action {
     GoBack,
     /// Returns to the root Back moved away from.
     GoForward,
+    /// Scrolls the File pane's text up one line.
+    FileScrollUp,
+    /// Scrolls the File pane's text down one line.
+    FileScrollDown,
+    /// Scrolls the File pane's text up one page.
+    FileScrollPageUp,
+    /// Scrolls the File pane's text down one page.
+    FileScrollPageDown,
+    /// Scrolls the File pane's text to its start.
+    FileScrollHome,
+    /// Scrolls the File pane's text to its end.
+    FileScrollEnd,
+    /// Switches the File pane to the view before the one it is showing.
+    FileViewPrevious,
+    /// Switches the File pane to the view after the one it is showing.
+    FileViewNext,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -100,6 +119,7 @@ impl Binding {
                 Owner::Global => true,
                 Owner::Folders => focus == Focus::Folders,
                 Owner::Contents => focus == Focus::Contents,
+                Owner::File => focus == Focus::File,
             }
     }
 }
@@ -313,6 +333,76 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::ALT,
         description: "Go forward",
         action: Action::GoForward,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Up,
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll up",
+        action: Action::FileScrollUp,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Char('k'),
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll up",
+        action: Action::FileScrollUp,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Down,
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll down",
+        action: Action::FileScrollDown,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Char('j'),
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll down",
+        action: Action::FileScrollDown,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::PageUp,
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll up a page",
+        action: Action::FileScrollPageUp,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::PageDown,
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll down a page",
+        action: Action::FileScrollPageDown,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Home,
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll to the start",
+        action: Action::FileScrollHome,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::End,
+        modifiers: KeyModifiers::NONE,
+        description: "Scroll to the end",
+        action: Action::FileScrollEnd,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Left,
+        modifiers: KeyModifiers::NONE,
+        description: "Previous view",
+        action: Action::FileViewPrevious,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Right,
+        modifiers: KeyModifiers::NONE,
+        description: "Next view",
+        action: Action::FileViewNext,
     },
 ];
 

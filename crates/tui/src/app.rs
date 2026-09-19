@@ -9,14 +9,18 @@
 //! streaming itself.
 
 use crate::bindings::{self, Action};
-use crate::render_with_block;
+use crate::{facts, graphic, present, present_folder, present_view, render_with_block, views};
+use plugin_api::Fact;
 use protocol::{DirectoryEntry, ReposRoot, Request, Response};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{
+    Block, Cell, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, TableState, Tabs,
+};
 use std::collections::HashMap;
 use std::io;
 use std::ops::Range;
@@ -442,6 +446,23 @@ pub struct App {
     contents_selected: usize,
     focus: Focus,
     file_view: Option<Response>,
+    /// Which of the selected file's [`views`] the File pane is showing
+    /// (#643). Reset to `0` whenever `file_view` changes to a fresh
+    /// selection, so a reader never lands on a view a different file
+    /// happened to leave selected.
+    file_view_index: usize,
+    /// The File pane's vertical scroll offset, in the wrapped lines
+    /// [`render_file`] last drew (#643). Reset alongside `file_view_index`.
+    file_scroll: usize,
+    /// The width [`render_file`] last wrapped the File pane's text at, read
+    /// back after each draw so the scroll keys can work out how many
+    /// wrapped lines the current text holds without laying it out
+    /// themselves. `0` until the first real draw, which [`App::file_total_lines`]
+    /// reads as "not drawn yet" rather than a pane with no room at all.
+    drawn_file_content_width: std::cell::Cell<u16>,
+    /// How many rows of wrapped text the File pane's scrollable area last
+    /// drew, read back the same way as `drawn_file_content_width`.
+    drawn_file_viewport_rows: std::cell::Cell<usize>,
     status: Option<String>,
     mode: Mode,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
@@ -522,6 +543,10 @@ impl App {
             contents_selected: 0,
             focus: Focus::Folders,
             file_view: None,
+            file_view_index: 0,
+            file_scroll: 0,
+            drawn_file_content_width: std::cell::Cell::new(0),
+            drawn_file_viewport_rows: std::cell::Cell::new(0),
             status: None,
             mode: Mode::Normal,
             pending_contents: None,
@@ -602,6 +627,8 @@ impl App {
             self.file_view = None;
             self.pending_file = None;
             self.pending_file_path = None;
+            self.file_view_index = 0;
+            self.file_scroll = 0;
             return;
         };
         let path = self.contents_dir.join(&entry.name);
@@ -751,6 +778,87 @@ impl App {
         self.clamp_contents_scroll();
     }
 
+    /// How many wrapped lines the File pane's current text holds at the
+    /// width it was last drawn at (#643). `usize::MAX` before the first
+    /// real draw, since there is no width yet to wrap at - harmless, as
+    /// nothing is on screen yet for a scroll key to move either.
+    fn file_total_lines(&self) -> usize {
+        let width = self.drawn_file_content_width.get();
+        if width == 0 {
+            return usize::MAX;
+        }
+        wrap_lines(&file_scrollable_lines(self), usize::from(width)).len()
+    }
+
+    /// Keeps [`App::file_scroll`] from scrolling past the last line the
+    /// File pane's text can show, the way [`App::clamp_contents_scroll`]
+    /// keeps the Contents cursor on screen.
+    fn clamp_file_scroll(&mut self) {
+        let max = self
+            .file_total_lines()
+            .saturating_sub(self.drawn_file_viewport_rows.get());
+        self.file_scroll = self.file_scroll.min(max);
+    }
+
+    fn scroll_file_up(&mut self) {
+        self.file_scroll = self.file_scroll.saturating_sub(1);
+    }
+
+    fn scroll_file_down(&mut self) {
+        self.file_scroll = self.file_scroll.saturating_add(1);
+        self.clamp_file_scroll();
+    }
+
+    fn scroll_file_page_up(&mut self) {
+        let step = self.drawn_file_viewport_rows.get().max(1);
+        self.file_scroll = self.file_scroll.saturating_sub(step);
+    }
+
+    fn scroll_file_page_down(&mut self) {
+        let step = self.drawn_file_viewport_rows.get().max(1);
+        self.file_scroll = self.file_scroll.saturating_add(step);
+        self.clamp_file_scroll();
+    }
+
+    fn scroll_file_home(&mut self) {
+        self.file_scroll = 0;
+    }
+
+    fn scroll_file_end(&mut self) {
+        self.file_scroll = self
+            .file_total_lines()
+            .saturating_sub(self.drawn_file_viewport_rows.get());
+    }
+
+    /// The views the selected file's plugin offers, for the tab strip and
+    /// for [`App::select_next_file_view`]/[`App::select_previous_file_view`].
+    /// Empty when nothing is selected or its plugin is not registered here.
+    fn file_views(&self) -> Vec<&'static str> {
+        match &self.file_view {
+            Some(Response::FileView { plugin, data, .. }) => views(plugin, data),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Switches the File pane to the view after the one it is showing,
+    /// wrapping around. Does nothing when there is only one, or none.
+    fn select_next_file_view(&mut self) {
+        let count = self.file_views().len();
+        if count > 1 {
+            self.file_view_index = (self.file_view_index + 1) % count;
+            self.file_scroll = 0;
+        }
+    }
+
+    /// As [`App::select_next_file_view`], the other way.
+    fn select_previous_file_view(&mut self) {
+        let count = self.file_views().len();
+        if count > 1 {
+            self.file_view_index = (self.file_view_index + count - 1) % count;
+            self.file_scroll = 0;
+        }
+    }
+
     /// Records the answer for the row named `name`, if it was asked about
     /// in the listing on screen.
     fn apply_status_result(&mut self, name: &str, result: io::Result<Response>) {
@@ -798,6 +906,8 @@ impl App {
                 *message = classify_file_problem(path, message);
             }
             self.file_view = Some(view);
+            self.file_view_index = 0;
+            self.file_scroll = 0;
         }
         if let Some(rx) = &self.pending_operation
             && let Ok(result) = rx.try_recv()
@@ -956,6 +1066,14 @@ impl App {
             Action::NavigateAboveRoot => self.navigate_above_root(),
             Action::GoBack => self.go_back(),
             Action::GoForward => self.go_forward(),
+            Action::FileScrollUp => self.scroll_file_up(),
+            Action::FileScrollDown => self.scroll_file_down(),
+            Action::FileScrollPageUp => self.scroll_file_page_up(),
+            Action::FileScrollPageDown => self.scroll_file_page_down(),
+            Action::FileScrollHome => self.scroll_file_home(),
+            Action::FileScrollEnd => self.scroll_file_end(),
+            Action::FileViewPrevious => self.select_previous_file_view(),
+            Action::FileViewNext => self.select_next_file_view(),
         }
     }
 
@@ -2017,24 +2135,234 @@ fn related_repository_name(path: &Path, root: &Path) -> String {
     }
 }
 
+/// The selected repository's README (#584), read straight from the
+/// `directory` plugin's own view data rather than through [`facts`] or
+/// [`present`]: the fact table only ever holds label/value pairs, and
+/// `directory` always has at least the entry-count fact, so its own
+/// `present` lines - which do carry the README - never reach the pane.
+/// Mirrors the graphical front end's own `readme_excerpt_of`.
+fn directory_readme(
+    plugin: &str,
+    data: &serde_json::Value,
+) -> Option<plugin_directory::readme::ReadmeExcerpt> {
+    if plugin != "directory" {
+        return None;
+    }
+    serde_json::from_value::<plugin_directory::DirectoryView>(data.clone())
+        .ok()
+        .and_then(|view| view.readme)
+}
+
+/// The File pane's scrollable text (#643): the plugin's own lines for the
+/// view currently shown, when it offers no fact table (`facts` says that
+/// instead); a note that a picture is not shown here, for a type whose
+/// view is one; a folder plugin's stacked lines below that, never in place
+/// of what is already there (D12); and a repository's README below those
+/// (#584).
+fn file_scrollable_lines(app: &App) -> Vec<String> {
+    let Some(Response::FileView { plugin, data, also }) = &app.file_view else {
+        return Vec::new();
+    };
+    let plugin_views = views(plugin, data);
+    let view_index = app
+        .file_view_index
+        .min(plugin_views.len().saturating_sub(1));
+    let showing = plugin_views.get(view_index).copied();
+
+    let mut lines = if facts(plugin, data).is_empty() {
+        match showing {
+            Some(view) => present_view(plugin, view, data),
+            None => present(plugin, data),
+        }
+    } else {
+        Vec::new()
+    };
+    if showing == Some(plugin_api::PREVIEW_VIEW) && graphic(plugin, data).is_some() {
+        lines.insert(
+            0,
+            "Picture - shown in the graphical front end, not here.".to_owned(),
+        );
+    }
+    for extra in also {
+        lines.push(String::new());
+        lines.extend(present_folder(&extra.plugin, &extra.data));
+    }
+    if let Some(readme) = directory_readme(plugin, data) {
+        lines.push(String::new());
+        lines.push(readme.title.unwrap_or_else(|| "README".to_owned()));
+        lines.extend(readme.excerpt);
+    }
+    lines
+}
+
+/// How wide the File pane's fact table gives its label column - enough for
+/// "Last fetched" without leaving a wide gutter beside a short one like
+/// "Branch" in a narrow pane.
+const FACT_LABEL_WIDTH: u16 = 14;
+
+/// The File pane's fact table (#576, #643): a label and its value per row,
+/// dimmed per [`plugin_api::Fact::dim`] - the folder-count divider a
+/// repository's own facts end with, for instance.
+fn facts_table(rows: &[Fact], width: u16) -> Table<'static> {
+    let label_width = FACT_LABEL_WIDTH.min(width / 2);
+    let table_rows: Vec<Row<'static>> = rows
+        .iter()
+        .map(|fact| {
+            let style = if fact.dim {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+            Row::new(vec![
+                Cell::from(fact.label.clone()),
+                Cell::from(fact.value.clone()),
+            ])
+            .style(style)
+        })
+        .collect();
+    Table::new(
+        table_rows,
+        [Constraint::Length(label_width), Constraint::Min(0)],
+    )
+    .column_spacing(1)
+}
+
+/// Wraps `line` at `width` characters, so a line wider than the pane
+/// continues on the row below it rather than being cut (#643). Character
+/// count, not measured display width - the same per-cell simplification
+/// `format_kind`'s column budget already makes, with no grapheme-width
+/// table to consult.
+fn wrap_line(line: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![line.to_owned()];
+    }
+    let chars: Vec<char> = line.chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars
+        .chunks(width)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
+}
+
+/// [`wrap_line`], over every line of text.
+fn wrap_lines(lines: &[String], width: usize) -> Vec<String> {
+    lines
+        .iter()
+        .flat_map(|line| wrap_line(line, width))
+        .collect()
+}
+
+/// Draws the File pane's scrollable text into `area`, wrapped rather than
+/// cut at the pane's width, with a [`Scrollbar`] beside it (#643). Reads
+/// back the width and row count it drew at into `app`'s cells, so the
+/// scroll keys - handled long after this returns - know what is on screen.
+fn render_file_text(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let lines = file_scrollable_lines(app);
+    let scrollbar_width = u16::from(!lines.is_empty());
+    let text_width = area.width.saturating_sub(scrollbar_width);
+    let text_area = Rect {
+        width: text_width,
+        ..area
+    };
+
+    let wrapped = wrap_lines(&lines, usize::from(text_width));
+    let total_lines = wrapped.len();
+    let viewport_rows = usize::from(area.height);
+    app.drawn_file_content_width.set(text_width);
+    app.drawn_file_viewport_rows.set(viewport_rows);
+    let scroll = app
+        .file_scroll
+        .min(total_lines.saturating_sub(viewport_rows));
+
+    let visible = wrapped.get(scroll..).unwrap_or_default().join("\n");
+    frame.render_widget(Paragraph::new(visible), text_area);
+
+    if scrollbar_width > 0 {
+        let scrollbar_area = Rect {
+            x: area.x + text_width,
+            width: scrollbar_width,
+            ..area
+        };
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            scrollbar_area,
+            &mut scrollbar_state,
+        );
+    }
+}
+
 fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let block = pane_block("File", app.focus == Focus::File);
     let Some(response) = &app.file_view else {
         frame.render_widget(Paragraph::new("(no file selected)").block(block), area);
         return;
     };
-    let Some(line) = related_repository_line(app) else {
-        render_with_block(frame, area, response, block);
-        return;
-    };
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let related = related_repository_line(app);
+
+    let Response::FileView { plugin, data, .. } = response else {
+        // Every other reply - an error, or a kind this front end never
+        // asks the File pane to show - keeps the plain path it always had,
+        // still led by the related-repository line when there is one.
+        match related {
+            Some(line) => {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Min(0)])
+                    .split(inner);
+                frame.render_widget(Paragraph::new(line), rows[0]);
+                render_with_block(frame, rows[1], response, Block::default());
+            }
+            None => render_with_block(frame, inner, response, Block::default()),
+        }
+        return;
+    };
+
+    let plugin_views = views(plugin, data);
+    let show_tabs = plugin_views.len() > 1;
+    let repository_facts = facts(plugin, data);
+
+    let mut constraints = Vec::with_capacity(4);
+    if show_tabs {
+        constraints.push(Constraint::Length(1));
+    }
+    if related.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
+    if !repository_facts.is_empty() {
+        let rows = u16::try_from(repository_facts.len()).unwrap_or(u16::MAX);
+        constraints.push(Constraint::Length(rows));
+    }
+    constraints.push(Constraint::Min(0));
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .constraints(constraints)
         .split(inner);
-    frame.render_widget(Paragraph::new(line), rows[0]);
-    render_with_block(frame, rows[1], response, Block::default());
+
+    let mut row = 0;
+    if show_tabs {
+        let index = app
+            .file_view_index
+            .min(plugin_views.len().saturating_sub(1));
+        let tabs = Tabs::new(plugin_views.iter().copied())
+            .select(index)
+            .highlight_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(tabs, rows[row]);
+        row += 1;
+    }
+    if let Some(line) = related {
+        frame.render_widget(Paragraph::new(line), rows[row]);
+        row += 1;
+    }
+    if !repository_facts.is_empty() {
+        frame.render_widget(facts_table(&repository_facts, rows[row].width), rows[row]);
+        row += 1;
+    }
+    render_file_text(frame, rows[row], app);
 }
 
 #[cfg(test)]
@@ -4563,6 +4891,261 @@ mod tests {
         assert!(
             text.contains("Submodule of outer"),
             "the File pane should name the outer working copy this submodule belongs to: {text}"
+        );
+    }
+
+    /// An app with `root` listing one selected row, and the File pane
+    /// already showing `plugin`'s view of `data`, focused so its own
+    /// scrolling and tab-switching bindings answer (#643).
+    fn app_with_file_view(root: &Path, plugin: &str, data: serde_json::Value) -> App {
+        let mut app = App::new(root.to_path_buf());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("selected", false)]),
+            }),
+        );
+        app.file_view = Some(Response::FileView {
+            plugin: plugin.to_owned(),
+            data,
+            also: Vec::new(),
+        });
+        app.focus = Focus::File;
+        app
+    }
+
+    #[test]
+    fn the_file_pane_scrolls_and_its_end_is_reachable() {
+        let root = notional_root("file-pane-scroll");
+        let content = (1..=60)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": content, "truncated": false }),
+        );
+
+        let top = drawn_rows(40, 12, &app).concat();
+        assert!(top.contains("line 1"), "{top}");
+        assert!(
+            !top.contains("line 60"),
+            "a pane this short should not already show the file's last line: {top}"
+        );
+
+        for _ in 0..200 {
+            app.handle_key(KeyCode::Down);
+        }
+        let scrolled = drawn_rows(40, 12, &app).concat();
+        assert!(
+            scrolled.contains("line 60"),
+            "pressing Down enough times should scroll all the way to the last line: {scrolled}"
+        );
+
+        app.handle_key(KeyCode::Home);
+        let home = drawn_rows(40, 12, &app).concat();
+        assert!(
+            home.contains("line 1") && !home.contains("line 60"),
+            "Home should scroll back to the start: {home}"
+        );
+
+        app.handle_key(KeyCode::End);
+        let end = drawn_rows(40, 12, &app).concat();
+        assert!(
+            end.contains("line 60"),
+            "End should reach the file's last line directly: {end}"
+        );
+    }
+
+    #[test]
+    fn the_file_panes_scrollbar_moves_as_the_text_scrolls() {
+        let root = notional_root("file-pane-scrollbar");
+        let content = (1..=60)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": content, "truncated": false }),
+        );
+
+        let track_at = |app: &App| -> String {
+            drawn_rows(40, 20, app)
+                .iter()
+                .map(|row| row.chars().rev().nth(1).unwrap_or(' '))
+                .collect()
+        };
+
+        let at_top = track_at(&app);
+        for _ in 0..200 {
+            app.handle_key(KeyCode::Down);
+        }
+        let at_bottom = track_at(&app);
+
+        assert_ne!(
+            at_top, at_bottom,
+            "the scrollbar should draw differently once the text is scrolled to the end"
+        );
+    }
+
+    #[test]
+    fn a_wide_line_in_the_file_pane_wraps_rather_than_being_cut() {
+        let root = notional_root("file-pane-wide-line");
+        let wide = format!("{}TAIL-MARKER", "x".repeat(80));
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": wide, "truncated": false }),
+        );
+
+        // A wide terminal, so the File pane's own share of it is wider
+        // than the line - what a narrow pane's Contents column already
+        // does not have room to spare a wrapped line, this one does.
+        let text = drawn_rows(200, 20, &app).concat();
+        app.handle_key(KeyCode::End);
+        let scrolled = drawn_rows(200, 20, &app).concat();
+
+        assert!(
+            text.contains("TAIL-MARKER") || scrolled.contains("TAIL-MARKER"),
+            "a line wider than the pane should wrap onto another row, not be cut short: \
+             {text} / {scrolled}"
+        );
+    }
+
+    #[test]
+    fn a_multi_view_plugin_shows_a_tab_strip_and_switching_draws_the_other_view() {
+        let root = notional_root("file-pane-tabs-multi");
+        let mut app = app_with_file_view(
+            &root,
+            "rust",
+            serde_json::json!({
+                "content": "struct Widget;\n",
+                "truncated": false,
+                "functions": [],
+                "structs": ["Widget"],
+                "traits": [],
+            }),
+        );
+
+        let preview = drawn_rows(60, 20, &app).concat();
+        assert!(
+            preview.contains("Preview") && preview.contains("Text"),
+            "a plugin with more than one view should draw a tab strip naming them: {preview}"
+        );
+        assert!(
+            preview.contains("structs: Widget"),
+            "the Preview tab should show the plugin's own outline: {preview}"
+        );
+
+        app.handle_key(KeyCode::Right);
+        let text_view = drawn_rows(60, 20, &app).concat();
+        assert!(
+            !text_view.contains("structs: Widget"),
+            "switching to the Text tab should draw the file's plain content instead: {text_view}"
+        );
+    }
+
+    #[test]
+    fn a_single_view_plugin_draws_no_tab_strip() {
+        let root = notional_root("file-pane-tabs-single");
+        let app = app_with_file_view(
+            &root,
+            "directory",
+            serde_json::json!({
+                "entry_count": 3,
+                "total_size": 42,
+                "repository": null,
+                "readme": null,
+            }),
+        );
+
+        let text = drawn_rows(60, 20, &app).concat();
+
+        assert!(
+            !text.contains("Preview"),
+            "a plugin with only one view should draw no tab strip at all: {text}"
+        );
+    }
+
+    #[test]
+    fn the_file_panes_facts_are_a_table_with_folder_lines_and_a_readme_below_them() {
+        let root = notional_root("file-pane-facts-readme");
+        let mut app = app_with_file_view(
+            &root,
+            "directory",
+            serde_json::json!({
+                "entry_count": 5,
+                "total_size": 1024,
+                "repository": {
+                    "provider": "github.com",
+                    "branch": "main",
+                    "remote": "https://github.com/example/repo.git",
+                    "status": null,
+                    "tracking": null,
+                },
+                "readme": {
+                    "name": "README.md",
+                    "title": "Widget",
+                    "excerpt": ["A small widget library."],
+                },
+            }),
+        );
+        let Some(Response::FileView { also, .. }) = &mut app.file_view else {
+            unreachable!("just constructed as a FileView");
+        };
+        *also = vec![protocol::PluginView {
+            plugin: "project-cargo".to_owned(),
+            data: serde_json::json!({
+                "kind": "package",
+                "package": {
+                    "name": "widget-crate",
+                    "version": "1.0.0",
+                    "edition": "2024",
+                    "rust_version": null,
+                    "description": null
+                },
+                "members": [],
+                "dependencies": 0,
+                "dev_dependencies": 0,
+                "build_dependencies": 0
+            }),
+        }];
+
+        let rows = drawn_rows(80, 24, &app);
+        let text = rows.concat();
+
+        assert!(text.contains("Provider"), "{text}");
+        let provider_row = rows
+            .iter()
+            .find(|row| row.contains("Provider"))
+            .expect("a row for the Provider fact");
+        assert!(
+            provider_row.contains("github.com"),
+            "the fact's label and value should sit on the same row, as a table draws them: {provider_row}"
+        );
+
+        assert!(
+            text.contains("widget-crate"),
+            "the folder plugin's own lines should still appear below the facts (D12): {text}"
+        );
+        assert!(
+            text.contains("Widget") && text.contains("A small widget library."),
+            "the README's title and excerpt should appear: {text}"
+        );
+
+        let facts_row = rows
+            .iter()
+            .position(|row| row.contains("Provider"))
+            .unwrap();
+        let readme_row = rows
+            .iter()
+            .position(|row| row.contains("A small widget library."))
+            .unwrap();
+        assert!(
+            readme_row > facts_row,
+            "the README should be drawn below the facts table: facts at row {facts_row}, README at row {readme_row}"
         );
     }
 

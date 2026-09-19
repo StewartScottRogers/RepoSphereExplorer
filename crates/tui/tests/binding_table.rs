@@ -114,6 +114,20 @@ fn folders_scratch(name: &str) -> PathBuf {
     root
 }
 
+/// A scratch folder holding one text file, `long.txt`, with sixty numbered
+/// lines - long enough that the File pane's default height cannot show it
+/// all at once, so a scroll binding actually has somewhere to move to
+/// (#643).
+fn file_pane_scratch(name: &str) -> PathBuf {
+    let root = common::scratch(name);
+    let content = (1..=60)
+        .map(|n| format!("line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.join("long.txt"), content).expect("long.txt is written");
+    root
+}
+
 #[test]
 fn every_global_binding_reaches_the_action_it_names() {
     common::ensure_service();
@@ -351,6 +365,89 @@ fn every_folders_binding_reaches_the_action_it_names() {
                 );
             }
             other => panic!("no assertion written for the folders action {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn every_file_binding_reaches_the_action_it_names() {
+    common::ensure_service();
+
+    for binding in BINDINGS.iter().filter(|b| b.owner == Owner::File) {
+        let root = file_pane_scratch(&format!("file-{}-{:?}", binding.description, binding.code));
+        let (mut terminal, mut app) = new_app_and_terminal(root);
+        wait_for(&mut terminal, &mut app, "line 1");
+        // File-owned bindings answer only once the File pane has focus -
+        // proven by `every_global_binding_reaches_the_action_it_names`.
+        press(&mut terminal, &mut app, KeyCode::Tab);
+        press(&mut terminal, &mut app, KeyCode::Tab);
+        assert_eq!(app.focus(), Focus::File);
+
+        match binding.action {
+            Action::FileScrollDown => {
+                let before = drawn(&terminal);
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert_ne!(
+                    before, shown,
+                    "{} should have scrolled the text down by one line",
+                    binding.description
+                );
+            }
+            Action::FileScrollUp => {
+                press(&mut terminal, &mut app, KeyCode::Down);
+                let before = drawn(&terminal);
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert_ne!(
+                    before, shown,
+                    "{} should have scrolled the text back up",
+                    binding.description
+                );
+            }
+            Action::FileScrollPageDown => {
+                let before = drawn(&terminal);
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert_ne!(
+                    before, shown,
+                    "{} should have scrolled the text down by a page",
+                    binding.description
+                );
+            }
+            Action::FileScrollPageUp => {
+                press(&mut terminal, &mut app, KeyCode::End);
+                let before = drawn(&terminal);
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert_ne!(
+                    before, shown,
+                    "{} should have scrolled the text back up by a page",
+                    binding.description
+                );
+            }
+            Action::FileScrollHome => {
+                press(&mut terminal, &mut app, KeyCode::End);
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.contains("line 1"),
+                    "{} should scroll back to the file's start: {shown:?}",
+                    binding.description
+                );
+            }
+            Action::FileScrollEnd => {
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.contains("line 60"),
+                    "{} should reach the file's last line: {shown:?}",
+                    binding.description
+                );
+            }
+            Action::FileViewPrevious | Action::FileViewNext => {
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.contains("line 1"),
+                    "{} should still show the file's own text: {shown:?}",
+                    binding.description
+                );
+            }
+            other => panic!("no assertion written for the file action {other:?}"),
         }
     }
 }
