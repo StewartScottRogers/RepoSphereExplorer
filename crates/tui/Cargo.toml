@@ -13,6 +13,9 @@ name = "RepoSphereExplorerTui"
 path = "src/main.rs"
 
 [dependencies]
+# The system clipboard, for "Copy path" and "Copy remote address" (#674) -
+# the same crate the graphical front end already uses.
+copypasta = "0.10"
 dirs = "6"
 interprocess = "2.4"
 plugin-ansible = { path = "../plugins/ansible" }

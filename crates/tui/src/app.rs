@@ -11,6 +11,7 @@
 use crate::bindings::{self, Action};
 use crate::colour::{self, Run};
 use crate::document::Document;
+use crate::launch;
 use crate::settings;
 use crate::switcher;
 use crate::{
@@ -56,6 +57,9 @@ pub struct FolderNode {
     /// The working copy's provider - `github.com` and the like - when it
     /// is one.
     pub provider: Option<String>,
+    /// The working copy's remote address, when it has one - what "Copy
+    /// remote address" (#674) copies.
+    pub remote: Option<String>,
 }
 
 impl FolderNode {
@@ -74,6 +78,7 @@ impl FolderNode {
             is_repository: false,
             branch: None,
             provider: None,
+            remote: None,
         }
     }
 
@@ -116,6 +121,7 @@ impl FolderNode {
                         is_repository: false,
                         branch: None,
                         provider: None,
+                        remote: None,
                     });
                     // Read fresh each time rather than only on first sight:
                     // a folder can turn into a working copy (or stop being
@@ -129,6 +135,10 @@ impl FolderNode {
                         .repository
                         .as_ref()
                         .and_then(|repository| repository.provider.clone());
+                    node.remote = entry
+                        .repository
+                        .as_ref()
+                        .and_then(|repository| repository.remote.clone());
                     node
                 })
                 .collect(),
@@ -282,6 +292,34 @@ fn spawn_request(request: Request) -> Receiver<io::Result<Response>> {
         let _ = tx.send(result);
     });
     rx
+}
+
+/// Runs `command` as a detached process, for "Open in editor" and "Show in
+/// file manager" (#674) - what the real front end asks for; a test drives
+/// the same path a keypress does, since a missing program answers with an
+/// error rather than hanging.
+fn run_detached(command: &crate::launch::Launch) -> io::Result<()> {
+    // The full path when the `PATH` has it, so `code` finds `code.cmd` on
+    // Windows; otherwise the name as given, for the operating system to
+    // resolve or refuse.
+    let program = crate::launch::find_on_path(&command.program)
+        .map_or_else(|| command.program.clone().into(), std::ffi::OsString::from);
+    std::process::Command::new(program)
+        .args(&command.args)
+        .spawn()
+        .map(|_| ())
+}
+
+/// Writes `text` to the system clipboard, for "Copy path" and "Copy remote
+/// address" (#674). Every call opens its own clipboard context rather than
+/// holding one open: a terminal reader's copies are rare enough that this is
+/// not a cost worth a persistent field for.
+fn write_clipboard(text: &str) -> Result<(), String> {
+    use copypasta::ClipboardProvider as _;
+    let mut context = copypasta::ClipboardContext::new().map_err(|err| err.to_string())?;
+    context
+        .set_contents(text.to_owned())
+        .map_err(|err| err.to_string())
 }
 
 /// Resolves `name` against `path`'s parent directory, as a string suitable
@@ -833,6 +871,23 @@ pub struct App {
     /// Not a `bool` (`clippy::struct_excessive_bools`, this struct's
     /// fourth): which pane is the one worth naming here.
     maximized: Option<Focus>,
+    /// What "Open in editor" (#674) has to launch, set once at startup by
+    /// [`App::set_editor`]. One field rather than the graphical front end's
+    /// `editor_setting: Option<String>` and `code_on_path: bool` pair,
+    /// since a fourth `bool` on this struct would trip
+    /// `clippy::struct_excessive_bools`.
+    editor: EditorSetting,
+}
+
+/// [`App::editor`]'s three states: an explicit setting, nothing configured
+/// but Visual Studio Code is on the `PATH`, or nothing to launch at all.
+enum EditorSetting {
+    /// The `editor` setting read from `tui.json`.
+    Configured(String),
+    /// No `editor` setting, but `code` is on the `PATH`.
+    CodeOnPath,
+    /// No `editor` setting, and no `code` on the `PATH`.
+    Unconfigured,
 }
 
 impl App {
@@ -887,6 +942,7 @@ impl App {
             pane_widths: None,
             drawn_panes_width: std::cell::Cell::new(0),
             maximized: None,
+            editor: EditorSetting::Unconfigured,
         };
         app.load_contents_for_selected();
         app
@@ -944,6 +1000,23 @@ impl App {
     /// at its default (#650).
     pub fn set_pane_widths(&mut self, widths: settings::PaneWidths) {
         self.pane_widths = Some(widths);
+    }
+
+    /// Records what "Open in editor" (#674) has to launch: the `editor`
+    /// setting from `tui.json`, and whether Visual Studio Code is on the
+    /// `PATH`.
+    ///
+    /// Called once, by `main` at startup (`tui::settings::load_editor`,
+    /// `tui::launch::on_path("code")`); a test calls it directly to force a
+    /// deterministic scenario, rather than this struct searching the `PATH`
+    /// itself and making every test's result depend on what happens to be
+    /// installed on the machine running it.
+    pub fn set_editor(&mut self, editor_setting: Option<String>, code_on_path: bool) {
+        self.editor = match editor_setting {
+            Some(editor) => EditorSetting::Configured(editor),
+            None if code_on_path => EditorSetting::CodeOnPath,
+            None => EditorSetting::Unconfigured,
+        };
     }
 
     fn selected_dir_path(&self) -> PathBuf {
@@ -2320,6 +2393,14 @@ impl App {
             Action::StartFind => self.begin_find(),
             Action::OpenAllRepositories => self.begin_all_repositories(),
             Action::OpenReposRoots => self.begin_repos_roots_view(),
+            Action::ContentsOpenInEditor => self.open_selected_in_editor(),
+            Action::FoldersOpenInEditor => self.open_folder_in_editor(),
+            Action::ContentsCopyPath => self.copy_selected_path(),
+            Action::FoldersCopyPath => self.copy_folder_path(),
+            Action::ContentsCopyRemoteAddress => self.copy_selected_remote_address(),
+            Action::FoldersCopyRemoteAddress => self.copy_folder_remote_address(),
+            Action::ContentsShowInFileManager => self.show_selected_in_file_manager(),
+            Action::FoldersShowInFileManager => self.show_folder_in_file_manager(),
         }
     }
 
@@ -2583,6 +2664,152 @@ impl App {
         }
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("working...".to_owned());
+    }
+
+    /// The Contents pane cursor's own folder, when it is one (#674): the
+    /// row "Open in editor", "Copy path", "Copy remote address" and "Show
+    /// in file manager" act on. `None` for a selected file, or nothing
+    /// selected at all.
+    fn selected_content_folder(&self) -> Option<PathBuf> {
+        let entry = self.contents.get(self.contents_selected)?;
+        entry.is_dir.then(|| self.contents_dir.join(&entry.name))
+    }
+
+    /// The remote address the Contents pane cursor's row's "Copy remote
+    /// address" (#674) copies, or `None` when the row is not a working
+    /// copy with a remote.
+    fn selected_content_remote(&self) -> Option<String> {
+        self.contents
+            .get(self.contents_selected)?
+            .repository
+            .as_ref()?
+            .remote
+            .clone()
+    }
+
+    /// The tree node the Folders pane's four "open in tools" actions
+    /// (#674) act on: the selected row.
+    fn selected_folder_node(&self) -> Option<&FolderNode> {
+        let rows = self.root.flatten();
+        let (_, indices) = rows.get(self.tree_selected)?;
+        self.root.node_at(indices)
+    }
+
+    /// Reports the outcome of launching an external program on the status
+    /// line (#674): a terminal reader gets no window appearing to tell
+    /// them it worked, so this is the only report there is.
+    fn report_launch(&mut self, what: &str, result: io::Result<()>) {
+        self.status = Some(match result {
+            Ok(()) => format!("opened {what}"),
+            Err(err) => format!("could not open {what}: {err}"),
+        });
+    }
+
+    /// As [`App::report_launch`], for a value handed to the clipboard
+    /// rather than a program.
+    fn report_copy(&mut self, what: &str, result: Result<(), String>) {
+        self.status = Some(match result {
+            Ok(()) => format!("copied {what} to the clipboard"),
+            Err(err) => format!("could not copy {what}: {err}"),
+        });
+    }
+
+    /// Opens `path` in the configured editor, or Visual Studio Code when
+    /// none is configured and it is on the `PATH` (#674) - see
+    /// [`launch::editor_launch`]. Says on the status line when neither is
+    /// available, rather than doing nothing with no report at all.
+    fn open_in_editor(&mut self, path: &Path) {
+        let (editor_setting, code_on_path) = match &self.editor {
+            EditorSetting::Configured(editor) => (Some(editor.as_str()), false),
+            EditorSetting::CodeOnPath => (None, true),
+            EditorSetting::Unconfigured => (None, false),
+        };
+        match launch::editor_launch(editor_setting, code_on_path, path) {
+            Some(command) => {
+                let result = run_detached(&command);
+                self.report_launch("an editor", result);
+            }
+            None => self.status = Some("no editor configured".to_owned()),
+        }
+    }
+
+    /// Shows `path` in the platform's file manager (#674) - see
+    /// [`launch::file_manager_launch`].
+    fn show_in_file_manager(&mut self, path: &Path) {
+        let command = launch::file_manager_launch(launch::Platform::current(), path);
+        let result = run_detached(&command);
+        self.report_launch("the file manager", result);
+    }
+
+    /// Opens the Contents pane cursor's folder in an editor (#674).
+    fn open_selected_in_editor(&mut self) {
+        if let Some(path) = self.selected_content_folder() {
+            self.open_in_editor(&path);
+        }
+    }
+
+    /// Opens the Folders pane's selected folder in an editor (#674).
+    fn open_folder_in_editor(&mut self) {
+        let path = self.selected_dir_path();
+        self.open_in_editor(&path);
+    }
+
+    /// Shows the Contents pane cursor's folder in the platform's file
+    /// manager (#674).
+    fn show_selected_in_file_manager(&mut self) {
+        if let Some(path) = self.selected_content_folder() {
+            self.show_in_file_manager(&path);
+        }
+    }
+
+    /// Shows the Folders pane's selected folder in the platform's file
+    /// manager (#674).
+    fn show_folder_in_file_manager(&mut self) {
+        let path = self.selected_dir_path();
+        self.show_in_file_manager(&path);
+    }
+
+    /// Copies the Contents pane cursor's folder's full path (#674).
+    fn copy_selected_path(&mut self) {
+        if let Some(path) = self.selected_content_folder() {
+            let result = write_clipboard(&path.to_string_lossy());
+            self.report_copy("the path", result);
+        }
+    }
+
+    /// Copies the Folders pane's selected folder's full path (#674).
+    fn copy_folder_path(&mut self) {
+        let path = self.selected_dir_path();
+        let result = write_clipboard(&path.to_string_lossy());
+        self.report_copy("the path", result);
+    }
+
+    /// Copies the Contents pane cursor's folder's remote address (#674),
+    /// saying so on the status line and leaving the clipboard alone when
+    /// the folder is not a working copy with a remote.
+    fn copy_selected_remote_address(&mut self) {
+        match self.selected_content_remote() {
+            Some(remote) => {
+                let result = write_clipboard(&remote);
+                self.report_copy("the remote address", result);
+            }
+            None => self.status = Some("this folder has no remote address".to_owned()),
+        }
+    }
+
+    /// As [`App::copy_selected_remote_address`], for the Folders pane's
+    /// selected folder (#674).
+    fn copy_folder_remote_address(&mut self) {
+        match self
+            .selected_folder_node()
+            .and_then(|node| node.remote.clone())
+        {
+            Some(remote) => {
+                let result = write_clipboard(&remote);
+                self.report_copy("the remote address", result);
+            }
+            None => self.status = Some("this folder has no remote address".to_owned()),
+        }
     }
 
     /// Handles one key while a prompt that collects typed text is open
@@ -6603,6 +6830,42 @@ mod tests {
             root.node_at(&[]).map(|node| node.name.clone()),
             Some(root.name.clone()),
             "and the empty path is the root itself"
+        );
+    }
+
+    #[test]
+    fn a_folder_nodes_remote_follows_its_directory_entry() {
+        let mut root = FolderNode::root("/root".into());
+        let checkout = DirectoryEntry {
+            name: "explorer".to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: Some("https://github.com/owner/explorer.git".to_owned()),
+                kind: protocol::RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch: None,
+            }),
+        };
+        root.set_children_from(std::slice::from_ref(&checkout));
+        assert_eq!(
+            root.node_at(&[0]).and_then(|node| node.remote.clone()),
+            Some("https://github.com/owner/explorer.git".to_owned()),
+            "the Folders tree's own node should carry the remote a listing reports (#674)"
+        );
+
+        let plain = DirectoryEntry {
+            repository: None,
+            ..checkout
+        };
+        root.set_children_from(std::slice::from_ref(&plain));
+        assert_eq!(
+            root.node_at(&[0]).and_then(|node| node.remote.clone()),
+            None,
+            "a folder that stops being a working copy should lose its remote too"
         );
     }
 

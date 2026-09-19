@@ -5,6 +5,7 @@ pub mod bindings;
 mod colour;
 mod document;
 mod editor;
+pub mod launch;
 pub mod settings;
 mod switcher;
 

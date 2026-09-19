@@ -166,6 +166,7 @@ fn run(opening: tui::app::Opening) -> io::Result<()> {
     if let Some(widths) = tui::settings::load_pane_widths() {
         app.set_pane_widths(widths);
     }
+    app.set_editor(tui::settings::load_editor(), tui::launch::on_path("code"));
     let mut terminal = ratatui::init();
     // Held for its `Drop`, which restores the terminal - so an early return
     // out of `tui::run`, below, cannot leave it in raw mode inside the
