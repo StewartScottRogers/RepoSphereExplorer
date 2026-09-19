@@ -27,7 +27,7 @@ use ratatui::widgets::{
     Block, Cell, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Table, TableState, Tabs, Wrap,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -257,12 +257,14 @@ fn sibling_path(path: &std::path::Path, name: &str) -> String {
 enum Mode {
     /// Nothing pending; keys navigate the panes as usual.
     Normal,
-    /// Asking whether to delete `path`, per GUIDANCE.md §2.1.5: destructive
-    /// operations need an explicit confirmed intent before they run.
+    /// Asking whether to delete `paths` - the whole selection (#676), not
+    /// only the cursor row - per GUIDANCE.md §2.1.5: destructive operations
+    /// need an explicit confirmed intent before they run.
     ConfirmDelete {
-        /// The path that would be deleted.
-        path: PathBuf,
-        /// Its display name, for the confirmation prompt.
+        /// The paths that would be deleted.
+        paths: Vec<PathBuf>,
+        /// The single entry's name, or `"{N} items"` for several, for the
+        /// confirmation prompt.
         name: String,
     },
     /// Editing a new name to rename `path` to, within its own directory.
@@ -499,6 +501,13 @@ pub struct App {
     /// not see.
     contents_dir: PathBuf,
     contents_selected: usize,
+    /// Every Contents row an operation acts on, beyond the cursor row
+    /// alone (#676). Empty for an ordinary single selection - reading it
+    /// goes through [`App::selected_indices`], never this field directly,
+    /// so a caller never has to remember the singleton case itself.
+    selection: BTreeSet<usize>,
+    /// The row a Shift range extends from.
+    anchor: usize,
     focus: Focus,
     file_view: Option<Response>,
     /// Which of the selected file's [`views`] the File pane is showing
@@ -628,6 +637,8 @@ impl App {
             contents: Vec::new(),
             contents_dir: PathBuf::new(),
             contents_selected: 0,
+            selection: BTreeSet::new(),
+            anchor: 0,
             focus: Focus::Folders,
             file_view: None,
             file_view_index: 0,
@@ -774,8 +785,9 @@ impl App {
     }
 
     /// Sorts the Contents pane by `key`, reversing direction if it is
-    /// already the sort key. The selected row keeps its selection across
-    /// the reorder by following its name, not its old position (#640).
+    /// already the sort key. The selected row, and the whole selection
+    /// beyond it (#676), keep their selection across the reorder by
+    /// following their names, not their old positions (#640).
     fn set_sort_key(&mut self, key: SortKey) {
         if self.sort_key == key {
             self.sort_ascending = !self.sort_ascending;
@@ -787,11 +799,32 @@ impl App {
             .contents
             .get(self.contents_selected)
             .map(|entry| entry.name.clone());
+        let anchored = self
+            .contents
+            .get(self.anchor)
+            .map(|entry| entry.name.clone());
+        let held: Vec<String> = self
+            .selection
+            .iter()
+            .filter_map(|&index| self.contents.get(index))
+            .map(|entry| entry.name.clone())
+            .collect();
         self.sort_contents();
+        let row_of = |name: &str, contents: &[DirectoryEntry]| {
+            contents.iter().position(|entry| entry.name == name)
+        };
         self.contents_selected = selected
             .as_deref()
-            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .and_then(|name| row_of(name, &self.contents))
             .unwrap_or(0);
+        self.anchor = anchored
+            .as_deref()
+            .and_then(|name| row_of(name, &self.contents))
+            .unwrap_or(self.contents_selected);
+        self.selection = held
+            .iter()
+            .filter_map(|name| row_of(name, &self.contents))
+            .collect();
         self.clamp_contents_scroll();
         self.load_file_view();
     }
@@ -823,6 +856,18 @@ impl App {
             .filter(|(_, entry)| self.passes_filter(entry))
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// The Contents rows an operation acts on (#676): the whole selection
+    /// when Shift, Insert or `*` have built one, or just the cursor row
+    /// when nothing else is selected - so a caller never has to handle
+    /// the singleton case itself.
+    fn selected_indices(&self) -> Vec<usize> {
+        if self.selection.is_empty() {
+            vec![self.contents_selected]
+        } else {
+            self.selection.iter().copied().collect()
+        }
     }
 
     /// Where [`App::contents_selected`] sits within [`App::filtered_indices`],
@@ -1336,6 +1381,8 @@ impl App {
                 self.pending_statuses.clear();
                 self.sort_contents();
                 self.contents_selected = 0;
+                self.anchor = 0;
+                self.selection.clear();
                 self.contents_scroll = 0;
                 // A filter narrows one folder's listing; a different one is
                 // not what it was narrowing (#650).
@@ -1440,6 +1487,12 @@ impl App {
             Action::FoldersCollapse => self.collapse_selected(),
             Action::ContentsUp => self.move_up_in_contents(),
             Action::ContentsDown => self.move_down_in_contents(),
+            Action::ExtendContentsUp => self.extend_contents_selection(-1),
+            Action::ExtendContentsDown => self.extend_contents_selection(1),
+            Action::ExtendContentsHome => self.extend_contents_selection_to_edge(false),
+            Action::ExtendContentsEnd => self.extend_contents_selection_to_edge(true),
+            Action::ToggleContentsSelected => self.toggle_contents_selected(),
+            Action::InvertContentsSelection => self.invert_contents_selection(),
             Action::ContentsOpen => self.drill_into_selected(),
             Action::ContentsSortName => self.set_sort_key(SortKey::Name),
             Action::ContentsSortType => self.set_sort_key(SortKey::Kind),
@@ -1543,15 +1596,28 @@ impl App {
         self.pane_widths = Some(widths);
     }
 
+    /// Asks whether to delete every selected row (#676), not only the
+    /// cursor row.
     fn start_delete_confirmation(&mut self) {
-        let Some(entry) = self.contents.get(self.contents_selected) else {
+        let indices = self.selected_indices();
+        let paths: Vec<PathBuf> = indices
+            .iter()
+            .filter_map(|&index| self.contents.get(index))
+            .map(|entry| self.contents_dir.join(&entry.name))
+            .collect();
+        if paths.is_empty() {
             return;
+        }
+        // Named when there is one, counted when there are several - what
+        // the status line already does for a clipboard operation.
+        let name = match indices.len() {
+            1 => self
+                .contents
+                .get(indices[0])
+                .map_or_else(String::new, |entry| entry.name.clone()),
+            count => format!("{count} items"),
         };
-        let path = self.contents_dir.join(&entry.name);
-        self.mode = Mode::ConfirmDelete {
-            path,
-            name: entry.name.clone(),
-        };
+        self.mode = Mode::ConfirmDelete { paths, name };
     }
 
     fn handle_confirm_delete_key(&mut self, code: KeyCode) {
@@ -1563,12 +1629,15 @@ impl App {
     }
 
     fn confirm_delete(&mut self) {
-        let Mode::ConfirmDelete { path, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
+        let Mode::ConfirmDelete { paths, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
         else {
             return;
         };
         let request = Request::Delete {
-            paths: vec![path.to_string_lossy().into_owned()],
+            paths: paths
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
         };
         self.pending_operation = Some(spawn_request(request));
         self.status = Some("deleting...".to_owned());
@@ -1695,7 +1764,11 @@ impl App {
     /// #649's job).
     fn status_line_at(&self, width: usize) -> String {
         match &self.mode {
-            Mode::Normal if self.status.is_none() && self.contents_summary().is_empty() => {
+            Mode::Normal
+                if self.status.is_none()
+                    && self.contents_summary().is_empty()
+                    && self.selection.len() <= 1 =>
+            {
                 fit_help_line(width)
             }
             Mode::ConfirmDelete { .. }
@@ -1715,18 +1788,24 @@ impl App {
     }
 
     /// What [`App::status_line`] shows in [`Mode::Normal`] with nothing
-    /// else to say: the Contents pane's counts (#641) when it holds a
-    /// repository, with the selected row's stale-fetch words appended when
-    /// it has one; the keyboard help text for a folder with no repository
-    /// rows, which has nothing of that kind to say.
+    /// else to say: how many rows are selected (#676) when it is more than
+    /// the cursor row alone, ahead of the Contents pane's counts (#641)
+    /// when it holds a repository, with the selected row's stale-fetch
+    /// words appended when it has one; the keyboard help text for a folder
+    /// with no repository rows, which has nothing of that kind to say.
     fn ambient_status(&self) -> String {
-        let summary = self.contents_summary();
-        if summary.is_empty() {
-            return HELP_SEGMENTS.join("  ");
-        }
-        match self.stale_fetch_note() {
-            Some(note) => format!("{summary} - {note}"),
-            None => summary,
+        let body = self.contents_summary();
+        let body = if body.is_empty() {
+            HELP_SEGMENTS.join("  ")
+        } else {
+            match self.stale_fetch_note() {
+                Some(note) => format!("{body} - {note}"),
+                None => body,
+            }
+        };
+        match self.selection.len() {
+            0 | 1 => body,
+            count => format!("{count} selected - {body}"),
         }
     }
 
@@ -2002,24 +2081,53 @@ impl App {
 
     /// Moves the cursor to the previous row the current filter shows
     /// (#650) - the previous row outright while no filter narrows the
-    /// listing.
+    /// listing. A plain arrow collapses any range selected back to the one
+    /// row landed on (#676).
     fn move_up_in_contents(&mut self) {
-        let filtered = self.filtered_indices();
-        let Some(position) = filtered
-            .iter()
-            .position(|&index| index == self.contents_selected)
-        else {
-            return;
-        };
-        if position > 0 {
-            self.contents_selected = filtered[position - 1];
-            self.clamp_contents_scroll();
-            self.load_file_view();
-        }
+        self.move_contents_cursor(-1);
+        self.selection.clear();
+        self.anchor = self.contents_selected;
     }
 
     /// As [`App::move_up_in_contents`], the other way.
     fn move_down_in_contents(&mut self) {
+        self.move_contents_cursor(1);
+        self.selection.clear();
+        self.anchor = self.contents_selected;
+    }
+
+    /// Moves [`App::contents_selected`] one row (`-1` or `1`) within what
+    /// the current filter shows, leaving the selection untouched. The
+    /// shared step under the plain arrows, which then collapse the
+    /// selection, and Insert, which does not (#676). Says whether it
+    /// actually moved.
+    fn move_contents_cursor(&mut self, delta: i32) -> bool {
+        let filtered = self.filtered_indices();
+        let Some(position) = filtered
+            .iter()
+            .position(|&index| index == self.contents_selected)
+        else {
+            return false;
+        };
+        let next = if delta < 0 {
+            position.checked_sub(1)
+        } else {
+            (position + 1 < filtered.len()).then_some(position + 1)
+        };
+        let Some(next) = next else {
+            return false;
+        };
+        self.contents_selected = filtered[next];
+        self.clamp_contents_scroll();
+        self.load_file_view();
+        true
+    }
+
+    /// Shift+Up/Down (#676): grows or shrinks the selected range to the
+    /// row `delta` away from the cursor within what the current filter
+    /// shows, the anchor staying put - so a Shift+Up back over it flips
+    /// the range rather than growing it the other way.
+    fn extend_contents_selection(&mut self, delta: i32) {
         let filtered = self.filtered_indices();
         let Some(position) = filtered
             .iter()
@@ -2027,11 +2135,77 @@ impl App {
         else {
             return;
         };
-        if position + 1 < filtered.len() {
-            self.contents_selected = filtered[position + 1];
-            self.clamp_contents_scroll();
-            self.load_file_view();
+        let next = if delta < 0 {
+            position.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            position
+                .saturating_add(delta.unsigned_abs() as usize)
+                .min(filtered.len().saturating_sub(1))
+        };
+        self.extend_contents_selection_to(filtered[next]);
+    }
+
+    /// Shift+Home and Shift+End (#676): extends the range to the first or
+    /// last row the current filter shows, rather than moving to it.
+    fn extend_contents_selection_to_edge(&mut self, last: bool) {
+        let filtered = self.filtered_indices();
+        let target = if last {
+            filtered.last()
+        } else {
+            filtered.first()
+        };
+        if let Some(&target) = target {
+            self.extend_contents_selection_to(target);
         }
+    }
+
+    /// Selects every row between [`App::anchor`] and `target`, inclusive,
+    /// within the current filter's order - so a range never silently
+    /// spans a row the filter hides.
+    fn extend_contents_selection_to(&mut self, target: usize) {
+        let filtered = self.filtered_indices();
+        let anchor_position = filtered.iter().position(|&index| index == self.anchor);
+        let target_position = filtered.iter().position(|&index| index == target);
+        let (Some(anchor_position), Some(target_position)) = (anchor_position, target_position)
+        else {
+            return;
+        };
+        let (low, high) = if anchor_position <= target_position {
+            (anchor_position, target_position)
+        } else {
+            (target_position, anchor_position)
+        };
+        self.selection = filtered[low..=high].iter().copied().collect();
+        self.contents_selected = target;
+        self.clamp_contents_scroll();
+        self.load_file_view();
+    }
+
+    /// Insert (#676): toggles the cursor row in or out of the selection
+    /// and moves down one, so holding it selects a run - a terminal file
+    /// manager's selection key since Norton Commander.
+    fn toggle_contents_selected(&mut self) {
+        if self.contents.get(self.contents_selected).is_none() {
+            return;
+        }
+        if !self.selection.remove(&self.contents_selected) {
+            self.selection.insert(self.contents_selected);
+        }
+        self.move_contents_cursor(1);
+        self.anchor = self.contents_selected;
+    }
+
+    /// `*` (#676): inverts the selection within what the current filter
+    /// shows. From an empty selection that selects every row shown;
+    /// pressed again, it clears it.
+    fn invert_contents_selection(&mut self) {
+        let filtered = self.filtered_indices();
+        self.selection = filtered
+            .iter()
+            .copied()
+            .filter(|index| !self.selection.contains(index))
+            .collect();
+        self.anchor = self.contents_selected;
     }
 
     fn drill_into_selected(&mut self) {
@@ -2518,9 +2692,25 @@ fn branch_cell(app: &App, entry: &DirectoryEntry) -> Cell<'static> {
     Cell::from(Line::from(spans))
 }
 
-/// One Contents row's cells, fitted to `columns`.
-fn contents_row(app: &App, entry: &DirectoryEntry, columns: &ContentsColumns) -> Row<'static> {
-    let mut cells = vec![Cell::from(entry_display_name(entry))];
+/// One Contents row's cells, fitted to `columns`. `index` is `entry`'s
+/// place in [`App::contents`], so a row that is part of a multi-row
+/// selection (#676) can be told apart from the rest - a leading glyph the
+/// name carries so it survives `NO_COLOR`, and a background colour on top
+/// of that. The cursor row carries the marker too when it is part of the
+/// range; the table's own highlight still tells it apart from the rest.
+fn contents_row(
+    app: &App,
+    index: usize,
+    entry: &DirectoryEntry,
+    columns: &ContentsColumns,
+) -> Row<'static> {
+    let selected = !app.selection.is_empty() && app.selection.contains(&index);
+    let name = if selected {
+        format!("* {}", entry_display_name(entry))
+    } else {
+        entry_display_name(entry)
+    };
+    let mut cells = vec![Cell::from(name)];
     if columns.branch.is_some() {
         cells.push(branch_cell(app, entry));
     }
@@ -2538,7 +2728,12 @@ fn contents_row(app: &App, entry: &DirectoryEntry, columns: &ContentsColumns) ->
     if columns.modified.is_some() {
         cells.push(Cell::from(format_timestamp(effective_modified(entry))));
     }
-    Row::new(cells)
+    let row = Row::new(cells);
+    if selected {
+        row.style(Style::default().bg(Color::DarkGray))
+    } else {
+        row
+    }
 }
 
 /// Renders the Contents pane as a table fitted to what the listing holds
@@ -2585,7 +2780,7 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let filtered = app.filtered_indices();
     let rows: Vec<Row<'static>> = filtered
         .iter()
-        .map(|&index| contents_row(app, &app.contents[index], &columns))
+        .map(|&index| contents_row(app, index, &app.contents[index], &columns))
         .collect();
 
     let mut state = TableState::default();
@@ -3697,14 +3892,24 @@ mod tests {
             .collect()
     }
 
-    /// The path the open prompt is about, whichever prompt it is.
+    /// The path the open prompt is about, whichever prompt it is - the
+    /// first, for a delete confirming more than one.
     fn prompt_path(app: &App) -> Option<&Path> {
         match &app.mode {
-            Mode::ConfirmDelete { path, .. }
-            | Mode::RenameInput { path, .. }
+            Mode::ConfirmDelete { paths, .. } => paths.first().map(PathBuf::as_path),
+            Mode::RenameInput { path, .. }
             | Mode::CopyInput { path, .. }
             | Mode::ExtractInput { path, .. } => Some(path.as_path()),
             Mode::Normal | Mode::ConfirmDiscardEdit { .. } | Mode::FilterInput => None,
+        }
+    }
+
+    /// Every path the open delete confirmation names, in the order
+    /// [`App::selected_indices`] gave them (#676).
+    fn prompt_delete_paths(app: &App) -> Vec<&Path> {
+        match &app.mode {
+            Mode::ConfirmDelete { paths, .. } => paths.iter().map(PathBuf::as_path).collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -3979,6 +4184,171 @@ mod tests {
         assert_eq!(content_names(&app), vec!["z-folder", "b.txt", "a.md"]);
         app.handle_key(KeyCode::Char('m'));
         assert_eq!(content_names(&app), vec!["z-folder", "a.md", "b.txt"]);
+    }
+
+    #[test]
+    fn shift_down_extends_the_selection_and_a_plain_down_collapses_it() {
+        let root = notional_root("shift-down-selects");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+
+        assert_eq!(app.selection.len(), 3, "the range now covers every row");
+        assert_eq!(
+            app.contents_selected, 2,
+            "the cursor followed to the far end"
+        );
+        let rows = drawn_contents(40, 6, &app);
+        let marked = rows.iter().filter(|row| row.contains('*')).count();
+        assert_eq!(marked, 3, "every selected row carries the glyph: {rows:?}");
+
+        app.handle_key(KeyCode::Down);
+
+        assert!(
+            app.selection.is_empty(),
+            "a plain arrow collapses the range back to one row"
+        );
+        let rows = drawn_contents(40, 6, &app);
+        assert!(
+            !rows.iter().any(|row| row.contains('*')),
+            "nothing is left marked: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn insert_selects_and_moves_on_and_star_selects_or_clears_everything() {
+        let root = notional_root("insert-and-star-select");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.focus = Focus::Contents;
+
+        app.handle_key(KeyCode::Insert);
+
+        assert!(
+            app.selection.contains(&0),
+            "the row Insert was pressed on is selected"
+        );
+        assert_eq!(app.contents_selected, 1, "and the cursor moved on");
+
+        // A plain arrow collapses Insert's own one-row selection, so `*`
+        // below starts from empty rather than from it.
+        app.handle_key(KeyCode::Down);
+        assert!(app.selection.is_empty());
+
+        app.handle_key(KeyCode::Char('*'));
+
+        assert_eq!(
+            app.selection.len(),
+            3,
+            "an empty selection inverts to the whole listing"
+        );
+        assert!(
+            app.status_line().starts_with("3 selected - "),
+            "the count reaches the status line: {}",
+            app.status_line()
+        );
+
+        app.handle_key(KeyCode::Char('*'));
+
+        assert!(app.selection.is_empty(), "pressed again, it clears");
+    }
+
+    #[test]
+    fn sorting_keeps_a_range_selected_on_the_same_entries() {
+        let root = notional_root("sort-keeps-selection");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    DirectoryEntry {
+                        name: "a.txt".to_owned(),
+                        is_dir: false,
+                        size: 100,
+                        modified: None,
+                        repository: None,
+                    },
+                    DirectoryEntry {
+                        name: "b.txt".to_owned(),
+                        is_dir: false,
+                        size: 10,
+                        modified: None,
+                        repository: None,
+                    },
+                    DirectoryEntry {
+                        name: "c.txt".to_owned(),
+                        is_dir: false,
+                        size: 50,
+                        modified: None,
+                        repository: None,
+                    },
+                ],
+            }),
+        );
+        app.focus = Focus::Contents;
+        // The default sort is ascending by name, so the listing is already
+        // a.txt, b.txt, c.txt; this selects the first two of those.
+        assert_eq!(content_names(&app), vec!["a.txt", "b.txt", "c.txt"]);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+
+        app.handle_key(KeyCode::Char('s'));
+
+        assert_eq!(
+            content_names(&app),
+            vec!["b.txt", "c.txt", "a.txt"],
+            "reordered ascending by size, moving a.txt to the far end"
+        );
+        let selected_names: std::collections::BTreeSet<&str> = app
+            .selection
+            .iter()
+            .map(|&index| app.contents[index].name.as_str())
+            .collect();
+        assert_eq!(
+            selected_names,
+            ["a.txt", "b.txt"].into_iter().collect(),
+            "the same two files are still selected, not the same two positions"
+        );
+    }
+
+    #[test]
+    fn delete_acts_on_every_selected_row_and_names_how_many() {
+        let root = notional_root("delete-the-selection");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a.txt", false), ("b.txt", false), ("c.txt", false)]),
+            }),
+        );
+        app.focus = Focus::Contents;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+
+        app.handle_key(KeyCode::Delete);
+
+        assert_eq!(app.status_line(), "Delete 3 items? y/n");
+        assert_eq!(
+            prompt_delete_paths(&app).len(),
+            3,
+            "every selected row is a target, not only the cursor row"
+        );
+
+        app.handle_key(KeyCode::Char('y'));
+
+        assert!(app.pending_operation.is_some());
     }
 
     #[test]

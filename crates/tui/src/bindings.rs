@@ -57,6 +57,19 @@ pub enum Action {
     ContentsUp,
     /// Moves the contents cursor down.
     ContentsDown,
+    /// Extends the contents selection to the row above the cursor (#676).
+    ExtendContentsUp,
+    /// Extends the contents selection to the row below the cursor (#676).
+    ExtendContentsDown,
+    /// Extends the contents selection to the first row shown (#676).
+    ExtendContentsHome,
+    /// Extends the contents selection to the last row shown (#676).
+    ExtendContentsEnd,
+    /// Toggles the cursor row in or out of the contents selection and
+    /// moves down one (#676).
+    ToggleContentsSelected,
+    /// Inverts the contents selection (#676).
+    InvertContentsSelection,
     /// Opens the selected row if it is a folder.
     ContentsOpen,
     /// Sorts the contents by Name, reversing direction if already sorted
@@ -238,6 +251,48 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Move down",
         action: Action::ContentsDown,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Up,
+        modifiers: KeyModifiers::SHIFT,
+        description: "Extend selection up",
+        action: Action::ExtendContentsUp,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Down,
+        modifiers: KeyModifiers::SHIFT,
+        description: "Extend selection down",
+        action: Action::ExtendContentsDown,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Home,
+        modifiers: KeyModifiers::SHIFT,
+        description: "Extend selection to the top",
+        action: Action::ExtendContentsHome,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::End,
+        modifiers: KeyModifiers::SHIFT,
+        description: "Extend selection to the bottom",
+        action: Action::ExtendContentsEnd,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Insert,
+        modifiers: KeyModifiers::NONE,
+        description: "Select and move down",
+        action: Action::ToggleContentsSelected,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('*'),
+        modifiers: KeyModifiers::NONE,
+        description: "Invert selection",
+        action: Action::InvertContentsSelection,
     },
     Binding {
         owner: Owner::Contents,

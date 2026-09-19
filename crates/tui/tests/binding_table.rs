@@ -275,39 +275,11 @@ fn every_contents_binding_reaches_the_action_it_names() {
         press(&mut terminal, &mut app, KeyCode::Tab);
 
         match binding.action {
-            Action::StartDelete => {
-                // subdir/, aaa.txt, mmm.txt, zzz.txt - one row down lands
-                // on the first file among them.
-                press(&mut terminal, &mut app, KeyCode::Down);
-                let shown = press_binding(&mut terminal, &mut app, binding);
-                assert!(
-                    shown.contains("Delete aaa.txt? y/n"),
-                    "{shown:?} should show the delete prompt for the selected row"
-                );
-            }
-            Action::StartRename => {
-                press(&mut terminal, &mut app, KeyCode::Down);
-                let shown = press_binding(&mut terminal, &mut app, binding);
-                assert!(
-                    shown.contains("Rename to: aaa.txt_"),
-                    "{shown:?} should show the rename prompt for the selected row"
-                );
-            }
-            Action::StartCopy => {
-                press(&mut terminal, &mut app, KeyCode::Down);
-                let shown = press_binding(&mut terminal, &mut app, binding);
-                assert!(
-                    shown.contains("Copy to: aaa.txt_"),
-                    "{shown:?} should show the copy prompt for the selected row"
-                );
-            }
-            Action::StartExtract => {
-                press(&mut terminal, &mut app, KeyCode::Down);
-                let shown = press_binding(&mut terminal, &mut app, binding);
-                assert!(
-                    shown.contains("Extract to: aaa_"),
-                    "{shown:?} should show the extract prompt, stemmed from the selected row"
-                );
+            Action::StartDelete
+            | Action::StartRename
+            | Action::StartCopy
+            | Action::StartExtract => {
+                assert_start_prompt(&mut terminal, &mut app, binding);
             }
             Action::ContentsDown => {
                 // subdir/ is selected first; one row down reaches aaa.txt.
@@ -371,8 +343,130 @@ fn every_contents_binding_reaches_the_action_it_names() {
             Action::ToggleChangedFilter => {
                 assert_toggle_changed_filter(&mut terminal, &mut app, binding);
             }
+            Action::ExtendContentsDown
+            | Action::ExtendContentsUp
+            | Action::ExtendContentsHome
+            | Action::ExtendContentsEnd
+            | Action::ToggleContentsSelected
+            | Action::InvertContentsSelection => {
+                assert_selection_binding(&mut terminal, &mut app, binding);
+            }
             other => panic!("no assertion written for the contents action {other:?}"),
         }
+    }
+}
+
+/// [`Action::StartDelete`], [`Action::StartRename`], [`Action::StartCopy`]
+/// and [`Action::StartExtract`]'s own assertion, split out of
+/// `every_contents_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650). Each one prompts for the row one Down from
+/// subdir/ - aaa.txt.
+fn assert_start_prompt(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
+    press(terminal, app, KeyCode::Down);
+    let shown = press_binding(terminal, app, binding);
+    let expected = match binding.action {
+        Action::StartDelete => "Delete aaa.txt? y/n",
+        Action::StartRename => "Rename to: aaa.txt_",
+        Action::StartCopy => "Copy to: aaa.txt_",
+        Action::StartExtract => "Extract to: aaa_",
+        other => panic!("assert_start_prompt was not written for {other:?}"),
+    };
+    assert!(
+        shown.contains(expected),
+        "{shown:?} should show the prompt for the selected row"
+    );
+}
+
+/// The selection bindings' own assertions (#676), split out of
+/// `every_contents_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650). Every row a selected row's own name
+/// carries a `*` glyph (`crates/tui/src/app.rs`'s `contents_row`), so the
+/// drawn buffer alone says how many rows are selected.
+fn assert_selection_binding(
+    terminal: &mut Terminal<TestBackend>,
+    app: &mut App,
+    binding: &Binding,
+) {
+    // Not a bare `*`: the scratch root this test runs under is itself
+    // named after `binding.code` (`Char('*')`, for the invert binding
+    // under test here), so a bare glyph count would also catch the
+    // breadcrumb naming the folder rather than only a marked row.
+    let marked = |shown: &str, name: &str| shown.contains(&format!("* {name}"));
+    match binding.action {
+        Action::ExtendContentsDown => {
+            // subdir/ is selected first; extending down twice should
+            // cover it, aaa.txt and mmm.txt - three of the four rows.
+            press_binding(terminal, app, binding);
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                marked(&shown, "subdir/") && marked(&shown, "aaa.txt") && marked(&shown, "mmm.txt"),
+                "extending the selection down twice should mark three rows: {shown:?}"
+            );
+            assert!(
+                !marked(&shown, "zzz.txt"),
+                "the fourth row should not be marked yet: {shown:?}"
+            );
+        }
+        Action::ExtendContentsUp => {
+            // Move to the last row, zzz.txt, then extend up twice to
+            // cover it, mmm.txt and aaa.txt.
+            press(terminal, app, KeyCode::Down);
+            press(terminal, app, KeyCode::Down);
+            press(terminal, app, KeyCode::Down);
+            press_binding(terminal, app, binding);
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                marked(&shown, "aaa.txt") && marked(&shown, "mmm.txt") && marked(&shown, "zzz.txt"),
+                "extending the selection up twice should mark three rows: {shown:?}"
+            );
+            assert!(
+                !marked(&shown, "subdir/"),
+                "the first row should not be marked yet: {shown:?}"
+            );
+        }
+        Action::ExtendContentsHome => {
+            // Move to the last row, then extend to the top - every row.
+            press(terminal, app, KeyCode::Down);
+            press(terminal, app, KeyCode::Down);
+            press(terminal, app, KeyCode::Down);
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                marked(&shown, "subdir/")
+                    && marked(&shown, "aaa.txt")
+                    && marked(&shown, "mmm.txt")
+                    && marked(&shown, "zzz.txt"),
+                "extending to the top should mark every row: {shown:?}"
+            );
+        }
+        Action::ExtendContentsEnd => {
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                marked(&shown, "subdir/")
+                    && marked(&shown, "aaa.txt")
+                    && marked(&shown, "mmm.txt")
+                    && marked(&shown, "zzz.txt"),
+                "extending to the bottom should mark every row: {shown:?}"
+            );
+        }
+        Action::ToggleContentsSelected => {
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                marked(&shown, "subdir/"),
+                "Insert should mark the row it was pressed on, even after the \
+                 cursor itself has moved on: {shown:?}"
+            );
+        }
+        Action::InvertContentsSelection => {
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                marked(&shown, "subdir/")
+                    && marked(&shown, "aaa.txt")
+                    && marked(&shown, "mmm.txt")
+                    && marked(&shown, "zzz.txt"),
+                "inverting an empty selection should mark every row: {shown:?}"
+            );
+        }
+        other => panic!("assert_selection_binding was not written for {other:?}"),
     }
 }
 
