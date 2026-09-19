@@ -12,10 +12,28 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 use tui::Events;
 use tui::app::{App, Focus};
 use tui::bindings::{Action, BINDINGS, Binding, Owner};
+
+/// The service's undo stack (#646) is one per process, not scoped to the
+/// caller that filled it - `common::ensure_service` starts exactly one for
+/// this whole test binary, shared by every test function below. Each of
+/// the four functions otherwise keeps its own operations inside its own
+/// scratch folder, which is enough isolation on its own - except for Undo,
+/// which asks a global "what happened last" that a concurrently running
+/// function could answer first. Held for the whole body of each `#[test]`
+/// below, the same shape `crates/tui/tests/terminal_in_the_window.rs` uses
+/// for its own process-global state.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serially() -> MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Everything drawn into `terminal`, run together into one string.
 fn drawn(terminal: &Terminal<TestBackend>) -> String {
@@ -130,6 +148,7 @@ fn file_pane_scratch(name: &str) -> PathBuf {
 
 #[test]
 fn every_global_binding_reaches_the_action_it_names() {
+    let _serial = serially();
     common::ensure_service();
 
     for binding in BINDINGS.iter().filter(|b| b.owner == Owner::Global) {
@@ -189,6 +208,40 @@ fn every_global_binding_reaches_the_action_it_names() {
             Action::WidenPane => assert_widen_pane(&mut terminal, &mut app, binding),
             Action::NarrowPane => assert_narrow_pane(&mut terminal, &mut app, binding),
             Action::ToggleMaximize => assert_toggle_maximize(&mut terminal, &mut app, binding),
+            Action::StartUndo => {
+                // The undo stack is one per service process
+                // (`common::ensure_service`), shared with every other
+                // binding this test binary presses - an empty stack
+                // cannot be assumed here. Undo something this test made
+                // itself instead: create a folder, then undo it away.
+                press(&mut terminal, &mut app, KeyCode::Tab);
+                press(&mut terminal, &mut app, KeyCode::Char('D'));
+                for c in "temp".chars() {
+                    press(&mut terminal, &mut app, KeyCode::Char(c));
+                }
+                press(&mut terminal, &mut app, KeyCode::Enter);
+                let shown = wait_for(&mut terminal, &mut app, "temp");
+                assert!(
+                    shown.contains("temp"),
+                    "setup: the folder should exist before undoing it: {shown:?}"
+                );
+
+                press_binding(&mut terminal, &mut app, binding);
+                let mut shown = drawn(&terminal);
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while shown.contains("temp") && std::time::Instant::now() < deadline {
+                    let mut nothing = common::QueuedKeys::new(std::iter::empty());
+                    tui::tick(&mut terminal, &mut app, &mut nothing, Duration::ZERO)
+                        .expect("a draw");
+                    shown = drawn(&terminal);
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                assert!(
+                    !shown.contains("temp"),
+                    "{} should have undone the folder it just created: {shown:?}",
+                    binding.description
+                );
+            }
             other => panic!("no assertion written for the global action {other:?}"),
         }
     }
@@ -261,6 +314,7 @@ fn assert_toggle_maximize(terminal: &mut Terminal<TestBackend>, app: &mut App, b
 
 #[test]
 fn every_contents_binding_reaches_the_action_it_names() {
+    let _serial = serially();
     common::ensure_service();
 
     for binding in BINDINGS.iter().filter(|b| b.owner == Owner::Contents) {
@@ -351,6 +405,15 @@ fn every_contents_binding_reaches_the_action_it_names() {
             | Action::InvertContentsSelection => {
                 assert_selection_binding(&mut terminal, &mut app, binding);
             }
+            Action::StartCreateDirectory | Action::StartCreateFile => {
+                assert_start_create(&mut terminal, &mut app, binding);
+            }
+            Action::StartOpen
+            | Action::ClipboardCopy
+            | Action::ClipboardCut
+            | Action::ClipboardPaste => {
+                assert_open_or_clipboard(&mut terminal, &mut app, binding);
+            }
             other => panic!("no assertion written for the contents action {other:?}"),
         }
     }
@@ -360,21 +423,37 @@ fn every_contents_binding_reaches_the_action_it_names() {
 /// and [`Action::StartExtract`]'s own assertion, split out of
 /// `every_contents_binding_reaches_the_action_it_names` to keep it under
 /// clippy's line count (#650). Each one prompts for the row one Down from
-/// subdir/ - aaa.txt.
+/// subdir/ - aaa.txt - and now draws as a real modal (#646) naming the
+/// full path rather than the row alone, so the check looks for the title,
+/// the full path, and the typed text, rather than one fixed sentence.
 fn assert_start_prompt(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
     press(terminal, app, KeyCode::Down);
+    let full_path = PathBuf::from(app.address_path())
+        .join("aaa.txt")
+        .display()
+        .to_string();
     let shown = press_binding(terminal, app, binding);
-    let expected = match binding.action {
-        Action::StartDelete => "Delete aaa.txt? y/n",
-        Action::StartRename => "Rename to: aaa.txt_",
-        Action::StartCopy => "Copy to: aaa.txt_",
-        Action::StartExtract => "Extract to: aaa_",
+    let (title, input) = match binding.action {
+        Action::StartDelete => ("Delete aaa.txt?", None),
+        Action::StartRename => ("Rename", Some("aaa.txt")),
+        Action::StartCopy => ("Copy", Some("aaa.txt")),
+        Action::StartExtract => ("Extract", Some("aaa")),
         other => panic!("assert_start_prompt was not written for {other:?}"),
     };
     assert!(
-        shown.contains(expected),
-        "{shown:?} should show the prompt for the selected row"
+        shown.contains(title),
+        "{shown:?} should show the modal's title, {title:?}"
     );
+    assert!(
+        shown.contains(&full_path),
+        "{shown:?} should name the full path, not just the row (#524)"
+    );
+    if let Some(input) = input {
+        assert!(
+            shown.contains(input),
+            "{shown:?} should show the typed text, {input:?}"
+        );
+    }
 }
 
 /// The selection bindings' own assertions (#676), split out of
@@ -470,6 +549,96 @@ fn assert_selection_binding(
     }
 }
 
+/// [`Action::StartCreateDirectory`] and [`Action::StartCreateFile`]'s own
+/// assertion, split out of `every_contents_binding_reaches_the_action_it_names`
+/// to keep it under clippy's line count (#650): typing a name and
+/// confirming should create it through the service and select the new row
+/// once the reloaded listing lands.
+fn assert_start_create(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
+    let title = match binding.action {
+        Action::StartCreateDirectory => "New folder",
+        Action::StartCreateFile => "New file",
+        other => panic!("assert_start_create was not written for {other:?}"),
+    };
+    let shown = press_binding(terminal, app, binding);
+    assert!(
+        shown.contains(title),
+        "{shown:?} should show the {title} modal"
+    );
+
+    for c in "fresh".chars() {
+        press(terminal, app, KeyCode::Char(c));
+    }
+    press(terminal, app, KeyCode::Enter);
+
+    let shown = wait_for(terminal, app, "fresh");
+    assert!(
+        shown.contains("fresh"),
+        "{} should create the new row and reload the listing: {shown:?}",
+        binding.description
+    );
+}
+
+/// [`Action::StartOpen`], [`Action::ClipboardCopy`], [`Action::ClipboardCut`]
+/// and [`Action::ClipboardPaste`]'s own assertion, split out of
+/// `every_contents_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650).
+fn assert_open_or_clipboard(
+    terminal: &mut Terminal<TestBackend>,
+    app: &mut App,
+    binding: &Binding,
+) {
+    match binding.action {
+        Action::StartOpen => {
+            press(terminal, app, KeyCode::Down);
+            press_binding(terminal, app, binding);
+            let shown = wait_for(terminal, app, "opened");
+            assert!(
+                shown.contains("opened"),
+                "{} should report what Open handed over: {shown:?}",
+                binding.description
+            );
+        }
+        Action::ClipboardCopy => {
+            press(terminal, app, KeyCode::Down);
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                shown.contains("1 item copied"),
+                "{} should say what it copied: {shown:?}",
+                binding.description
+            );
+        }
+        Action::ClipboardCut => {
+            press(terminal, app, KeyCode::Down);
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                shown.contains("1 item cut"),
+                "{} should say what it cut: {shown:?}",
+                binding.description
+            );
+        }
+        Action::ClipboardPaste => {
+            // Copy aaa.txt then paste it back into the same folder: a real
+            // round trip that ends in the same refusal the service gives
+            // any other collision, worded exactly as it is (#646, item 7).
+            press(terminal, app, KeyCode::Down);
+            press_key(
+                terminal,
+                app,
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            );
+            press_binding(terminal, app, binding);
+            let shown = wait_for(terminal, app, "already exists");
+            assert!(
+                shown.contains("already exists"),
+                "{} onto the same name should surface the service's own refusal: {shown:?}",
+                binding.description
+            );
+        }
+        other => panic!("assert_open_or_clipboard was not written for {other:?}"),
+    }
+}
+
 /// [`Action::StartFilter`]'s own assertion, split out of
 /// `every_contents_binding_reaches_the_action_it_names` to keep it under
 /// clippy's line count (#650).
@@ -511,6 +680,7 @@ fn assert_toggle_changed_filter(
 
 #[test]
 fn every_folders_binding_reaches_the_action_it_names() {
+    let _serial = serially();
     common::ensure_service();
 
     for binding in BINDINGS.iter().filter(|b| b.owner == Owner::Folders) {
@@ -576,6 +746,7 @@ fn every_folders_binding_reaches_the_action_it_names() {
 
 #[test]
 fn every_file_binding_reaches_the_action_it_names() {
+    let _serial = serially();
     common::ensure_service();
 
     for binding in BINDINGS.iter().filter(|b| b.owner == Owner::File) {

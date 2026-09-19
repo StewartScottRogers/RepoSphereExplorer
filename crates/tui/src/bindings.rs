@@ -45,6 +45,20 @@ pub enum Action {
     StartCopy,
     /// Starts extracting the selected archive.
     StartExtract,
+    /// Starts naming a new, empty directory (#646).
+    StartCreateDirectory,
+    /// Starts naming a new, empty file (#646).
+    StartCreateFile,
+    /// Sends `Undo` for the immediately preceding operation (#646).
+    StartUndo,
+    /// Sends `Open` for the selected row (#646).
+    StartOpen,
+    /// Copies the selection onto the clipboard (#646).
+    ClipboardCopy,
+    /// Cuts the selection onto the clipboard (#646).
+    ClipboardCut,
+    /// Pastes the clipboard into the folder currently shown (#646).
+    ClipboardPaste,
     /// Moves the folders tree cursor up.
     FoldersUp,
     /// Moves the folders tree cursor down.
@@ -223,6 +237,55 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Extract",
         action: Action::StartExtract,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('D'),
+        modifiers: KeyModifiers::NONE,
+        description: "New folder",
+        action: Action::StartCreateDirectory,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('F'),
+        modifiers: KeyModifiers::NONE,
+        description: "New file",
+        action: Action::StartCreateFile,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('O'),
+        modifiers: KeyModifiers::NONE,
+        description: "Open with the platform",
+        action: Action::StartOpen,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('z'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Undo",
+        action: Action::StartUndo,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('c'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Copy to clipboard",
+        action: Action::ClipboardCopy,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('x'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Cut to clipboard",
+        action: Action::ClipboardCut,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('v'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Paste",
+        action: Action::ClipboardPaste,
     },
     Binding {
         owner: Owner::Contents,
@@ -557,8 +620,9 @@ mod tests {
                 KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
                 Focus::Contents
             ),
-            None,
-            "Ctrl+C must not read as the plain `c` copy binding"
+            Some(Action::ClipboardCopy),
+            "Ctrl+C must not read as the plain `c` copy binding - it copies to the \
+             clipboard instead (#646)"
         );
         assert_eq!(
             find(
