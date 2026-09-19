@@ -200,7 +200,7 @@ it.
 
 A separate registry, and a separate rule: every folder plugin that recognises
 a folder contributes, because a folder is several things at once. See
-GUIDANCE.md §3.4 and DECISIONS.md D12.
+GUIDANCE.md §3.5 and DECISIONS.md D12.
 
 | Kind | Crate | Issue | Notes |
 | --- | --- | --- | --- |

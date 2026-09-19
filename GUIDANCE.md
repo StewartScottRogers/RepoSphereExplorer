@@ -3,7 +3,9 @@
 **Status: D1–D10 settled, ready for a build order.** This is the source document
 the factory builds from. Edit it directly; every work order should trace back to
 a line in here. If this document and the code disagree, this document is wrong —
-fix it here first, then let the factory change the code.
+fix it here first, then let the factory change the code. D11 to D15 came later
+and live in [DECISIONS.md](DECISIONS.md), settled the same way but recorded
+there rather than in §7 below.
 
 Sections are numbered to match the original brief. Decisions D1–D10 in [§7](#7-decisions)
 are settled below and gate the build order in [§8](#8-build-order).
@@ -299,9 +301,9 @@ The anchor the whole application is arranged around.
   marker — never guessed from a name — and the provider is read from the
   remote address in the repository's own configuration. Branch comes from the
   same place. Whether the working tree has uncommitted changes is read from
-  the checkout's own index, for the **selected** repository only: a listing
-  of forty checkouts cannot afford a pass over forty sets of tracked files,
-  and the one a reader is looking at is a pass they asked for. Tracked files
+  the checkout's own index. A listing must not *wait* on it: the status for
+  every repository row on screen is asked, one request each, after the
+  listing itself is drawn, and a row not yet answered says so. Tracked files
   only - deciding whether an untracked file is ignored needs the ignore
   rules - so the wording says "tracked" and never "clean".
 - **The boundary is soft.** The root is home base, not a cage: navigating above
@@ -616,7 +618,8 @@ Stated so the factory does not drift into them.
 All settled. Nothing here is open; the build order in §8 proceeds. D7 to D10
 were settled on 2026-09-08 and are recorded, with their reasoning, in
 [DECISIONS.md](DECISIONS.md). They are revisitable: each names the one place a
-change would have to be made.
+change would have to be made. D11 to D15, settled after this section was
+last touched, live in DECISIONS.md too, alongside D7 to D10.
 
 **D1 — Plugin split.** Core-in-service plus presentation-in-front-end, as in §3.1?
 
@@ -660,9 +663,11 @@ no sortable columns, no drag-and-drop, no create/undo. Settled 2026-09-06:
   current folder's listing) - a new addition beyond §2.4's original wording,
   since Explorer users expect it.
 - Deferred, explicitly not in this scope: dragging files in from the operating
-  system's shell (import from outside the application), recursive/whole-tree
-  search, thumbnails beyond what a plugin's own preview already renders.
-  Network and cloud locations remain excluded by §6.
+  system's shell (import from outside the application), thumbnails beyond
+  what a plugin's own preview already renders. Network and cloud locations
+  remain excluded by §6. Finding a file by *name* across every repository
+  was since built (#536, #540); searching file *contents* is still out of
+  scope.
 
 D6 is kept as it was settled on 2026-09-06, under the general-purpose mission
 that D7 replaced. What survives it is the *handling* — a person who knows
