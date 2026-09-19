@@ -9,7 +9,10 @@
 //! streaming itself.
 
 use crate::bindings::{self, Action};
-use crate::{facts, graphic, present, present_folder, present_view, render_with_block, views};
+use crate::colour::{self, Run};
+use crate::{
+    classify, facts, graphic, present, present_folder, present_view, render_with_block, views,
+};
 use plugin_api::Fact;
 use protocol::{DirectoryEntry, ReposRoot, Request, Response};
 use ratatui::Frame;
@@ -528,6 +531,14 @@ pub struct App {
     type_ahead_at: Option<Instant>,
     /// Set once the user has asked to quit.
     pub should_quit: bool,
+    /// Whether the File pane may draw a classified [`Run`] in its class's
+    /// colour (#644). Read once from the environment at construction -
+    /// `NO_COLOR` set, or `TERM` reporting a terminal with none
+    /// ([`colour::terminal_colour_enabled`]) turns it off - rather than on
+    /// every draw, so a test can set it directly instead of mutating a
+    /// process-global environment variable another test reads at the same
+    /// time.
+    colour_enabled: bool,
 }
 
 impl App {
@@ -566,6 +577,7 @@ impl App {
             type_ahead_buffer: String::new(),
             type_ahead_at: None,
             should_quit: false,
+            colour_enabled: colour::terminal_colour_enabled(),
         };
         app.load_contents_for_selected();
         app
@@ -2153,13 +2165,58 @@ fn directory_readme(
         .and_then(|view| view.readme)
 }
 
-/// The File pane's scrollable text (#643): the plugin's own lines for the
-/// view currently shown, when it offers no fact table (`facts` says that
-/// instead); a note that a picture is not shown here, for a type whose
-/// view is one; a folder plugin's stacked lines below that, never in place
-/// of what is already there (D12); and a repository's README below those
-/// (#584).
-fn file_scrollable_lines(app: &App) -> Vec<String> {
+/// The plugin's own lines for the view named `showing` (or its default
+/// view, for `None`), classified into [`Run`]s where the plugin has
+/// something to say about its syntax (#644).
+///
+/// The lines themselves are exactly [`present_view`]'s (or [`present`]'s):
+/// classifying never changes what is drawn, only how - what has no
+/// `content` to classify, or whose plugin classifies nothing, comes back
+/// as one plain run per line. A view that is not the file's own text
+/// (`TEXT_VIEW`) is only partly classified: `coloured_lines` is spliced in
+/// under whatever summary a plugin like `rust`'s prepends to it, found by
+/// [`colour::file_starts_in`], and left alone entirely when that summary
+/// does not simply end with the file (a `Table` view, say).
+fn coloured_view_lines(
+    plugin: &str,
+    showing: Option<&str>,
+    data: &serde_json::Value,
+) -> Vec<Vec<Run>> {
+    let plain = match showing {
+        Some(view) => present_view(plugin, view, data),
+        None => present(plugin, data),
+    };
+    let plain_runs = || plain.iter().map(|line| colour::plain_line(line)).collect();
+    let Some(text) = data.get("content").and_then(serde_json::Value::as_str) else {
+        return plain_runs();
+    };
+    let spans = classify(plugin, text);
+    if spans.is_empty() {
+        return plain_runs();
+    }
+    let coloured = colour::coloured_lines(text, &spans);
+    if showing == Some(plugin_api::TEXT_VIEW) {
+        return coloured;
+    }
+    let Some(from) = colour::file_starts_in(&plain, text) else {
+        return plain_runs();
+    };
+    let mut lines: Vec<Vec<Run>> = plain[..from]
+        .iter()
+        .map(|line| colour::plain_line(line))
+        .collect();
+    lines.extend(coloured);
+    lines
+}
+
+/// The File pane's scrollable text, as classified [`Run`]s (#643, #644):
+/// the plugin's own lines for the view currently shown, when it offers no
+/// fact table (`facts` says that instead); a note that a picture is not
+/// shown here, for a type whose view is one; a folder plugin's stacked
+/// lines below that, never in place of what is already there (D12); and a
+/// repository's README below those (#584). Everything but the plugin's own
+/// lines is plain - only its own text is the plugin's to classify.
+fn file_scrollable_runs(app: &App) -> Vec<Vec<Run>> {
     let Some(Response::FileView { plugin, data, also }) = &app.file_view else {
         return Vec::new();
     };
@@ -2170,29 +2227,43 @@ fn file_scrollable_lines(app: &App) -> Vec<String> {
     let showing = plugin_views.get(view_index).copied();
 
     let mut lines = if facts(plugin, data).is_empty() {
-        match showing {
-            Some(view) => present_view(plugin, view, data),
-            None => present(plugin, data),
-        }
+        coloured_view_lines(plugin, showing, data)
     } else {
         Vec::new()
     };
     if showing == Some(plugin_api::PREVIEW_VIEW) && graphic(plugin, data).is_some() {
         lines.insert(
             0,
-            "Picture - shown in the graphical front end, not here.".to_owned(),
+            colour::plain_line("Picture - shown in the graphical front end, not here."),
         );
     }
     for extra in also {
-        lines.push(String::new());
-        lines.extend(present_folder(&extra.plugin, &extra.data));
+        lines.push(Vec::new());
+        lines.extend(
+            present_folder(&extra.plugin, &extra.data)
+                .iter()
+                .map(|line| colour::plain_line(line)),
+        );
     }
     if let Some(readme) = directory_readme(plugin, data) {
-        lines.push(String::new());
-        lines.push(readme.title.unwrap_or_else(|| "README".to_owned()));
-        lines.extend(readme.excerpt);
+        lines.push(Vec::new());
+        lines.push(colour::plain_line(
+            &readme.title.unwrap_or_else(|| "README".to_owned()),
+        ));
+        lines.extend(readme.excerpt.iter().map(|line| colour::plain_line(line)));
     }
     lines
+}
+
+/// The File pane's scrollable text, as plain strings - [`file_scrollable_runs`]
+/// with each line's runs joined back together, so a scroll bound computed
+/// from this and a row drawn from the runs never disagree on how many
+/// rows a line wraps into (#643).
+fn file_scrollable_lines(app: &App) -> Vec<String> {
+    file_scrollable_runs(app)
+        .iter()
+        .map(|line| line.iter().map(|run| run.text.as_str()).collect())
+        .collect()
 }
 
 /// How wide the File pane's fact table gives its label column - enough for
@@ -2254,12 +2325,26 @@ fn wrap_lines(lines: &[String], width: usize) -> Vec<String> {
         .collect()
 }
 
+/// A [`Run`] drawn in its class's colour (#644), or in none at all when
+/// `enabled` is false - `NO_COLOR` set, or a terminal that reports it
+/// supports none (`colour::terminal_colour_enabled`) - so a class is never
+/// stood in for by a colour a terminal does not have.
+fn run_span(run: &Run, enabled: bool) -> Span<'static> {
+    let style = if enabled {
+        colour::class_colour(run.class).map_or_else(Style::default, |fg| Style::default().fg(fg))
+    } else {
+        Style::default()
+    };
+    Span::styled(run.text.clone(), style)
+}
+
 /// Draws the File pane's scrollable text into `area`, wrapped rather than
-/// cut at the pane's width, with a [`Scrollbar`] beside it (#643). Reads
-/// back the width and row count it drew at into `app`'s cells, so the
-/// scroll keys - handled long after this returns - know what is on screen.
+/// cut at the pane's width, with a [`Scrollbar`] beside it (#643), coloured
+/// the way the file's own plugin classifies it (#644). Reads back the
+/// width and row count it drew at into `app`'s cells, so the scroll keys -
+/// handled long after this returns - know what is on screen.
 fn render_file_text(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let lines = file_scrollable_lines(app);
+    let lines = file_scrollable_runs(app);
     let scrollbar_width = u16::from(!lines.is_empty());
     let text_width = area.width.saturating_sub(scrollbar_width);
     let text_area = Rect {
@@ -2267,7 +2352,10 @@ fn render_file_text(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ..area
     };
 
-    let wrapped = wrap_lines(&lines, usize::from(text_width));
+    let wrapped: Vec<Vec<Run>> = lines
+        .iter()
+        .flat_map(|line| colour::wrap_runs(line, usize::from(text_width)))
+        .collect();
     let total_lines = wrapped.len();
     let viewport_rows = usize::from(area.height);
     app.drawn_file_content_width.set(text_width);
@@ -2276,7 +2364,18 @@ fn render_file_text(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .file_scroll
         .min(total_lines.saturating_sub(viewport_rows));
 
-    let visible = wrapped.get(scroll..).unwrap_or_default().join("\n");
+    let visible: Vec<Line<'static>> = wrapped
+        .get(scroll..)
+        .unwrap_or_default()
+        .iter()
+        .map(|runs| {
+            Line::from(
+                runs.iter()
+                    .map(|run| run_span(run, app.colour_enabled))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
     frame.render_widget(Paragraph::new(visible), text_area);
 
     if scrollbar_width > 0 {
@@ -2932,6 +3031,20 @@ mod tests {
     /// As [`drawn_rows`], run together into one string.
     fn drawn(width: u16, height: u16, app: &App) -> String {
         drawn_rows(width, height, app).concat()
+    }
+
+    /// As [`drawn_rows`], but each cell's foreground colour rather than its
+    /// glyph (#644) - what a colour assertion reads, at the same
+    /// coordinates `drawn_rows` finds a needle at.
+    fn drawn_colours(width: u16, height: u16, app: &App) -> Vec<Vec<Color>> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test terminal");
+        terminal
+            .draw(|frame| render_app(frame, frame.area(), app))
+            .expect("a draw into the test backend");
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].fg).collect())
+            .collect()
     }
 
     /// What [`render_contents`] alone draws into a `width` x `height`
@@ -5044,6 +5157,100 @@ mod tests {
         assert!(
             !text_view.contains("structs: Widget"),
             "switching to the Text tab should draw the file's plain content instead: {text_view}"
+        );
+    }
+
+    /// A rust file's data for the colouring tests below: a comment, a
+    /// keyword, and a string, each of the Rust language's own classes.
+    fn coloured_rust_file() -> serde_json::Value {
+        serde_json::json!({
+            "content": "// a comment\nfn go() {\n    let s = \"hi\";\n}\n",
+            "truncated": false,
+            "functions": ["go"],
+            "structs": [],
+            "traits": [],
+        })
+    }
+
+    /// Where `needle` is drawn in `rows`, as a (row, column) pair rather
+    /// than the byte offset `str::find` would give - a border or the
+    /// scrollbar draws a multi-byte character for a single column, so a
+    /// byte offset and a column stop agreeing the moment one appears
+    /// earlier in the row (#644).
+    fn column_of(rows: &[String], needle: &str) -> (usize, usize) {
+        let needle: Vec<char> = needle.chars().collect();
+        for (y, row) in rows.iter().enumerate() {
+            let chars: Vec<char> = row.chars().collect();
+            if let Some(x) = chars
+                .windows(needle.len())
+                .position(|window| window == needle.as_slice())
+            {
+                return (y, x);
+            }
+        }
+        panic!("{needle:?} was not drawn: {rows:?}");
+    }
+
+    #[test]
+    fn a_keyword_a_string_and_a_comment_draw_in_their_classes_colours() {
+        let root = notional_root("file-pane-colour");
+        let mut app = app_with_file_view(&root, "rust", coloured_rust_file());
+        app.colour_enabled = true;
+        // Onto the Text tab, so this reads the branch that hands
+        // `coloured_lines` straight to the pane rather than splicing it
+        // in under the Preview tab's own summary line.
+        app.handle_key(KeyCode::Right);
+
+        let rows = drawn_rows(100, 20, &app);
+        let colours = drawn_colours(100, 20, &app);
+        let colour_of = |needle: &str| -> Color {
+            let (y, x) = column_of(&rows, needle);
+            colours[y][x]
+        };
+
+        assert_eq!(
+            colour_of("fn go"),
+            Color::Blue,
+            "a keyword should draw in the keyword colour"
+        );
+        assert_eq!(
+            colour_of("\"hi\""),
+            Color::Red,
+            "a string should draw in the string colour"
+        );
+        assert_eq!(
+            colour_of("// a comment"),
+            Color::DarkGray,
+            "a comment should draw in the comment colour"
+        );
+    }
+
+    #[test]
+    fn no_colour_draws_the_same_characters_with_none_standing_in_for_a_class() {
+        let root = notional_root("file-pane-no-colour");
+
+        let mut coloured = app_with_file_view(&root, "rust", coloured_rust_file());
+        coloured.colour_enabled = true;
+        coloured.handle_key(KeyCode::Right);
+
+        let mut plain = app_with_file_view(&root, "rust", coloured_rust_file());
+        plain.colour_enabled = false;
+        plain.handle_key(KeyCode::Right);
+
+        assert_eq!(
+            drawn_rows(100, 20, &coloured),
+            drawn_rows(100, 20, &plain),
+            "disabling colour - NO_COLOR, or a terminal that reports it supports \
+             none - should never change what is drawn, only how"
+        );
+
+        let rows = drawn_rows(100, 20, &plain);
+        let plain_colours = drawn_colours(100, 20, &plain);
+        let (y, x) = column_of(&rows, "fn go");
+        assert_eq!(
+            plain_colours[y][x],
+            Color::Reset,
+            "with colour disabled, no class should stand in a colour it does not have"
         );
     }
 

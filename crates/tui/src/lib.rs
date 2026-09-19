@@ -2,10 +2,11 @@
 
 pub mod app;
 pub mod bindings;
+mod colour;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
-use plugin_api::{Fact, FolderPresentation, Graphic, PluginPresentation};
+use plugin_api::{Fact, FolderPresentation, Graphic, PluginPresentation, Span};
 use protocol::{Request, Response};
 use ratatui::Frame;
 use ratatui::Terminal;
@@ -179,7 +180,13 @@ pub fn run<B: Backend, E: Events>(
 /// Hand-registered: a registration macro would be structure with no second
 /// caller to justify it while seven entries can still be read at a glance
 /// (see `plugin-api`'s crate docs).
-const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
+///
+/// Public so a test can walk the whole catalogue and hold each plugin to
+/// the contract on [`plugin_api::Span`]: a classifier whose spans do not
+/// cover their text would slice a string at a byte that is not a
+/// character boundary the first time somebody opened that format
+/// (`tests/classification.rs`, mirroring the graphical front end's own).
+pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_text::TextPresentation,
     &plugin_python::PythonPresentation,
     &plugin_elixir::ElixirPresentation,
@@ -431,6 +438,17 @@ pub(crate) fn graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic>
         .iter()
         .find(|candidate| candidate.name() == plugin)
         .and_then(|candidate| candidate.graphic(data))
+}
+
+/// What each run of `text` is, via whichever registered presentation
+/// plugin matches `plugin`, for the File pane to colour (#644). Empty for
+/// an unrecognised plugin - the same as a plugin that classifies nothing
+/// of its own.
+pub(crate) fn classify(plugin: &str, text: &str) -> Vec<Span> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+        .map_or_else(Vec::new, |candidate| candidate.classify(text))
 }
 
 /// Renders a directory listing, a file view, or an error, into `area` of
