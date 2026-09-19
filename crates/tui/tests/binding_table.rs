@@ -208,40 +208,7 @@ fn every_global_binding_reaches_the_action_it_names() {
             Action::WidenPane => assert_widen_pane(&mut terminal, &mut app, binding),
             Action::NarrowPane => assert_narrow_pane(&mut terminal, &mut app, binding),
             Action::ToggleMaximize => assert_toggle_maximize(&mut terminal, &mut app, binding),
-            Action::StartUndo => {
-                // The undo stack is one per service process
-                // (`common::ensure_service`), shared with every other
-                // binding this test binary presses - an empty stack
-                // cannot be assumed here. Undo something this test made
-                // itself instead: create a folder, then undo it away.
-                press(&mut terminal, &mut app, KeyCode::Tab);
-                press(&mut terminal, &mut app, KeyCode::Char('D'));
-                for c in "temp".chars() {
-                    press(&mut terminal, &mut app, KeyCode::Char(c));
-                }
-                press(&mut terminal, &mut app, KeyCode::Enter);
-                let shown = wait_for(&mut terminal, &mut app, "temp");
-                assert!(
-                    shown.contains("temp"),
-                    "setup: the folder should exist before undoing it: {shown:?}"
-                );
-
-                press_binding(&mut terminal, &mut app, binding);
-                let mut shown = drawn(&terminal);
-                let deadline = std::time::Instant::now() + Duration::from_secs(2);
-                while shown.contains("temp") && std::time::Instant::now() < deadline {
-                    let mut nothing = common::QueuedKeys::new(std::iter::empty());
-                    tui::tick(&mut terminal, &mut app, &mut nothing, Duration::ZERO)
-                        .expect("a draw");
-                    shown = drawn(&terminal);
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                assert!(
-                    !shown.contains("temp"),
-                    "{} should have undone the folder it just created: {shown:?}",
-                    binding.description
-                );
-            }
+            Action::StartUndo => assert_start_undo(&mut terminal, &mut app, binding),
             Action::OpenSwitcher => {
                 assert_opens_overlay(&mut terminal, &mut app, binding, "Go to Repository");
             }
@@ -251,13 +218,52 @@ fn every_global_binding_reaches_the_action_it_names() {
             Action::OpenAllRepositories => {
                 assert_opens_overlay(&mut terminal, &mut app, binding, "All Repositories");
             }
+            Action::OpenReposRoots => {
+                assert_opens_overlay(&mut terminal, &mut app, binding, "Repos Directory");
+            }
             other => panic!("no assertion written for the global action {other:?}"),
         }
     }
 }
 
-/// [`Action::OpenSwitcher`], [`Action::StartFind`] and
-/// [`Action::OpenAllRepositories`]'s own assertion (#647), split out of
+/// [`Action::StartUndo`]'s own assertion, split out of
+/// `every_global_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650). The undo stack is one per service process
+/// (`common::ensure_service`), shared with every other binding this test
+/// binary presses - an empty stack cannot be assumed here. Undo something
+/// this test made itself instead: create a folder, then undo it away.
+fn assert_start_undo(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
+    press(terminal, app, KeyCode::Tab);
+    press(terminal, app, KeyCode::Char('D'));
+    for c in "temp".chars() {
+        press(terminal, app, KeyCode::Char(c));
+    }
+    press(terminal, app, KeyCode::Enter);
+    let shown = wait_for(terminal, app, "temp");
+    assert!(
+        shown.contains("temp"),
+        "setup: the folder should exist before undoing it: {shown:?}"
+    );
+
+    press_binding(terminal, app, binding);
+    let mut shown = drawn(terminal);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while shown.contains("temp") && std::time::Instant::now() < deadline {
+        let mut nothing = common::QueuedKeys::new(std::iter::empty());
+        tui::tick(terminal, app, &mut nothing, Duration::ZERO).expect("a draw");
+        shown = drawn(terminal);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !shown.contains("temp"),
+        "{} should have undone the folder it just created: {shown:?}",
+        binding.description
+    );
+}
+
+/// [`Action::OpenSwitcher`], [`Action::StartFind`],
+/// [`Action::OpenAllRepositories`] (#647) and [`Action::OpenReposRoots`]
+/// (#648)'s own assertion, split out of
 /// `every_global_binding_reaches_the_action_it_names` to keep it under
 /// clippy's line count (#650): pressing the binding should draw the named
 /// overlay's own title.
