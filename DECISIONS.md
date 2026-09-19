@@ -386,3 +386,93 @@ nothing else depends on windows being separate.
 which named the third pane "the File pane" and left it fixed in the main
 window. §3.6's old title, "The File pane is an editor", which named the
 pane rather than the tool now living in its slot.
+
+## D16 — The terminal front end is a peer, within its medium
+
+**Settled 2026-09-18.**
+
+The terminal front end had been named only to be excluded. D6 read "The
+three-pane GUI (§2.2's TUI is not in scope for this decision)", so every
+work order that tried to bring the terminal front end forward would have
+had to cite a decision that ruled it out. §2.2 was the terminal front
+end's whole specification, and all four of its bullets were duties to the
+host terminal - restoring state, handling resize, releasing the mouse,
+degrading to sixteen colours - and none said what it shows a reader. §8's
+build order still read "GUI to parity with the TUI", the opposite of what
+happened: the terminal front end is still exactly D4's v1 scope, view plus
+rename, copy, delete and extract; it never sends nine of the sixteen
+requests the protocol carries (`Open`, `CreateDirectory`, `CreateFile`,
+`SetReposRoot`, `WriteFile`, `Undo`, `FindNames`, `WorkingTreeStatus`,
+`AllRepositories`); it links all hundred and eighty presentation plugins
+and calls only `present()`, never `facts()`, `views()`, `present_view()`,
+`classify()`, `graphic()` or `icon()`; its listing drops `size`,
+`modified`, `branch`, `remote`, and the worktree kind, last activity and
+last fetch #587, #588 and #589 added to the graphical one; and it carries
+ninety-four tests against the graphical front end's six hundred and
+fifty-three, none of them driving the real event loop, because that loop
+lives in `main.rs`, where CLAUDE.md rule 14 already says no test can reach
+it.
+
+This settles that the terminal front end reaches the same standard as the
+graphical one for everything a terminal can do. It is not a reduced
+client: D6's exclusion is lifted, and D4's "view plus operations only" no
+longer bounds it.
+
+- **Scope.** Same standard as the graphical front end, for everything a
+  terminal can do.
+- **Colour.** Drawn by default within the sixteen American National
+  Standards Institute (ANSI) colours; `NO_COLOR`
+  in the environment, or a terminal reporting no colour, gives a
+  monochrome drawing where nothing is told apart by colour alone (#574's
+  rule, doubly).
+- **Glyphs.** Unicode where the terminal accepts it, with an ASCII
+  fallback for every mark; no nerd font, ever (§2.2).
+- **Mouse.** The terminal front end does not capture the mouse. Everything
+  is reachable by keyboard, which inverts §2.4's "mouse-first, keyboard as
+  a peer" for this front end alone, and has to be said because nothing
+  else in the documents says it.
+- **Modals.** A prompt draws over the panes - a cleared box - not as a
+  one-row status line, and names the full path of what it will act on
+  (§2.1.5).
+- **Keys.** A binding table the front end owns, never stealing what a
+  multiplexer needs (Ctrl+B, Ctrl+A); modifiers are read, so Ctrl+C is not
+  a Copy prompt.
+- **Editing.** The File pane edits text files, through the service's
+  `WriteFile`, with §3.6's excluded list binding unchanged. §3.6's three
+  "knowingly given up" items - input method editor (IME) composition,
+  screen readers, and right-to-left text - are the host terminal's to
+  give, not this application's, which reverses D14's reasoning and is why
+  the terminal front end may have the editor where the graphical one had
+  to write a surface by hand to get it.
+- **Platforms.** Windows console (Windows Terminal and `conhost` with
+  virtual terminal processing), macOS and Linux terminals, and inside a
+  multiplexer.
+- **No terminal at all.** With no terminal attached, it prints what it
+  cannot do and exits non-zero rather than drawing.
+- **Layout.** Which pane is wide is remembered, the way the graphical
+  front end remembers pane widths; the folder it opens at is not (D7).
+- **The Repos Directory.** The terminal front end can read **and set** the
+  active root, so a terminal user never has to open the graphical one to
+  configure the application.
+
+**Why.** The owner asked on 2026-09-18 for the terminal front end to be
+brought up to the graphical one's standard, and the documents as they
+stood made that impossible to build toward honestly: every work order in
+the series that follows (#637 to #650) would otherwise have cited a
+decision that excluded its own subject.
+
+**What it costs.** A binding table, a modal box and an editing surface
+each have to be written for the terminal front end rather than assumed
+from the graphical one's. Its test count grows from ninety-four toward
+the graphical front end's scale, and rule 14's seam - a real event loop a
+test can drive - has to be built for it, not only asserted of it.
+
+**What it would take to revisit.** Reinstate the exclusion sentence D6
+had. Nothing built under this decision would need to be undone; the
+terminal front end would simply stop being extended toward parity.
+
+**What this supersedes.** GUIDANCE.md §7's D6, which named the terminal
+front end only to put it out of scope for that decision. GUIDANCE.md
+§2.2's four bullets, which were host-terminal duties and said nothing
+about what the terminal front end shows a reader. GUIDANCE.md §8's build
+order, which read "GUI to parity with the TUI".
