@@ -93,6 +93,9 @@ pub enum Action {
     FileViewPrevious,
     /// Switches the File pane to the view after the one it is showing.
     FileViewNext,
+    /// Activates the File pane's currently shown view - starts editing
+    /// when it is the `"Edit"` view (#645).
+    FileActivateView,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -403,6 +406,13 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Next view",
         action: Action::FileViewNext,
+    },
+    Binding {
+        owner: Owner::File,
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        description: "Edit",
+        action: Action::FileActivateView,
     },
 ];
 

@@ -3,6 +3,8 @@
 pub mod app;
 pub mod bindings;
 mod colour;
+mod document;
+mod editor;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
@@ -438,6 +440,16 @@ pub(crate) fn graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic>
         .iter()
         .find(|candidate| candidate.name() == plugin)
         .and_then(|candidate| candidate.graphic(data))
+}
+
+/// The editable text `plugin` offers for `data`, via whichever registered
+/// presentation plugin matches it - `None` for an unrecognised plugin, a
+/// truncated view, or a type whose data holds no text at all (#645).
+pub(crate) fn editable_text(plugin: &str, data: &serde_json::Value) -> Option<String> {
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|candidate| candidate.name() == plugin)
+        .and_then(|candidate| candidate.editable_text(data))
 }
 
 /// What each run of `text` is, via whichever registered presentation

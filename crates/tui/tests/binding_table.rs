@@ -447,6 +447,18 @@ fn every_file_binding_reaches_the_action_it_names() {
                     binding.description
                 );
             }
+            Action::FileActivateView => {
+                // long.txt's plugin offers Preview and Text; Edit is
+                // appended after them (#645).
+                press(&mut terminal, &mut app, KeyCode::Right);
+                press(&mut terminal, &mut app, KeyCode::Right);
+                let shown = press_binding(&mut terminal, &mut app, binding);
+                assert!(
+                    shown.contains("Editing"),
+                    "{} should start editing once the Edit view is showing: {shown:?}",
+                    binding.description
+                );
+            }
             other => panic!("no assertion written for the file action {other:?}"),
         }
     }

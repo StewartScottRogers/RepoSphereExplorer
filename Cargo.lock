@@ -10879,6 +10879,7 @@ dependencies = [
  "serde_json",
  "service",
  "syntax",
+ "unicode-segmentation",
  "updater",
  "winresource",
 ]

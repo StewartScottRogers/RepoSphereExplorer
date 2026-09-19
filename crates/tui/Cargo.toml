@@ -198,6 +198,7 @@ plugin-zstd = { path = "../plugins/zstd" }
 protocol = { path = "../protocol" }
 ratatui = "0.30"
 serde_json = "1"
+unicode-segmentation = "1"
 updater = { path = "../updater" }
 
 # Compiles `assets/RepoSphereExplorer.ico` into the binary's resource
