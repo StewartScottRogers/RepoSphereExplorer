@@ -145,6 +145,24 @@ pub enum Action {
     OpenAllRepositories,
     /// Opens the Repos Directory roots view (#648).
     OpenReposRoots,
+    /// Opens the Contents pane cursor's folder in an editor (#674).
+    ContentsOpenInEditor,
+    /// Opens the Folders pane's selected folder in an editor (#674).
+    FoldersOpenInEditor,
+    /// Copies the Contents pane cursor's folder's full path (#674).
+    ContentsCopyPath,
+    /// Copies the Folders pane's selected folder's full path (#674).
+    FoldersCopyPath,
+    /// Copies the Contents pane cursor's folder's remote address (#674).
+    ContentsCopyRemoteAddress,
+    /// Copies the Folders pane's selected folder's remote address (#674).
+    FoldersCopyRemoteAddress,
+    /// Shows the Contents pane cursor's folder in the platform's file
+    /// manager (#674).
+    ContentsShowInFileManager,
+    /// Shows the Folders pane's selected folder in the platform's file
+    /// manager (#674).
+    FoldersShowInFileManager,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -616,6 +634,62 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::CONTROL,
         description: "Repos Directory",
         action: Action::OpenReposRoots,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('e'),
+        modifiers: KeyModifiers::NONE,
+        description: "Open in editor",
+        action: Action::ContentsOpenInEditor,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Char('e'),
+        modifiers: KeyModifiers::NONE,
+        description: "Open in editor",
+        action: Action::FoldersOpenInEditor,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('y'),
+        modifiers: KeyModifiers::NONE,
+        description: "Copy path",
+        action: Action::ContentsCopyPath,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Char('y'),
+        modifiers: KeyModifiers::NONE,
+        description: "Copy path",
+        action: Action::FoldersCopyPath,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('R'),
+        modifiers: KeyModifiers::NONE,
+        description: "Copy remote address",
+        action: Action::ContentsCopyRemoteAddress,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Char('R'),
+        modifiers: KeyModifiers::NONE,
+        description: "Copy remote address",
+        action: Action::FoldersCopyRemoteAddress,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('f'),
+        modifiers: KeyModifiers::NONE,
+        description: "Show in file manager",
+        action: Action::ContentsShowInFileManager,
+    },
+    Binding {
+        owner: Owner::Folders,
+        code: KeyCode::Char('f'),
+        modifiers: KeyModifiers::NONE,
+        description: "Show in file manager",
+        action: Action::FoldersShowInFileManager,
     },
 ];
 

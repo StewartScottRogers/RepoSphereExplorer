@@ -98,9 +98,27 @@ pub fn save_pane_widths(widths: PaneWidths) {
     }
 }
 
+/// Reads the `editor` field out of `value`: the command a row is handed to
+/// for "Open in editor" (#674), the same key and shape as the graphical
+/// front end's own `gui.json`. `None` for a missing, non-string or blank
+/// setting - the action falls back to Visual Studio Code, or reports it has
+/// nothing to launch, rather than erroring.
+fn editor_field(value: &serde_json::Value) -> Option<String> {
+    let editor = value.get("editor")?.as_str()?.trim();
+    (!editor.is_empty()).then(|| editor.to_owned())
+}
+
+/// The `editor` setting from the settings file. `None` for a missing,
+/// unreadable or malformed file, the same as [`load_pane_widths`].
+#[must_use]
+pub fn load_editor() -> Option<String> {
+    let text = std::fs::read_to_string(settings_path()?).ok()?;
+    editor_field(&serde_json::from_str(&text).ok()?)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MAX_WIDTH, MIN_WIDTH, PaneWidths, merged_pane_widths, width_field};
+    use super::{MAX_WIDTH, MIN_WIDTH, PaneWidths, editor_field, merged_pane_widths, width_field};
 
     #[test]
     fn a_width_inside_the_usable_range_is_read_back() {
@@ -156,6 +174,19 @@ mod tests {
             merged,
             serde_json::json!({ "folders_width": 30, "contents_width": 50 })
         );
+    }
+
+    #[test]
+    fn a_configured_editor_is_read_back_trimmed() {
+        let value = serde_json::json!({ "editor": "  subl  " });
+        assert_eq!(editor_field(&value), Some("subl".to_owned()));
+    }
+
+    #[test]
+    fn a_missing_or_blank_editor_is_treated_as_unset() {
+        assert_eq!(editor_field(&serde_json::json!({})), None);
+        assert_eq!(editor_field(&serde_json::json!({ "editor": "   " })), None);
+        assert_eq!(editor_field(&serde_json::json!({ "editor": 5 })), None);
     }
 
     #[test]
