@@ -6,6 +6,7 @@ mod colour;
 mod document;
 mod editor;
 pub mod settings;
+mod switcher;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
@@ -509,12 +510,16 @@ pub(crate) fn render_with_block(
     }
 }
 
-/// What the terminal front end draws for a reply it never asks for.
+/// What this fallback draws for a reply that reaches it - a kind the File
+/// pane's own `app::render_file` shows in place of a plugin's view when
+/// `App::file_view` holds one, which in practice is only an error, since
+/// every other kind either goes through `App`'s own rendering (a
+/// directory listing, or `FindNames`/`AllRepositories` since #647) or is
+/// never asked for from the File pane's own `Request::ViewFile`.
 ///
-/// It sends seven of the protocol's requests; the rest answer questions
-/// only the graphical front end asks. A reply that arrives anyway is shown
-/// as what it holds rather than as nothing, and keeping those together
-/// here leaves `render_with_block` about the panes it does draw.
+/// A reply that arrives here anyway is shown as what it holds rather than
+/// as nothing, and keeping those together here leaves `render_with_block`
+/// about the panes it does draw.
 fn unasked_text(response: &Response) -> String {
     match response {
         // The terminal front end keeps its own path argument until its own
@@ -538,8 +543,10 @@ fn unasked_text(response: &Response) -> String {
                 status.summary.as_str()
             })
             .to_owned(),
-        // Nor does it list the working copies nested below the Repos
-        // Directory (#591), with a line while the scan is still going.
+        // `App` itself asks for this now (#647/#591), and draws its own
+        // "still looking..." line while the scan is not yet done; this
+        // fallback's own copy of that line is for a reply that somehow
+        // reaches the File pane instead.
         Response::AllRepositories { entries, done } => {
             let found = entries
                 .iter()
@@ -586,7 +593,9 @@ still looking..."
                 )
             }
         }
-        // Nor does it search; a reply is shown as the paths it names.
+        // `App` itself sends `FindNames` now too (#647), and draws its own
+        // results with each match's repository; this fallback's own text
+        // is for a reply that somehow reaches the File pane instead.
         Response::Names { matches, .. } => matches
             .iter()
             .map(|found| found.path.as_str())

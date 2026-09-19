@@ -242,9 +242,37 @@ fn every_global_binding_reaches_the_action_it_names() {
                     binding.description
                 );
             }
+            Action::OpenSwitcher => {
+                assert_opens_overlay(&mut terminal, &mut app, binding, "Go to Repository");
+            }
+            Action::StartFind => {
+                assert_opens_overlay(&mut terminal, &mut app, binding, "Find (Enter/Esc)");
+            }
+            Action::OpenAllRepositories => {
+                assert_opens_overlay(&mut terminal, &mut app, binding, "All Repositories");
+            }
             other => panic!("no assertion written for the global action {other:?}"),
         }
     }
+}
+
+/// [`Action::OpenSwitcher`], [`Action::StartFind`] and
+/// [`Action::OpenAllRepositories`]'s own assertion (#647), split out of
+/// `every_global_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650): pressing the binding should draw the named
+/// overlay's own title.
+fn assert_opens_overlay(
+    terminal: &mut Terminal<TestBackend>,
+    app: &mut App,
+    binding: &Binding,
+    needle: &str,
+) {
+    let shown = press_binding(terminal, app, binding);
+    assert!(
+        shown.contains(needle),
+        "{} should open the {needle:?} overlay: {shown:?}",
+        binding.description
+    );
 }
 
 /// [`Action::WidenPane`]'s own assertion, split out of
