@@ -50,6 +50,43 @@ pub trait Events {
     fn read(&mut self) -> io::Result<Event>;
 }
 
+/// Restores the terminal when dropped, so no return path out of [`run`] -
+/// including an early return on a drawing or input error - can skip
+/// restoring it. GUIDANCE.md §2.2 asks for terminal state to be restored on
+/// every exit path; a guard's `Drop` is the shape that holds regardless of
+/// which path is taken, rather than a call that a future change could add a
+/// return before.
+///
+/// `restore` is generic rather than a fixed call to `ratatui::restore`, so a
+/// test can observe that it ran without a real terminal to restore.
+#[must_use]
+pub struct TerminalGuard<R: FnMut()>(R);
+
+impl<R: FnMut()> TerminalGuard<R> {
+    /// Wraps `restore`, to be called once when the guard is dropped.
+    pub fn new(restore: R) -> Self {
+        Self(restore)
+    }
+}
+
+impl<R: FnMut()> Drop for TerminalGuard<R> {
+    fn drop(&mut self) {
+        (self.0)();
+    }
+}
+
+/// What to print on standard error, and exit non-zero for, when standard
+/// output is not a terminal - GUIDANCE.md §2.2's "no terminal attached"
+/// case (D16), which would otherwise draw into a pipe or a redirected file.
+#[must_use]
+pub fn no_terminal_attached_message(is_terminal: bool) -> Option<&'static str> {
+    if is_terminal {
+        None
+    } else {
+        Some("no terminal attached: refusing to draw into a pipe or redirected file")
+    }
+}
+
 /// The real terminal's input, read through `crossterm`.
 pub struct CrosstermEvents;
 
@@ -80,11 +117,19 @@ pub fn tick<B: Backend, E: Events>(
         .draw(|frame| render_app(frame, frame.area(), app))
         .map_err(|err| io::Error::other(err.to_string()))?;
     app.tick();
-    if events.poll(poll_timeout)?
-        && let Event::Key(key) = events.read()?
-        && key.kind == KeyEventKind::Press
-    {
-        app.handle_key(key);
+    if events.poll(poll_timeout)? {
+        match events.read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+            // Redrawn here rather than left for the next tick's own draw, so
+            // a resize is laid out again at the new size as soon as it
+            // arrives instead of waiting on the next poll.
+            Event::Resize(_, _) => {
+                terminal
+                    .draw(|frame| render_app(frame, frame.area(), app))
+                    .map_err(|err| io::Error::other(err.to_string()))?;
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -484,6 +529,9 @@ mod tests {
     use protocol::{DirectoryEntry, Request, Response};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::Event;
+    use std::io;
+    use std::time::Duration;
 
     fn unique_socket_name() -> String {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -869,6 +917,225 @@ mod tests {
         assert!(
             result.is_err(),
             "connecting to a socket that was never created should fail"
+        );
+    }
+
+    #[test]
+    fn a_dropped_guard_restores_and_a_drawing_error_still_returns() {
+        use super::TerminalGuard;
+        use std::cell::Cell as StdCell;
+        use std::rc::Rc;
+
+        let restored = Rc::new(StdCell::new(false));
+        let for_guard = Rc::clone(&restored);
+        let guard = TerminalGuard::new(move || for_guard.set(true));
+
+        let mut terminal = ratatui::Terminal::new(FailingBackend).expect("a test terminal");
+        let mut app = crate::app::App::new(std::env::temp_dir());
+        let mut events = spy::NoEvents;
+
+        let result = super::run(&mut terminal, &mut app, &mut events);
+
+        assert!(result.is_err(), "a drawing error should return, not panic");
+        assert!(
+            !restored.get(),
+            "the guard should not have restored before it was dropped"
+        );
+        drop(guard);
+        assert!(
+            restored.get(),
+            "dropping the guard should have restored the terminal"
+        );
+    }
+
+    /// Fails every draw, so [`super::run`] returns the error without ever
+    /// reaching a real terminal.
+    struct FailingBackend;
+
+    impl ratatui::backend::Backend for FailingBackend {
+        type Error = io::Error;
+
+        fn draw<'a, I>(&mut self, _content: I) -> io::Result<()>
+        where
+            I: Iterator<Item = (u16, u16, &'a ratatui::buffer::Cell)>,
+        {
+            Err(io::Error::other("the drawing backend failed"))
+        }
+
+        fn hide_cursor(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn show_cursor(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn get_cursor_position(&mut self) -> io::Result<ratatui::layout::Position> {
+            Ok(ratatui::layout::Position::ORIGIN)
+        }
+
+        fn set_cursor_position<P: Into<ratatui::layout::Position>>(
+            &mut self,
+            _position: P,
+        ) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn clear(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn clear_region(&mut self, _clear_type: ratatui::backend::ClearType) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn size(&self) -> io::Result<ratatui::layout::Size> {
+            Ok(ratatui::layout::Size::new(10, 4))
+        }
+
+        fn window_size(&mut self) -> io::Result<ratatui::backend::WindowSize> {
+            Ok(ratatui::backend::WindowSize {
+                columns_rows: ratatui::layout::Size::new(10, 4),
+                pixels: ratatui::layout::Size::new(0, 0),
+            })
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    mod spy {
+        //! An [`Events`] source that never has anything ready - `run`'s only
+        //! way to see a drawing error is through the very first draw, which
+        //! [`super::FailingBackend`] fails before any event would matter.
+        use super::super::Events;
+        use std::io;
+        use std::time::Duration;
+
+        pub(super) struct NoEvents;
+
+        impl Events for NoEvents {
+            fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+                Ok(false)
+            }
+
+            fn read(&mut self) -> io::Result<ratatui::crossterm::event::Event> {
+                unreachable!("poll never says an event is ready")
+            }
+        }
+    }
+
+    #[test]
+    fn a_resize_event_is_drawn_again_before_the_next_tick() {
+        use ratatui::backend::TestBackend;
+        use std::cell::Cell as StdCell;
+        use std::rc::Rc;
+
+        struct CountingBackend {
+            inner: TestBackend,
+            draws: Rc<StdCell<u32>>,
+        }
+
+        impl ratatui::backend::Backend for CountingBackend {
+            type Error = std::convert::Infallible;
+
+            fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+            where
+                I: Iterator<Item = (u16, u16, &'a ratatui::buffer::Cell)>,
+            {
+                self.draws.set(self.draws.get() + 1);
+                self.inner.draw(content)
+            }
+
+            fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+                self.inner.hide_cursor()
+            }
+
+            fn show_cursor(&mut self) -> Result<(), Self::Error> {
+                self.inner.show_cursor()
+            }
+
+            fn get_cursor_position(&mut self) -> Result<ratatui::layout::Position, Self::Error> {
+                self.inner.get_cursor_position()
+            }
+
+            fn set_cursor_position<P: Into<ratatui::layout::Position>>(
+                &mut self,
+                position: P,
+            ) -> Result<(), Self::Error> {
+                self.inner.set_cursor_position(position)
+            }
+
+            fn clear(&mut self) -> Result<(), Self::Error> {
+                self.inner.clear()
+            }
+
+            fn clear_region(
+                &mut self,
+                clear_type: ratatui::backend::ClearType,
+            ) -> Result<(), Self::Error> {
+                self.inner.clear_region(clear_type)
+            }
+
+            fn size(&self) -> Result<ratatui::layout::Size, Self::Error> {
+                self.inner.size()
+            }
+
+            fn window_size(&mut self) -> Result<ratatui::backend::WindowSize, Self::Error> {
+                self.inner.window_size()
+            }
+
+            fn flush(&mut self) -> Result<(), Self::Error> {
+                self.inner.flush()
+            }
+        }
+
+        struct OneResize(bool);
+
+        impl super::Events for OneResize {
+            fn poll(&mut self, _timeout: std::time::Duration) -> io::Result<bool> {
+                Ok(self.0)
+            }
+
+            fn read(&mut self) -> io::Result<Event> {
+                self.0 = false;
+                Ok(Event::Resize(30, 10))
+            }
+        }
+
+        let draws = Rc::new(StdCell::new(0));
+        let backend = CountingBackend {
+            inner: TestBackend::new(10, 4),
+            draws: Rc::clone(&draws),
+        };
+        let mut terminal = ratatui::Terminal::new(backend).expect("a test terminal");
+        let mut app = crate::app::App::new(std::env::temp_dir());
+        let mut events = OneResize(true);
+
+        super::tick(&mut terminal, &mut app, &mut events, Duration::ZERO).expect("a draw");
+
+        assert_eq!(
+            draws.get(),
+            2,
+            "a resize should be drawn again immediately, not left for the next tick"
+        );
+    }
+
+    #[test]
+    fn a_terminal_is_required_before_drawing() {
+        assert!(
+            super::no_terminal_attached_message(true).is_none(),
+            "a real terminal should draw as normal"
+        );
+    }
+
+    #[test]
+    fn no_terminal_attached_says_so_rather_than_drawing_into_a_pipe() {
+        let message = super::no_terminal_attached_message(false).expect("a message, not silence");
+        assert!(
+            message.contains("no terminal"),
+            "the message should say what is missing: {message}"
         );
     }
 }
