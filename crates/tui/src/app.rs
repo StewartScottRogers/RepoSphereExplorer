@@ -10,10 +10,12 @@
 
 use crate::bindings::{self, Action};
 use crate::colour::{self, Run};
+use crate::document::Document;
 use crate::{
-    classify, facts, graphic, present, present_folder, present_view, render_with_block, views,
+    classify, editable_text, editor, facts, graphic, present, present_folder, present_view,
+    render_with_block, views,
 };
-use plugin_api::Fact;
+use plugin_api::{Class, Fact, Span as PluginSpan};
 use protocol::{DirectoryEntry, ReposRoot, Request, Response};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -285,6 +287,26 @@ enum Mode {
         /// The destination directory name typed so far.
         input: String,
     },
+    /// Asking whether to discard unsaved changes to the file open in the
+    /// editor, named `name`, before leaving it (#645).
+    ConfirmDiscardEdit {
+        /// Its display name, for the confirmation prompt.
+        name: String,
+    },
+}
+
+/// A file open in the terminal File pane's editor (#645), on the same
+/// terms as the graphical front end's own `Edit` (`crates/gui/src/app.rs`):
+/// the path it saves to, the document a reader is typing into, and the
+/// text it started from, so leaving can tell whether anything changed.
+struct Editing {
+    /// The file being edited.
+    path: PathBuf,
+    /// The caret, selection and undo history typing has built up.
+    document: Document,
+    /// The text the file held when editing began - compared against
+    /// `document.text()` to decide whether leaving needs to ask first.
+    original: String,
 }
 
 /// What the File pane says when `path`, the row it just asked to view,
@@ -468,6 +490,13 @@ pub struct App {
     drawn_file_viewport_rows: std::cell::Cell<usize>,
     status: Option<String>,
     mode: Mode,
+    /// The file open in the File pane's editor, if any (#645). `None`
+    /// means the File pane shows a plugin's own views, the way it always
+    /// has; entering the editor is what appends `"Edit"` to
+    /// [`App::file_views`] and leaves the plugin's own views hidden while
+    /// it holds `Some`, the way the graphical front end's `EDIT_TAB`/
+    /// `EDITING_TAB` convention already does.
+    editing: Option<Editing>,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
     /// The folder the outstanding listing was asked for, so `contents_dir`
     /// can follow the entries rather than the cursor.
@@ -560,6 +589,7 @@ impl App {
             drawn_file_viewport_rows: std::cell::Cell::new(0),
             status: None,
             mode: Mode::Normal,
+            editing: None,
             pending_contents: None,
             pending_contents_dir: None,
             pending_file: None,
@@ -845,9 +875,26 @@ impl App {
     /// The views the selected file's plugin offers, for the tab strip and
     /// for [`App::select_next_file_view`]/[`App::select_previous_file_view`].
     /// Empty when nothing is selected or its plugin is not registered here.
+    ///
+    /// Editing is not a plugin's idea of the file, the same as the
+    /// graphical front end's own comment on `EDIT_TAB` has it: whenever the
+    /// plugin offers editable text, `"Edit"` is appended here for the
+    /// reader to switch to and press Enter on (#645). While
+    /// [`App::editing`] holds `Some`, the plugin's own views are hidden and
+    /// `"Editing"` is the only entry - one stray Left or Right away from
+    /// discarding what somebody has typed is not a risk worth keeping.
     fn file_views(&self) -> Vec<&'static str> {
+        if self.editing.is_some() {
+            return vec!["Editing"];
+        }
         match &self.file_view {
-            Some(Response::FileView { plugin, data, .. }) => views(plugin, data),
+            Some(Response::FileView { plugin, data, .. }) => {
+                let mut views = views(plugin, data);
+                if editable_text(plugin, data).is_some() {
+                    views.push("Edit");
+                }
+                views
+            }
             _ => Vec::new(),
         }
     }
@@ -869,6 +916,129 @@ impl App {
             self.file_view_index = (self.file_view_index + count - 1) % count;
             self.file_scroll = 0;
         }
+    }
+
+    /// What Enter does in the File pane: starts editing when the tab
+    /// currently shown is `"Edit"`, and does nothing otherwise (#645).
+    fn activate_file_view(&mut self) {
+        if self.file_views().get(self.file_view_index) == Some(&"Edit") {
+            self.start_edit();
+        }
+    }
+
+    /// Opens the selected file's editable text in the File pane's editor,
+    /// if its plugin offers any (#645).
+    fn start_edit(&mut self) {
+        let Some(Response::FileView { plugin, data, .. }) = &self.file_view else {
+            return;
+        };
+        let Some(text) = editable_text(plugin, data) else {
+            return;
+        };
+        let Some(entry) = self.contents.get(self.contents_selected) else {
+            return;
+        };
+        self.editing = Some(Editing {
+            path: self.contents_dir.join(&entry.name),
+            document: Document::new(text.clone()),
+            original: text,
+        });
+        self.file_view_index = 0;
+        self.file_scroll = 0;
+    }
+
+    /// Leaves the editor: at once if nothing has changed, or by asking
+    /// first, naming the file, when it has (#645, item 4).
+    fn leave_edit(&mut self) {
+        let Some(editing) = &self.editing else {
+            return;
+        };
+        if editing.document.text() == editing.original {
+            self.editing = None;
+            self.file_view_index = 0;
+            return;
+        }
+        let name = editing.path.file_name().map_or_else(
+            || editing.path.to_string_lossy().into_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        self.mode = Mode::ConfirmDiscardEdit { name };
+    }
+
+    fn handle_confirm_discard_edit_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char('y' | 'Y') => {
+                self.editing = None;
+                self.file_view_index = 0;
+                self.mode = Mode::Normal;
+                self.status = Some("edit discarded".to_owned());
+            }
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {}
+        }
+    }
+
+    /// Saves the file being edited through the service (`WriteFile`), the
+    /// only process that touches the filesystem, and leaves the editor -
+    /// the same "the way out is Save or Escape" shape the graphical front
+    /// end's own `save_file_edit` uses. A refusal - a file that stopped
+    /// being valid UTF-8 underneath the edit, say - comes back exactly as
+    /// the service worded it, through the same [`App::apply_operation_result`]
+    /// every other operation's errors already go through (#645, item 3).
+    fn save_edit(&mut self) {
+        let Some(editing) = self.editing.take() else {
+            return;
+        };
+        self.file_view_index = 0;
+        self.pending_operation = Some(spawn_request(Request::WriteFile {
+            path: editing.path.to_string_lossy().into_owned(),
+            content: editing.document.text().to_owned(),
+        }));
+        self.status = Some("saving...".to_owned());
+    }
+
+    /// Keeps the caret's line inside the File pane's editor viewport,
+    /// scrolling to follow it the way [`App::clamp_contents_scroll`] keeps
+    /// the Contents cursor on screen. Reuses [`App::file_scroll`] as the
+    /// editor's own top-line offset - the two are never in play at once,
+    /// since [`App::file_views`] shows the plugin's scrollable text or the
+    /// editor, never both.
+    fn follow_caret_in_editor(&mut self) {
+        let Some(editing) = &self.editing else {
+            return;
+        };
+        let line = editing.document.line_of(editing.document.caret());
+        let rows = self.drawn_file_viewport_rows.get().max(1);
+        if line < self.file_scroll {
+            self.file_scroll = line;
+        } else if line >= self.file_scroll + rows {
+            self.file_scroll = line + 1 - rows;
+        }
+    }
+
+    /// Handles one key while [`App::editing`] holds `Some`: Escape leaves
+    /// (asking first if anything changed), Ctrl+S saves through the
+    /// service, and everything else goes to [`editor::handle_key`] - which
+    /// is why this is checked ahead of the binding table in
+    /// [`App::handle_key`] rather than added to it: an editor has to
+    /// consume every printable key, not opt into a table of them (#645).
+    fn handle_editing_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Esc {
+            self.leave_edit();
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('s' | 'S'))
+        {
+            self.save_edit();
+            return;
+        }
+        let Some(editing) = &mut self.editing else {
+            return;
+        };
+        let rows = self.drawn_file_viewport_rows.get().max(1);
+        editor::handle_key(&mut editing.document, key.code, key.modifiers, rows);
+        self.follow_caret_in_editor();
     }
 
     /// Records the answer for the row named `name`, if it was asked about
@@ -1020,7 +1190,15 @@ impl App {
                 self.handle_text_input_key(key.code);
                 return;
             }
+            Mode::ConfirmDiscardEdit { .. } => {
+                self.handle_confirm_discard_edit_key(key.code);
+                return;
+            }
             Mode::Normal => {}
+        }
+        if self.editing.is_some() {
+            self.handle_editing_key(key);
+            return;
         }
         if let Some(action) = bindings::find(key, self.focus) {
             if matches!(action, Action::CancelOrQuit) {
@@ -1086,6 +1264,7 @@ impl App {
             Action::FileScrollEnd => self.scroll_file_end(),
             Action::FileViewPrevious => self.select_previous_file_view(),
             Action::FileViewNext => self.select_next_file_view(),
+            Action::FileActivateView => self.activate_file_view(),
         }
     }
 
@@ -1192,7 +1371,7 @@ impl App {
             Mode::RenameInput { input, .. }
             | Mode::CopyInput { input, .. }
             | Mode::ExtractInput { input, .. } => Some(input),
-            Mode::Normal | Mode::ConfirmDelete { .. } => None,
+            Mode::Normal | Mode::ConfirmDelete { .. } | Mode::ConfirmDiscardEdit { .. } => None,
         }
     }
 
@@ -1234,6 +1413,7 @@ impl App {
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
             Mode::ExtractInput { input, .. } => format!("Extract to: {input}_  (Enter/Esc)"),
+            Mode::ConfirmDiscardEdit { name } => format!("Discard changes to {name}? y/n"),
             Mode::Normal => self.status.clone().unwrap_or_else(|| self.ambient_status()),
         }
     }
@@ -1255,6 +1435,7 @@ impl App {
             | Mode::RenameInput { .. }
             | Mode::CopyInput { .. }
             | Mode::ExtractInput { .. }
+            | Mode::ConfirmDiscardEdit { .. }
             | Mode::Normal => self.status_line(),
         }
     }
@@ -2220,7 +2401,7 @@ fn file_scrollable_runs(app: &App) -> Vec<Vec<Run>> {
     let Some(Response::FileView { plugin, data, also }) = &app.file_view else {
         return Vec::new();
     };
-    let plugin_views = views(plugin, data);
+    let plugin_views = app.file_views();
     let view_index = app
         .file_view_index
         .min(plugin_views.len().saturating_sub(1));
@@ -2393,8 +2574,169 @@ fn render_file_text(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 }
 
+/// The runs `classify` gives for the byte range `start..end` of `text` -
+/// one document line - clipped to that line's own bounds, or the whole
+/// range as one plain run when `spans` is empty (a plugin with nothing to
+/// say about its syntax, the same as [`colour::plain_line`] for a view
+/// that is not being edited).
+///
+/// A span may run past a line's end (a block comment usually does): the
+/// clip is what keeps it from bleeding into a row it does not belong to,
+/// since the editor draws one document line per row rather than the
+/// wrapped rows [`render_file_text`] does.
+fn line_runs(spans: &[PluginSpan], start: usize, end: usize) -> Vec<(Range<usize>, Class)> {
+    if spans.is_empty() {
+        return if start == end {
+            Vec::new()
+        } else {
+            vec![(start..end, Class::Plain)]
+        };
+    }
+    spans
+        .iter()
+        .filter_map(|span| {
+            let clip_start = span.start.max(start);
+            let clip_end = (span.start + span.len).min(end);
+            (clip_start < clip_end).then_some((clip_start..clip_end, span.class))
+        })
+        .collect()
+}
+
+/// Splits `range` into the parts of it outside `selection` and the part
+/// inside, each tagged with whether it is selected - up to three pieces,
+/// in order, empty ones dropped.
+fn split_by_selection(
+    range: Range<usize>,
+    selection: Option<&Range<usize>>,
+) -> Vec<(Range<usize>, bool)> {
+    let Some(selection) = selection else {
+        return vec![(range, false)];
+    };
+    let sel_start = selection.start.clamp(range.start, range.end);
+    let sel_end = selection.end.clamp(range.start, range.end);
+    [
+        (range.start..sel_start, false),
+        (sel_start..sel_end, true),
+        (sel_end..range.end, false),
+    ]
+    .into_iter()
+    .filter(|(part, _)| !part.is_empty())
+    .collect()
+}
+
+/// One run of the editor's text as a styled [`Span`], coloured by `class`
+/// the way [`run_span`] colours a read-only run, and drawn reversed when
+/// `selected` - the caret's own selection, the terminal's ordinary way of
+/// showing one, in place of the background colour Slint's `TextInput`
+/// gives the graphical front end's plain editor.
+fn editing_span(text: &str, class: Class, selected: bool, colour_enabled: bool) -> Span<'static> {
+    let mut style = if colour_enabled {
+        colour::class_colour(class).map_or_else(Style::default, |fg| Style::default().fg(fg))
+    } else {
+        Style::default()
+    };
+    if selected {
+        style = style.add_modifier(ratatui::style::Modifier::REVERSED);
+    }
+    Span::styled(text.to_owned(), style)
+}
+
+/// One document line, `start..end` of `text`, as the styled spans a
+/// [`Line`] draws: [`line_runs`]'s classified runs, each split by
+/// `selection` into up to three pieces so a selection that starts or ends
+/// mid-run still highlights exactly the bytes it covers.
+fn editing_line_spans(
+    text: &str,
+    document_spans: &[PluginSpan],
+    start: usize,
+    end: usize,
+    selection: Option<&Range<usize>>,
+    colour_enabled: bool,
+) -> Vec<Span<'static>> {
+    line_runs(document_spans, start, end)
+        .into_iter()
+        .flat_map(|(range, class)| {
+            split_by_selection(range, selection)
+                .into_iter()
+                .map(move |(part, selected)| (part, class, selected))
+        })
+        .map(|(part, class, selected)| editing_span(&text[part], class, selected, colour_enabled))
+        .collect()
+}
+
+/// Draws the File pane's editor into `area`: the document being edited,
+/// one document line per row, scrolled to keep the caret's line in view
+/// (#645). Coloured the way a read-only view already is - `classify`
+/// knows nothing of a caret, so the terminal's own cursor is what shows
+/// where it is, placed by [`Frame::set_cursor_position`] rather than drawn
+/// by hand, the same reasoning GUIDANCE.md §3.6 gives for leaving input
+/// method editor (IME) composition, accessibility and right-to-left text
+/// to the host terminal here.
+fn render_file_editing(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let Some(editing) = &app.editing else {
+        return;
+    };
+    let plugin = match &app.file_view {
+        Some(Response::FileView { plugin, .. }) => plugin.as_str(),
+        _ => "",
+    };
+    let text = editing.document.text();
+    let document_spans = classify(plugin, text);
+    let selection = editing.document.selection();
+    let caret = editing.document.caret();
+    let caret_line = editing.document.line_of(caret);
+    let caret_column = editing.document.column_of(caret);
+
+    let viewport_rows = usize::from(area.height);
+    app.drawn_file_content_width.set(area.width);
+    app.drawn_file_viewport_rows.set(viewport_rows);
+
+    let line_count = editing.document.line_count();
+    let scroll = app.file_scroll.min(line_count.saturating_sub(1));
+
+    let visible: Vec<Line<'static>> = (scroll..line_count.min(scroll + viewport_rows))
+        .map(|index| {
+            let start = editing.document.line_start(index);
+            let end = editing.document.line_end(index);
+            Line::from(editing_line_spans(
+                text,
+                &document_spans,
+                start,
+                end,
+                selection.as_ref(),
+                app.colour_enabled,
+            ))
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(visible), area);
+
+    let cursor_row = caret_line.saturating_sub(scroll);
+    if cursor_row < viewport_rows {
+        let x = area.x
+            + u16::try_from(caret_column)
+                .unwrap_or(u16::MAX)
+                .min(area.width.saturating_sub(1));
+        let y = area.y + u16::try_from(cursor_row).unwrap_or(0);
+        frame.set_cursor_position((x, y));
+    }
+}
+
 fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let block = pane_block("File", app.focus == Focus::File);
+    if app.editing.is_some() {
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(inner);
+        let tabs = Tabs::new(app.file_views())
+            .select(0)
+            .highlight_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(tabs, rows[0]);
+        render_file_editing(frame, rows[1], app);
+        return;
+    }
     let Some(response) = &app.file_view else {
         frame.render_widget(Paragraph::new("(no file selected)").block(block), area);
         return;
@@ -2421,7 +2763,7 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
         return;
     };
 
-    let plugin_views = views(plugin, data);
+    let plugin_views = app.file_views();
     let show_tabs = plugin_views.len() > 1;
     let repository_facts = facts(plugin, data);
 
@@ -2467,13 +2809,15 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, CHANGED_MARKER, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER, RowStatus,
-        STALE_FETCH_MARKER, breadcrumb_line, render_app, render_contents,
+        App, CHANGED_MARKER, Document, Editing, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER,
+        RowStatus, STALE_FETCH_MARKER, breadcrumb_line, render_app, render_contents,
+        render_file_editing,
     };
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::layout::Rect;
     use ratatui::style::Color;
     use std::path::{Path, PathBuf};
 
@@ -2992,6 +3336,7 @@ mod tests {
             Mode::RenameInput { .. } => "rename",
             Mode::CopyInput { .. } => "copy",
             Mode::ExtractInput { .. } => "extract",
+            Mode::ConfirmDiscardEdit { .. } => "confirm-discard-edit",
         }
     }
 
@@ -3011,7 +3356,7 @@ mod tests {
             | Mode::RenameInput { path, .. }
             | Mode::CopyInput { path, .. }
             | Mode::ExtractInput { path, .. } => Some(path.as_path()),
-            Mode::Normal => None,
+            Mode::Normal | Mode::ConfirmDiscardEdit { .. } => None,
         }
     }
 
@@ -5461,5 +5806,226 @@ mod tests {
         let app = app_showing(&root, &[("notes.txt", false)]);
 
         assert!(app.status_line().starts_with("Tab: switch pane"));
+    }
+
+    // -- the editor (#645) ------------------------------------------------
+
+    #[test]
+    fn the_edit_view_is_appended_only_when_the_plugin_offers_editable_text() {
+        let root = notional_root("edit-view-offered");
+        let editable = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        assert_eq!(editable.file_views(), vec!["Preview", "Text", "Edit"]);
+
+        let truncated = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": true }),
+        );
+        assert!(
+            !truncated.file_views().contains(&"Edit"),
+            "a truncated view must not be offered for editing - saving it back would \
+             silently drop the rest of the file"
+        );
+    }
+
+    #[test]
+    fn enter_on_the_edit_view_starts_editing_and_hides_the_plugins_own_views() {
+        let root = notional_root("edit-view-enter");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        app.file_view_index = 2; // "Edit", the last of ["Preview", "Text", "Edit"]
+
+        app.handle_key(KeyCode::Enter);
+
+        assert!(
+            app.editing.is_some(),
+            "Enter on the Edit view should start editing"
+        );
+        assert_eq!(
+            app.file_views(),
+            vec!["Editing"],
+            "the plugin's own views are hidden while editing - one stray Left \
+             or Right away from discarding what somebody has typed is not a \
+             risk worth keeping"
+        );
+    }
+
+    #[test]
+    fn leaving_with_no_changes_does_not_ask() {
+        let root = notional_root("edit-leave-clean");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        app.editing = Some(Editing {
+            path: root.join("selected"),
+            document: Document::new("hello"),
+            original: "hello".to_owned(),
+        });
+
+        app.handle_key(KeyCode::Esc);
+
+        assert!(
+            app.editing.is_none(),
+            "leaving unchanged should not stay in the editor"
+        );
+        assert!(matches!(app.mode, Mode::Normal));
+    }
+
+    #[test]
+    fn leaving_with_changes_asks_naming_the_file_and_declining_keeps_them() {
+        let root = notional_root("edit-leave-dirty");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        let mut document = Document::new("hello");
+        document.insert("X");
+        app.editing = Some(Editing {
+            path: root.join("selected"),
+            document,
+            original: "hello".to_owned(),
+        });
+
+        app.handle_key(KeyCode::Esc);
+        assert_eq!(
+            app.status_line(),
+            "Discard changes to selected? y/n",
+            "the prompt should name the file"
+        );
+        assert!(app.editing.is_some(), "nothing should be discarded yet");
+
+        app.handle_key(KeyCode::Char('n'));
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(app.editing.is_some(), "declining should keep editing");
+        assert_eq!(
+            app.editing.as_ref().unwrap().document.text(),
+            "Xhello",
+            "declining should keep exactly what was typed"
+        );
+    }
+
+    #[test]
+    fn confirming_discard_drops_the_typed_changes() {
+        let root = notional_root("edit-discard-yes");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        let mut document = Document::new("hello");
+        document.insert("X");
+        app.editing = Some(Editing {
+            path: root.join("selected"),
+            document,
+            original: "hello".to_owned(),
+        });
+
+        app.handle_key(KeyCode::Esc);
+        app.handle_key(KeyCode::Char('y'));
+
+        assert!(app.editing.is_none());
+        assert!(matches!(app.mode, Mode::Normal));
+    }
+
+    #[test]
+    fn saving_sends_write_file_and_leaves_the_editor() {
+        let root = notional_root("edit-save");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "hello", "truncated": false }),
+        );
+        let mut document = Document::new("hello");
+        document.insert("X");
+        app.editing = Some(Editing {
+            path: root.join("selected"),
+            document,
+            original: "hello".to_owned(),
+        });
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+
+        assert!(
+            app.editing.is_none(),
+            "saving should leave the editor at once, the way Save always does"
+        );
+        assert!(
+            app.pending_operation.is_some(),
+            "a WriteFile request should be sent through the service"
+        );
+    }
+
+    #[test]
+    fn a_refused_save_shows_the_services_own_words() {
+        let root = notional_root("edit-save-refused");
+        let mut app = App::new(root);
+
+        app.apply_operation_result(Ok(Response::Error {
+            message: "stream did not contain valid UTF-8".to_owned(),
+        }));
+
+        assert_eq!(
+            app.status_line(),
+            "stream did not contain valid UTF-8",
+            "a refusal should reach the reader exactly as the service worded it"
+        );
+    }
+
+    #[test]
+    fn the_editor_places_the_terminal_cursor_on_a_character_boundary_in_a_multibyte_line() {
+        let root = notional_root("edit-caret-multibyte");
+        let mut app = app_with_file_view(
+            &root,
+            "text",
+            serde_json::json!({ "content": "héllo wörld", "truncated": false }),
+        );
+        let mut document = Document::new("héllo wörld");
+        for _ in 0..7 {
+            document.move_right(false);
+        }
+        app.editing = Some(Editing {
+            path: root.join("selected"),
+            document,
+            original: "héllo wörld".to_owned(),
+        });
+
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 6,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("a test terminal");
+        terminal
+            .draw(|frame| render_file_editing(frame, area, &app))
+            .expect("a draw into the test backend");
+
+        let cursor = terminal
+            .get_cursor_position()
+            .expect("the editor places the terminal's own cursor");
+        assert_eq!(
+            (cursor.x, cursor.y),
+            (7, 0),
+            "the caret sits after the seventh grapheme - a letter, an accented \
+             letter and a space each count as one - not mid multibyte character"
+        );
+
+        let drawn: String = (0..area.width)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol().to_owned())
+            .collect();
+        assert!(
+            drawn.starts_with("héllo wörld"),
+            "the multibyte line should draw whole, without panicking or mangling: {drawn}"
+        );
     }
 }

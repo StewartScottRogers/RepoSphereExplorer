@@ -13,8 +13,9 @@ mod common;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::sync::{Mutex, MutexGuard};
+use tui::Events;
 use tui::app::App;
 
 /// One service at a time: these tests share a single-threaded test service
@@ -52,6 +53,36 @@ fn drawn(terminal: &Terminal<TestBackend>) -> String {
 /// the following frame. A second, keyless tick is the following frame.
 fn press(terminal: &mut Terminal<TestBackend>, app: &mut App, code: KeyCode) -> String {
     let mut events = common::QueuedKeys::new([code]);
+    tui::tick(terminal, app, &mut events, std::time::Duration::ZERO).expect("a draw");
+    let mut nothing = common::QueuedKeys::new(std::iter::empty());
+    tui::tick(terminal, app, &mut nothing, std::time::Duration::ZERO).expect("a draw");
+    drawn(terminal)
+}
+
+/// One key event with modifiers, read once - `common::QueuedKeys` only
+/// carries a bare [`KeyCode`], which cannot express a Ctrl+S.
+struct OneKeyWithModifiers(Option<(KeyCode, KeyModifiers)>);
+
+impl Events for OneKeyWithModifiers {
+    fn poll(&mut self, _timeout: std::time::Duration) -> std::io::Result<bool> {
+        Ok(self.0.is_some())
+    }
+
+    fn read(&mut self) -> std::io::Result<Event> {
+        let (code, modifiers) = self.0.take().expect("poll said an event was ready");
+        Ok(Event::Key(KeyEvent::new(code, modifiers)))
+    }
+}
+
+/// As [`press`], but the key carries `modifiers` - for a Ctrl+S, which
+/// [`press`] cannot express.
+fn press_with_modifiers(
+    terminal: &mut Terminal<TestBackend>,
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> String {
+    let mut events = OneKeyWithModifiers(Some((code, modifiers)));
     tui::tick(terminal, app, &mut events, std::time::Duration::ZERO).expect("a draw");
     let mut nothing = common::QueuedKeys::new(std::iter::empty());
     tui::tick(terminal, app, &mut nothing, std::time::Duration::ZERO).expect("a draw");
@@ -306,5 +337,138 @@ fn a_row_that_comes_into_view_after_a_sort_is_asked_about() {
         unanswered.is_empty(),
         "and every one of them has an answer; these do not:\n{}",
         unanswered.join("\n")
+    );
+}
+
+/// Steps the File pane to its `"Edit"` view and presses Enter to start
+/// editing (#645) - two Right presses past a plain text file's `Preview`
+/// and `Text` views, then activation.
+fn open_the_editor(terminal: &mut Terminal<TestBackend>, app: &mut App) -> String {
+    press(terminal, app, KeyCode::Tab);
+    press(terminal, app, KeyCode::Tab);
+    press(terminal, app, KeyCode::Right);
+    press(terminal, app, KeyCode::Right);
+    press(terminal, app, KeyCode::Enter)
+}
+
+#[test]
+fn typing_and_saving_writes_the_file_through_the_service() {
+    let _serial = serially();
+    common::ensure_service();
+    let root = common::scratch("edit-and-save");
+    let path = root.join("notes.txt");
+    std::fs::write(&path, "hello").expect("notes.txt is written");
+
+    let mut app = App::new(root);
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).expect("a test terminal");
+    wait_for(&mut terminal, &mut app, "hello");
+
+    let editing = open_the_editor(&mut terminal, &mut app);
+    assert!(
+        editing.contains("Editing"),
+        "entering the Edit view should say plainly which it is in: {editing}"
+    );
+
+    press(&mut terminal, &mut app, KeyCode::End);
+    press(&mut terminal, &mut app, KeyCode::Char('!'));
+
+    press_with_modifiers(
+        &mut terminal,
+        &mut app,
+        KeyCode::Char('s'),
+        KeyModifiers::CONTROL,
+    );
+    wait_for(&mut terminal, &mut app, "hello!");
+
+    let saved = std::fs::read_to_string(&path).expect("the file can be read back");
+    assert_eq!(
+        saved, "hello!",
+        "the service should have written exactly what was typed"
+    );
+}
+
+#[test]
+fn leaving_the_editor_with_unsaved_changes_asks_first_and_declining_keeps_them() {
+    let _serial = serially();
+    common::ensure_service();
+    let root = common::scratch("edit-discard-prompt");
+    let path = root.join("notes.txt");
+    std::fs::write(&path, "hello").expect("notes.txt is written");
+
+    let mut app = App::new(root);
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).expect("a test terminal");
+    wait_for(&mut terminal, &mut app, "hello");
+    open_the_editor(&mut terminal, &mut app);
+
+    press(&mut terminal, &mut app, KeyCode::Char('!'));
+
+    let prompted = press(&mut terminal, &mut app, KeyCode::Esc);
+    assert!(
+        prompted.contains("Discard changes to notes.txt? y/n"),
+        "leaving with unsaved changes should ask first, naming the file: {prompted}"
+    );
+
+    let declined = press(&mut terminal, &mut app, KeyCode::Char('n'));
+    assert!(
+        declined.contains("Editing"),
+        "declining should stay in the editor: {declined}"
+    );
+
+    press_with_modifiers(
+        &mut terminal,
+        &mut app,
+        KeyCode::Char('s'),
+        KeyModifiers::CONTROL,
+    );
+    wait_for(&mut terminal, &mut app, "!hello");
+
+    let saved = std::fs::read_to_string(&path).expect("the file can be read back");
+    assert_eq!(
+        saved, "!hello",
+        "declining to discard should have kept the typed character"
+    );
+}
+
+#[test]
+fn saving_a_file_that_is_no_longer_valid_utf8_is_refused_with_the_services_own_words() {
+    let _serial = serially();
+    common::ensure_service();
+    let root = common::scratch("edit-save-non-utf8");
+    let path = root.join("notes.txt");
+    std::fs::write(&path, "hello").expect("notes.txt is written");
+
+    let mut app = App::new(root);
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).expect("a test terminal");
+    wait_for(&mut terminal, &mut app, "hello");
+    open_the_editor(&mut terminal, &mut app);
+    press(&mut terminal, &mut app, KeyCode::Char('!'));
+
+    // Something else changes the file underneath the edit: what the
+    // service reads back before writing is no longer text at all. Reading
+    // the same corrupted bytes here gives the exact words the service will
+    // independently produce doing the same read, rather than guessing at
+    // the standard library's wording.
+    let corrupted: &[u8] = &[0xFF, 0xFE, 0x00, 0x01, 0x80];
+    std::fs::write(&path, corrupted).expect("the file is corrupted on disk");
+    let expected_message = std::fs::read_to_string(&path)
+        .expect_err("the corrupted bytes are not valid UTF-8")
+        .to_string();
+
+    press_with_modifiers(
+        &mut terminal,
+        &mut app,
+        KeyCode::Char('s'),
+        KeyModifiers::CONTROL,
+    );
+    let refused = wait_for(&mut terminal, &mut app, &expected_message);
+
+    assert!(
+        refused.contains(&expected_message),
+        "the service's own refusal should reach the reader unchanged: {refused}"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("the file can still be read"),
+        corrupted,
+        "a refused write must not have touched the file's bytes"
     );
 }
