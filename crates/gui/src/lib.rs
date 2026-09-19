@@ -1879,6 +1879,8 @@ fn wire_filter_actions(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_filter_focus_requested, begin_filter);
     on_event!(on_status_changed_link_clicked, filter_to_changed);
     on_event!(on_status_clear_filter_clicked, clear_filters);
+    on_event!(on_status_link_focus_requested, focus_status_link);
+    on_event!(on_changed_filter_toggled, toggle_changed_filter);
 }
 
 /// Wires handing a selected folder to a program the user already has
@@ -2098,7 +2100,9 @@ fn sync_filter(ui: &MainWindow, app: &App) {
     ui.set_filter_text(app.filter_text().into());
     ui.set_filter_focused(app.filter_focused());
     ui.set_status_changed_label(app.status_changed_label().into());
+    ui.set_status_changed_accessible_label(app.status_changed_accessible_label().into());
     ui.set_status_show_clear_link(app.status_show_clear_link());
+    ui.set_status_link_focused(app.status_link_focused());
 }
 
 /// Copies the Contents pane's centred message (#592) into `ui`'s bound

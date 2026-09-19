@@ -125,6 +125,9 @@ fn install_spy(ui: &MainWindow, fires: Fires, log: &Rc<RefCell<Vec<String>>>) {
         Fires::ZoomInRequested => spy!(on_zoom_in_requested, "zoom-in-requested"),
         Fires::ZoomOutRequested => spy!(on_zoom_out_requested, "zoom-out-requested"),
         Fires::ZoomResetRequested => spy!(on_zoom_reset_requested, "zoom-reset-requested"),
+        Fires::ChangedFilterToggled => {
+            spy!(on_changed_filter_toggled, "changed-filter-toggled");
+        }
     }
 }
 

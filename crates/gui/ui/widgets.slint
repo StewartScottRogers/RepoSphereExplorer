@@ -141,12 +141,24 @@ export component Crumb inherits Rectangle {
 
 // A clickable word in the status bar (#582): the changed count and
 // "clear", styled and hit-tested the way a breadcrumb already is.
+// Keyboard reachable (#629): Tab moves `highlighted` onto whichever one is
+// showing - the same focus ring `CommandButton` draws - and Return or
+// Space activates it exactly as a click does.
 export component StatusLink inherits Rectangle {
     in property <string> label;
+    // What a screen reader speaks, fuller than the terse word or two
+    // `label` draws on screen (#629): "3 repositories with uncommitted
+    // changes" rather than "3 with uncommitted changes".
+    in property <string> accessible-text: label;
+    in property <bool> highlighted: false;
     callback activated();
 
     background: link-touch.has-hover ? Theme.hover : transparent;
     border-radius: 3px;
+    border-width: highlighted ? 2px : 0px;
+    border-color: Theme.accent;
+    accessible-role: button;
+    accessible-label: accessible-text;
 
     HorizontalLayout {
         padding-left: 4px;
@@ -155,8 +167,6 @@ export component StatusLink inherits Rectangle {
             text: label;
             color: Theme.accent;
             vertical-alignment: center;
-            accessible-role: text;
-            accessible-label: label;
         }
     }
 
