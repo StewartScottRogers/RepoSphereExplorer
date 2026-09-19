@@ -420,7 +420,8 @@ longer bounds it.
 
 - **Scope.** Same standard as the graphical front end, for everything a
   terminal can do.
-- **Colour.** Drawn by default within the sixteen ANSI colours; `NO_COLOR`
+- **Colour.** Drawn by default within the sixteen American National
+  Standards Institute (ANSI) colours; `NO_COLOR`
   in the environment, or a terminal reporting no colour, gives a
   monochrome drawing where nothing is told apart by colour alone (#574's
   rule, doubly).

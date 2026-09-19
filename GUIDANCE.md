@@ -209,8 +209,9 @@ multiplexer needs (Ctrl+B, Ctrl+A).
 **Colour and glyphs.** Degrade cleanly to 16 colours by default; `NO_COLOR`
 in the environment, or a terminal reporting no colour, gives a monochrome
 drawing where nothing is told apart by colour alone (#574's rule, doubly).
-Unicode where the terminal accepts it, with an ASCII fallback for every
-mark; no nerd font, ever.
+Unicode where the terminal accepts it, with an American Standard Code for
+Information Interchange (ASCII) fallback for every mark; no nerd font,
+ever.
 
 **Editing.** The File pane edits text files, through the service's
 `WriteFile`, on the same terms as §3.6 - see §3.6's own paragraph on this.
@@ -222,8 +223,8 @@ herdr:**
   path, including panic and the host pane closing.
 - Handle resize continuously; the host pane changes size without warning.
 - Mouse capture must be releasable so the host's own selection still works.
-- Degrade cleanly to 16 colours and to plain American Standard Code for
-  Information Interchange (ASCII) text; do not require a nerd font.
+- Degrade cleanly to 16 colours and to plain ASCII text; do not require a
+  nerd font.
 
 **Platforms.** Windows console (Windows Terminal and `conhost` with virtual
 terminal processing), macOS and Linux terminals, and inside a multiplexer.
