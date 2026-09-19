@@ -428,6 +428,19 @@ pub struct App {
     /// follows `contents_selected` so a status is asked for only once its
     /// row scrolls into view (#641).
     contents_scroll: usize,
+    /// The offset the Contents table was last drawn at, read back from
+    /// its own state after each draw and handed to the next one.
+    ///
+    /// `App` used to keep a scroll model of its own and hope it matched:
+    /// it tracked the window stickily, while a freshly defaulted
+    /// `TableState` made the widget re-derive its window from the selected
+    /// row alone on every frame. The two agree while a reader scrolls
+    /// steadily downward and part company the moment anything jumps - a
+    /// sort, for instance - after which a row plainly on screen could
+    /// never be asked about and kept the not-known marker for ever (the
+    /// review of #672). What is drawn is now the one answer, and the
+    /// status requests are scoped by it.
+    drawn_contents_offset: std::cell::Cell<Option<usize>>,
     /// How many Contents rows fit in the pane the terminal last drew, set
     /// by [`App::set_contents_viewport_rows`]. `usize::MAX` until the first
     /// real draw reports one, so a listing asked about before any terminal
@@ -464,6 +477,7 @@ impl App {
             row_statuses: HashMap::new(),
             pending_statuses: Vec::new(),
             contents_scroll: 0,
+            drawn_contents_offset: std::cell::Cell::new(None),
             contents_viewport_rows: usize::MAX,
             should_quit: false,
         };
@@ -608,8 +622,31 @@ impl App {
     /// The Contents rows currently on screen, by index - [`App::tick`] asks
     /// for their statuses every iteration, and a fresh listing asks for
     /// them as soon as it lands (#641).
+    /// The name the Contents pane draws for row `index`, or `None` past
+    /// the end of the listing.
+    #[must_use]
+    pub fn content_name_at(&self, index: usize) -> Option<&str> {
+        self.contents.get(index).map(|entry| entry.name.as_str())
+    }
+
+    /// The rows the front end believes are on screen: what scopes its
+    /// status requests (#641), and what a test can hold against the rows
+    /// actually drawn. The two were separate models once, agreeing only
+    /// while a reader scrolled steadily downward (the review of #672).
+    #[must_use]
+    pub fn visible_rows(&self) -> Range<usize> {
+        self.visible_content_range()
+    }
+
     fn visible_content_range(&self) -> Range<usize> {
-        let start = self.contents_scroll.min(self.contents.len());
+        // What the table drew, when it has drawn: the clamp below is only
+        // the answer before the first frame, and in a unit test that never
+        // renders one.
+        let start = self
+            .drawn_contents_offset
+            .get()
+            .unwrap_or(self.contents_scroll)
+            .min(self.contents.len());
         let end = start
             .saturating_add(self.contents_viewport_rows)
             .min(self.contents.len());
@@ -1598,6 +1635,12 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .collect();
 
     let mut state = TableState::default();
+    // Carried from the last frame, so the table scrolls the way a reader
+    // expects rather than re-deriving its window from the selected row
+    // each time - and so what it draws can be read back below.
+    if let Some(offset) = app.drawn_contents_offset.get() {
+        *state.offset_mut() = offset.min(app.contents.len());
+    }
     if !app.contents.is_empty() {
         state.select(Some(app.contents_selected));
     }
@@ -1608,6 +1651,9 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .block(pane_block("Contents", app.focus == Focus::Contents))
         .row_highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
     frame.render_stateful_widget(table, area, &mut state);
+    // The widget has just decided which rows fit; that decision is what
+    // scopes the status requests (#641).
+    app.drawn_contents_offset.set(Some(state.offset()));
 }
 
 /// What the File pane says above the selected repository's own view when
