@@ -212,6 +212,9 @@ icon = { path = "../icon" }
 # Test-only: the terminal harness starts a service in-process, on a private
 # socket, so a test never reaches the developer's own.
 service = { path = "../service" }
+# Test-only: `spans_cover` is the classification catalogue test's own check
+# on every plugin's spans, the same one the graphical front end's runs.
+syntax = { path = "../syntax" }
 
 [lints]
 workspace = true

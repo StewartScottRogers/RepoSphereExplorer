@@ -10878,6 +10878,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "service",
+ "syntax",
  "updater",
  "winresource",
 ]
