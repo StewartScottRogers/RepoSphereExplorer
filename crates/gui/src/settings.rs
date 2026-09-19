@@ -264,8 +264,7 @@ pub fn geometry_on_a_display(
     if on_any_display(geometry, displays) {
         return geometry;
     }
-    let width = geometry.width.min(primary.width);
-    let height = geometry.height.min(primary.height);
+    let (width, height) = shrunk_to_fit(geometry, primary);
     WindowGeometry {
         x: primary.x + (primary.width - width) / 2.0,
         y: primary.y + (primary.height - height) / 2.0,
@@ -273,6 +272,23 @@ pub fn geometry_on_a_display(
         height,
         maximized: geometry.maximized,
     }
+}
+
+/// A remembered size, shrunk to what `display` can hold.
+///
+/// The window keeps the size its reader chose wherever it can (#583, and
+/// #620 requirement 5 for a popped-out pane): only a window larger than
+/// the display it is being moved onto is made smaller, and then only as
+/// far as it has to be. One function because both windows answer it the
+/// same way and a pane window answered it differently once - it was reset
+/// to the size a freshly popped-out pane gets, losing the remembered one
+/// (the review of #660).
+#[must_use]
+pub fn shrunk_to_fit(geometry: WindowGeometry, display: DisplayBounds) -> (f32, f32) {
+    (
+        geometry.width.min(display.width),
+        geometry.height.min(display.height),
+    )
 }
 
 /// Which of the three panes were popped out of the main window when the
@@ -835,6 +851,41 @@ mod tests {
     /// what a popped-out pane's own window checks, before falling back to
     /// a place beside the main window rather than [`geometry_on_a_display`]'s
     /// centred-on-primary (#620 requirement 5).
+    #[test]
+    fn a_remembered_size_is_kept_unless_the_display_cannot_hold_it() {
+        let display = DisplayBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1280.0,
+            height: 800.0,
+        };
+        let fits = WindowGeometry {
+            x: -4000.0,
+            y: -4000.0,
+            width: 900.0,
+            height: 700.0,
+            maximized: false,
+        };
+
+        assert_eq!(
+            super::shrunk_to_fit(fits, display),
+            (900.0, 700.0),
+            "a size the display can hold is the reader's own, wherever the window has to move"
+        );
+        assert_eq!(
+            super::shrunk_to_fit(
+                WindowGeometry {
+                    width: 3000.0,
+                    height: 2000.0,
+                    ..fits
+                },
+                display
+            ),
+            (1280.0, 800.0),
+            "and one it cannot hold is shrunk only as far as it has to be"
+        );
+    }
+
     #[test]
     fn a_geometry_off_every_display_is_on_no_display() {
         let geometry = WindowGeometry {

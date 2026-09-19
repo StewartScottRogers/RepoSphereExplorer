@@ -909,7 +909,15 @@ fn refresh_pane_menus(windows: &Rc<RefCell<PaneWindows>>, app: &App) {
 fn place_beside_main(main: &MainWindow, ui: &slint::Window) {
     const DEFAULT_WIDTH: f32 = 480.0;
     const DEFAULT_HEIGHT: f32 = 600.0;
-    ui.set_size(slint::LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT));
+    place_beside_main_sized(main, ui, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+}
+
+/// [`place_beside_main`], at a size the caller chose: what a pane window
+/// whose remembered position is on no connected display is moved to, since
+/// #620 requirement 5 asks for it to keep its remembered size, shrunk to
+/// fit, rather than be reset to the size a freshly popped-out pane gets.
+fn place_beside_main_sized(main: &MainWindow, ui: &slint::Window, width: f32, height: f32) {
+    ui.set_size(slint::LogicalSize::new(width, height));
     if let Some(geometry) = normal_window_geometry(main) {
         ui.set_position(slint::LogicalPosition::new(
             geometry.x + geometry.width,
@@ -1013,9 +1021,14 @@ fn settle_pane_onto_a_display(
     main: &MainWindow,
     remembered: settings::WindowGeometry,
 ) -> Option<settings::WindowGeometry> {
-    let (displays, _primary) = connected_displays(ui.window())?;
+    let (displays, primary) = connected_displays(ui.window())?;
     if !settings::on_any_display(remembered, &displays) && !ui.window().is_maximized() {
-        place_beside_main(main, ui.window());
+        // Its own remembered size, shrunk to whatever the primary display
+        // can hold (#620 requirement 5) - the same shrink-to-fit the main
+        // window's `geometry_on_a_display` does, rather than the size a
+        // pane popped out live is given.
+        let (width, height) = settings::shrunk_to_fit(remembered, primary);
+        place_beside_main_sized(main, ui.window(), width, height);
     }
     normal_window_geometry(ui).or(Some(remembered))
 }
