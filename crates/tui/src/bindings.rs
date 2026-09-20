@@ -177,6 +177,9 @@ pub enum Action {
     /// Shows the Folders pane's selected folder in the platform's file
     /// manager (#674).
     FoldersShowInFileManager,
+    /// Opens the Contents pane cursor's repository's web page in the
+    /// reader's browser (#679).
+    ContentsOpenOnTheWeb,
     /// Opens the keyboard reference (#649).
     OpenKeyboardReference,
     /// Opens the command palette (#649).
@@ -832,6 +835,13 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Show in file manager",
         action: Action::FoldersShowInFileManager,
+    },
+    Binding {
+        owner: Owner::Contents,
+        code: KeyCode::Char('w'),
+        modifiers: KeyModifiers::NONE,
+        description: "Open on the web",
+        action: Action::ContentsOpenOnTheWeb,
     },
     Binding {
         owner: Owner::Global,

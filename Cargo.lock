@@ -10695,6 +10695,7 @@ dependencies = [
  "dirs",
  "icon",
  "interprocess",
+ "open",
  "plugin-ada",
  "plugin-ansible",
  "plugin-antlr",
