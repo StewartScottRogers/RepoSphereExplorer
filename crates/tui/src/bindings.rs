@@ -181,6 +181,9 @@ pub enum Action {
     OpenKeyboardReference,
     /// Opens the command palette (#649).
     OpenCommandPalette,
+    /// Re-reads the selected folder's listing, the tree beneath the root,
+    /// and the facts the File pane is showing (#675).
+    Refresh,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -836,6 +839,13 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::NONE,
         description: "Keyboard reference",
         action: Action::OpenKeyboardReference,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::F(5),
+        modifiers: KeyModifiers::NONE,
+        description: "Refresh the listing",
+        action: Action::Refresh,
     },
     Binding {
         owner: Owner::Global,

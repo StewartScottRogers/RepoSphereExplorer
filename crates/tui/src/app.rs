@@ -795,6 +795,14 @@ pub struct App {
     /// name, or the last path a paste lands, so the row it created is the
     /// one already under the cursor once it appears.
     pending_reselect: Option<String>,
+    /// The status line message [`App::apply_contents_result`] should show
+    /// once this reload lands, in place of the ambient status a plain
+    /// navigation leaves it to fall back to. Set by [`App::refresh`] (#675)
+    /// so a refresh finding nothing changed still says the listing was
+    /// re-read - the only sign, otherwise, that the key did anything at
+    /// all. A message rather than a `bool` naming this one case, since the
+    /// struct already carries its fourth (`clippy::struct_excessive_bools`).
+    pending_reload_status: Option<String>,
     /// The entries cut or copied to the clipboard (#646): their full paths
     /// at the moment it was set, and whether pasting should move them
     /// (`Cut`) or duplicate them (`Copy`).
@@ -943,6 +951,7 @@ impl App {
             pending_operation: None,
             reselect: None,
             pending_reselect: None,
+            pending_reload_status: None,
             clipboard: None,
             pending_open: None,
             pending_open_path: None,
@@ -1065,6 +1074,18 @@ impl App {
         self.pending_contents = Some((indices, spawn_request(request)));
         self.pending_contents_dir = Some(path.clone());
         self.status = Some(format!("loading {}...", path.display()));
+    }
+
+    /// Re-reads the selected folder's listing, the tree beneath the root,
+    /// and the facts the File pane is showing (#675) - the same reload
+    /// [`App::load_contents_for_selected`] already does for ordinary
+    /// navigation, with the cursor's own row remembered by name first so it
+    /// lands back where it was when the row still exists, the way
+    /// [`App::confirm_switcher`] remembers a "Go to Repository" match.
+    fn refresh(&mut self) {
+        self.reselect = self.selected_content_name().map(ToOwned::to_owned);
+        self.pending_reload_status = Some("listing re-read".to_owned());
+        self.load_contents_for_selected();
     }
 
     fn load_file_view(&mut self) {
@@ -2335,6 +2356,9 @@ impl App {
 
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
         self.status = None;
+        // Taken regardless of outcome, so a refresh that errors never
+        // leaves this set for some unrelated, later listing to show.
+        let reload_status = self.pending_reload_status.take();
         match result {
             Ok(Response::Directory { entries }) => {
                 if let Some(node) = self.root.node_at_mut(indices) {
@@ -2368,6 +2392,9 @@ impl App {
                 self.filter = ContentsFilter::default();
                 self.load_file_view();
                 self.ask_for_statuses(self.visible_content_range());
+                if let Some(message) = reload_status {
+                    self.status = Some(message);
+                }
             }
             Ok(Response::Error { message }) => self.status = Some(message),
             Ok(
@@ -2553,6 +2580,7 @@ impl App {
             Action::FoldersShowInFileManager => self.show_folder_in_file_manager(),
             Action::OpenKeyboardReference => self.begin_keyboard_reference(),
             Action::OpenCommandPalette => self.begin_command_palette(),
+            Action::Refresh => self.refresh(),
         }
     }
 
@@ -6407,6 +6435,29 @@ mod tests {
         );
 
         assert_eq!(app.contents_selected, 0);
+    }
+
+    #[test]
+    fn f5_rereads_the_listing_keeps_the_selection_and_says_so() {
+        let root = notional_root("f5-rereads-the-listing");
+        let mut app = app_showing(&root, &[("a", false), ("b", false), ("c", false)]);
+        app.focus = Focus::Contents;
+        app.handle_key(KeyCode::Down);
+        assert_eq!(app.contents_selected, 1);
+
+        app.handle_key(KeyCode::F(5));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("a", false), ("b", false), ("c", false)]),
+            }),
+        );
+
+        assert_eq!(
+            app.contents_selected, 1,
+            "the row the cursor was on is still selected, since it still exists"
+        );
+        assert_eq!(app.status_line(), "listing re-read");
     }
 
     // ---------------------------------------------------------------------
