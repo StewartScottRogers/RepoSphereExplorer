@@ -481,6 +481,25 @@ enum Mode {
         /// Which of the current matches is highlighted.
         selected: usize,
     },
+    /// The Certificates view (#621/#681), opened by Ctrl+T: every
+    /// certificate, certificate signing request and private key committed
+    /// under the active Repos Directory, from the same `FindCertificates`
+    /// request the graphical front end's own Certificates tool (#622)
+    /// asks, so the two front ends can never disagree about what was
+    /// found. Up and Down move `selected`; Enter expands or collapses the
+    /// private keys line's own file list; Escape closes it.
+    CertificatesView {
+        /// What the search has found so far, as the service last reported
+        /// it.
+        entries: Vec<protocol::CertificateFinding>,
+        /// Which row is highlighted - kept only to give the list something
+        /// to scroll around, the same as [`Mode::KeyboardReference`].
+        selected: usize,
+        /// Whether the private keys line's own file list is expanded - the
+        /// same setting the graphical front end's own
+        /// `certificates_private_keys_shown` toggles, not a second one.
+        private_keys_shown: bool,
+    },
 }
 
 /// What a real modal (#646) shows, drawn in a cleared box over the panes
@@ -838,6 +857,9 @@ pub struct App {
     /// roots view opens so it always shows what the service has now rather
     /// than what was true when this front end started.
     pending_repos_roots: Option<Receiver<io::Result<Response>>>,
+    /// An outstanding `FindCertificates` request (#621/#681), asked for
+    /// whenever the Certificates view opens.
+    pending_certificates: Option<Receiver<io::Result<Response>>>,
     /// The path the outstanding `Open` request named, so the status line
     /// can say what was handed over once it answers.
     pending_open_path: Option<PathBuf>,
@@ -975,6 +997,7 @@ impl App {
             pending_find: None,
             pending_all_repositories: None,
             pending_repos_roots: None,
+            pending_certificates: None,
             sort_key: SortKey::Name,
             sort_ascending: true,
             row_statuses: HashMap::new(),
@@ -1904,6 +1927,60 @@ impl App {
         self.browse(target);
     }
 
+    /// Opens the Certificates view (#621/#681). Refused while another
+    /// prompt or the editor already has the keyboard.
+    fn begin_certificates_view(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing.is_some() {
+            return;
+        }
+        self.mode = Mode::CertificatesView {
+            entries: Vec::new(),
+            selected: 0,
+            private_keys_shown: false,
+        };
+        self.status = Some("Looking for certificates...".to_owned());
+        self.pending_certificates = Some(spawn_request(Request::FindCertificates));
+    }
+
+    /// Applies the service's answer to `Request::FindCertificates`.
+    fn apply_certificates_result(&mut self, result: io::Result<Response>) {
+        let Mode::CertificatesView { entries, .. } = &mut self.mode else {
+            return;
+        };
+        match result {
+            Ok(Response::Certificates { certificates, .. }) => {
+                *entries = certificates;
+                self.status = None;
+            }
+            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(_) => self.status = Some("expected certificates".to_owned()),
+            Err(err) => self.status = Some(err.to_string()),
+        }
+    }
+
+    /// One key while the Certificates view is showing.
+    fn handle_certificates_key(&mut self, code: KeyCode) {
+        let Mode::CertificatesView {
+            entries,
+            selected,
+            private_keys_shown,
+        } = &mut self.mode
+        else {
+            return;
+        };
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => *private_keys_shown = !*private_keys_shown,
+            KeyCode::Up => *selected = selected.saturating_sub(1),
+            KeyCode::Down => {
+                *selected = selected
+                    .saturating_add(1)
+                    .min(entries.len().saturating_sub(1));
+            }
+            _ => {}
+        }
+    }
+
     /// Asks the service for the working-tree status of each repository row
     /// in `range` that has not been asked about since the listing landed -
     /// one request per row, after the listing is already on screen: the
@@ -2308,6 +2385,12 @@ impl App {
             self.pending_repos_roots = None;
             self.apply_repos_roots_result(result);
         }
+        if let Some(rx) = &self.pending_certificates
+            && let Ok(result) = rx.try_recv()
+        {
+            self.pending_certificates = None;
+            self.apply_certificates_result(result);
+        }
         let mut still_pending = Vec::with_capacity(self.pending_statuses.len());
         let mut answered = Vec::new();
         for (name, rx) in self.pending_statuses.drain(..) {
@@ -2544,6 +2627,10 @@ impl App {
                 self.handle_palette_key(key.code);
                 return;
             }
+            Mode::CertificatesView { .. } => {
+                self.handle_certificates_key(key.code);
+                return;
+            }
             Mode::Normal => {}
         }
         if self.editing.is_some() {
@@ -2643,6 +2730,7 @@ impl App {
             Action::StartFind => self.begin_find(),
             Action::OpenAllRepositories => self.begin_all_repositories(),
             Action::OpenReposRoots => self.begin_repos_roots_view(),
+            Action::OpenCertificates => self.begin_certificates_view(),
             Action::ContentsOpenInEditor => self.open_selected_in_editor(),
             Action::FoldersOpenInEditor => self.open_folder_in_editor(),
             Action::ContentsCopyPath => self.copy_selected_path(),
@@ -3138,7 +3226,8 @@ impl App {
             | Mode::AllRepositoriesView { .. }
             | Mode::ReposRootsView { .. }
             | Mode::KeyboardReference { .. }
-            | Mode::CommandPalette { .. } => None,
+            | Mode::CommandPalette { .. }
+            | Mode::CertificatesView { .. } => None,
         }
     }
 
@@ -3214,7 +3303,8 @@ impl App {
             | Mode::AllRepositoriesView { .. }
             | Mode::ReposRootsView { .. }
             | Mode::KeyboardReference { .. }
-            | Mode::CommandPalette { .. } => None,
+            | Mode::CommandPalette { .. }
+            | Mode::CertificatesView { .. } => None,
             Mode::ConfirmDelete { paths, name } => Some(Modal {
                 title: format!("Delete {name}?"),
                 subject: paths
@@ -3368,6 +3458,7 @@ impl App {
             Mode::CommandPalette { query, selected } => {
                 Some(self.command_palette_overlay(query, *selected))
             }
+            Mode::CertificatesView { .. } => self.certificates_overlay(),
             Mode::Normal
             | Mode::ConfirmDelete { .. }
             | Mode::RenameInput { .. }
@@ -3395,6 +3486,52 @@ impl App {
             selected,
             keys: "Enter/Esc",
         }
+    }
+
+    /// [`Mode::CertificatesView`]'s own [`ListOverlay`] (#621/#681), split
+    /// out of [`App::list_overlay`] to keep it under clippy's line count
+    /// (#650): a row per certificate (or unreadable block/file), the
+    /// private keys line's count, and - once expanded - each private key's
+    /// own file, the same setting the graphical front end's Certificates
+    /// tool toggles rather than a second one.
+    fn certificates_overlay(&self) -> Option<ListOverlay> {
+        let Mode::CertificatesView {
+            entries,
+            selected,
+            private_keys_shown,
+        } = &self.mode
+        else {
+            return None;
+        };
+        let now = i64::try_from(now_epoch_seconds()).unwrap_or(i64::MAX);
+        let mut rows = certificate_rows_text(entries, now);
+        let found = rows.len();
+        let private_key_files = certificate_private_key_files(entries);
+        if !private_key_files.is_empty() {
+            let count = private_key_files.len();
+            rows.push(format!(
+                "{count} private key{} committed{}",
+                if count == 1 { "" } else { "s" },
+                if *private_keys_shown {
+                    ":"
+                } else {
+                    " (Enter expands)"
+                }
+            ));
+            if *private_keys_shown {
+                for file in private_key_files {
+                    rows.push(format!("  {file}"));
+                }
+            }
+        }
+        Some(ListOverlay {
+            title: "Certificates".to_owned(),
+            query: None,
+            note: Some(format!("{found} found")),
+            rows,
+            selected: *selected,
+            keys: "Esc, Enter toggles private keys",
+        })
     }
 
     /// The text shown on the status line: the current status or the
@@ -4067,6 +4204,120 @@ fn repos_root_row_text(root: &ReposRoot) -> String {
     } else {
         root.path.clone()
     }
+}
+
+/// `status`, in the words a Certificates row shows (#621/#681) - the same
+/// wording the graphical front end's own `certificate_status_text`
+/// (`crates/gui/src/app.rs`) uses, so a reader sees the same thing
+/// whichever front end they are looking at. This is the mark that tells an
+/// expired or expiring certificate apart from the rest at a glance without
+/// relying on colour alone (D16): the word itself, not a colour, since the
+/// list overlay these rows draw into (`render_list_overlay`) draws every
+/// row in the same style regardless.
+fn certificate_status_text(
+    status: plugin_certificate::CertificateStatus,
+    not_after: i64,
+    now: i64,
+) -> String {
+    match status {
+        plugin_certificate::CertificateStatus::Expired => "Expired".to_owned(),
+        plugin_certificate::CertificateStatus::Expiring => {
+            let seconds_left = (not_after - now).max(0);
+            let days = (seconds_left + 86_399) / 86_400;
+            format!("Expires in {days} day{}", if days == 1 { "" } else { "s" })
+        }
+        plugin_certificate::CertificateStatus::NotYetValid => "Not yet valid".to_owned(),
+        plugin_certificate::CertificateStatus::Valid => "Valid".to_owned(),
+    }
+}
+
+/// One Certificates row's own text (#621/#681): the status word first, then
+/// the subject (empty for an unreadable block or file), the file, and the
+/// repository holding it - `-` when none does, the same convention
+/// [`found_row_text`] uses.
+fn certificate_row_text(
+    status: &str,
+    subject: &str,
+    path: &str,
+    repository: Option<&str>,
+) -> String {
+    let repository = match repository {
+        Some("") => "Repos Directory".to_owned(),
+        Some(name) => name.to_owned(),
+        None => "-".to_owned(),
+    };
+    if subject.is_empty() {
+        format!("{status}  {path}  ({repository})")
+    } else {
+        format!("{status}  {subject}  {path}  ({repository})")
+    }
+}
+
+/// Every row the Certificates view shows (#621/#681): one per parsed
+/// certificate, plus one for a block or a whole file that did not decode -
+/// the same flattening `crates/gui/src/app.rs`'s own `App::certificate_rows`
+/// does, without its sort, since nothing here asks the reader to reorder
+/// them.
+fn certificate_rows_text(entries: &[protocol::CertificateFinding], now: i64) -> Vec<String> {
+    let mut rows = Vec::new();
+    for finding in entries {
+        let repository = finding.repository.as_deref();
+        match &finding.kind {
+            protocol::CertificateFindingKind::Unreadable => {
+                rows.push(certificate_row_text(
+                    "Unreadable",
+                    "",
+                    &finding.path,
+                    repository,
+                ));
+            }
+            protocol::CertificateFindingKind::Blocks(blocks) => {
+                for block in blocks {
+                    match block {
+                        protocol::CertificateBlock::Certificate(summary) => {
+                            let status = plugin_certificate::certificate_status(
+                                summary.not_before,
+                                summary.not_after,
+                                now,
+                            );
+                            rows.push(certificate_row_text(
+                                &certificate_status_text(status, summary.not_after, now),
+                                &summary.subject,
+                                &finding.path,
+                                repository,
+                            ));
+                        }
+                        protocol::CertificateBlock::Unreadable => {
+                            rows.push(certificate_row_text(
+                                "Unreadable",
+                                "",
+                                &finding.path,
+                                repository,
+                            ));
+                        }
+                        protocol::CertificateBlock::PrivateKey
+                        | protocol::CertificateBlock::CertificateRequest => {}
+                    }
+                }
+            }
+        }
+    }
+    rows
+}
+
+/// Every file a private key was found in, in the order the search met them
+/// (#621/#681) - what the private keys line lists once expanded, the same
+/// file list `crates/gui/src/app.rs`'s own
+/// `App::certificates_private_key_files` shows.
+fn certificate_private_key_files(entries: &[protocol::CertificateFinding]) -> Vec<&str> {
+    entries
+        .iter()
+        .filter(|finding| {
+            matches!(&finding.kind, protocol::CertificateFindingKind::Blocks(blocks)
+                if blocks.iter().any(|block| matches!(block, protocol::CertificateBlock::PrivateKey)))
+        })
+        .map(|finding| finding.path.as_str())
+        .collect()
 }
 
 /// Draws the open switcher, Find, or All Repositories overlay (#647), if
@@ -5162,7 +5413,8 @@ mod tests {
     use super::{
         App, CHANGED_MARKER, Document, Editing, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER,
         REPOSITORY_MARKER, RowStatus, STALE_FETCH_MARKER, bindings, breadcrumb_line,
-        folder_repository_marker, render_app, render_contents, render_file_editing, settings,
+        folder_repository_marker, now_epoch_seconds, render_app, render_contents,
+        render_file_editing, settings,
     };
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
@@ -5820,6 +6072,7 @@ mod tests {
             Mode::ReposRootsView { .. } => "repos-roots",
             Mode::KeyboardReference { .. } => "keyboard-reference",
             Mode::CommandPalette { .. } => "command-palette",
+            Mode::CertificatesView { .. } => "certificates",
         }
     }
 
@@ -5861,7 +6114,8 @@ mod tests {
             | Mode::AllRepositoriesView { .. }
             | Mode::ReposRootsView { .. }
             | Mode::KeyboardReference { .. }
-            | Mode::CommandPalette { .. } => None,
+            | Mode::CommandPalette { .. }
+            | Mode::CertificatesView { .. } => None,
         }
     }
 
@@ -9904,5 +10158,168 @@ mod tests {
         app.open_selected_on_the_web();
 
         assert_eq!(app.status_line(), "this folder has no web page to open");
+    }
+
+    // ---- #621/#681: the Certificates view ----
+
+    fn certificate_finding(
+        path: &str,
+        repository: Option<&str>,
+        kind: protocol::CertificateFindingKind,
+    ) -> protocol::CertificateFinding {
+        protocol::CertificateFinding {
+            path: path.to_owned(),
+            repository: repository.map(str::to_owned),
+            kind,
+        }
+    }
+
+    fn certificate_summary(
+        subject: &str,
+        not_before: i64,
+        not_after: i64,
+    ) -> protocol::CertificateSummary {
+        protocol::CertificateSummary {
+            subject: subject.to_owned(),
+            issuer: subject.to_owned(),
+            serial: "01".to_owned(),
+            not_before,
+            not_after,
+            self_signed: true,
+        }
+    }
+
+    #[test]
+    fn the_certificates_view_tells_an_expired_certificate_from_an_expiring_one_even_with_colour_off()
+     {
+        let root = notional_root("certificates-expired-expiring");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+        app.colour_enabled = false;
+        let now = i64::try_from(now_epoch_seconds()).unwrap();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert!(
+            app.pending_certificates.is_some(),
+            "opening the view should ask the service"
+        );
+
+        app.apply_certificates_result(Ok(Response::Certificates {
+            certificates: vec![
+                certificate_finding(
+                    "expired.pem",
+                    Some("repo-one"),
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "expired",
+                            now - 2_000,
+                            now - 1_000,
+                        )),
+                    ]),
+                ),
+                certificate_finding(
+                    "expiring.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "expiring",
+                            now - 1_000,
+                            now + 5 * 86_400,
+                        )),
+                    ]),
+                ),
+                certificate_finding(
+                    "valid.pem",
+                    None,
+                    protocol::CertificateFindingKind::Blocks(vec![
+                        protocol::CertificateBlock::Certificate(certificate_summary(
+                            "valid",
+                            now - 1_000,
+                            now + 400 * 86_400,
+                        )),
+                    ]),
+                ),
+            ],
+            complete: true,
+        }));
+
+        let backend = TestBackend::new(80, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_app(frame, frame.area(), &app))
+            .unwrap();
+        let contents: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+
+        assert!(
+            contents.contains("Expired"),
+            "the expired certificate's own mark should be drawn: {contents}"
+        );
+        assert!(
+            contents.contains("Expires in 5 days"),
+            "the expiring certificate's own mark should be drawn, distinct from \"Expired\": {contents}"
+        );
+        assert!(
+            contents.contains("Valid"),
+            "and a certificate that is neither should say so too: {contents}"
+        );
+    }
+
+    #[test]
+    fn the_private_keys_line_toggles_what_is_listed_and_escape_returns() {
+        let root = notional_root("certificates-private-keys");
+        let mut app = app_showing(&root, &[("repo-one", true)]);
+        let before = app.contents_selected;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        app.apply_certificates_result(Ok(Response::Certificates {
+            certificates: vec![certificate_finding(
+                "id_rsa",
+                Some("repo-one"),
+                protocol::CertificateFindingKind::Blocks(vec![
+                    protocol::CertificateBlock::PrivateKey,
+                ]),
+            )],
+            complete: true,
+        }));
+
+        let overlay = app.list_overlay().expect("the view is open");
+        assert!(
+            !overlay.rows.iter().any(|row| row.contains("id_rsa")),
+            "the private key's own file is not listed until expanded: {:?}",
+            overlay.rows
+        );
+        assert!(
+            overlay.rows.iter().any(|row| row.contains("private key")),
+            "the count is shown either way: {:?}",
+            overlay.rows
+        );
+
+        app.handle_key(KeyCode::Enter);
+        let overlay = app.list_overlay().expect("the view is still open");
+        assert!(
+            overlay.rows.iter().any(|row| row.contains("id_rsa")),
+            "Enter expands the private keys line to name its file: {:?}",
+            overlay.rows
+        );
+
+        app.handle_key(KeyCode::Enter);
+        let overlay = app.list_overlay().expect("the view is still open");
+        assert!(
+            !overlay.rows.iter().any(|row| row.contains("id_rsa")),
+            "Enter again collapses it: {:?}",
+            overlay.rows
+        );
+
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(
+            app.contents_selected, before,
+            "leaving the view should touch nothing else"
+        );
     }
 }
