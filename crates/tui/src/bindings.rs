@@ -159,6 +159,8 @@ pub enum Action {
     OpenAllRepositories,
     /// Opens the Repos Directory roots view (#648).
     OpenReposRoots,
+    /// Opens the Certificates view (#621/#681).
+    OpenCertificates,
     /// Opens the Contents pane cursor's folder in an editor (#674).
     ContentsOpenInEditor,
     /// Opens the Folders pane's selected folder in an editor (#674).
@@ -779,6 +781,13 @@ pub const BINDINGS: &[Binding] = &[
         modifiers: KeyModifiers::CONTROL,
         description: "Repos Directory",
         action: Action::OpenReposRoots,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('t'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Certificates",
+        action: Action::OpenCertificates,
     },
     Binding {
         owner: Owner::Contents,

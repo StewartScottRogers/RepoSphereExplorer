@@ -227,6 +227,9 @@ fn every_global_binding_reaches_the_action_it_names() {
             Action::OpenCommandPalette => {
                 assert_opens_overlay(&mut terminal, &mut app, binding, "Command Palette");
             }
+            Action::OpenCertificates => {
+                assert_opens_overlay(&mut terminal, &mut app, binding, "Certificates");
+            }
             Action::Refresh => assert_refresh(&mut terminal, &mut app, binding, &root),
             other => panic!("no assertion written for the global action {other:?}"),
         }
