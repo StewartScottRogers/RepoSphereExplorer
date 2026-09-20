@@ -4056,6 +4056,25 @@ fn render_pane(frame: &mut Frame<'_>, area: Rect, app: &App, pane: Focus) {
     }
 }
 
+/// Drawn in the Folders tree beside a folder that is itself a source
+/// control working copy, so it is told apart from a plain folder even with
+/// colour off (D16) - a glyph, not colour alone, the same rule the Contents
+/// pane's own marks already follow (#574, #640).
+const REPOSITORY_MARKER: &str = "R";
+
+/// The Folders tree's own repository mark for one row: [`REPOSITORY_MARKER`]
+/// for a working copy, empty for a plain folder, or [`NOT_KNOWN_YET_MARKER`]
+/// when the row's own node cannot be resolved - the same marker the
+/// Contents pane draws while a row's own facts have not come back yet
+/// (#641), so the two panes read alike if either ever loses its footing.
+fn folder_repository_marker(node: Option<&FolderNode>) -> &'static str {
+    match node {
+        None => NOT_KNOWN_YET_MARKER,
+        Some(node) if node.is_repository => REPOSITORY_MARKER,
+        Some(_) => "",
+    }
+}
+
 fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let rows = app.root.flatten();
     let items: Vec<ListItem<'_>> = rows
@@ -4072,7 +4091,19 @@ fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     '>'
                 }
             });
-            ListItem::new(format!("{}{marker} {name}/", "  ".repeat(*depth)))
+            let repository_marker = folder_repository_marker(node);
+            let prefix = format!("{}{marker}", "  ".repeat(*depth));
+            let mut spans = vec![Span::raw(prefix)];
+            if !repository_marker.is_empty() {
+                let style = if app.colour_enabled {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(repository_marker, style));
+            }
+            spans.push(Span::raw(format!(" {name}/")));
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -4989,8 +5020,8 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 mod tests {
     use super::{
         App, CHANGED_MARKER, Document, Editing, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER,
-        RowStatus, STALE_FETCH_MARKER, bindings, breadcrumb_line, render_app, render_contents,
-        render_file_editing, settings,
+        REPOSITORY_MARKER, RowStatus, STALE_FETCH_MARKER, bindings, breadcrumb_line,
+        folder_repository_marker, render_app, render_contents, render_file_editing, settings,
     };
     use protocol::{DirectoryEntry, ReposRoot, Response};
     use ratatui::Terminal;
@@ -5032,6 +5063,118 @@ mod tests {
         assert_eq!(rows[1], (1, vec![0]));
         assert_eq!(rows[2], (2, vec![0, 0]));
         assert_eq!(rows[3], (1, vec![1]));
+    }
+
+    /// A checkout for the Folders tree tests below, alongside `entries`'
+    /// own plain folders.
+    fn checkout_entry(name: &str) -> DirectoryEntry {
+        DirectoryEntry {
+            name: name.to_owned(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+            repository: Some(protocol::RepositoryInfo {
+                provider: Some("github.com".to_owned()),
+                branch: Some("main".to_owned()),
+                remote: Some("https://github.com/owner/repo.git".to_owned()),
+                kind: protocol::RepositoryKind::Clone,
+                last_activity: None,
+                last_fetch: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn folders_tree_marks_a_checkout_but_not_a_plain_folder() {
+        let mut app = App::new("/root".into());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![
+                    checkout_entry("checkout"),
+                    entries(&[("plain", true)])[0].clone(),
+                ],
+            }),
+        );
+
+        let rows = drawn_rows(60, 20, &app);
+        let checkout_row = rows
+            .iter()
+            .find(|row| row.contains("checkout"))
+            .expect("the checkout should be drawn");
+        let plain_row = rows
+            .iter()
+            .find(|row| row.contains("plain"))
+            .expect("the plain folder should be drawn");
+        assert!(
+            checkout_row.contains(REPOSITORY_MARKER),
+            "a checkout should carry the repository mark: {checkout_row}"
+        );
+        assert!(
+            !plain_row.contains(REPOSITORY_MARKER),
+            "a plain folder should not: {plain_row}"
+        );
+    }
+
+    #[test]
+    fn folders_tree_repository_marker_survives_with_colour_off() {
+        let mut app = App::new("/root".into());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![checkout_entry("checkout")],
+            }),
+        );
+
+        app.colour_enabled = true;
+        let coloured = drawn(60, 20, &app);
+        app.colour_enabled = false;
+        let plain = drawn(60, 20, &app);
+
+        assert!(coloured.contains(REPOSITORY_MARKER));
+        assert!(
+            plain.contains(REPOSITORY_MARKER),
+            "the mark should not depend on colour being on"
+        );
+    }
+
+    #[test]
+    fn folders_tree_never_marks_a_folder_whose_children_have_not_been_fetched() {
+        let mut root = FolderNode::root("/root".into());
+        root.set_children_from(&[checkout_entry("checkout")]);
+        root.children.as_mut().unwrap()[0].expanded = true;
+        // "checkout" has never itself been listed, so nothing about what it
+        // holds is known yet - and nothing is drawn for it, the same rule
+        // that keeps the Contents pane from asking about a row that has not
+        // scrolled into view (#641).
+        let rows = root.flatten();
+        assert_eq!(
+            rows.len(),
+            2,
+            "only the root and \"checkout\" itself, no unfetched grandchildren"
+        );
+    }
+
+    #[test]
+    fn folder_repository_marker_reads_a_node_directly() {
+        let mut root = FolderNode::root("/root".into());
+        root.set_children_from(&[
+            checkout_entry("checkout"),
+            entries(&[("plain", true)])[0].clone(),
+        ]);
+        let children = root.children.as_ref().unwrap();
+
+        assert_eq!(
+            folder_repository_marker(Some(&children[0])),
+            REPOSITORY_MARKER
+        );
+        assert_eq!(folder_repository_marker(Some(&children[1])), "");
+        assert_eq!(
+            folder_repository_marker(None),
+            NOT_KNOWN_YET_MARKER,
+            "a row whose own node cannot be resolved reads as not known yet, \
+             the same as the Contents pane"
+        );
     }
 
     #[test]
