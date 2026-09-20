@@ -11,7 +11,7 @@ mod common;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 use tui::Events;
@@ -227,6 +227,7 @@ fn every_global_binding_reaches_the_action_it_names() {
             Action::OpenCommandPalette => {
                 assert_opens_overlay(&mut terminal, &mut app, binding, "Command Palette");
             }
+            Action::Refresh => assert_refresh(&mut terminal, &mut app, binding, &root),
             other => panic!("no assertion written for the global action {other:?}"),
         }
     }
@@ -263,6 +264,85 @@ fn assert_start_undo(terminal: &mut Terminal<TestBackend>, app: &mut App, bindin
     assert!(
         !shown.contains("temp"),
         "{} should have undone the folder it just created: {shown:?}",
+        binding.description
+    );
+}
+
+/// [`Action::Refresh`]'s own assertion (#675), split out of
+/// `every_global_binding_reaches_the_action_it_names` to keep it under
+/// clippy's line count (#650). Presses the binding once with nothing on
+/// disk yet, so the pane has a repository row to select in the first
+/// place, then again after a sibling file appears and the repository's
+/// branch changes underneath the running front end - asserting the new
+/// file is drawn, the branch shown is the new one rather than the one
+/// first read, the row selected before the second press is still
+/// selected, and the status line says the listing was re-read.
+fn assert_refresh(
+    terminal: &mut Terminal<TestBackend>,
+    app: &mut App,
+    binding: &Binding,
+    root: &Path,
+) {
+    let repository = root.join("repo");
+    std::fs::create_dir_all(&repository).expect("a repository fixture directory");
+    let made = std::process::Command::new("git")
+        .args(["init", "--quiet", "--initial-branch", "main", "."])
+        .current_dir(&repository)
+        .status()
+        .expect("git should be on PATH");
+    assert!(made.success(), "git init should make the fixture");
+
+    press_binding(terminal, app, binding);
+    let shown = wait_for(terminal, app, "main");
+    assert!(
+        shown.contains("main"),
+        "setup: the repository's branch should be shown once its listing loads: {shown:?}"
+    );
+    assert_eq!(
+        app.selected_content_name(),
+        Some("repo"),
+        "setup: the only row should already be selected"
+    );
+
+    // Behind the running front end: a new sibling file appears, and the
+    // repository's checked-out branch changes - neither of which a stale
+    // listing, served from what the first press already fetched, could
+    // ever show.
+    std::fs::write(root.join("new-file.txt"), "new").expect("a new sibling file");
+    let switched = std::process::Command::new("git")
+        .args(["symbolic-ref", "HEAD", "refs/heads/other"])
+        .current_dir(&repository)
+        .status()
+        .expect("git should be on PATH");
+    assert!(
+        switched.success(),
+        "switching the unborn branch should succeed"
+    );
+
+    press_binding(terminal, app, binding);
+    // Waited for last, since the File pane's own facts land a tick or two
+    // after the listing itself does - by the time the new branch shows,
+    // the new file has already been drawn too.
+    let shown = wait_for(terminal, app, "other");
+    assert!(
+        shown.contains("new-file.txt"),
+        "{} should show a file written to disk since the last listing: {shown:?}",
+        binding.description
+    );
+    assert!(
+        shown.contains("other"),
+        "{} should re-read the repository's branch rather than reuse it: {shown:?}",
+        binding.description
+    );
+    assert_eq!(
+        app.selected_content_name(),
+        Some("repo"),
+        "{} should keep the row that was selected, since it still exists",
+        binding.description
+    );
+    assert!(
+        shown.contains("listing re-read"),
+        "{} should say the listing was re-read: {shown:?}",
         binding.description
     );
 }
