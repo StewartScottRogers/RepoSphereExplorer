@@ -84,6 +84,15 @@ impl<R: FnMut()> Drop for TerminalGuard<R> {
 /// What to print on standard error, and exit non-zero for, when standard
 /// output is not a terminal - GUIDANCE.md §2.2's "no terminal attached"
 /// case (D16), which would otherwise draw into a pipe or a redirected file.
+///
+/// `is_terminal` should come from `crossterm`'s own [`IsTty`](ratatui::crossterm::tty::IsTty)
+/// rather than `std::io::IsTerminal`: `crossterm` is what will actually
+/// take the terminal over - reading events, entering raw mode, drawing -
+/// so it is the one library whose opinion of "is this a terminal" this
+/// guard can't afford to disagree with. Asking a second, independently
+/// maintained implementation of the same question is exactly the shape
+/// CLAUDE.md rule 14 warns about: two halves that each answer correctly
+/// on their own can still drift apart at the seam between them.
 #[must_use]
 pub fn no_terminal_attached_message(is_terminal: bool) -> Option<&'static str> {
     if is_terminal {
