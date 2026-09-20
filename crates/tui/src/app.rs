@@ -2578,6 +2578,7 @@ impl App {
             Action::FoldersCopyRemoteAddress => self.copy_folder_remote_address(),
             Action::ContentsShowInFileManager => self.show_selected_in_file_manager(),
             Action::FoldersShowInFileManager => self.show_folder_in_file_manager(),
+            Action::ContentsOpenOnTheWeb => self.open_selected_on_the_web(),
             Action::OpenKeyboardReference => self.begin_keyboard_reference(),
             Action::OpenCommandPalette => self.begin_command_palette(),
             Action::Refresh => self.refresh(),
@@ -2867,6 +2868,27 @@ impl App {
             .clone()
     }
 
+    /// Where the Contents pane cursor's row's web page is - the provider
+    /// and the address "Open on the web" (#679) hands to a browser - or
+    /// `None` for a plain folder, a file, or a checkout whose remote a
+    /// browser could not reach. Mirrors `gui::App::selected_web_page`.
+    fn selected_content_web_page(&self) -> Option<(String, String)> {
+        let repository = self
+            .contents
+            .get(self.contents_selected)?
+            .repository
+            .as_ref()?;
+        let address = plugin_directory::repository::web_address(
+            repository.remote.as_deref()?,
+            repository.branch.as_deref(),
+        )?;
+        let provider = repository
+            .provider
+            .clone()
+            .unwrap_or_else(|| "the web".to_owned());
+        Some((provider, address))
+    }
+
     /// The tree node the Folders pane's four "open in tools" actions
     /// (#674) act on: the selected row.
     fn selected_folder_node(&self) -> Option<&FolderNode> {
@@ -2947,6 +2969,20 @@ impl App {
     fn show_folder_in_file_manager(&mut self) {
         let path = self.selected_dir_path();
         self.show_in_file_manager(&path);
+    }
+
+    /// Opens the Contents pane cursor's repository's web page in the
+    /// reader's browser, at its branch (#679) - the same address
+    /// `gui::App::open_on_the_web` hands its own launcher. Says on the
+    /// status line when the row has no remote, or a remote a browser could
+    /// not reach, rather than opening nothing silently.
+    fn open_selected_on_the_web(&mut self) {
+        let Some((provider, address)) = self.selected_content_web_page() else {
+            self.status = Some("this folder has no web page to open".to_owned());
+            return;
+        };
+        let result = open::that_detached(&address);
+        self.report_launch(&format!("{provider} in a browser"), result);
     }
 
     /// Copies the Contents pane cursor's folder's full path (#674).
@@ -9559,5 +9595,81 @@ mod tests {
             app.status
         );
         assert_eq!(app.root.path, root);
+    }
+
+    // ---------------------------------------------------------------------
+    // #679: opening a repository's web page from the terminal.
+    // ---------------------------------------------------------------------
+
+    /// A Contents pane showing one row named `name`, whose repository - when
+    /// `remote` is given - carries it and `branch` untouched, for
+    /// `App::open_selected_on_the_web` to act on. A `None` `remote` leaves
+    /// the row a working copy with none, rather than not a working copy at
+    /// all - `a_plain_folder_has_no_web_page_to_open` covers that case
+    /// separately.
+    fn app_with_a_checkout_remote(remote: Option<&str>, branch: Option<&str>) -> App {
+        let mut app = App::new(notional_root("open-on-the-web"));
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: vec![DirectoryEntry {
+                    name: "name".to_owned(),
+                    is_dir: true,
+                    size: 0,
+                    modified: None,
+                    repository: Some(protocol::RepositoryInfo {
+                        provider: remote.map(|_| "github.com".to_owned()),
+                        branch: branch.map(str::to_owned),
+                        remote: remote.map(str::to_owned),
+                        kind: protocol::RepositoryKind::Clone,
+                        last_activity: None,
+                        last_fetch: None,
+                    }),
+                }],
+            }),
+        );
+        app.focus = Focus::Contents;
+        app
+    }
+
+    #[test]
+    fn opening_the_selected_repository_on_the_web_names_its_provider() {
+        let mut app =
+            app_with_a_checkout_remote(Some("git@github.com:owner/name.git"), Some("main"));
+        assert_eq!(
+            app.selected_content_web_page(),
+            Some((
+                "github.com".to_owned(),
+                "https://github.com/owner/name/tree/main".to_owned()
+            )),
+            "the branch reaches the address the same way it does in the graphical front end"
+        );
+
+        app.open_selected_on_the_web();
+
+        assert!(
+            app.status_line().contains("github.com"),
+            "the status line should name the provider the remote carries: {:?}",
+            app.status_line()
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_no_remote_has_no_web_page_to_open() {
+        let mut app = app_with_a_checkout_remote(None, Some("main"));
+
+        app.open_selected_on_the_web();
+
+        assert_eq!(app.status_line(), "this folder has no web page to open");
+    }
+
+    #[test]
+    fn a_plain_folder_has_no_web_page_to_open() {
+        let mut app = app_showing(&notional_root("open-on-the-web-plain"), &[("plain", true)]);
+        app.focus = Focus::Contents;
+
+        app.open_selected_on_the_web();
+
+        assert_eq!(app.status_line(), "this folder has no web page to open");
     }
 }

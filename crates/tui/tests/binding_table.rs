@@ -537,7 +537,8 @@ fn every_contents_binding_reaches_the_action_it_names() {
             Action::ContentsOpenInEditor
             | Action::ContentsCopyPath
             | Action::ContentsCopyRemoteAddress
-            | Action::ContentsShowInFileManager => {
+            | Action::ContentsShowInFileManager
+            | Action::ContentsOpenOnTheWeb => {
                 assert_open_in_tools(&mut terminal, &mut app, binding);
             }
             other => panic!("no assertion written for the contents action {other:?}"),
@@ -769,14 +770,16 @@ fn assert_open_or_clipboard(
 /// [`Action::ContentsCopyPath`], [`Action::FoldersCopyPath`],
 /// [`Action::ContentsCopyRemoteAddress`], [`Action::FoldersCopyRemoteAddress`],
 /// [`Action::ContentsShowInFileManager`] and
-/// [`Action::FoldersShowInFileManager`]'s own assertion (#674), shared
-/// between `every_contents_binding_reaches_the_action_it_names` and
+/// [`Action::FoldersShowInFileManager`]'s own assertion (#674), plus
+/// [`Action::ContentsOpenOnTheWeb`]'s (#679), shared between
+/// `every_contents_binding_reaches_the_action_it_names` and
 /// `every_folders_binding_reaches_the_action_it_names`: a terminal reader
 /// gets no window appearing to confirm any of these worked, so the status
 /// line is the only place to check. The row each fixture starts on - a
 /// plain folder, not a working copy - is never a working copy with a
 /// remote, which is exactly what proves "Copy remote address" reports the
-/// no-remote case rather than silently doing nothing.
+/// no-remote case, and "Open on the web" the no-web-page one, rather than
+/// silently doing nothing.
 fn assert_open_in_tools(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &Binding) {
     match binding.action {
         Action::ContentsOpenInEditor | Action::FoldersOpenInEditor => {
@@ -808,6 +811,15 @@ fn assert_open_in_tools(terminal: &mut Terminal<TestBackend>, app: &mut App, bin
             assert!(
                 shown.contains("this folder has no remote address"),
                 "{} on a plain folder should say so rather than copying nothing \
+                 silently: {shown:?}",
+                binding.description
+            );
+        }
+        Action::ContentsOpenOnTheWeb => {
+            let shown = press_binding(terminal, app, binding);
+            assert!(
+                shown.contains("this folder has no web page to open"),
+                "{} on a plain folder should say so rather than opening nothing \
                  silently: {shown:?}",
                 binding.description
             );

@@ -18,6 +18,9 @@ path = "src/main.rs"
 copypasta = "0.10"
 dirs = "6"
 interprocess = "2.4"
+# Opens a repository's web page in the reader's browser, for "Open on the
+# web" (#679) - the same crate the graphical front end already uses.
+open = "5"
 plugin-ansible = { path = "../plugins/ansible" }
 plugin-antlr = { path = "../plugins/antlr" }
 plugin-apacheconf = { path = "../plugins/apacheconf" }
