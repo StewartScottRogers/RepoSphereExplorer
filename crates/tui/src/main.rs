@@ -3,9 +3,9 @@
 
 use interprocess::local_socket::Stream;
 use interprocess::local_socket::traits::Stream as _;
+use ratatui::crossterm::tty::IsTty as _;
 use std::env;
 use std::io;
-use std::io::IsTerminal as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -21,7 +21,7 @@ fn main() -> ExitCode {
         return self_update();
     }
 
-    if let Some(message) = tui::no_terminal_attached_message(io::stdout().is_terminal()) {
+    if let Some(message) = tui::no_terminal_attached_message(io::stdout().is_tty()) {
         eprintln!("{message}");
         return ExitCode::FAILURE;
     }
