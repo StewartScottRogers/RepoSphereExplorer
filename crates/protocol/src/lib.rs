@@ -5,6 +5,7 @@ use interprocess::local_socket::{
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
+use std::path::Path;
 
 /// The protocol version this build speaks. Bump whenever [`Request`] or
 /// [`Response`] changes shape in a way that is not backward compatible.
@@ -464,6 +465,128 @@ pub struct ReposRoot {
     pub active: bool,
 }
 
+/// Why the Repos Directory's own root could not be listed (#592, #680):
+/// decided by looking at the path directly rather than at the service's
+/// answer, which only ever sends a stringified `io::Error` with no way to
+/// tell "does not exist" apart from "permission denied" without parsing
+/// English out of it. Shared by both front ends (#680) so a reader sees the
+/// same explanation whichever one they are looking at. Only ever computed
+/// for the Repos Directory's own root - a subfolder that fails to list
+/// keeps its front end's ordinary error handling instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootProblem {
+    /// The path, or the drive it names, does not exist.
+    NotThere {
+        /// The likely reason.
+        cause: NotThereCause,
+    },
+    /// The path exists but could not be read - permission denied, or any
+    /// other input/output error. Carries the service's own message, which
+    /// is the detail a front end shows.
+    NotReadable {
+        /// The service's own error message.
+        message: String,
+    },
+}
+
+impl RootProblem {
+    /// The title a front end draws in place of `root`'s listing: shared so
+    /// the two front ends never disagree about what a reader is told for
+    /// the same cause.
+    #[must_use]
+    pub fn title(&self, root: &Path) -> String {
+        let path = root.display();
+        match self {
+            Self::NotThere { .. } => format!("The Repos Directory {path} is not available"),
+            Self::NotReadable { .. } => format!("Repos Explorer cannot read {path}"),
+        }
+    }
+
+    /// The detail line under [`Self::title`]: the likely cause, or the read
+    /// error's own message.
+    #[must_use]
+    pub fn detail(&self) -> String {
+        match self {
+            Self::NotThere { cause } => cause.describe(),
+            Self::NotReadable { message } => message.clone(),
+        }
+    }
+}
+
+/// The likely reason a Repos Directory path is not there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotThereCause {
+    /// The path names a drive letter (`Z:\repos`) whose drive itself is not
+    /// connected - a mapped network drive before the VPN is up, or an
+    /// external disk that is unplugged. Carries the drive, e.g. `"Z:"`.
+    DriveNotConnected(String),
+    /// The drive, if any, is there; the folder itself is not.
+    FolderMissing,
+}
+
+impl NotThereCause {
+    /// The second line under "is not available": the likely cause.
+    fn describe(&self) -> String {
+        match self {
+            Self::DriveNotConnected(drive) => format!("Drive {drive} is not connected"),
+            Self::FolderMissing => "The folder does not exist".to_owned(),
+        }
+    }
+}
+
+/// Whether `root` names a Windows drive letter (`Z:\repos`, or a
+/// forward-slash spelling of the same thing), and if so, which one - `"Z:"`.
+/// Read from the path's text rather than [`std::path::Component::Prefix`],
+/// which only Windows' own path parser ever produces: this way the "drive
+/// not connected" case is exercisable by a unit test on any host, the Linux
+/// runner that gates every pull request included.
+fn drive_letter(root: &Path) -> Option<String> {
+    let text = root.to_string_lossy();
+    let mut chars = text.chars();
+    let letter = chars.next().filter(char::is_ascii_alphabetic)?;
+    (chars.next() == Some(':')).then(|| format!("{letter}:"))
+}
+
+/// Classifies why `root` is not there: whether it names a drive that is
+/// itself missing, or is an ordinary missing folder.
+fn not_there_cause(root: &Path) -> NotThereCause {
+    let Some(drive) = drive_letter(root) else {
+        return NotThereCause::FolderMissing;
+    };
+    let mut drive_root = drive.clone();
+    drive_root.push(std::path::MAIN_SEPARATOR);
+    if std::fs::metadata(drive_root).is_err() {
+        NotThereCause::DriveNotConnected(drive)
+    } else {
+        NotThereCause::FolderMissing
+    }
+}
+
+/// Classifies why the Repos Directory's root listing failed, from the path
+/// itself and the message the failed request already carried.
+#[must_use]
+pub fn classify_root_problem(root: &Path, message: &str) -> RootProblem {
+    match std::fs::metadata(root) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => RootProblem::NotThere {
+            cause: not_there_cause(root),
+        },
+        _ => RootProblem::NotReadable {
+            message: message.to_owned(),
+        },
+    }
+}
+
+/// The title a front end draws when the Repos Directory lists fine but
+/// holds nothing yet - shared with [`RootProblem::title`] so every case is
+/// worded the same way in both front ends.
+#[must_use]
+pub fn empty_root_title(root: &Path) -> String {
+    format!("{} has no repositories yet", root.display())
+}
+
+/// The detail line under [`empty_root_title`].
+pub const EMPTY_ROOT_DETAIL: &str = "Working copies cloned into it will appear here.";
+
 /// Resolves [`SOCKET_NAME`] to a platform-appropriate local socket name,
 /// preferring a namespaced name and falling back to a filesystem path where
 /// namespaced sockets are not supported.
@@ -592,11 +715,13 @@ pub fn write_message<T: Serialize, W: Write>(mut writer: W, value: &T) -> io::Re
 mod tests {
     use super::{
         CertificateBlock, CertificateFinding, CertificateFindingKind, CertificateSummary,
-        DirectoryEntry, MAX_MESSAGE_BYTES, NameMatch, PluginView, ReposRoot, RepositoryInfo,
-        RepositoryKind, Request, Response, VERSION, WorkingTreeSummary, read_message, socket_name,
+        DirectoryEntry, EMPTY_ROOT_DETAIL, MAX_MESSAGE_BYTES, NameMatch, NotThereCause, PluginView,
+        ReposRoot, RepositoryInfo, RepositoryKind, Request, Response, RootProblem, VERSION,
+        WorkingTreeSummary, classify_root_problem, empty_root_title, read_message, socket_name,
         write_message,
     };
     use std::io::{self, Read, Write};
+    use std::path::Path;
 
     #[test]
     fn refuses_a_length_prefix_larger_than_the_message_limit() {
@@ -1670,5 +1795,100 @@ mod tests {
         socket_name().expect("the platform has a socket name");
 
         assert!(!super::use_private_socket("too-late.sock".to_owned()));
+    }
+
+    // ---- #680: what the two front ends say about the Repos Directory ----
+
+    #[test]
+    fn classify_root_problem_reports_a_missing_folder() {
+        let missing = std::env::temp_dir().join("repos-explorer-680-missing-folder");
+        let _ = std::fs::remove_dir_all(&missing);
+
+        let problem = classify_root_problem(&missing, "not found");
+
+        assert_eq!(
+            problem,
+            RootProblem::NotThere {
+                cause: NotThereCause::FolderMissing
+            }
+        );
+        assert!(problem.title(&missing).contains("is not available"));
+        assert_eq!(problem.detail(), "The folder does not exist");
+    }
+
+    #[test]
+    fn classify_root_problem_reports_a_drive_that_is_not_connected() {
+        // The letter is found, never named. A named one - this project's
+        // own "Z:" example - is a real mapped drive on some of the
+        // machines that run these tests, where the classifier rightly
+        // answers "unreadable" and the test fails, while a runner without
+        // that drive stays green. Do not write a constant back.
+        //
+        // "Lacks" has to mean the letter's root answers `NotFound`, not
+        // merely that it cannot be read: a drive that is present but not
+        // ready, such as an empty optical drive, answers otherwise and is
+        // classified unreadable, which is correct and is not the case
+        // under test.
+        let absent = ('A'..='Z').find(|letter| {
+            let mut root = format!("{letter}:");
+            root.push(std::path::MAIN_SEPARATOR);
+            std::fs::metadata(root)
+                .err()
+                .is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound)
+        });
+        let Some(absent) = absent else {
+            // Every drive letter answers on this host, so there is no
+            // missing drive to tell apart from a missing folder, and
+            // nothing to assert.
+            return;
+        };
+
+        let drive = format!("{absent}:");
+        let mut root = drive.clone();
+        root.push(std::path::MAIN_SEPARATOR);
+        root.push_str("repos");
+
+        let problem = classify_root_problem(Path::new(&root), "not found");
+
+        assert_eq!(
+            problem,
+            RootProblem::NotThere {
+                cause: NotThereCause::DriveNotConnected(drive.clone())
+            }
+        );
+        assert_eq!(problem.detail(), format!("Drive {drive} is not connected"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_root_problem_reports_permission_denied() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = std::env::temp_dir().join("repos-explorer-680-permission-denied");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let err = std::fs::read_dir(&dir).unwrap_err();
+
+        let problem = classify_root_problem(&dir, &err.to_string());
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            problem,
+            RootProblem::NotReadable {
+                message: err.to_string(),
+            }
+        );
+        assert!(problem.title(&dir).contains("cannot read"));
+        assert_eq!(problem.detail(), err.to_string());
+    }
+
+    #[test]
+    fn the_empty_root_title_names_the_path() {
+        let root = Path::new("/home/ada/repos");
+
+        assert!(empty_root_title(root).contains("has no repositories yet"));
+        assert!(EMPTY_ROOT_DETAIL.contains("will appear here"));
     }
 }

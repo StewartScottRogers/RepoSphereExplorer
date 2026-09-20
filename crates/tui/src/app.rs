@@ -723,6 +723,16 @@ impl ContentsFilter {
     }
 }
 
+/// What [`App::root_message`] draws in the Contents pane in place of a
+/// listing (#680): a title, a detail line, and whether F5/Ctrl+D's retry and
+/// "choose a different Repos Directory" are worth mentioning - true for the
+/// two failure cases, false for a root that lists but is genuinely empty.
+struct RootMessage {
+    title: String,
+    detail: String,
+    retry: bool,
+}
+
 /// The three-pane explorer's state: a folders tree, the selected folder's
 /// contents, and the selected file's preview.
 pub struct App {
@@ -737,6 +747,12 @@ pub struct App {
     /// onto the tree cursor's path was addressing a file the reader could
     /// not see.
     contents_dir: PathBuf,
+    /// Why the Repos Directory's own root last failed to list (#680),
+    /// cleared the moment it lists successfully. `None` while it has never
+    /// failed, or last listed fine - shares the classifier and the message
+    /// text the graphical front end shows (`protocol::classify_root_problem`)
+    /// so a reader sees the same explanation whichever front end they use.
+    root_problem: Option<protocol::RootProblem>,
     contents_selected: usize,
     /// Every Contents row an operation acts on, beyond the cursor row
     /// alone (#676). Empty for an ordinary single selection - reading it
@@ -932,6 +948,7 @@ impl App {
             tree_selected: 0,
             contents: Vec::new(),
             contents_dir: PathBuf::new(),
+            root_problem: None,
             contents_selected: 0,
             selection: BTreeSet::new(),
             anchor: 0,
@@ -2356,6 +2373,9 @@ impl App {
 
     fn apply_contents_result(&mut self, indices: &[usize], result: io::Result<Response>) {
         self.status = None;
+        if indices.is_empty() {
+            self.root_problem = None;
+        }
         // Taken regardless of outcome, so a refresh that errors never
         // leaves this set for some unrelated, later listing to show.
         let reload_status = self.pending_reload_status.take();
@@ -2396,7 +2416,13 @@ impl App {
                     self.status = Some(message);
                 }
             }
-            Ok(Response::Error { message }) => self.status = Some(message),
+            Ok(Response::Error { message }) => {
+                if indices.is_empty() {
+                    self.fail_root_listing(&message);
+                } else {
+                    self.status = Some(message);
+                }
+            }
             Ok(
                 Response::FileView { .. }
                 | Response::Done
@@ -2408,8 +2434,55 @@ impl App {
             ) => {
                 self.status = Some("expected a directory listing".to_owned());
             }
-            Err(err) => self.status = Some(err.to_string()),
+            Err(err) => {
+                if indices.is_empty() {
+                    self.fail_root_listing(&err.to_string());
+                } else {
+                    self.status = Some(err.to_string());
+                }
+            }
         }
+    }
+
+    /// A listing for the Repos Directory's own root failed: classifies why
+    /// (#680) and clears what it was showing, so the Folders and File panes
+    /// agree with the Contents pane's message - mirrors the graphical front
+    /// end's own `fail_contents_listing`. A subfolder that fails to list
+    /// keeps today's status bar message instead, in [`Self::apply_contents_result`].
+    fn fail_root_listing(&mut self, message: &str) {
+        self.root.children = None;
+        self.contents.clear();
+        self.contents_selected = 0;
+        self.anchor = 0;
+        self.selection.clear();
+        self.load_file_view();
+        self.root_problem = Some(protocol::classify_root_problem(&self.root.path, message));
+    }
+
+    /// What the Contents pane shows instead of a table when the Repos
+    /// Directory's own root cannot be listed, or lists but holds nothing yet
+    /// (#680): `None` while a different folder is selected - a subfolder
+    /// that lists empty keeps its plain empty table - or while there is
+    /// something to show. Shares the graphical front end's own classifier
+    /// and message text (`protocol::classify_root_problem`,
+    /// `protocol::empty_root_title`) so a reader is told the same thing from
+    /// either front end.
+    fn root_message(&self) -> Option<RootMessage> {
+        if !self.contents.is_empty() || self.selected_dir_path() != self.root.path {
+            return None;
+        }
+        Some(match &self.root_problem {
+            Some(problem) => RootMessage {
+                title: problem.title(&self.root.path),
+                detail: problem.detail(),
+                retry: true,
+            },
+            None => RootMessage {
+                title: protocol::empty_root_title(&self.root.path),
+                detail: protocol::EMPTY_ROOT_DETAIL.to_owned(),
+                retry: false,
+            },
+        })
     }
 
     /// Handles one key press.
@@ -4474,7 +4547,8 @@ fn contents_row(
 /// (#578, #640): Name, then Branch, Type, Size and Modified as room and
 /// the listing's own contents allow, sorted by [`App::sort_key`], and
 /// narrowed to what the current filter shows (#650) - a message in place
-/// of the table when that filter matches nothing.
+/// of the table when that filter matches nothing, or when the Repos
+/// Directory's own root cannot be listed or is empty (#680).
 fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let block = pane_block("Contents", app.focus == Focus::Contents);
     if let Some(message) = app.filter_empty_message() {
@@ -4482,6 +4556,17 @@ fn render_contents(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Paragraph::new(message)
                 .wrap(Wrap { trim: false })
                 .block(block),
+            area,
+        );
+        return;
+    }
+    if let Some(message) = app.root_message() {
+        let mut text = format!("{}\n{}", message.title, message.detail);
+        if message.retry {
+            text.push_str("\n\nF5 to retry, Ctrl+D to choose a different Repos Directory");
+        }
+        frame.render_widget(
+            Paragraph::new(text).wrap(Wrap { trim: false }).block(block),
             area,
         );
         return;
@@ -5258,7 +5343,9 @@ mod tests {
     }
 
     #[test]
-    fn applying_an_error_sets_status_and_leaves_contents_empty() {
+    fn applying_an_error_for_the_root_leaves_contents_empty_and_classifies_it() {
+        // Not on the status line (#680): the root's own failure shows in
+        // the Contents pane's message instead, in `App::root_message`.
         let mut app = App::new(std::env::temp_dir());
         app.apply_contents_result(
             &[],
@@ -5268,7 +5355,10 @@ mod tests {
         );
 
         assert!(app.contents.is_empty());
-        assert_eq!(app.status.as_deref(), Some("boom"));
+        assert_eq!(app.status, None);
+        let message = app.root_message().expect("the root failed to list");
+        assert!(message.title.contains("cannot read"));
+        assert_eq!(message.detail, "boom");
     }
 
     #[test]
@@ -7219,11 +7309,14 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_connection_during_a_listing_is_reported_on_the_status_line() {
+    fn a_broken_connection_during_a_subfolder_listing_is_reported_on_the_status_line() {
         let root = notional_root("broken-listing");
         let mut app = app_showing(&root, &[]);
 
-        app.apply_contents_result(&[], Err(std::io::Error::other("connection reset")));
+        // A subfolder (a non-empty index path) keeps today's status bar
+        // message on error (#680, case 6) - only the root itself (`&[]`)
+        // switches to the Contents pane's own message.
+        app.apply_contents_result(&[0], Err(std::io::Error::other("connection reset")));
 
         assert_eq!(app.status.as_deref(), Some("connection reset"));
     }
@@ -7871,6 +7964,11 @@ mod tests {
                 ],
             }),
         );
+        // `App::new` already started a real request for the root that
+        // nothing here answers; left in place, the later `tick` below could
+        // pick up its (failed) reply instead of doing what the test means to
+        // exercise - the same reason `app_showing` clears this.
+        app.pending_contents = None;
 
         // The viewport only fits two rows: only the first two are asked.
         assert!(app.row_statuses.contains_key("a"));
@@ -8943,6 +9041,141 @@ mod tests {
             text.contains("No name matches `zzz`"),
             "should name the filter, not read as an empty Repos Directory: {text}"
         );
+    }
+
+    // ---- #680: what is wrong with the Repos Directory itself ----
+
+    #[test]
+    fn a_missing_repos_directory_draws_the_not_there_message() {
+        let root = notional_root("680-missing");
+        let mut app = App::new(root);
+        app.pending_contents = None;
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+
+        let text = drawn_contents(120, 8, &app).concat();
+        assert!(
+            text.contains("is not available"),
+            "the title should say the root is not available: {text}"
+        );
+        assert!(
+            text.contains("The folder does not exist"),
+            "and the detail should name the likely cause: {text}"
+        );
+        assert!(app.contents.is_empty());
+        assert!(app.root.children.is_none(), "the root, with no children");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_repos_directory_draws_the_cannot_read_message() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = notional_root("680-unreadable");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let err = std::fs::read_dir(&dir).unwrap_err();
+        let mut app = App::new(dir.clone());
+        app.pending_contents = None;
+
+        app.apply_contents_result(&[], Err(std::io::Error::other(err.to_string())));
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let text = drawn_contents(120, 8, &app).concat();
+        assert!(
+            text.contains("cannot read"),
+            "the title should say Repos Explorer cannot read it: {text}"
+        );
+    }
+
+    #[test]
+    fn an_empty_repos_directory_draws_the_empty_message() {
+        let dir = notional_root("680-empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new(dir.clone());
+        app.pending_contents = None;
+
+        app.apply_contents_result(&[], Ok(Response::Directory { entries: vec![] }));
+
+        let text = drawn_contents(120, 8, &app).concat();
+
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(
+            text.contains("has no repositories yet"),
+            "the title should say the root is empty, not unreadable: {text}"
+        );
+        assert!(
+            text.contains("will appear here"),
+            "and the detail should say what will show up once something is cloned in: {text}"
+        );
+    }
+
+    #[test]
+    fn f5_retries_a_missing_root_and_the_message_clears_once_it_lists() {
+        let root = notional_root("680-retry");
+        let mut app = App::new(root);
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+        assert!(app.root_message().is_some(), "the message is up first");
+
+        // F5 (Refresh) re-asks for the selected folder - the root itself,
+        // since nothing else was ever listed - the same key that retries
+        // in the graphical front end.
+        app.handle_key(KeyCode::F(5));
+        let Some((indices, rx)) = app.pending_contents.take() else {
+            panic!("F5 should have started a fresh listing of the root");
+        };
+        assert!(indices.is_empty(), "the root, not some other folder");
+        drop(rx);
+
+        app.apply_contents_result(
+            &indices,
+            Ok(Response::Directory {
+                entries: entries(&[("a-repo", true)]),
+            }),
+        );
+
+        assert!(
+            app.root_message().is_none(),
+            "the message should clear once the retry lists successfully"
+        );
+        assert_eq!(app.contents.len(), 1);
+    }
+
+    #[test]
+    fn the_terminal_front_ends_title_is_the_same_shared_classifiers_title_the_graphical_front_end_calls()
+     {
+        // Both front ends draw `protocol::RootProblem::title`/
+        // `protocol::empty_root_title` verbatim rather than composing their
+        // own wording (#680) - `crates/gui/src/app.rs`'s `contents_message`
+        // calls the very same methods. Checked here against the classifier
+        // directly, since a terminal front end test cannot reach into the
+        // graphical crate to call it a second time.
+        let root = notional_root("680-shared-title");
+        let mut app = App::new(root.clone());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Error {
+                message: "not found".to_owned(),
+            }),
+        );
+
+        let shared = protocol::classify_root_problem(&root, "not found");
+        let message = app.root_message().expect("the root failed to list");
+        assert_eq!(message.title, shared.title(&root));
+        assert_eq!(message.detail, shared.detail());
     }
 
     #[test]
