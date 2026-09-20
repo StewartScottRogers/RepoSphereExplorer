@@ -114,15 +114,15 @@ fn opening_at_the_repos_directory_draws_the_three_panes_and_the_status_line() {
     let mut terminal = Terminal::new(TestBackend::new(80, 12)).expect("a test terminal");
 
     // The very first draw still says "loading..."; the status line settles
-    // to its default help text once the root's own listing has answered.
-    let contents = wait_for(&mut terminal, &mut app, "Tab: switch pane");
+    // to its default help hint once the root's own listing has answered.
+    let contents = wait_for(&mut terminal, &mut app, "? for keys");
 
     assert!(contents.contains("Folders"), "{contents}");
     assert!(contents.contains("Contents"), "{contents}");
     assert!(contents.contains("File"), "{contents}");
     assert!(
-        contents.contains("Tab: switch pane"),
-        "the status line's help text should be drawn: {contents}"
+        contents.contains("? for keys"),
+        "the status line's help hint should be drawn: {contents}"
     );
 }
 
