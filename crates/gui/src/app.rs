@@ -13,7 +13,10 @@ use plugin_api::{
     Class, Fact, FolderPresentation, Graphic, Icon, PREVIEW_VIEW, PluginPresentation, Span,
     TEXT_VIEW, UNKNOWN_ICON,
 };
-use protocol::{DirectoryEntry, ReposRoot, RepositoryInfo, RepositoryKind, Request, Response};
+use protocol::{
+    DirectoryEntry, ReposRoot, RepositoryInfo, RepositoryKind, Request, Response, RootProblem,
+    classify_root_problem, empty_root_title,
+};
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -1576,7 +1579,8 @@ struct PinnedWindow {
     /// Set once the pinned path is confirmed gone (#619 requirement 6):
     /// deleted or renamed, from inside this application or outside it.
     /// Checked directly against the filesystem, the same reasoning
-    /// [`classify_root_problem`] gives for the Repos Directory's own root:
+    /// [`protocol::classify_root_problem`] gives for the Repos Directory's
+    /// own root:
     /// the service's error strings are not something a front end can
     /// reliably tell "gone" apart from "unreadable" by parsing.
     gone: bool,
@@ -2111,86 +2115,6 @@ struct Filter {
     /// bool on `App` itself (rule 3: `clippy::struct_excessive_bools`,
     /// the same reason `CertificatesView` keeps its own bools apart).
     link_focused: bool,
-}
-
-/// Why the Repos Directory itself could not be listed (#592): decided by
-/// looking at the path directly rather than at the service's answer,
-/// which only ever sends a stringified `io::Error` with no way to tell
-/// "does not exist" apart from "permission denied" without parsing
-/// English out of it. Only ever computed for the Repos Directory's own
-/// root - a subfolder that fails to list keeps today's status bar
-/// message (issue #592, case 6).
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RootProblem {
-    /// The path, or the drive it names, does not exist.
-    NotThere { cause: NotThereCause },
-    /// The path exists but could not be read - permission denied, or any
-    /// other input/output error. Carries the service's own message,
-    /// which is the detail the pane shows.
-    NotReadable { message: String },
-}
-
-/// The likely reason a Repos Directory path is not there.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum NotThereCause {
-    /// The path names a drive letter (`Z:\repos`) whose drive itself is
-    /// not connected - a mapped network drive before the VPN is up, or an
-    /// external disk that is unplugged. Carries the drive, e.g. `"Z:"`.
-    DriveNotConnected(String),
-    /// The drive, if any, is there; the folder itself is not.
-    FolderMissing,
-}
-
-impl NotThereCause {
-    /// The second line under "is not available": the likely cause.
-    fn describe(&self) -> String {
-        match self {
-            Self::DriveNotConnected(drive) => format!("Drive {drive} is not connected"),
-            Self::FolderMissing => "The folder does not exist".to_owned(),
-        }
-    }
-}
-
-/// Whether `root` names a Windows drive letter (`Z:\repos`, or a
-/// forward-slash spelling of the same thing), and if so, which one -
-/// `"Z:"`. Read from the path's text rather than
-/// [`std::path::Component::Prefix`], which only Windows' own path parser
-/// ever produces: this way the "drive not connected" case is exercisable
-/// by a unit test on any host, the Linux runner that gates every pull
-/// request included.
-fn drive_letter(root: &Path) -> Option<String> {
-    let text = root.to_string_lossy();
-    let mut chars = text.chars();
-    let letter = chars.next().filter(char::is_ascii_alphabetic)?;
-    (chars.next() == Some(':')).then(|| format!("{letter}:"))
-}
-
-/// Classifies why `root` is not there: whether it names a drive that is
-/// itself missing, or is an ordinary missing folder.
-fn not_there_cause(root: &Path) -> NotThereCause {
-    let Some(drive) = drive_letter(root) else {
-        return NotThereCause::FolderMissing;
-    };
-    let mut drive_root = drive.clone();
-    drive_root.push(std::path::MAIN_SEPARATOR);
-    if std::fs::metadata(drive_root).is_err() {
-        NotThereCause::DriveNotConnected(drive)
-    } else {
-        NotThereCause::FolderMissing
-    }
-}
-
-/// Classifies why the Repos Directory's root listing failed, from the
-/// path itself and the message the failed request already carried.
-fn classify_root_problem(root: &Path, message: &str) -> RootProblem {
-    match std::fs::metadata(root) {
-        Err(err) if err.kind() == io::ErrorKind::NotFound => RootProblem::NotThere {
-            cause: not_there_cause(root),
-        },
-        _ => RootProblem::NotReadable {
-            message: message.to_owned(),
-        },
-    }
 }
 
 /// What the File pane says when `path`, the row it just asked to view,
@@ -5686,18 +5610,17 @@ impl App {
         if self.selected_dir_path() != self.root.path {
             return None;
         }
-        let path = self.root.path.display();
         Some(match &self.root_problem {
-            Some(RootProblem::NotThere { cause }) => ContentsMessage::NotThere {
-                title: format!("The Repos Directory {path} is not available"),
-                cause: cause.describe(),
+            Some(problem @ RootProblem::NotThere { .. }) => ContentsMessage::NotThere {
+                title: problem.title(&self.root.path),
+                cause: problem.detail(),
             },
-            Some(RootProblem::NotReadable { message }) => ContentsMessage::NotReadable {
-                title: format!("Repos Explorer cannot read {path}"),
-                detail: message.clone(),
+            Some(problem @ RootProblem::NotReadable { .. }) => ContentsMessage::NotReadable {
+                title: problem.title(&self.root.path),
+                detail: problem.detail(),
             },
             None => ContentsMessage::Empty {
-                title: format!("{path} has no repositories yet"),
+                title: empty_root_title(&self.root.path),
             },
         })
     }
@@ -5739,9 +5662,7 @@ impl App {
         match self.contents_message() {
             Some(ContentsMessage::NotThere { cause, .. }) => cause,
             Some(ContentsMessage::NotReadable { detail, .. }) => detail,
-            Some(ContentsMessage::Empty { .. }) => {
-                "Working copies cloned into it will appear here.".to_owned()
-            }
+            Some(ContentsMessage::Empty { .. }) => protocol::EMPTY_ROOT_DETAIL.to_owned(),
             Some(ContentsMessage::FilterEmpty { .. }) | None => String::new(),
         }
     }
@@ -12272,85 +12193,12 @@ third",
         );
     }
 
-    // ---- #592: what is wrong with the Repos Directory itself ----
-
-    #[test]
-    fn classify_root_problem_reports_a_missing_folder() {
-        let missing = std::env::temp_dir().join("repos-explorer-592-missing-folder");
-        let _ = std::fs::remove_dir_all(&missing);
-
-        let problem = super::classify_root_problem(&missing, "not found");
-
-        assert_eq!(
-            problem,
-            super::RootProblem::NotThere {
-                cause: super::NotThereCause::FolderMissing
-            }
-        );
-    }
-
-    #[test]
-    fn classify_root_problem_reports_a_drive_that_is_not_connected() {
-        // The letter is found, never named. A named one - this project's
-        // own "Z:" example - is a real mapped drive on some of the
-        // machines that run these tests, where the classifier rightly
-        // answers "unreadable" and the test fails, while a runner without
-        // that drive stays green. Do not write a constant back.
-        //
-        // "Lacks" has to mean the letter's root answers `NotFound`, not
-        // merely that it cannot be read: a drive that is present but not
-        // ready, such as an empty optical drive, answers otherwise and is
-        // classified unreadable, which is correct and is not the case
-        // under test.
-        let absent = ('A'..='Z').find(|letter| {
-            let mut root = format!("{letter}:");
-            root.push(std::path::MAIN_SEPARATOR);
-            std::fs::metadata(root)
-                .err()
-                .is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound)
-        });
-        let Some(absent) = absent else {
-            // Every drive letter answers on this host, so there is no
-            // missing drive to tell apart from a missing folder, and
-            // nothing to assert.
-            return;
-        };
-
-        let drive = format!("{absent}:");
-        let mut root = drive.clone();
-        root.push(std::path::MAIN_SEPARATOR);
-        root.push_str("repos");
-
-        let problem = super::classify_root_problem(Path::new(&root), "not found");
-
-        assert_eq!(
-            problem,
-            super::RootProblem::NotThere {
-                cause: super::NotThereCause::DriveNotConnected(drive)
-            }
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn classify_root_problem_reports_permission_denied() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let dir = scratch("592-permission-denied");
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let err = std::fs::read_dir(&dir).unwrap_err();
-
-        let problem = super::classify_root_problem(&dir, &err.to_string());
-
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(
-            problem,
-            super::RootProblem::NotReadable {
-                message: err.to_string(),
-            }
-        );
-    }
+    // ---- #592/#680: what is wrong with the Repos Directory itself ----
+    //
+    // The classifier itself (`protocol::classify_root_problem`) has its own
+    // tests in the `protocol` crate, shared with the terminal front end
+    // (#680); the tests below exercise `App` wiring it into the pane's
+    // message.
 
     // ---- #625: a folder or file that has vanished since it was listed ----
 
