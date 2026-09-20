@@ -457,6 +457,30 @@ enum Mode {
         /// for the typed row itself.
         selected: usize,
     },
+    /// The keyboard reference (#649), opened by F1 or `?`: every
+    /// [`bindings::BINDINGS`] entry, grouped by the pane it answers in,
+    /// built by [`bindings::reference_lines`] so a binding cannot exist
+    /// without a line here. Up and Down move `selected`, which the real
+    /// [`ratatui::widgets::List`] this draws through uses to scroll the
+    /// sheet into view on a terminal too short to show it all at once.
+    /// Escape closes it.
+    KeyboardReference {
+        /// Which reference line is highlighted - kept only to give the
+        /// list something to scroll around.
+        selected: usize,
+    },
+    /// The command palette (#649), opened by Ctrl+K: typing narrows
+    /// [`bindings::palette_entries`] to those that currently apply
+    /// (`App::palette_entry_applies`) and whose description matches, ranked
+    /// by [`switcher::score`] the same way the "Go to Repository" switcher
+    /// ranks names. Enter runs the highlighted command; Escape leaves
+    /// everything as it was.
+    CommandPalette {
+        /// The text typed so far.
+        query: String,
+        /// Which of the current matches is highlighted.
+        selected: usize,
+    },
 }
 
 /// What a real modal (#646) shows, drawn in a cleared box over the panes
@@ -1345,6 +1369,124 @@ impl App {
             self.reselect = Some(node.name.clone());
             self.tree_selected = 0;
             self.load_contents_for_selected();
+        }
+    }
+
+    /// Opens the keyboard reference (#649). Refused while another prompt or
+    /// the editor already has the keyboard.
+    fn begin_keyboard_reference(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing.is_some() {
+            return;
+        }
+        self.mode = Mode::KeyboardReference { selected: 0 };
+    }
+
+    /// One key while the keyboard reference is open.
+    fn handle_keyboard_reference_key(&mut self, code: KeyCode) {
+        let Mode::KeyboardReference { selected } = &mut self.mode else {
+            return;
+        };
+        let count = bindings::reference_lines().len();
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Up => *selected = selected.saturating_sub(1),
+            KeyCode::Down => *selected = selected.saturating_add(1).min(count.saturating_sub(1)),
+            KeyCode::PageUp => *selected = selected.saturating_sub(10),
+            KeyCode::PageDown => {
+                *selected = selected.saturating_add(10).min(count.saturating_sub(1));
+            }
+            _ => {}
+        }
+    }
+
+    /// Opens the command palette (#649). Refused while another prompt or
+    /// the editor already has the keyboard.
+    fn begin_command_palette(&mut self) {
+        if !matches!(self.mode, Mode::Normal) || self.editing.is_some() {
+            return;
+        }
+        self.mode = Mode::CommandPalette {
+            query: String::new(),
+            selected: 0,
+        };
+    }
+
+    /// Whether a command owned by `owner` currently applies (#649): a
+    /// [`bindings::Owner::Global`] or [`bindings::Owner::Folders`] one
+    /// always does - the tree always has at least its own root - a
+    /// [`bindings::Owner::Contents`] one only once the Contents pane holds
+    /// a row to act on, and a [`bindings::Owner::File`] one only once the
+    /// File pane is showing a file.
+    fn palette_entry_applies(&self, owner: bindings::Owner) -> bool {
+        match owner {
+            bindings::Owner::Global | bindings::Owner::Folders => true,
+            bindings::Owner::Contents => !self.contents.is_empty(),
+            bindings::Owner::File => self.file_view.is_some(),
+        }
+    }
+
+    /// [`bindings::palette_entries`] narrowed to those that currently apply
+    /// (#649), matched against `query` and ranked by [`switcher::score`] -
+    /// the same ranking the switcher gives repository names. An empty
+    /// query keeps every applicable command, in the table's own order.
+    fn palette_matches(&self, query: &str) -> Vec<bindings::PaletteEntry> {
+        let mut scored: Vec<(i32, bindings::PaletteEntry)> = bindings::palette_entries()
+            .into_iter()
+            .filter(|entry| self.palette_entry_applies(entry.owner))
+            .filter_map(|entry| {
+                switcher::score(query, entry.description).map(|score| (score, entry))
+            })
+            .collect();
+        scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        scored.into_iter().map(|(_, entry)| entry).collect()
+    }
+
+    /// One key while the command palette is open.
+    fn handle_palette_key(&mut self, code: KeyCode) {
+        let Mode::CommandPalette { query, .. } = &self.mode else {
+            return;
+        };
+        let query = query.clone();
+        match code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => self.confirm_palette(),
+            KeyCode::Up => {
+                if let Mode::CommandPalette { selected, .. } = &mut self.mode {
+                    *selected = selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                let count = self.palette_matches(&query).len();
+                if let Mode::CommandPalette { selected, .. } = &mut self.mode {
+                    *selected = selected.saturating_add(1).min(count.saturating_sub(1));
+                }
+            }
+            KeyCode::Backspace => {
+                if let Mode::CommandPalette { query, selected } = &mut self.mode {
+                    query.pop();
+                    *selected = 0;
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Mode::CommandPalette { query, selected } = &mut self.mode {
+                    query.push(c);
+                    *selected = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Enter in the command palette: runs the highlighted command, the same
+    /// way [`App::dispatch`] runs a matched key press.
+    fn confirm_palette(&mut self) {
+        let Mode::CommandPalette { query, selected } =
+            std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
+            return;
+        };
+        if let Some(entry) = self.palette_matches(&query).get(selected) {
+            self.dispatch(entry.action);
         }
     }
 
@@ -2294,6 +2436,14 @@ impl App {
                 self.handle_repos_roots_key(key.code);
                 return;
             }
+            Mode::KeyboardReference { .. } => {
+                self.handle_keyboard_reference_key(key.code);
+                return;
+            }
+            Mode::CommandPalette { .. } => {
+                self.handle_palette_key(key.code);
+                return;
+            }
             Mode::Normal => {}
         }
         if self.editing.is_some() {
@@ -2401,6 +2551,8 @@ impl App {
             Action::FoldersCopyRemoteAddress => self.copy_folder_remote_address(),
             Action::ContentsShowInFileManager => self.show_selected_in_file_manager(),
             Action::FoldersShowInFileManager => self.show_folder_in_file_manager(),
+            Action::OpenKeyboardReference => self.begin_keyboard_reference(),
+            Action::OpenCommandPalette => self.begin_command_palette(),
         }
     }
 
@@ -2847,7 +2999,9 @@ impl App {
             | Mode::FindInput { .. }
             | Mode::Found { .. }
             | Mode::AllRepositoriesView { .. }
-            | Mode::ReposRootsView { .. } => None,
+            | Mode::ReposRootsView { .. }
+            | Mode::KeyboardReference { .. }
+            | Mode::CommandPalette { .. } => None,
         }
     }
 
@@ -2921,7 +3075,9 @@ impl App {
             | Mode::FindInput { .. }
             | Mode::Found { .. }
             | Mode::AllRepositoriesView { .. }
-            | Mode::ReposRootsView { .. } => None,
+            | Mode::ReposRootsView { .. }
+            | Mode::KeyboardReference { .. }
+            | Mode::CommandPalette { .. } => None,
             Mode::ConfirmDelete { paths, name } => Some(Modal {
                 title: format!("Delete {name}?"),
                 subject: paths
@@ -3064,6 +3220,17 @@ impl App {
                 selected: *selected,
                 keys: "Enter/Esc",
             }),
+            Mode::KeyboardReference { selected } => Some(ListOverlay {
+                title: "Keyboard Reference".to_owned(),
+                query: None,
+                note: None,
+                rows: bindings::reference_lines(),
+                selected: *selected,
+                keys: "Esc",
+            }),
+            Mode::CommandPalette { query, selected } => {
+                Some(self.command_palette_overlay(query, *selected))
+            }
             Mode::Normal
             | Mode::ConfirmDelete { .. }
             | Mode::RenameInput { .. }
@@ -3076,39 +3243,35 @@ impl App {
         }
     }
 
+    /// [`Mode::CommandPalette`]'s own [`ListOverlay`], split out of
+    /// [`App::list_overlay`] to keep it under clippy's line count (#650).
+    fn command_palette_overlay(&self, query: &str, selected: usize) -> ListOverlay {
+        let matches = self.palette_matches(query);
+        ListOverlay {
+            title: "Command Palette".to_owned(),
+            query: Some((query.to_owned(), query.chars().count())),
+            note: Some(format!("{} commands", matches.len())),
+            rows: matches
+                .iter()
+                .map(|entry| format!("{}  {}", entry.keys, entry.description))
+                .collect(),
+            selected,
+            keys: "Enter/Esc",
+        }
+    }
+
     /// The text shown on the status line: the current status or the
-    /// ambient one - the Contents pane's counts, or the default help text
-    /// when it holds no repository - in full, or the filter field while it
-    /// is open (#650). A prompt's own text lives in the real modal
-    /// [`App::modal`] describes (#646), drawn over the panes rather than
-    /// squeezed in here, so it does not shorten or hide whatever the
-    /// status line was already saying underneath it. See
-    /// [`App::status_line_at`] for the version that fits a given terminal
-    /// width.
+    /// ambient one - the Contents pane's counts, or [`HELP_HINT`] when it
+    /// holds no repository - in full, or the filter field while it is open
+    /// (#650). A prompt's own text lives in the real modal [`App::modal`]
+    /// describes (#646), drawn over the panes rather than squeezed in
+    /// here, so it does not shorten or hide whatever the status line was
+    /// already saying underneath it.
     fn status_line(&self) -> String {
         match &self.mode {
             Mode::FilterInput => format!("Filter: {}_  (Enter/Esc)", self.filter.text),
             _ => self.status.clone().unwrap_or_else(|| self.ambient_status()),
         }
-    }
-
-    /// As [`App::status_line`], but the default help text is shortened to
-    /// fit `width` columns rather than being cut off wherever the terminal
-    /// happens to end - the bug #638 reported: a truncated help line on an
-    /// 80-column terminal, hiding three of its own bindings. A custom
-    /// status message, the filter field, or the Contents pane's counts
-    /// (#641) is returned exactly as `status_line` gives it, since none of
-    /// those is this front end's to shorten (a full reference for the help
-    /// text is #649's job).
-    fn status_line_at(&self, width: usize) -> String {
-        if matches!(self.mode, Mode::FilterInput) {
-            return self.status_line();
-        }
-        if self.status.is_none() && self.contents_summary().is_empty() && self.selection.len() <= 1
-        {
-            return fit_help_line(width);
-        }
-        self.status_line()
     }
 
     /// The breadcrumb line drawn above the panes (#642): the folder
@@ -3121,12 +3284,14 @@ impl App {
     /// else to say: how many rows are selected (#676) when it is more than
     /// the cursor row alone, ahead of the Contents pane's counts (#641)
     /// when it holds a repository, with the selected row's stale-fetch
-    /// words appended when it has one; the keyboard help text for a folder
-    /// with no repository rows, which has nothing of that kind to say.
+    /// words appended when it has one; [`HELP_HINT`] for a folder with no
+    /// repository rows, which has nothing of that kind to say - a full
+    /// reference for what the keys do, rather than a truncated list of
+    /// them (#649), is a keypress away.
     fn ambient_status(&self) -> String {
         let body = self.contents_summary();
         let body = if body.is_empty() {
-            HELP_SEGMENTS.join("  ")
+            HELP_HINT.to_owned()
         } else {
             match self.stale_fetch_note() {
                 Some(note) => format!("{body} - {note}"),
@@ -3574,56 +3739,11 @@ impl App {
     }
 }
 
-/// The default help text's pieces, in the order they are shown, joined with
-/// two spaces for [`App::status_line`]'s unbounded form.
-const HELP_SEGMENTS: &[&str] = &[
-    "Tab: switch pane",
-    "Up/Down: move",
-    "Enter/Right: open",
-    "Left: collapse",
-    "Delete: delete",
-    "r: rename",
-    "c: copy",
-    "x: extract",
-    "Esc: cancel/quit",
-    "q: quit",
-];
-
-/// Shortens [`HELP_SEGMENTS`] to fit `width` columns, keeping the first
-/// segment (what a reader sees first) and the last (how to quit) and
-/// dropping whole segments from the middle - never a single character off
-/// a segment's end - until what remains fits.
-fn fit_help_line(width: usize) -> String {
-    let Some((first, rest)) = HELP_SEGMENTS.split_first() else {
-        return String::new();
-    };
-    let Some((last, middle)) = rest.split_last() else {
-        return (*first).to_owned();
-    };
-
-    let mut budget = width.saturating_sub(first.chars().count());
-    let suffix_cost = 2 + last.chars().count();
-    let show_suffix = budget >= suffix_cost;
-    if show_suffix {
-        budget -= suffix_cost;
-    }
-
-    let mut line = (*first).to_owned();
-    for segment in middle {
-        let cost = 2 + segment.chars().count();
-        if cost > budget {
-            break;
-        }
-        line.push_str("  ");
-        line.push_str(segment);
-        budget -= cost;
-    }
-    if show_suffix {
-        line.push_str("  ");
-        line.push_str(last);
-    }
-    line
-}
+/// [`App::ambient_status`]'s default text for a folder with no repository
+/// rows to summarise - short enough to fit any terminal this front end
+/// runs on, replacing the truncated list of bindings #638 reported (a
+/// full, unabridged one is what F1 or `?` now open, #649).
+const HELP_HINT: &str = "? for keys";
 
 /// The breadcrumb line above the panes (#642): `path`, fitted to `width`
 /// columns. Shortened from the left with a leading ellipsis when it does
@@ -3704,10 +3824,7 @@ pub fn render_app(frame: &mut Frame<'_>, area: Rect, app: &App) {
         render_file(frame, columns[2], app);
     }
 
-    frame.render_widget(
-        Paragraph::new(app.status_line_at(status_area.width.into())),
-        status_area,
-    );
+    frame.render_widget(Paragraph::new(app.status_line()), status_area);
 
     render_modal(frame, area, app);
     render_list_overlay(frame, area, app);
@@ -4844,7 +4961,7 @@ fn render_file(frame: &mut Frame<'_>, area: Rect, app: &App) {
 mod tests {
     use super::{
         App, CHANGED_MARKER, Document, Editing, Focus, FolderNode, Mode, NOT_KNOWN_YET_MARKER,
-        RowStatus, STALE_FETCH_MARKER, breadcrumb_line, render_app, render_contents,
+        RowStatus, STALE_FETCH_MARKER, bindings, breadcrumb_line, render_app, render_contents,
         render_file_editing, settings,
     };
     use protocol::{DirectoryEntry, ReposRoot, Response};
@@ -5384,6 +5501,8 @@ mod tests {
             Mode::Found { .. } => "found",
             Mode::AllRepositoriesView { .. } => "all-repositories",
             Mode::ReposRootsView { .. } => "repos-roots",
+            Mode::KeyboardReference { .. } => "keyboard-reference",
+            Mode::CommandPalette { .. } => "command-palette",
         }
     }
 
@@ -5423,7 +5542,9 @@ mod tests {
             | Mode::FindInput { .. }
             | Mode::Found { .. }
             | Mode::AllRepositoriesView { .. }
-            | Mode::ReposRootsView { .. } => None,
+            | Mode::ReposRootsView { .. }
+            | Mode::KeyboardReference { .. }
+            | Mode::CommandPalette { .. } => None,
         }
     }
 
@@ -6325,7 +6446,7 @@ mod tests {
         let rows = drawn_rows(30, 1, &app);
 
         assert!(
-            rows[0].starts_with("Tab: switch pane"),
+            rows[0].starts_with("? for keys"),
             "with room for one row it should be the one that says what the keys do: {:?}",
             rows[0]
         );
@@ -6563,7 +6684,7 @@ mod tests {
                 "normal",
                 "{key:?} left its prompt open with nothing to confirm"
             );
-            assert!(app.status_line().starts_with("Tab: switch pane"));
+            assert!(app.status_line().starts_with("? for keys"));
         }
     }
 
@@ -7321,32 +7442,20 @@ mod tests {
     }
 
     #[test]
-    fn the_default_help_line_fits_an_80_and_a_40_column_terminal_without_being_cut() {
+    fn the_default_help_hint_fits_a_40_column_terminal_with_nothing_cut() {
         // A fresh app's own "loading..." status would otherwise stand in
         // for the help text this test means to measure.
         let mut app = App::new(notional_root("help-line-width"));
         app.status = None;
 
-        let wide = app.status_line_at(80);
+        let shown = app.status_line();
         assert!(
-            wide.chars().count() <= 80,
-            "an 80-column line must not overflow its own width: {wide:?}"
+            shown.chars().count() <= 40,
+            "a 40-column line must not overflow its own width: {shown:?}"
         );
-        assert!(wide.starts_with("Tab: switch pane"));
-        assert!(
-            wide.ends_with("q: quit"),
-            "there is room to say how to quit: {wide:?}"
-        );
-
-        let narrow = app.status_line_at(40);
-        assert!(
-            narrow.chars().count() <= 40,
-            "a 40-column line must not overflow its own width: {narrow:?}"
-        );
-        assert!(narrow.starts_with("Tab: switch pane"));
-        assert!(
-            narrow.ends_with("q: quit"),
-            "even a narrow terminal should still say how to quit: {narrow:?}"
+        assert_eq!(
+            shown, "? for keys",
+            "the default hint should say nothing more, and nothing less (#649)"
         );
     }
 
@@ -8134,7 +8243,7 @@ mod tests {
         let root = notional_root("status-line-no-repository");
         let app = app_showing(&root, &[("notes.txt", false)]);
 
-        assert!(app.status_line().starts_with("Tab: switch pane"));
+        assert!(app.status_line().starts_with("? for keys"));
     }
 
     // -- the editor (#645) ------------------------------------------------
@@ -8713,6 +8822,111 @@ mod tests {
         assert!(
             app.pending_find.is_none(),
             "typing into the switcher must not search anything"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // #649: the keyboard reference and the command palette.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn f1_and_question_mark_both_open_the_keyboard_reference_which_names_every_binding() {
+        for key in [KeyCode::F(1), KeyCode::Char('?')] {
+            let root = notional_root(&format!("keyboard-reference-{key:?}"));
+            let mut app = app_showing(&root, &[("notes.txt", false)]);
+
+            app.handle_key(key);
+            assert!(
+                matches!(app.mode, Mode::KeyboardReference { .. }),
+                "{key:?} should open the keyboard reference"
+            );
+
+            let overlay = app.list_overlay().expect("the reference is open");
+            for binding in bindings::BINDINGS {
+                let line = format!("{}  {}", binding.label(), binding.description);
+                assert!(
+                    overlay.rows.contains(&line),
+                    "{line:?} from the binding table is missing from the reference"
+                );
+            }
+
+            app.handle_key(KeyCode::Esc);
+            assert!(matches!(app.mode, Mode::Normal), "Escape closes it");
+        }
+    }
+
+    #[test]
+    fn the_keyboard_reference_scrolls_a_short_terminal_as_the_cursor_moves_down() {
+        let root = notional_root("keyboard-reference-scroll");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+        app.handle_key(KeyCode::F(1));
+
+        let before = drawn_rows(40, 6, &app);
+        for _ in 0..20 {
+            app.handle_key(KeyCode::Down);
+        }
+        let after = drawn_rows(40, 6, &app);
+
+        assert_ne!(
+            before, after,
+            "moving the cursor down past what a six-row terminal shows should scroll the sheet"
+        );
+    }
+
+    #[test]
+    fn ctrl_k_opens_the_command_palette_which_runs_the_typed_command_on_enter() {
+        let root = notional_root("palette-runs-a-command");
+        let mut app = app_showing(&root, &[("notes.txt", false)]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert!(
+            matches!(app.mode, Mode::CommandPalette { .. }),
+            "Ctrl+K should open the command palette"
+        );
+        for c in "Quit".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+        app.handle_key(KeyCode::Enter);
+
+        assert!(app.should_quit, "running Quit from the palette should quit");
+        assert!(
+            matches!(app.mode, Mode::Normal),
+            "Enter should close the palette"
+        );
+    }
+
+    #[test]
+    fn the_palette_offers_a_contents_owned_command_only_once_the_contents_pane_holds_a_row() {
+        let root = notional_root("palette-applies-to-selection");
+        let mut app = App::new(root);
+        app.pending_contents = None;
+        app.pending_file = None;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        for c in "Rename".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+        let empty_matches = app.list_overlay().expect("the palette is open").rows;
+        assert!(
+            empty_matches.is_empty(),
+            "an empty Contents pane has nothing to rename: {empty_matches:?}"
+        );
+        app.handle_key(KeyCode::Esc);
+
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[("notes.txt", false)]),
+            }),
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        for c in "Rename".chars() {
+            app.handle_key(KeyCode::Char(c));
+        }
+        let seeded_matches = app.list_overlay().expect("the palette is open").rows;
+        assert!(
+            seeded_matches.iter().any(|row| row.contains("Rename")),
+            "a Contents row now exists to rename: {seeded_matches:?}"
         );
     }
 

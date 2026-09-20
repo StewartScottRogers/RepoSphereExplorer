@@ -26,6 +26,20 @@ pub enum Owner {
     File,
 }
 
+impl Owner {
+    /// The heading the keyboard reference (#649) shows above this owner's
+    /// entries.
+    #[must_use]
+    pub fn heading(self) -> &'static str {
+        match self {
+            Owner::Global => "Global",
+            Owner::Folders => "Folders pane",
+            Owner::Contents => "Contents pane",
+            Owner::File => "File pane",
+        }
+    }
+}
+
 /// What a matched binding does to the [`App`](crate::app::App).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -163,6 +177,10 @@ pub enum Action {
     /// Shows the Folders pane's selected folder in the platform's file
     /// manager (#674).
     FoldersShowInFileManager,
+    /// Opens the keyboard reference (#649).
+    OpenKeyboardReference,
+    /// Opens the command palette (#649).
+    OpenCommandPalette,
 }
 
 /// One row of the table: the keys that trigger it, the pane it answers in,
@@ -192,6 +210,127 @@ impl Binding {
                 Owner::File => focus == Focus::File,
             }
     }
+
+    /// The keys as a reader sees them, e.g. `"Ctrl+P"` or `"Shift+Tab"`
+    /// (#649). Mirrors `crates/gui/src/shortcuts.rs`'s own `Binding::label`,
+    /// without its macOS "Cmd" substitution - a terminal's Ctrl key is
+    /// never relabelled (D16).
+    #[must_use]
+    pub fn label(&self) -> String {
+        let mut parts = Vec::new();
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("Ctrl".to_owned());
+        }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            parts.push("Alt".to_owned());
+        }
+        if self.modifiers.contains(KeyModifiers::SHIFT) {
+            parts.push("Shift".to_owned());
+        }
+        // A Ctrl or Alt chord's letter is typed without Shift - crossterm
+        // reports it lowercase - but the conventional written form is the
+        // capital, `"Ctrl+P"` rather than `"Ctrl+p"`; a plain letter with
+        // no modifier keeps whatever case the table itself gives it.
+        let held_with_control_or_alt = self
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        parts.push(match self.code {
+            KeyCode::Char(c) if held_with_control_or_alt => c.to_ascii_uppercase().to_string(),
+            code => key_text(code),
+        });
+        parts.join("+")
+    }
+}
+
+/// [`Binding::label`]'s text for the key itself, ignoring modifiers -
+/// `BackTab` is crossterm's own name for Shift+Tab, carrying no modifier
+/// of its own, so it is spelled out here rather than left to read as a
+/// bare `"Tab"`.
+fn key_text(code: KeyCode) -> String {
+    match code {
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Up => "Up".to_owned(),
+        KeyCode::Down => "Down".to_owned(),
+        KeyCode::Left => "Left".to_owned(),
+        KeyCode::Right => "Right".to_owned(),
+        KeyCode::Home => "Home".to_owned(),
+        KeyCode::End => "End".to_owned(),
+        KeyCode::PageUp => "PageUp".to_owned(),
+        KeyCode::PageDown => "PageDown".to_owned(),
+        KeyCode::Delete => "Delete".to_owned(),
+        KeyCode::Insert => "Insert".to_owned(),
+        KeyCode::Enter => "Enter".to_owned(),
+        KeyCode::Esc => "Esc".to_owned(),
+        KeyCode::Tab => "Tab".to_owned(),
+        KeyCode::BackTab => "Shift+Tab".to_owned(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// One command the command palette (#649) can run: every distinct
+/// [`Action`] in [`BINDINGS`], with every key bound to it joined for the
+/// "shows each one's keys beside it" requirement.
+#[derive(Clone)]
+pub struct PaletteEntry {
+    /// The pane this command answers in - decides whether it currently
+    /// applies (`crates/tui/src/app.rs`'s `App::palette_entry_applies`).
+    pub owner: Owner,
+    /// Every key bound to this command, joined with `"/"`.
+    pub keys: String,
+    /// What the command does, in plain words - what a typed query is
+    /// matched against.
+    pub description: &'static str,
+    /// What running the command does.
+    pub action: Action,
+}
+
+/// Every distinct [`Action`] in [`BINDINGS`], in the order it first
+/// appears there, each with every key bound to it collected onto one
+/// entry - so the palette lists a command once no matter how many keys
+/// reach it.
+#[must_use]
+pub fn palette_entries() -> Vec<PaletteEntry> {
+    let mut entries: Vec<PaletteEntry> = Vec::new();
+    for binding in BINDINGS {
+        match entries
+            .iter_mut()
+            .find(|entry| entry.action == binding.action)
+        {
+            Some(entry) => {
+                entry.keys.push('/');
+                entry.keys.push_str(&binding.label());
+            }
+            None => entries.push(PaletteEntry {
+                owner: binding.owner,
+                keys: binding.label(),
+                description: binding.description,
+                action: binding.action,
+            }),
+        }
+    }
+    entries
+}
+
+/// Every [`BINDINGS`] entry, as a line for the keyboard reference (#649):
+/// a heading naming the pane a group of entries answers in, followed by
+/// "key  description" lines for the entries themselves - built from the
+/// table so a binding cannot exist without a line here. Grouped as
+/// [`Owner::Global`], [`Owner::Folders`], [`Owner::Contents`], then
+/// [`Owner::File`], regardless of the table's own declaration order -
+/// unlike `crates/gui/src/shortcuts.rs`'s table, this one's owners are not
+/// declared contiguously, so each group is collected by filtering rather
+/// than by merely watching for a change from the previous row.
+#[must_use]
+pub fn reference_lines() -> Vec<String> {
+    let mut lines = Vec::new();
+    for owner in [Owner::Global, Owner::Folders, Owner::Contents, Owner::File] {
+        lines.push(owner.heading().to_owned());
+        for binding in BINDINGS.iter().filter(|binding| binding.owner == owner) {
+            lines.push(format!("{}  {}", binding.label(), binding.description));
+        }
+    }
+    lines
 }
 
 /// Every keyboard binding `App::handle_key` answers while no prompt is
@@ -691,6 +830,27 @@ pub const BINDINGS: &[Binding] = &[
         description: "Show in file manager",
         action: Action::FoldersShowInFileManager,
     },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::F(1),
+        modifiers: KeyModifiers::NONE,
+        description: "Keyboard reference",
+        action: Action::OpenKeyboardReference,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('?'),
+        modifiers: KeyModifiers::NONE,
+        description: "Keyboard reference",
+        action: Action::OpenKeyboardReference,
+    },
+    Binding {
+        owner: Owner::Global,
+        code: KeyCode::Char('k'),
+        modifiers: KeyModifiers::CONTROL,
+        description: "Command palette",
+        action: Action::OpenCommandPalette,
+    },
 ];
 
 /// The action `key` runs with `focus` currently held, if any binding
@@ -705,7 +865,7 @@ pub fn find(key: KeyEvent, focus: Focus) -> Option<Action> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, BINDINGS, find};
+    use super::{Action, BINDINGS, find, palette_entries, reference_lines};
     use crate::app::Focus;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -769,6 +929,73 @@ mod tests {
                 Focus::Folders
             ),
             None
+        );
+    }
+
+    #[test]
+    fn a_binding_s_label_names_its_modifiers_and_key() {
+        let ctrl_p = BINDINGS
+            .iter()
+            .find(|binding| binding.action == Action::OpenSwitcher)
+            .expect("Ctrl+P opens the switcher");
+        assert_eq!(ctrl_p.label(), "Ctrl+P");
+
+        let shift_up = BINDINGS
+            .iter()
+            .find(|binding| binding.action == Action::ExtendContentsUp)
+            .expect("Shift+Up extends the contents selection");
+        assert_eq!(shift_up.label(), "Shift+Up");
+
+        let back_tab = BINDINGS
+            .iter()
+            .find(|binding| binding.action == Action::FocusPrevious)
+            .expect("BackTab switches panes backwards");
+        assert_eq!(back_tab.label(), "Shift+Tab");
+    }
+
+    #[test]
+    fn every_binding_appears_in_the_keyboard_reference() {
+        let lines = reference_lines();
+        for binding in BINDINGS {
+            let line = format!("{}  {}", binding.label(), binding.description);
+            assert!(
+                lines.contains(&line),
+                "{line:?} from the binding table is missing from the reference"
+            );
+        }
+    }
+
+    #[test]
+    fn the_reference_groups_each_owner_under_its_own_heading() {
+        let lines = reference_lines();
+        for owner_heading in ["Global", "Folders pane", "Contents pane", "File pane"] {
+            assert_eq!(
+                lines.iter().filter(|line| *line == owner_heading).count(),
+                1,
+                "{owner_heading:?} should appear exactly once, as a heading"
+            );
+        }
+    }
+
+    #[test]
+    fn the_palette_lists_a_command_once_with_every_key_bound_to_it() {
+        let entries = palette_entries();
+        let quit = entries
+            .iter()
+            .find(|entry| entry.action == Action::Quit)
+            .expect("Quit is bound and so appears once in the palette");
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry.action == Action::Quit)
+                .count(),
+            1,
+            "Quit is bound to both `q` and Ctrl+Q, but should appear once"
+        );
+        assert!(
+            quit.keys.contains('Q'),
+            "{:?} should name its keys",
+            quit.keys
         );
     }
 }

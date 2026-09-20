@@ -221,6 +221,12 @@ fn every_global_binding_reaches_the_action_it_names() {
             Action::OpenReposRoots => {
                 assert_opens_overlay(&mut terminal, &mut app, binding, "Repos Directory");
             }
+            Action::OpenKeyboardReference => {
+                assert_opens_overlay(&mut terminal, &mut app, binding, "Keyboard Reference");
+            }
+            Action::OpenCommandPalette => {
+                assert_opens_overlay(&mut terminal, &mut app, binding, "Command Palette");
+            }
             other => panic!("no assertion written for the global action {other:?}"),
         }
     }
