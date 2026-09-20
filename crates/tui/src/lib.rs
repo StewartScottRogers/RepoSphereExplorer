@@ -11,7 +11,7 @@ mod switcher;
 
 use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{Name, Stream};
-use plugin_api::{Fact, FolderPresentation, Graphic, PluginPresentation, Span};
+use plugin_api::{Fact, FolderPresentation, Graphic, Icon, PluginPresentation, Span, UNKNOWN_ICON};
 use protocol::{Request, Response};
 use ratatui::Frame;
 use ratatui::Terminal;
@@ -464,6 +464,28 @@ pub(crate) fn classify(plugin: &str, text: &str) -> Vec<Span> {
         .iter()
         .find(|candidate| candidate.name() == plugin)
         .map_or_else(Vec::new, |candidate| candidate.classify(text))
+}
+
+/// The type mark for a row named `name`, from whichever registered
+/// presentation plugin claims it - by name alone, the same lookup the
+/// graphical front end's own `icon_for` (`crates/gui/src/app.rs`) already
+/// uses, so a listing is marked without opening a single file
+/// (GUIDANCE.md §3.3). `is_dir` short-circuits to the directory plugin's
+/// own icon - a folder's mark is what it *is*, the same whichever other
+/// folder plugins go on to describe it.
+pub(crate) fn icon_for(name: &str, is_dir: bool) -> Icon {
+    if is_dir {
+        return plugin_directory::DirectoryPresentation.icon();
+    }
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_lowercase);
+    let key = extension.unwrap_or_else(|| name.to_lowercase());
+    PRESENTATION_PLUGINS
+        .iter()
+        .find(|plugin| plugin.extensions().contains(&key.as_str()))
+        .map_or(UNKNOWN_ICON, |plugin| plugin.icon())
 }
 
 /// Renders a directory listing, a file view, or an error, into `area` of

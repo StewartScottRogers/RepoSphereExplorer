@@ -15,10 +15,10 @@ use crate::launch;
 use crate::settings;
 use crate::switcher;
 use crate::{
-    classify, editable_text, editor, facts, graphic, present, present_folder, present_view,
-    render_with_block, views,
+    classify, editable_text, editor, facts, graphic, icon_for, present, present_folder,
+    present_view, render_with_block, views,
 };
-use plugin_api::{Class, Fact, Span as PluginSpan};
+use plugin_api::{Class, Fact, Icon, Span as PluginSpan};
 use protocol::{DirectoryEntry, ReposRoot, Request, Response};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -4062,6 +4062,21 @@ fn render_pane(frame: &mut Frame<'_>, area: Rect, app: &App, pane: Focus) {
 /// pane's own marks already follow (#574, #640).
 const REPOSITORY_MARKER: &str = "R";
 
+/// The single character drawn before a row's name to mark what kind of
+/// row it is (#678): the first character of the claiming plugin's own
+/// icon label. `PluginPresentation::icon`'s own contract already limits
+/// that label to short, printable American Standard Code for Information
+/// Interchange (ASCII) text, so the character taken from it is always one
+/// a terminal can draw - the set is exactly the twenty-six letters and ten
+/// digits every plugin already states for the graphical front end's icon,
+/// which needs no separate Unicode form and so no fallback to draw
+/// instead of one. A blank space stands in for a name no plugin claims
+/// ([`plugin_api::UNKNOWN_ICON`]'s label is empty), so that row's name
+/// still starts in the same column as every other row's.
+fn type_glyph(icon: Icon) -> char {
+    icon.label.chars().next().unwrap_or(' ')
+}
+
 /// The Folders tree's own repository mark for one row: [`REPOSITORY_MARKER`]
 /// for a working copy, empty for a plain folder, or [`NOT_KNOWN_YET_MARKER`]
 /// when the row's own node cannot be resolved - the same marker the
@@ -4092,7 +4107,8 @@ fn render_folders(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 }
             });
             let repository_marker = folder_repository_marker(node);
-            let prefix = format!("{}{marker}", "  ".repeat(*depth));
+            let glyph = type_glyph(icon_for(name, true));
+            let prefix = format!("{}{marker}{glyph}", "  ".repeat(*depth));
             let mut spans = vec![Span::raw(prefix)];
             if !repository_marker.is_empty() {
                 let style = if app.colour_enabled {
@@ -4376,6 +4392,9 @@ fn branch_cell(app: &App, entry: &DirectoryEntry) -> Cell<'static> {
 /// name carries so it survives `NO_COLOR`, and a background colour on top
 /// of that. The cursor row carries the marker too when it is part of the
 /// range; the table's own highlight still tells it apart from the rest.
+/// The name's own leading character is [`type_glyph`]'s mark for what the
+/// row is (#678), ahead of the selection mark rather than after it, so
+/// every row's type reads in the same place regardless of selection.
 fn contents_row(
     app: &App,
     index: usize,
@@ -4383,10 +4402,11 @@ fn contents_row(
     columns: &ContentsColumns,
 ) -> Row<'static> {
     let selected = !app.selection.is_empty() && app.selection.contains(&index);
+    let glyph = type_glyph(icon_for(&entry.name, entry.is_dir));
     let name = if selected {
-        format!("* {}", entry_display_name(entry))
+        format!("{glyph} * {}", entry_display_name(entry))
     } else {
-        entry_display_name(entry)
+        format!("{glyph} {}", entry_display_name(entry))
     };
     let mut cells = vec![Cell::from(name)];
     if columns.branch.is_some() {
@@ -6200,6 +6220,98 @@ mod tests {
         assert!(
             text.contains(CHANGED_MARKER),
             "the marker must be a glyph a reader can see even with no colour drawn at all: {text}"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // A per-row type glyph, from the plugin that claims the file (#678).
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn two_kinds_of_file_and_a_folder_each_draw_their_own_glyph() {
+        let root = notional_root("type-glyph-kinds");
+        let app = app_showing(
+            &root,
+            &[("main.rs", false), ("notes.txt", false), ("src", true)],
+        );
+
+        let rows = drawn_contents(60, 6, &app);
+        let rust_row = rows
+            .iter()
+            .find(|row| row.contains("main.rs"))
+            .expect("the Rust file should be drawn");
+        let text_row = rows
+            .iter()
+            .find(|row| row.contains("notes.txt"))
+            .expect("the text file should be drawn");
+        let folder_row = rows
+            .iter()
+            .find(|row| row.contains("src"))
+            .expect("the folder should be drawn");
+
+        assert!(rust_row.contains('R'), "Rust's own glyph: {rust_row}");
+        assert!(text_row.contains('T'), "text's own glyph: {text_row}");
+        assert!(
+            folder_row.contains('D'),
+            "a folder's own glyph: {folder_row}"
+        );
+        assert_ne!(
+            super::type_glyph(super::icon_for("main.rs", false)),
+            super::type_glyph(super::icon_for("notes.txt", false)),
+            "two different kinds of file must not share a glyph"
+        );
+        assert_ne!(
+            super::type_glyph(super::icon_for("src", true)),
+            super::type_glyph(super::icon_for("main.rs", false)),
+            "a folder must not share a file's glyph"
+        );
+    }
+
+    #[test]
+    fn an_unclaimed_name_falls_back_to_a_blank_glyph_that_keeps_the_name_column_in_place() {
+        let root = notional_root("type-glyph-fallback");
+        let app = app_showing(
+            &root,
+            &[("main.rs", false), ("mystery.unclaimed-format", false)],
+        );
+
+        let rows = drawn_contents(60, 6, &app);
+        let claimed_row = rows
+            .iter()
+            .find(|row| row.contains("main.rs"))
+            .expect("the claimed file should be drawn");
+        let unclaimed_row = rows
+            .iter()
+            .find(|row| row.contains("mystery.unclaimed-format"))
+            .expect("the unclaimed file should be drawn");
+
+        let claimed_at = claimed_row.find("main.rs").unwrap();
+        let unclaimed_at = unclaimed_row.find("mystery.unclaimed-format").unwrap();
+        assert_eq!(
+            claimed_at, unclaimed_at,
+            "the plain fallback for an unclaimed name must start the name in the same column \
+             a claimed name's glyph leaves it in: {claimed_row:?} vs {unclaimed_row:?}"
+        );
+    }
+
+    #[test]
+    fn listing_many_files_for_their_glyphs_opens_none_of_them() {
+        // `notional_root` names a directory nothing answers to, and these
+        // entries are fabricated rather than read from it (see its own
+        // doc comment) - so a glyph for every one of them, with no file
+        // ever opened, is exactly what rendering this listing exercises.
+        let root = notional_root("type-glyph-many-files");
+        let extensions = ["rs", "py", "js", "md", "toml", "json", "yaml", "html"];
+        let names: Vec<String> = (0..200)
+            .map(|index| format!("file{index}.{}", extensions[index % extensions.len()]))
+            .collect();
+        let listing: Vec<(&str, bool)> = names.iter().map(|name| (name.as_str(), false)).collect();
+        let app = app_showing(&root, &listing);
+
+        let rows = drawn_contents(80, 20, &app);
+        assert!(
+            rows.iter().any(|row| row.contains("file0.rs")),
+            "the listing itself must have drawn: {rows:?}"
         );
     }
 
