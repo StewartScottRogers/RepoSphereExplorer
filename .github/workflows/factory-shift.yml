@@ -19,12 +19,13 @@ on:
         required: false
         default: "300"
 
-# Shares its group with claude.yml: only one floor build runs at a time,
-# whether it was triggered by a label or by tonight's shift, so concurrent
-# work orders never race each other's edits to the same root Cargo.toml.
-concurrency:
-  group: dark-factory-floor
-  cancel-in-progress: false
+# One floor build at a time is still the rule - concurrent work orders race
+# each other's edits to the same root Cargo.toml - but it is kept by the
+# "Wait for the floor to be free" step below rather than by a concurrency
+# group. A group holds only one *pending* run: a fresh trigger cancels
+# whatever was already pending instead of queueing behind it, so a burst of
+# filed work orders cancelled nineteen of themselves and the queued shift
+# with them (#733). Every run now starts, and waits its turn in the step.
 
 permissions:
   contents: write
@@ -43,6 +44,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # Before anything is installed or built, so a run that is waiting its
+      # turn costs a runner and nothing else.
+      - name: Wait for the floor to be free
+        run: bash .github/wait-for-floor.sh
+        env:
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
       # The same native libraries ci.yml installs before it builds. Without
       # them `gui` does not compile, so the agent cannot run the checks its
       # work order names: shift 35177959275 spent its 150 turns on

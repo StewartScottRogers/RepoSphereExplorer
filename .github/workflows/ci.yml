@@ -31,6 +31,7 @@ jobs:
           bash .github/tests/hold.sh
           bash .github/tests/review-landed.sh
           bash .github/tests/review-verdict.sh
+          bash .github/tests/wait-for-floor.sh
       - name: Install gui's native build dependencies (Slint)
         run: |
           sudo apt-get update
