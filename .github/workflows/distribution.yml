@@ -502,10 +502,52 @@ jobs:
           $scratch = Join-Path $env:RUNNER_TEMP 'scratch'
           New-Item -ItemType Directory -Force $scratch | Out-Null
           Set-Content (Join-Path $scratch 'smoke-marker.txt') 'marker'
-          $service = Start-Process -FilePath (Join-Path $env:PREFIX 'service.exe') -PassThru -WindowStyle Hidden
+          # What was here said only "the installed service did not answer",
+          # and the client's own "failed to fill whole buffer" - an end of
+          # file part-way through a reply, so the service bound the socket
+          # and then went away. Which is every possible cause at once. The
+          # service's own output, whether it is still alive, and what else
+          # was already listening are the three facts that tell them apart,
+          # and none of them was being captured (#749).
+          $exe = Join-Path $env:PREFIX 'service.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Output "::error title=Service smoke (Windows)::nothing is installed at $exe"
+            Get-ChildItem -Force $env:PREFIX -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String -Width 200
+            exit 1
+          }
+          Write-Output "already running before this step:"
+          Get-Process service -ErrorAction SilentlyContinue |
+            Select-Object Id, Path, StartTime | Format-Table -AutoSize | Out-String -Width 200
+
+          $out = Join-Path $env:RUNNER_TEMP 'service-stdout.txt'
+          $err = Join-Path $env:RUNNER_TEMP 'service-stderr.txt'
+          $service = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput $out -RedirectStandardError $err
+          # It has to finish binding before a client can be answered, and the
+          # client only retries the connect, never the read.
+          Start-Sleep -Seconds 3
+          $service.Refresh()
+          if ($service.HasExited) {
+            Write-Output "::error title=Service smoke (Windows)::the service exited before it was asked anything, code $($service.ExitCode)"
+          }
+
           & target\debug\smoke.exe $scratch smoke-marker.txt
           $code = $LASTEXITCODE
-          Stop-Process -Id $service.Id -Force
+
+          if ($code -ne 0) {
+            $service.Refresh()
+            Write-Output "service still running: $(-not $service.HasExited)"
+            if ($service.HasExited) { Write-Output "service exit code: $($service.ExitCode)" }
+            foreach ($stream in @(@('stdout', $out), @('stderr', $err))) {
+              Write-Output "--- service $($stream[0]) ---"
+              if (Test-Path $stream[1]) { Get-Content $stream[1] } else { Write-Output "(nothing)" }
+            }
+            Write-Output "--- services running now ---"
+            Get-Process service -ErrorAction SilentlyContinue |
+              Select-Object Id, Path, StartTime | Format-Table -AutoSize | Out-String -Width 200
+          }
+
+          Stop-Process -Id $service.Id -Force -ErrorAction SilentlyContinue
           $service.WaitForExit(10000) | Out-Null
           if ($code -ne 0) { Write-Output "::error title=Service smoke (Windows)::the installed service did not answer ListDirectory"; exit 1 }
       - name: Service answers ListDirectory (${{ runner.os }})
