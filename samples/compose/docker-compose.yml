@@ -1,0 +1,38 @@
+# A stack exercising every field the compose plugin extracts: a service
+# built from a local context, one on a pinned image, one on a floating
+# tag, published ports, a bind mount, a named volume, an environment
+# block, a depends_on chain, a profile, and a network.
+
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    volumes:
+      - ./web:/usr/src/app
+    environment:
+      DATABASE_URL: postgres://db:5432/app
+      LOG_LEVEL: info
+    depends_on:
+      - db
+      - cache
+
+  db:
+    image: postgres:15.4
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: change-me
+
+  cache:
+    image: redis@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    profiles:
+      - backend
+
+volumes:
+  db-data:
+
+networks:
+  backend:

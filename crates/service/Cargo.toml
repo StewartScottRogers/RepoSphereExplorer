@@ -40,6 +40,7 @@ plugin-cloudformation = { path = "../plugins/cloudformation" }
 plugin-cmake = { path = "../plugins/cmake" }
 plugin-cobol = { path = "../plugins/cobol" }
 plugin-codeowners = { path = "../plugins/codeowners" }
+plugin-compose = { path = "../plugins/compose" }
 plugin-composerlock = { path = "../plugins/composerlock" }
 plugin-css = { path = "../plugins/css" }
 plugin-cue = { path = "../plugins/cue" }

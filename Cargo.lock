@@ -3385,6 +3385,7 @@ dependencies = [
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
+ "plugin-compose",
  "plugin-composerlock",
  "plugin-cpp",
  "plugin-crystal",
@@ -6774,6 +6775,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-compose"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "syntax",
+]
+
+[[package]]
 name = "plugin-composerlock"
 version = "0.8.0"
 dependencies = [
@@ -9484,6 +9495,7 @@ dependencies = [
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
+ "plugin-compose",
  "plugin-composerlock",
  "plugin-cpp",
  "plugin-crystal",
@@ -10761,6 +10773,7 @@ dependencies = [
  "plugin-cobol",
  "plugin-codeowners",
  "plugin-comic-archive",
+ "plugin-compose",
  "plugin-composerlock",
  "plugin-cpp",
  "plugin-crystal",

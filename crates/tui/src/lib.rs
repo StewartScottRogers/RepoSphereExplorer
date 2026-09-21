@@ -308,6 +308,7 @@ pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_jsonschema::JsonschemaPresentation,
     &plugin_githubactions::GithubactionsPresentation,
     &plugin_kubernetes::KubernetesPresentation,
+    &plugin_compose::ComposePresentation,
     &plugin_maven::MavenPresentation,
     &plugin_msbuild::MsbuildPresentation,
     &plugin_protobuf::ProtobufPresentation,

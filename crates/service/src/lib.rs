@@ -119,6 +119,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_gitlabci::GitlabciCore,
     &plugin_githubactions::GithubactionsCore,
     &plugin_kubernetes::KubernetesCore,
+    &plugin_compose::ComposeCore,
     &plugin_yarnlock::YarnlockCore,
     &plugin_pnpmlock::PnpmlockCore,
     &plugin_ansible::AnsibleCore,
