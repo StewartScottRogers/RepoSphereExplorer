@@ -1,0 +1,35 @@
+{
+  "name": "@example/task-board",
+  "version": "4.2.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "task-board": "./bin/task-board.js"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5"
+  },
+  "peerDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.6.0",
+  "workspaces": [
+    "packages/client",
+    "packages/server"
+  ]
+}
