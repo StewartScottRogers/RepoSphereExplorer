@@ -298,6 +298,7 @@ pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_cargolock::CargolockPresentation,
     &plugin_npmlock::NpmlockPresentation,
     &plugin_npmmanifest::NpmmanifestPresentation,
+    &plugin_devcontainer::DevcontainerPresentation,
     &plugin_roff::RoffPresentation,
     &plugin_ignorefile::IgnorefilePresentation,
     &plugin_webmanifest::WebmanifestPresentation,

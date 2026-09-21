@@ -1,0 +1,6 @@
+{
+  // A container exercising the one field the other two fixtures in this
+  // set do not: a base image pulled rather than built or composed.
+  "name": "Static image",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04"
+}

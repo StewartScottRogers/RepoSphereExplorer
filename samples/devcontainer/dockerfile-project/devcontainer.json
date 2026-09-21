@@ -1,0 +1,32 @@
+{
+  // A container exercising the fields the devcontainer plugin extracts
+  // from a Dockerfile-based project: built from this project's own
+  // Dockerfile, two features - one pinned by its options, one by a tag
+  // on its identifier - two forwarded ports, a postCreateCommand and a
+  // postStartCommand, a remote user, a bind mount, and two editor
+  // extensions with a setting.
+  "name": "Web API dev container",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [3000, 5432],
+  "postCreateCommand": "npm install",
+  "postStartCommand": "npm run db:migrate",
+  "remoteUser": "node",
+  "mounts": [
+    "source=${localWorkspaceFolder}/.cache,target=/home/node/.cache,type=bind"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"],
+      "settings": {
+        "editor.formatOnSave": true,
+      },
+    },
+  },
+}
