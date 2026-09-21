@@ -234,7 +234,10 @@ const DIRECTORY_PLUGIN: &dyn PluginCore = &plugin_directory::DirectoryCore;
 /// plugins claiming one file is a defect. A folder is several things at
 /// once: this repository's own root is a source control working copy and a
 /// Cargo workspace, and neither description is the wrong one.
-const FOLDER_PLUGINS: &[&dyn FolderCore] = &[&plugin_project_cargo::CargoProjectCore];
+const FOLDER_PLUGINS: &[&dyn FolderCore] = &[
+    &plugin_project_cargo::CargoProjectCore,
+    &plugin_project_node::NodeProjectCore,
+];
 
 /// Every folder plugin that recognises the folder at `path`, in
 /// registration order.
@@ -4145,6 +4148,49 @@ public class OrderBook {
             "the project description is added, never substituted: {:?}",
             also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
         );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_is_a_node_project_is_described_as_both_at_once() {
+        let dir = scratch();
+        fs::write(dir.join("package.json"), "{\"name\": \"widgets\"}").unwrap();
+
+        let Response::FileView { plugin, also, .. } = view_file(&dir).unwrap() else {
+            panic!("a folder should view as a file view");
+        };
+
+        assert_eq!(plugin, "directory", "the folder is still a folder");
+        assert!(
+            also.iter().any(|view| view.plugin == "project-node"),
+            "the project description is added, never substituted: {:?}",
+            also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_node_and_a_cargo_project_at_once_both_contribute() {
+        // A folder is several things at once (D12): a monorepo root can
+        // hold both a `package.json` for its tooling and a `Cargo.toml`
+        // for a Rust component, and neither should crowd the other out.
+        let dir = scratch();
+        fs::write(dir.join("package.json"), "{\"name\": \"widgets\"}").unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"widgets\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+
+        let Response::FileView { also, .. } = view_file(&dir).unwrap() else {
+            panic!("a folder should view as a file view");
+        };
+
+        let plugins: Vec<&str> = also.iter().map(|view| view.plugin.as_str()).collect();
+        assert!(plugins.contains(&"project-node"));
+        assert!(plugins.contains(&"project-cargo"));
 
         fs::remove_dir_all(&dir).unwrap();
     }

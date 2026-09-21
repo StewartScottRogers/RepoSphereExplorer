@@ -293,8 +293,10 @@ pub fn present_graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic
 /// different question. A file has one type. A folder can be a source
 /// control working copy and a Cargo workspace at once, and each plugin
 /// that recognises it contributes its own lines.
-const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] =
-    &[&plugin_project_cargo::CargoProjectPresentation];
+const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] = &[
+    &plugin_project_cargo::CargoProjectPresentation,
+    &plugin_project_node::NodeProjectPresentation,
+];
 
 /// Turns a folder plugin's view data into displayable lines.
 #[must_use]

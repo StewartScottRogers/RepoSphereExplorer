@@ -1,0 +1,27 @@
+{
+  "name": "@example/factory-floor",
+  "version": "1.4.0",
+  "private": true,
+  "description": "Coordinates the floor's tooling packages and reports on repositories.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "node --run build",
+    "lint": "eslint src test",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.27.0",
+    "prettier": "^3.5.3"
+  }
+}

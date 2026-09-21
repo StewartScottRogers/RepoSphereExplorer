@@ -389,8 +389,10 @@ pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
 /// Separate from [`PRESENTATION_PLUGINS`] because a folder can be several
 /// things at once - a working copy that is also a Cargo workspace - and
 /// each plugin that recognises it contributes its own lines.
-const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] =
-    &[&plugin_project_cargo::CargoProjectPresentation];
+const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] = &[
+    &plugin_project_cargo::CargoProjectPresentation,
+    &plugin_project_node::NodeProjectPresentation,
+];
 
 /// Turns a folder plugin's view data into displayable lines.
 fn present_folder(plugin: &str, data: &serde_json::Value) -> Vec<String> {

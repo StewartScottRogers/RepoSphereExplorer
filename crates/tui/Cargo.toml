@@ -130,6 +130,7 @@ plugin-csv = { path = "../plugins/csv" }
 plugin-dart = { path = "../plugins/dart" }
 plugin-directory = { path = "../plugins/directory" }
 plugin-project-cargo = { path = "../plugins/project-cargo" }
+plugin-project-node = { path = "../plugins/project-node" }
 plugin-disk-image = { path = "../plugins/disk-image" }
 plugin-dockerfile = { path = "../plugins/dockerfile" }
 plugin-elixir = { path = "../plugins/elixir" }
