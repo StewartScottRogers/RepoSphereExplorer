@@ -13,8 +13,11 @@ name: Day shift
 # backlog lets it go quiet instead of spinning empty runs.
 #
 # Any redundant dispatch this fires alongside factory-shift's own
-# self-chain is harmless - they share factory-shift's concurrency group,
-# so a duplicate just gets deduped rather than racing.
+# self-chain is harmless: each shift waits for the floor to be free before
+# it builds anything (`.github/wait-for-floor.sh`), so a duplicate queues
+# behind the first rather than racing it. It used to say they were deduped
+# by a shared concurrency group, which was never true - a group cancels the
+# pending run instead of queueing it, which is what #733 was.
 #
 # workflow_run is the fast path (fires right after a run completes) but
 # isn't reliable here: GitHub doesn't consistently fire workflow_run for a
