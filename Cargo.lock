@@ -3418,6 +3418,7 @@ dependencies = [
  "plugin-gitconfig",
  "plugin-githubactions",
  "plugin-gitlabci",
+ "plugin-gitmodules",
  "plugin-gleam",
  "plugin-go",
  "plugin-gomod",
@@ -7110,6 +7111,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gitmodules"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "syntax",
+]
+
+[[package]]
 name = "plugin-gleam"
 version = "0.8.0"
 dependencies = [
@@ -9551,6 +9562,7 @@ dependencies = [
  "plugin-gitconfig",
  "plugin-githubactions",
  "plugin-gitlabci",
+ "plugin-gitmodules",
  "plugin-gleam",
  "plugin-go",
  "plugin-gomod",
@@ -10831,6 +10843,7 @@ dependencies = [
  "plugin-gitconfig",
  "plugin-githubactions",
  "plugin-gitlabci",
+ "plugin-gitmodules",
  "plugin-gleam",
  "plugin-go",
  "plugin-gomod",
