@@ -193,6 +193,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_cue::CueCore,
     &plugin_rego::RegoCore,
     &plugin_gemfilelock::GemfilelockCore,
+    &plugin_gomod::GomodCore,
     &plugin_gosum::GosumCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,

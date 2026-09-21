@@ -213,6 +213,7 @@ pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_gemfilelock::GemfilelockPresentation,
     &plugin_composerlock::ComposerlockPresentation,
     &plugin_pythonlock::PythonlockPresentation,
+    &plugin_gomod::GomodPresentation,
     &plugin_gosum::GosumPresentation,
 ];
 

@@ -3419,6 +3419,7 @@ dependencies = [
  "plugin-gitlabci",
  "plugin-gleam",
  "plugin-go",
+ "plugin-gomod",
  "plugin-gosum",
  "plugin-graphql",
  "plugin-groovy",
@@ -7116,6 +7117,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gomod"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "syntax",
+]
+
+[[package]]
 name = "plugin-gosum"
 version = "0.8.0"
 dependencies = [
@@ -9507,6 +9518,7 @@ dependencies = [
  "plugin-gitlabci",
  "plugin-gleam",
  "plugin-go",
+ "plugin-gomod",
  "plugin-gosum",
  "plugin-graphql",
  "plugin-groovy",
@@ -10783,6 +10795,7 @@ dependencies = [
  "plugin-gitlabci",
  "plugin-gleam",
  "plugin-go",
+ "plugin-gomod",
  "plugin-gosum",
  "plugin-graphql",
  "plugin-groovy",
