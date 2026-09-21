@@ -198,6 +198,10 @@ const NO_SYNTAX: &[(&str, &str)] = &[
         "tar",
         "an archive. The view lists what is inside it, and that listing is the plugin's own words rather than the file's",
     ),
+    (
+        "licence",
+        "legal prose, read for its distinctive phrases rather than its syntax - there is none to colour",
+    ),
 ];
 
 /// Every plugin that opens a text file either describes its language or

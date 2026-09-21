@@ -81,6 +81,7 @@ plugin-jsonschema = { path = "../plugins/jsonschema" }
 plugin-githubactions = { path = "../plugins/githubactions" }
 plugin-kubernetes = { path = "../plugins/kubernetes" }
 plugin-latex = { path = "../plugins/latex" }
+plugin-licence = { path = "../plugins/licence" }
 plugin-lex = { path = "../plugins/lex" }
 plugin-lua = { path = "../plugins/lua" }
 plugin-markdown = { path = "../plugins/markdown" }

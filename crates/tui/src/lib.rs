@@ -304,6 +304,7 @@ pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_webmanifest::WebmanifestPresentation,
     &plugin_sourcemap::SourcemapPresentation,
     &plugin_gitmodules::GitmodulesPresentation,
+    &plugin_licence::LicencePresentation,
     &plugin_gitconfig::GitconfigPresentation,
     &plugin_gitattributes::GitattributesPresentation,
     &plugin_helmchart::HelmchartPresentation,

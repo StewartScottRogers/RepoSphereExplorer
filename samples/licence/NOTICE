@@ -1,0 +1,11 @@
+This product includes software developed by third parties.
+
+Component: quill-render (https://example.com/quill-render)
+Used for rendering vector icons in the toolbar. See that project's own
+repository for its licence.
+
+Component: pixel-loom
+Bundled as a build-time dependency for generating sprite sheets.
+
+See the NOTICES directory in each dependency's own repository for its
+full attribution text.
