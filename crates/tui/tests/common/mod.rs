@@ -49,12 +49,57 @@ pub fn ensure_service() {
 }
 
 /// A directory of this test's own, under the system temp directory, emptied
-/// first so an earlier run's leftovers cannot leak in.
+/// first so an earlier run's leftovers cannot leak in. `name` is built from
+/// a binding's own description in `binding_table.rs`, which reads like
+/// prose and is free to hold a character - `?`, `:`, `/`, `"` - that is
+/// ordinary in a POSIX file name and forbidden in a Windows one (#741), so
+/// it is sanitised before it is joined onto a path.
 pub fn scratch(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join(format!("repos-explorer-tui-window-{name}"));
+    let directory =
+        std::env::temp_dir().join(format!("repos-explorer-tui-window-{}", sanitize(name)));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory
+}
+
+/// Escapes every character Windows forbids in a filename - `< > : " / \ | ? *`
+/// and the control characters - to `%` followed by its code point in hex,
+/// the way a URL escapes a reserved character. `%` itself is escaped the
+/// same way, so the mapping stays one name to one directory: two names
+/// differing only in which forbidden character they hold, or in whether one
+/// was already escaped, still land in different places.
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if matches!(
+                c,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '%'
+            ) || (c as u32) < 0x20
+            {
+                format!("%{:02X}", c as u32)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn sanitize_removes_every_character_windows_forbids() {
+    let forbidden = "<>:\"/\\|?*";
+    for c in forbidden.chars() {
+        let name = format!("a{c}b");
+        assert!(
+            sanitize(&name).chars().all(|c| !forbidden.contains(c)),
+            "{c:?} should not survive sanitising"
+        );
+    }
+}
+
+#[test]
+fn sanitize_keeps_names_differing_only_in_punctuation_apart() {
+    assert_ne!(sanitize("Sort by name"), sanitize("Sort: by name"));
+    assert_ne!(sanitize("? for keys"), sanitize(" for keys"));
 }
 
 /// A fixed sequence of key presses, read one at a time by [`tui::tick`] or

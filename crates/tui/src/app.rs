@@ -6769,8 +6769,13 @@ mod tests {
         app.handle_key(KeyCode::Down);
         app.handle_key(KeyCode::Delete);
 
-        let text = drawn(80, 20, &app);
         let expected = root.join("notes.txt").display().to_string();
+        // Measured from the path itself, not assumed: `render_modal` clips
+        // its box to the terminal's width, and a temp directory can run
+        // longer than any fixed guess (#741). Six columns is the modal's
+        // own border and padding around the longest line it draws.
+        let width = u16::try_from(expected.chars().count() + 6).unwrap_or(u16::MAX);
+        let text = drawn(width, 20, &app);
 
         assert!(
             text.contains(&expected),
@@ -7184,10 +7189,15 @@ mod tests {
         let root = notional_root("breadcrumb-wired-in");
         let app = app_showing(&root, &[("alpha", true)]);
 
-        let rows = drawn_rows(80, 8, &app);
+        // Measured from the root itself, not assumed: `breadcrumb_line`
+        // elides anything past the terminal's width, and a temp directory
+        // can run longer than any fixed guess (#741).
+        let expected = root.display().to_string();
+        let width = u16::try_from(expected.chars().count()).unwrap_or(u16::MAX);
+        let rows = drawn_rows(width, 8, &app);
 
         assert!(
-            rows[0].contains(&root.display().to_string()),
+            rows[0].contains(&expected),
             "the browsed folder's path is the first row, at a wide enough terminal: {:?}",
             rows[0]
         );

@@ -90,10 +90,13 @@ fn press_binding(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &
 }
 
 /// Draws with no key pressed until `needle` appears or a deadline passes -
-/// the real round trip to the service takes a moment to answer.
+/// the real round trip to the service takes a moment to answer. The
+/// deadline is generous rather than tight (#741): the loop returns the
+/// moment `needle` appears, so a longer one costs nothing while the front
+/// end is working, and a slower machine's real round trip has room to land.
 fn wait_for(terminal: &mut Terminal<TestBackend>, app: &mut App, needle: &str) -> String {
     let mut nothing = common::QueuedKeys::new(std::iter::empty());
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
     loop {
         tui::tick(terminal, app, &mut nothing, Duration::ZERO).expect("a draw");
         let contents = drawn(terminal);
@@ -257,7 +260,9 @@ fn assert_start_undo(terminal: &mut Terminal<TestBackend>, app: &mut App, bindin
 
     press_binding(terminal, app, binding);
     let mut shown = drawn(terminal);
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    // Generous rather than tight (#741): the loop stops as soon as "temp"
+    // is gone, so a longer deadline costs nothing while undo is working.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
     while shown.contains("temp") && std::time::Instant::now() < deadline {
         let mut nothing = common::QueuedKeys::new(std::iter::empty());
         tui::tick(terminal, app, &mut nothing, Duration::ZERO).expect("a draw");

@@ -70,7 +70,10 @@ fn press_with_modifiers(
 
 fn wait_for(terminal: &mut Terminal<TestBackend>, app: &mut App, needle: &str) -> String {
     let mut nothing = common::QueuedKeys::new(std::iter::empty());
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    // Generous rather than tight (#741): the loop returns the moment
+    // `needle` appears, so a longer deadline costs nothing while the real
+    // round trip to the service and to `git` is working.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         tui::tick(terminal, app, &mut nothing, std::time::Duration::ZERO).expect("a draw");
         let contents = drawn(terminal);
