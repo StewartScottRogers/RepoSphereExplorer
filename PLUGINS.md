@@ -206,8 +206,9 @@ GUIDANCE.md §3.5 and DECISIONS.md D12.
 | --- | --- | --- | --- |
 | Directory | `crates/plugins/directory` | — | The folder itself: contents, and the source control facts of a working copy |
 | Cargo project | `crates/plugins/project-cargo` | #308 | Workspace or package, name, version, edition, members, dependency counts |
+| Go project | `crates/plugins/project-go` | #712 | Module path, Go version and toolchain, direct requirement count, replaced requirements, vendoring, command count |
 
-Node, Python, Go, .NET and Java project plugins are follow-up work, not
+Node, Python, .NET and Java project plugins are follow-up work, not
 rejected.
 
 ## Rejected / infeasible

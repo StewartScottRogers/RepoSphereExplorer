@@ -3479,6 +3479,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
+ "plugin-project-go",
  "plugin-prolog",
  "plugin-properties",
  "plugin-protobuf",
@@ -7713,6 +7714,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-project-go"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-prolog"
 version = "0.8.0"
 dependencies = [
@@ -9546,6 +9556,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
+ "plugin-project-go",
  "plugin-prolog",
  "plugin-properties",
  "plugin-protobuf",
@@ -10820,6 +10831,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
+ "plugin-project-go",
  "plugin-prolog",
  "plugin-properties",
  "plugin-protobuf",

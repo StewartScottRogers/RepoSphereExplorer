@@ -234,7 +234,10 @@ const DIRECTORY_PLUGIN: &dyn PluginCore = &plugin_directory::DirectoryCore;
 /// plugins claiming one file is a defect. A folder is several things at
 /// once: this repository's own root is a source control working copy and a
 /// Cargo workspace, and neither description is the wrong one.
-const FOLDER_PLUGINS: &[&dyn FolderCore] = &[&plugin_project_cargo::CargoProjectCore];
+const FOLDER_PLUGINS: &[&dyn FolderCore] = &[
+    &plugin_project_cargo::CargoProjectCore,
+    &plugin_project_go::GoProjectCore,
+];
 
 /// Every folder plugin that recognises the folder at `path`, in
 /// registration order.
@@ -4145,6 +4148,58 @@ public class OrderBook {
             "the project description is added, never substituted: {:?}",
             also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
         );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_is_a_go_module_is_described_as_both_at_once() {
+        let dir = scratch();
+        fs::write(
+            dir.join("go.mod"),
+            "module github.com/example/widgets\n\ngo 1.22\n",
+        )
+        .unwrap();
+
+        let Response::FileView { plugin, also, .. } = view_file(&dir).unwrap() else {
+            panic!("a folder should view as a file view");
+        };
+
+        assert_eq!(plugin, "directory");
+        assert!(
+            also.iter().any(|view| view.plugin == "project-go"),
+            "the module description is added, never substituted: {:?}",
+            also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_can_be_a_cargo_and_a_go_project_at_once() {
+        // The rule this whole registry exists for (D12): every folder
+        // plugin that recognises a folder contributes, and none of them
+        // replaces what another already reported.
+        let dir = scratch();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"widgets\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("go.mod"),
+            "module github.com/example/widgets\n\ngo 1.22\n",
+        )
+        .unwrap();
+
+        let Response::FileView { plugin, also, .. } = view_file(&dir).unwrap() else {
+            panic!("a folder should view as a file view");
+        };
+
+        assert_eq!(plugin, "directory", "the folder is still a folder");
+        let names: Vec<&str> = also.iter().map(|view| view.plugin.as_str()).collect();
+        assert!(names.contains(&"project-cargo"), "{names:?}");
+        assert!(names.contains(&"project-go"), "{names:?}");
 
         fs::remove_dir_all(&dir).unwrap();
     }
