@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// rather than a file in it. The files inside them are ordinary files that
 /// other plugins own, so the per-file checks skip these directories and
 /// ask about the folder instead.
-const FOLDER_PLUGIN_SAMPLES: &[&str] = &["directory", "project-cargo"];
+const FOLDER_PLUGIN_SAMPLES: &[&str] = &["directory", "project-cargo", "project-node"];
 
 /// Fields no fixture anywhere fills, because the format itself has no way
 /// to carry them. Each entry is `("<plugin>", "<field>")`, and every one of
