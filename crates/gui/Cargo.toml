@@ -68,6 +68,7 @@ plugin-gitlabci = { path = "../plugins/gitlabci" }
 plugin-gleam = { path = "../plugins/gleam" }
 plugin-gomod = { path = "../plugins/gomod" }
 plugin-gosum = { path = "../plugins/gosum" }
+plugin-gradle = { path = "../plugins/gradle" }
 plugin-gzip = { path = "../plugins/gzip" }
 plugin-helmchart = { path = "../plugins/helmchart" }
 plugin-ignorefile = { path = "../plugins/ignorefile" }

@@ -3422,6 +3422,7 @@ dependencies = [
  "plugin-go",
  "plugin-gomod",
  "plugin-gosum",
+ "plugin-gradle",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-gzip",
@@ -7148,6 +7149,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-gradle"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "syntax",
+]
+
+[[package]]
 name = "plugin-graphql"
 version = "0.8.0"
 dependencies = [
@@ -9532,6 +9543,7 @@ dependencies = [
  "plugin-go",
  "plugin-gomod",
  "plugin-gosum",
+ "plugin-gradle",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-gzip",
@@ -10810,6 +10822,7 @@ dependencies = [
  "plugin-go",
  "plugin-gomod",
  "plugin-gosum",
+ "plugin-gradle",
  "plugin-graphql",
  "plugin-groovy",
  "plugin-gzip",
