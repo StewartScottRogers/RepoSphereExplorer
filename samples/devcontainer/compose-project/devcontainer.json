@@ -1,0 +1,15 @@
+{
+  // A container exercising the fields a Compose-based project's
+  // configuration carries that the Dockerfile-based fixture next door
+  // does not: two Compose files, the service it runs as, a
+  // postAttachCommand, and a container user.
+  "name": "Full stack (Compose)",
+  "dockerComposeFile": ["../docker-compose.yml", "docker-compose.override.yml"],
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "postAttachCommand": "echo attached",
+  "containerUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/aws-cli": {}
+  }
+}

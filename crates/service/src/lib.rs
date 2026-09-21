@@ -98,6 +98,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_geojson::GeoJsonCore,
     &plugin_npmlock::NpmlockCore,
     &plugin_npmmanifest::NpmmanifestCore,
+    &plugin_devcontainer::DevcontainerCore,
     &plugin_webmanifest::WebmanifestCore,
     &plugin_sourcemap::SourcemapCore,
     &plugin_jsonschema::JsonschemaCore,

@@ -3394,6 +3394,7 @@ dependencies = [
  "plugin-csv",
  "plugin-cue",
  "plugin-dart",
+ "plugin-devcontainer",
  "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
@@ -6868,6 +6869,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-devcontainer"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "syntax",
+]
+
+[[package]]
 name = "plugin-diff"
 version = "0.8.0"
 dependencies = [
@@ -9538,6 +9549,7 @@ dependencies = [
  "plugin-csv",
  "plugin-cue",
  "plugin-dart",
+ "plugin-devcontainer",
  "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",
@@ -10819,6 +10831,7 @@ dependencies = [
  "plugin-csv",
  "plugin-cue",
  "plugin-dart",
+ "plugin-devcontainer",
  "plugin-diff",
  "plugin-directory",
  "plugin-disk-image",

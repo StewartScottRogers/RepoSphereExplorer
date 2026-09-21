@@ -54,6 +54,7 @@ plugin-compose = { path = "../plugins/compose" }
 plugin-composerlock = { path = "../plugins/composerlock" }
 plugin-css = { path = "../plugins/css" }
 plugin-cue = { path = "../plugins/cue" }
+plugin-devcontainer = { path = "../plugins/devcontainer" }
 plugin-diff = { path = "../plugins/diff" }
 plugin-dlang = { path = "../plugins/dlang" }
 plugin-dotenv = { path = "../plugins/dotenv" }
