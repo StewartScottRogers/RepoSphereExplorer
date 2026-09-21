@@ -72,7 +72,7 @@ pub fn scratch(name: &str) -> PathBuf {
 /// `name` with everything Windows forbids in a file name replaced by `-`,
 /// and any run of them collapsed, so two cases whose names differ only in
 /// punctuation still get directories of their own.
-fn usable_as_a_name(name: &str) -> String {
+pub fn usable_as_a_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for character in name.chars() {
         // The set Windows reserves, plus the control characters, plus the
