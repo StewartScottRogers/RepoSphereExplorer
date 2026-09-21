@@ -93,7 +93,13 @@ fn press_binding(terminal: &mut Terminal<TestBackend>, app: &mut App, binding: &
 /// the real round trip to the service takes a moment to answer.
 fn wait_for(terminal: &mut Terminal<TestBackend>, app: &mut App, needle: &str) -> String {
     let mut nothing = common::QueuedKeys::new(std::iter::empty());
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    // Generous, because the loop returns the moment the needle appears: a
+    // long deadline costs nothing when the front end is working, and only
+    // lengthens the wait before a genuine failure is reported. Two seconds
+    // was not enough for `git init` plus a round trip to the service on a
+    // Windows desktop, so `assert_refresh` failed there while passing on the
+    // runner - the same shape of fault as #654 and #662.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
     loop {
         tui::tick(terminal, app, &mut nothing, Duration::ZERO).expect("a draw");
         let contents = drawn(terminal);
@@ -105,8 +111,16 @@ fn wait_for(terminal: &mut Terminal<TestBackend>, app: &mut App, needle: &str) -
 }
 
 fn new_app_and_terminal(root: PathBuf) -> (Terminal<TestBackend>, App) {
+    // Wide enough for this machine's own fixture path, because several
+    // assertions below require a full path to be drawn rather than elided,
+    // and how long that path is belongs to the machine: a short
+    // `/tmp/repos-explorer-tui-window-...` fits eighty columns and the
+    // Windows equivalent under `AppData\Local\Temp` does not.
+    let width = u16::try_from(root.display().to_string().chars().count() + 40)
+        .expect("a fixture path that fits a terminal width")
+        .max(80);
     let app = App::new(root);
-    let terminal = Terminal::new(TestBackend::new(80, 14)).expect("a test terminal");
+    let terminal = Terminal::new(TestBackend::new(width, 14)).expect("a test terminal");
     (terminal, app)
 }
 

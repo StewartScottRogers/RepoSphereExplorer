@@ -6038,6 +6038,22 @@ mod tests {
         std::env::temp_dir().join(format!("rse-tui-tests-{}-{tag}", std::process::id()))
     }
 
+    /// A terminal wide enough to draw `text` without eliding it, plus
+    /// `framing` columns for whatever is drawn around it.
+    ///
+    /// Measured, never assumed: these fixtures live under
+    /// `std::env::temp_dir()`, and how long that is belongs to the machine,
+    /// not to the test. A short `/tmp/rse-tui-tests-123-tag` fits an
+    /// eighty-column terminal; the Windows equivalent under
+    /// `AppData\Local\Temp` does not, so a hard-coded eighty passed on the
+    /// runner and failed on a desktop - the same shape of fault as #654 and
+    /// #662.
+    fn wide_enough_for(text: &str, framing: usize) -> u16 {
+        u16::try_from(text.chars().count() + framing)
+            .expect("a fixture path that fits a terminal width")
+            .max(80)
+    }
+
     /// An app showing `listing` as the contents of `root`, with nothing left
     /// in flight, so a test starts from a settled screen.
     fn app_showing(root: &Path, listing: &[(&str, bool)]) -> App {
@@ -6769,8 +6785,10 @@ mod tests {
         app.handle_key(KeyCode::Down);
         app.handle_key(KeyCode::Delete);
 
-        let text = drawn(80, 20, &app);
         let expected = root.join("notes.txt").display().to_string();
+        // As the breadcrumb test: the modal is inset inside the panes and
+        // bordered, so it needs more room than the path alone.
+        let text = drawn(wide_enough_for(&expected, 24), 20, &app);
 
         assert!(
             text.contains(&expected),
@@ -7184,10 +7202,14 @@ mod tests {
         let root = notional_root("breadcrumb-wired-in");
         let app = app_showing(&root, &[("alpha", true)]);
 
-        let rows = drawn_rows(80, 8, &app);
+        // Wide enough for this machine's own fixture path: the breadcrumb
+        // elides what does not fit, and how long that path is depends on
+        // where the platform puts its temporary directory.
+        let crumb = root.display().to_string();
+        let rows = drawn_rows(wide_enough_for(&crumb, 4), 8, &app);
 
         assert!(
-            rows[0].contains(&root.display().to_string()),
+            rows[0].contains(&crumb),
             "the browsed folder's path is the first row, at a wide enough terminal: {:?}",
             rows[0]
         );

@@ -50,11 +50,48 @@ pub fn ensure_service() {
 
 /// A directory of this test's own, under the system temp directory, emptied
 /// first so an earlier run's leftovers cannot leak in.
+///
+/// `name` is made safe for a file name first. Callers build one out of
+/// whatever names the case - `binding_table.rs` uses each binding's own
+/// description - and those read like prose: "Delete", "Sort by name",
+/// "? for keys". A question mark, a colon, a slash or a quotation mark is
+/// an ordinary character in a POSIX file name and is forbidden in a Windows
+/// one, so the suite passed on the runner and failed on a desktop with
+/// `InvalidFilename` before the first assertion was ever reached - the same
+/// shape of fault as #654 and #662.
 pub fn scratch(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join(format!("repos-explorer-tui-window-{name}"));
+    let directory = std::env::temp_dir().join(format!(
+        "repos-explorer-tui-window-{}",
+        usable_as_a_name(name)
+    ));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory
+}
+
+/// `name` with everything Windows forbids in a file name replaced by `-`,
+/// and any run of them collapsed, so two cases whose names differ only in
+/// punctuation still get directories of their own.
+pub fn usable_as_a_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for character in name.chars() {
+        // The set Windows reserves, plus the control characters, plus the
+        // separators - a name is one path component and must stay one.
+        let forbidden = matches!(
+            character,
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+        ) || character.is_control();
+        if forbidden {
+            if !out.ends_with('-') {
+                out.push('-');
+            }
+        } else {
+            out.push(character);
+        }
+    }
+    // A trailing dot or space is legal to create and impossible to open
+    // again on Windows.
+    out.trim_end_matches([' ', '.']).to_owned()
 }
 
 /// A fixed sequence of key presses, read one at a time by [`tui::tick`] or
