@@ -1,0 +1,15 @@
+[submodule "vendor/widgets"]
+	path = vendor/widgets
+	url = https://github.com/example/widgets.git
+
+[submodule "libs/format"]
+	path = libs/format
+	url = git@gitlab.com:example/format.git
+	branch = release
+	shallow = true
+
+[submodule "tools/legacy"]
+	path = tools/legacy
+	url = https://github.com/example/legacy.git
+	update = none
+	ignore = dirty

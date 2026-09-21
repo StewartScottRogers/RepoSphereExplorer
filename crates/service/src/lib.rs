@@ -126,6 +126,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_pnpmlock::PnpmlockCore,
     &plugin_ansible::AnsibleCore,
     &plugin_yaml::YamlCore,
+    &plugin_gitmodules::GitmodulesCore,
     &plugin_gitconfig::GitconfigCore,
     &plugin_systemdunit::SystemdunitCore,
     // These three sit ahead of `ini`, which sniffs loosely enough to

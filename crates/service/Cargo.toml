@@ -55,6 +55,7 @@ plugin-gemfilelock = { path = "../plugins/gemfilelock" }
 plugin-gitattributes = { path = "../plugins/gitattributes" }
 plugin-gitconfig = { path = "../plugins/gitconfig" }
 plugin-gitlabci = { path = "../plugins/gitlabci" }
+plugin-gitmodules = { path = "../plugins/gitmodules" }
 plugin-gleam = { path = "../plugins/gleam" }
 plugin-gomod = { path = "../plugins/gomod" }
 plugin-gosum = { path = "../plugins/gosum" }
