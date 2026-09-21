@@ -111,6 +111,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_editorconfig::EditorconfigCore,
     &plugin_cargolock::CargolockCore,
     &plugin_pythonlock::PythonlockCore,
+    &plugin_pyproject::PyprojectCore,
     &plugin_toml::TomlCore,
     &plugin_csv::CsvCore,
     &plugin_msgpack::MsgpackCore,

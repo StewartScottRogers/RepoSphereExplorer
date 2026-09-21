@@ -199,6 +199,7 @@ it.
 | Go checksum database | `crates/plugins/gosum` | #341 | Modules and versions, the two lines folded into one entry, several versions, go.mod only, pseudo-versions |
 | Go module file | `crates/plugins/gomod` | #704 | Module path, Go version, toolchain, requirements with indirect marked, replace directives, excludes, retracts, godebug settings. Extension `mod` is unique to it, so `claimed_by_extension` routes it correctly ahead of `ruby`'s looser `module` marker regardless of `CORE_PLUGINS` order |
 | Gradle build and settings script | `crates/plugins/gradle` | #707 | Build script: plugins applied with versions, group, version, Java/Kotlin toolchain, dependencies grouped by configuration, repositories. Settings script: root project name, included modules. Claims no extension of its own - `.gradle`/`.gradle.kts` already belong to `groovy`/`kotlin` - and specialises both of those plus `text`, so `most_specific` routes it correctly regardless of which of the two also recognised the same bytes |
+| Python project manifest (`pyproject.toml`, `setup.cfg`) | `crates/plugins/pyproject` | #705 | Build backend and its requirements, distribution name and version, requires-python, dependencies, optional-dependency extras by name, console and graphical entry points, licence, authors, tools configured under `[tool.*]`; reads either shape into one view, specialises `toml` and `ini` in `CORE_PLUGINS` |
 
 ## Folder plugins
 

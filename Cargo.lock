@@ -3490,6 +3490,7 @@ dependencies = [
  "plugin-psd",
  "plugin-purescript",
  "plugin-pyc",
+ "plugin-pyproject",
  "plugin-python",
  "plugin-pythonlock",
  "plugin-r",
@@ -7827,6 +7828,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-pyproject"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "syntax",
+ "toml",
+]
+
+[[package]]
 name = "plugin-python"
 version = "0.8.0"
 dependencies = [
@@ -9611,6 +9623,7 @@ dependencies = [
  "plugin-psd",
  "plugin-purescript",
  "plugin-pyc",
+ "plugin-pyproject",
  "plugin-python",
  "plugin-pythonlock",
  "plugin-r",
@@ -10890,6 +10903,7 @@ dependencies = [
  "plugin-psd",
  "plugin-purescript",
  "plugin-pyc",
+ "plugin-pyproject",
  "plugin-python",
  "plugin-pythonlock",
  "plugin-r",

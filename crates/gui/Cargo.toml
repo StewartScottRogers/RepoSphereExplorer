@@ -108,6 +108,7 @@ plugin-properties = { path = "../plugins/properties" }
 plugin-protobuf = { path = "../plugins/protobuf" }
 plugin-purescript = { path = "../plugins/purescript" }
 plugin-pyc = { path = "../plugins/pyc" }
+plugin-pyproject = { path = "../plugins/pyproject" }
 plugin-pythonlock = { path = "../plugins/pythonlock" }
 plugin-rego = { path = "../plugins/rego" }
 plugin-requirements = { path = "../plugins/requirements" }
