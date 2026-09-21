@@ -304,6 +304,7 @@ pub fn present_graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic
 const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] = &[
     &plugin_project_cargo::CargoProjectPresentation,
     &plugin_project_node::NodeProjectPresentation,
+    &plugin_project_python::PythonProjectPresentation,
 ];
 
 /// Turns a folder plugin's view data into displayable lines.

@@ -30,7 +30,12 @@ use std::path::{Path, PathBuf};
 /// Sample directories belonging to a plugin whose subject is the folder
 /// rather than a file in it. The folder itself is what proves the plugin,
 /// so rule 2 asks about the directory rather than looking for a file.
-const FOLDER_PLUGIN_SAMPLES: &[&str] = &["directory", "project-cargo", "project-node"];
+const FOLDER_PLUGIN_SAMPLES: &[&str] = &[
+    "directory",
+    "project-cargo",
+    "project-node",
+    "project-python",
+];
 
 /// Which plugin recognises `path`, or `None` when nothing does.
 ///

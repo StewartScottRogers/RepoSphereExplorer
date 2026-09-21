@@ -246,6 +246,7 @@ const DIRECTORY_PLUGIN: &dyn PluginCore = &plugin_directory::DirectoryCore;
 const FOLDER_PLUGINS: &[&dyn FolderCore] = &[
     &plugin_project_cargo::CargoProjectCore,
     &plugin_project_node::NodeProjectCore,
+    &plugin_project_python::PythonProjectCore,
 ];
 
 /// Every folder plugin that recognises the folder at `path`, in
@@ -4400,6 +4401,29 @@ public class OrderBook {
         assert_eq!(plugin, "directory", "the folder is still a folder");
         assert!(
             also.iter().any(|view| view.plugin == "project-node"),
+            "the project description is added, never substituted: {:?}",
+            also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_is_a_python_project_is_described_as_both_at_once() {
+        let dir = scratch();
+        fs::write(
+            dir.join("pyproject.toml"),
+            "[project]\nname = \"widgets\"\n",
+        )
+        .unwrap();
+
+        let Response::FileView { plugin, also, .. } = view_file(&dir).unwrap() else {
+            panic!("a folder should view as a file view");
+        };
+
+        assert_eq!(plugin, "directory", "the folder is still a folder");
+        assert!(
+            also.iter().any(|view| view.plugin == "project-python"),
             "the project description is added, never substituted: {:?}",
             also.iter().map(|view| &view.plugin).collect::<Vec<_>>()
         );

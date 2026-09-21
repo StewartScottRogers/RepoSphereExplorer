@@ -1,0 +1,24 @@
+# A sample Python project, so the `project-python` folder plugin has a
+# folder to recognise. A real PEP 621 manifest: a build backend, a name
+# and version, the Python it requires, dependencies, and a console entry
+# point.
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "widgets"
+version = "0.4.1"
+description = "Assembles and reports on the factory floor's tooling widgets."
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "requests>=2.31",
+]
+
+[project.scripts]
+widgets = "widgets.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/widgets"]

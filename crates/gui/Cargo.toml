@@ -145,6 +145,7 @@ plugin-directory = { path = "../plugins/directory" }
 open = "5"
 plugin-project-cargo = { path = "../plugins/project-cargo" }
 plugin-project-node = { path = "../plugins/project-node" }
+plugin-project-python = { path = "../plugins/project-python" }
 plugin-disk-image = { path = "../plugins/disk-image" }
 plugin-dockerfile = { path = "../plugins/dockerfile" }
 plugin-elixir = { path = "../plugins/elixir" }

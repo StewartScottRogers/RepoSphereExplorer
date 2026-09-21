@@ -400,6 +400,7 @@ pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
 const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] = &[
     &plugin_project_cargo::CargoProjectPresentation,
     &plugin_project_node::NodeProjectPresentation,
+    &plugin_project_python::PythonProjectPresentation,
 ];
 
 /// Turns a folder plugin's view data into displayable lines.
