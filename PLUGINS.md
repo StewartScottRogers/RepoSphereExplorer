@@ -195,6 +195,7 @@ it.
 | Composer lock file | `crates/plugins/composerlock` | #339 | Content hash, packages with source and kind, development apart, platform requirements, stability |
 | Python lock file | `crates/plugins/pythonlock` | #340 | Which tool wrote it, lock format, Python, resolution markers, packages with sources, wheels, markers, hash |
 | Go checksum database | `crates/plugins/gosum` | #341 | Modules and versions, the two lines folded into one entry, several versions, go.mod only, pseudo-versions |
+| Go module file | `crates/plugins/gomod` | #704 | Module path, Go version, toolchain, requirements with indirect marked, replace directives, excludes, retracts, godebug settings. Extension `mod` is unique to it, so `claimed_by_extension` routes it correctly ahead of `ruby`'s looser `module` marker regardless of `CORE_PLUGINS` order |
 
 ## Folder plugins
 
