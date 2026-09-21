@@ -255,6 +255,10 @@ const PLAINLY_TEXT: &[&str] = &[
     // structure, of which this has none, so claiming it would relabel
     // the file without saying anything more about it.
     "r/NAMESPACE",
+    // Third-party attribution prose, deliberately holding none of a
+    // licence's own distinctive phrases, to prove the `licence` plugin
+    // refuses a `NOTICE` file that is not one.
+    "licence/NOTICE",
 ];
 
 /// Rule 3. A file in `samples/<plugin>/` that goes to the general text

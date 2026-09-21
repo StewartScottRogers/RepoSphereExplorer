@@ -200,6 +200,7 @@ const CORE_PLUGINS: &[&dyn PluginCore] = &[
     &plugin_gemfilelock::GemfilelockCore,
     &plugin_gomod::GomodCore,
     &plugin_gosum::GosumCore,
+    &plugin_licence::LicenceCore,
     &plugin_text::TextCore,
     &plugin_image::ImageCore,
     &plugin_psd::PsdCore,

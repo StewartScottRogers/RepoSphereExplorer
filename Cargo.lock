@@ -3450,6 +3450,7 @@ dependencies = [
  "plugin-kubernetes",
  "plugin-latex",
  "plugin-lex",
+ "plugin-licence",
  "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
@@ -7430,6 +7431,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-licence"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-lua"
 version = "0.8.0"
 dependencies = [
@@ -9605,6 +9615,7 @@ dependencies = [
  "plugin-kubernetes",
  "plugin-latex",
  "plugin-lex",
+ "plugin-licence",
  "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
@@ -10887,6 +10898,7 @@ dependencies = [
  "plugin-kubernetes",
  "plugin-latex",
  "plugin-lex",
+ "plugin-licence",
  "plugin-lua",
  "plugin-makefile",
  "plugin-markdown",
