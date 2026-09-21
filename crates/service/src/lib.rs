@@ -4,6 +4,7 @@ mod all_repositories;
 pub mod repos;
 
 use interprocess::local_socket::traits::Listener as _;
+use interprocess::local_socket::traits::StreamCommon as _;
 use interprocess::local_socket::{Listener, ListenerOptions, Name, Stream};
 use plugin_api::{FolderCore, PluginCore};
 use protocol::{DirectoryEntry, NameMatch, PluginView, Request, Response, WorkingTreeSummary};
@@ -1306,14 +1307,88 @@ pub fn bind_reclaiming_stale(name: Name<'_>) -> io::Result<Listener> {
     }
 }
 
+/// The connecting peer's identity, established from the connection itself -
+/// GUIDANCE.md §2.1.2 requires this to come from the connection, never from
+/// anything the caller says about itself.
+///
+/// `Unknown` covers both "this platform has no way to tell" and "the lookup
+/// failed", and is never equal to anything, including another `Unknown`: an
+/// authentication gap fails closed rather than passing silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerIdentity {
+    /// A Unix effective user ID, from `SO_PEERCRED` or equivalent.
+    Uid(u32),
+    /// No identity could be established for this connection.
+    Unknown,
+}
+
+/// The rule GUIDANCE.md §2.1.2 gates every request on: whether `peer` is the
+/// same identity as `owner`. A pure function over two identifiers, so it is
+/// testable without a second user account.
+fn peer_is_owner(peer: PeerIdentity, owner: PeerIdentity) -> bool {
+    matches!((peer, owner), (PeerIdentity::Uid(a), PeerIdentity::Uid(b)) if a == b)
+}
+
+/// This service's own identity: the session owner every peer is checked
+/// against.
+fn owner_identity() -> PeerIdentity {
+    #[cfg(unix)]
+    {
+        PeerIdentity::Uid(rustix::process::geteuid().as_raw())
+    }
+    #[cfg(not(unix))]
+    {
+        // `interprocess` 2.4's cross-platform local-socket API reports only
+        // a process ID on Windows, not the security identifier (SID)
+        // GUIDANCE.md §2.1.2 asks for, and resolving a SID from a process ID
+        // means calling Win32 directly, which this workspace's
+        // `unsafe_code = "forbid"` rules out. `Unknown` refuses every
+        // connection here rather than serving one nobody has verified - the
+        // fallback the work order that added this check sanctions for a
+        // platform that genuinely cannot answer.
+        PeerIdentity::Unknown
+    }
+}
+
+/// Reads the connecting peer's identity off `conn` itself.
+fn peer_identity(conn: &Stream) -> PeerIdentity {
+    let Ok(creds) = conn.peer_creds() else {
+        return PeerIdentity::Unknown;
+    };
+    #[cfg(unix)]
+    {
+        creds
+            .euid()
+            .map_or(PeerIdentity::Unknown, PeerIdentity::Uid)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = creds;
+        PeerIdentity::Unknown
+    }
+}
+
 /// Accepts one connection on `listener`, answers exactly one request on it,
 /// then returns.
 ///
-/// # Errors
-/// Returns an error if accepting the connection or the request/response
-/// round trip fails.
-pub fn serve_one(listener: &Listener) -> io::Result<()> {
+/// The connecting peer is checked against `owner` before a single byte of
+/// the request is read: a peer that is not the owner gets its connection
+/// closed with nothing served, and the refusal is journaled. See
+/// [`peer_is_owner`].
+fn serve_one_as(listener: &Listener, owner: PeerIdentity) -> io::Result<()> {
     let mut conn: Stream = listener.accept()?;
+    let peer = peer_identity(&conn);
+    if !peer_is_owner(peer, owner) {
+        journal(
+            "peer_refused",
+            &[format!("{peer:?}")],
+            &Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "connecting peer is not the session owner",
+            )),
+        );
+        return Ok(());
+    }
     let request: Request = protocol::read_message(&mut conn)?;
     let response = handle_request(&request);
     if let Err(err) = protocol::write_message(&mut conn, &response) {
@@ -1334,6 +1409,16 @@ pub fn serve_one(listener: &Listener) -> io::Result<()> {
     Ok(())
 }
 
+/// Accepts one connection on `listener`, answers exactly one request on it,
+/// then returns.
+///
+/// # Errors
+/// Returns an error if accepting the connection or the request/response
+/// round trip fails.
+pub fn serve_one(listener: &Listener) -> io::Result<()> {
+    serve_one_as(listener, owner_identity())
+}
+
 /// Runs the service loop: accepts connections and answers one request on
 /// each, forever.
 ///
@@ -1350,11 +1435,11 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, bind, copy, create_directory,
-        create_file, delete, extract, find_certificates, find_names, folder_plugins_among, guarded,
-        handle_request, journal_to, list_directory, most_specific, open, rename, repos, serve_one,
-        sniff_among, undo, view_file, with_source_text, working_tree_status, write_atomically,
-        write_file,
+        CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, PeerIdentity, bind, copy,
+        create_directory, create_file, delete, extract, find_certificates, find_names,
+        folder_plugins_among, guarded, handle_request, journal_to, list_directory, most_specific,
+        open, peer_is_owner, rename, repos, serve_one, serve_one_as, sniff_among, undo, view_file,
+        with_source_text, working_tree_status, write_atomically, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -2369,6 +2454,104 @@ public class OrderBook {
         });
         serve_one(&listener).unwrap();
         client.join().unwrap()
+    }
+
+    #[test]
+    fn peer_is_owner_matches_the_same_uid() {
+        assert!(peer_is_owner(
+            PeerIdentity::Uid(501),
+            PeerIdentity::Uid(501)
+        ));
+    }
+
+    #[test]
+    fn peer_is_owner_refuses_a_different_uid() {
+        assert!(!peer_is_owner(
+            PeerIdentity::Uid(501),
+            PeerIdentity::Uid(1000)
+        ));
+    }
+
+    #[test]
+    fn peer_is_owner_refuses_when_either_identity_is_unknown() {
+        assert!(!peer_is_owner(
+            PeerIdentity::Unknown,
+            PeerIdentity::Uid(501)
+        ));
+        assert!(!peer_is_owner(
+            PeerIdentity::Uid(501),
+            PeerIdentity::Unknown
+        ));
+        assert!(!peer_is_owner(PeerIdentity::Unknown, PeerIdentity::Unknown));
+    }
+
+    #[test]
+    fn the_session_owner_is_served() {
+        let response = round_trip(Request::ReposRoots);
+        assert!(
+            matches!(response, Response::ReposRoots { .. }),
+            "the session owner's own connection is served: {response:?}"
+        );
+    }
+
+    #[test]
+    fn a_peer_that_is_not_the_owner_is_refused_before_any_request_is_handled() {
+        let (listener, name) = bind_unique();
+        let path = std::env::temp_dir().join(unique_socket_name());
+        fs::write(&path, "still here").unwrap();
+        let path_for_client = path.to_string_lossy().into_owned();
+
+        let client = std::thread::spawn(move || {
+            let mut conn = connect(&name);
+            // The server may already have closed its end by the time this
+            // write happens, so a broken pipe here is as much a refusal as
+            // an error from the read below - only the read result matters.
+            let _ = protocol::write_message(
+                &mut conn,
+                &Request::Delete {
+                    paths: vec![path_for_client],
+                },
+            );
+            protocol::read_message::<Response, _>(&mut conn)
+        });
+
+        // No identity on this machine equals `Unknown` (see
+        // `peer_is_owner_refuses_when_either_identity_is_unknown`), so this
+        // forces the same refusal a genuine non-owner peer would get,
+        // without a second user account to connect as.
+        serve_one_as(&listener, PeerIdentity::Unknown).unwrap();
+
+        let result = client.join().unwrap();
+        assert!(
+            result.is_err(),
+            "a refused connection is closed with nothing served: {result:?}"
+        );
+        assert!(
+            path.exists(),
+            "a refused connection performs no filesystem work"
+        );
+
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_refused_peer_gets_no_response_whatever_request_it_sent() {
+        let (listener, name) = bind_unique();
+        let client = std::thread::spawn(move || {
+            let mut conn = connect(&name);
+            let _ = protocol::write_message(&mut conn, &Request::ReposRoots);
+            protocol::read_message::<Response, _>(&mut conn)
+        });
+
+        // The check runs on `peer_identity(&conn)` before `read_message`
+        // ever looks at what was sent, so it cannot matter which `Request`
+        // variant - existing or added later - the peer chose.
+        serve_one_as(&listener, PeerIdentity::Unknown).unwrap();
+
+        assert!(
+            client.join().unwrap().is_err(),
+            "a read-only request is refused exactly like a destructive one"
+        );
     }
 
     #[test]
