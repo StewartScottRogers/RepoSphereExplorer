@@ -78,6 +78,7 @@ run() { # run_id, JSON for claude.yml, JSON for factory-shift.yml, clears-at
   # clears ==" case's switch-after-N-polls behaviour by accident.
   CLAUDE_JSON="$2" SHIFT_JSON="$3" SHIFT_CLEAR_JSON="[]" SHIFT_CLEARS_AT="${4:-1000000}" \
     WORK="${work}" REPO=o/r RUN_ID="$1" POLL_SECONDS=0 MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}" \
+    GH_TOKEN="${GH_TOKEN_FOR_RUN-stub-token}" \
     bash "${stub}" > "${work}/log" 2>&1
   echo "$?"
 }
@@ -107,6 +108,19 @@ check "our own run listed as in-progress does not block us" "0" "$(run 10 '[]' "
 
 echo "== the wait ends the moment the floor actually clears =="
 check "clears on the 2nd poll, not stuck at the 1st" "0" "$(MAX_ATTEMPTS=5 run 20 '[]' "${run_in_progress}" 2)"
+
+# The case the first version of this test could not see, and the reviewer
+# of #734 could: with no token, `gh run list` fails, and a failed listing
+# read as an empty floor would wave every run straight through while
+# reporting a clear floor - two builds racing on the same root Cargo.toml,
+# with the queueing message still saying all was well. Both the missing
+# token and a failing `gh` must stop the run instead.
+echo "== a listing that cannot be made is never read as an empty floor =="
+check "no token at all fails, rather than passing the run through" "1" \
+  "$(GH_TOKEN_FOR_RUN="" run 20 '[]' '[]')"
+check "and says which environment variable is missing" "1" \
+  "$(grep -c "::error::Neither GH_TOKEN nor GITHUB_TOKEN" "${work}/log")"
+check "does not claim the floor was clear" "0" "$(grep -c "goes now" "${work}/log")"
 
 echo "== gives up loudly rather than waiting forever =="
 result="$(MAX_ATTEMPTS=2 run 20 '[]' "${run_in_progress}" 99)"

@@ -61,6 +61,14 @@ print(json.dumps(merged))
 
 wait_for_floor() {
   : "${REPO:?}" "${RUN_ID:?}"
+  # `gh` needs a token: Actions does not put one in the environment on its
+  # own. Checked here rather than left to `gh`, because a missing token used
+  # to be indistinguishable from an empty floor - see the loud failure below.
+  if [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
+    echo "::error::Neither GH_TOKEN nor GITHUB_TOKEN is set, so this step cannot see the rest of the floor."
+    echo "::error::Set GH_TOKEN on the step that calls this script; without it the wait would pass every run straight through."
+    return 1
+  fi
   local workflows="${WORKFLOWS:-claude.yml factory-shift.yml}"
   local poll_seconds="${POLL_SECONDS:-30}"
   local max_attempts="${MAX_ATTEMPTS:-600}"
@@ -69,8 +77,16 @@ wait_for_floor() {
   for attempt in $(seq 1 "${max_attempts}"); do
     pages=()
     for workflow in ${workflows}; do
-      page=$(gh run list --repo "${REPO}" --workflow "${workflow}" --limit 100 \
-        --json databaseId,status 2>/dev/null) || page="[]"
+      # Never `|| page="[]"`. A failed listing is not an empty floor: read
+      # that way, a broken `gh` - no token, an outage, a renamed workflow -
+      # would look exactly like "nobody is ahead of you", and every run would
+      # be waved through while the step reported a clear floor. That is the
+      # fault this whole script exists to remove, so it fails loudly instead.
+      if ! page=$(gh run list --repo "${REPO}" --workflow "${workflow}" --limit 100 \
+        --json databaseId,status); then
+        echo "::error::Could not list runs of ${workflow}; refusing to treat that as an empty floor."
+        return 1
+      fi
       pages+=("${page}")
     done
 
