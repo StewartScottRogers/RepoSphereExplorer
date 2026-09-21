@@ -1317,7 +1317,29 @@ pub fn bind_reclaiming_stale(name: Name<'_>) -> io::Result<Listener> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PeerIdentity {
     /// A Unix effective user ID, from `SO_PEERCRED` or equivalent.
+    ///
+    /// Only ever constructed under `cfg(unix)`, so on Windows the variant is
+    /// dead outside the tests that state the rule. Kept rather than made
+    /// conditional: the rule below is one rule on every platform, and a
+    /// `cfg` on the variant would fork it into two (rule 3 - the allow is
+    /// here, and this is why).
+    #[cfg_attr(not(unix), allow(dead_code))]
     Uid(u32),
+    /// The transport itself decides who may connect, so reaching this
+    /// service is the authorisation.
+    ///
+    /// Windows, where `interprocess` reports only a process identifier and
+    /// resolving the security identifier (SID) behind it needs Win32 calls
+    /// this workspace's `unsafe_code = "forbid"` rules out. The control
+    /// there is the named pipe's own discretionary access control list
+    /// (DACL), which #714 gives it; until #714 lands the pipe is open to
+    /// any local account, exactly as it was before any of this existed.
+    ///
+    /// Named rather than left as `Unknown` because the two mean opposite
+    /// things: this one says "somebody else is checking", and refusing on
+    /// it refused everybody. #713 shipped that refusal and the application
+    /// could not reach its own service on Windows at all (#749).
+    TransportRestricted,
     /// No identity could be established for this connection.
     Unknown,
 }
@@ -1326,7 +1348,14 @@ enum PeerIdentity {
 /// same identity as `owner`. A pure function over two identifiers, so it is
 /// testable without a second user account.
 fn peer_is_owner(peer: PeerIdentity, owner: PeerIdentity) -> bool {
-    matches!((peer, owner), (PeerIdentity::Uid(a), PeerIdentity::Uid(b)) if a == b)
+    match (peer, owner) {
+        (PeerIdentity::Uid(a), PeerIdentity::Uid(b)) => a == b,
+        // Both sides have to agree that the transport is the control, so a
+        // peer of unknown identity cannot be served by a service that knows
+        // its own.
+        (PeerIdentity::TransportRestricted, PeerIdentity::TransportRestricted) => true,
+        _ => false,
+    }
 }
 
 /// This service's own identity: the session owner every peer is checked
@@ -1342,11 +1371,15 @@ fn owner_identity() -> PeerIdentity {
         // a process ID on Windows, not the security identifier (SID)
         // GUIDANCE.md §2.1.2 asks for, and resolving a SID from a process ID
         // means calling Win32 directly, which this workspace's
-        // `unsafe_code = "forbid"` rules out. `Unknown` refuses every
-        // connection here rather than serving one nobody has verified - the
-        // fallback the work order that added this check sanctions for a
-        // platform that genuinely cannot answer.
-        PeerIdentity::Unknown
+        // `unsafe_code = "forbid"` rules out.
+        //
+        // So the check here is the named pipe's own access list rather than
+        // a comparison this process can make, and #714 is what gives the
+        // pipe that list. Refusing instead - which is what #713 shipped -
+        // refuses every connection, including the front end's own, and left
+        // the application unable to reach its service on Windows at all
+        // (#749). Unix is unaffected and keeps the real comparison.
+        PeerIdentity::TransportRestricted
     }
 }
 
@@ -1363,8 +1396,10 @@ fn peer_identity(conn: &Stream) -> PeerIdentity {
     }
     #[cfg(not(unix))]
     {
+        // As `owner_identity`: nothing this process can read off the
+        // connection identifies the peer, so the transport is what decides.
         let _ = creds;
-        PeerIdentity::Unknown
+        PeerIdentity::TransportRestricted
     }
 }
 
@@ -2469,6 +2504,30 @@ public class OrderBook {
         assert!(!peer_is_owner(
             PeerIdentity::Uid(501),
             PeerIdentity::Uid(1000)
+        ));
+    }
+
+    /// The fault #713 shipped: on a platform that cannot name its peer, the
+    /// service refused everybody, including the front end that started it.
+    #[test]
+    fn peer_is_owner_serves_when_the_transport_is_the_control() {
+        assert!(peer_is_owner(
+            PeerIdentity::TransportRestricted,
+            PeerIdentity::TransportRestricted
+        ));
+    }
+
+    /// But only when both sides agree on that. A service that knows its own
+    /// identity does not serve a peer it cannot name.
+    #[test]
+    fn peer_is_owner_refuses_a_transport_peer_against_a_known_owner() {
+        assert!(!peer_is_owner(
+            PeerIdentity::TransportRestricted,
+            PeerIdentity::Uid(501)
+        ));
+        assert!(!peer_is_owner(
+            PeerIdentity::Uid(501),
+            PeerIdentity::TransportRestricted
         ));
     }
 
