@@ -217,6 +217,7 @@ pub const PRESENTATION_PLUGINS: &[&dyn PluginPresentation] = &[
     &plugin_java::JavaPresentation,
     &plugin_kotlin::KotlinPresentation,
     &plugin_groovy::GroovyPresentation,
+    &plugin_gradle::GradlePresentation,
     &plugin_csharp::CSharpPresentation,
     &plugin_vbnet::VbNetPresentation,
     &plugin_objective_c::ObjectiveCPresentation,

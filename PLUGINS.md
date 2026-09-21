@@ -198,6 +198,7 @@ it.
 | Python lock file | `crates/plugins/pythonlock` | #340 | Which tool wrote it, lock format, Python, resolution markers, packages with sources, wheels, markers, hash |
 | Go checksum database | `crates/plugins/gosum` | #341 | Modules and versions, the two lines folded into one entry, several versions, go.mod only, pseudo-versions |
 | Go module file | `crates/plugins/gomod` | #704 | Module path, Go version, toolchain, requirements with indirect marked, replace directives, excludes, retracts, godebug settings. Extension `mod` is unique to it, so `claimed_by_extension` routes it correctly ahead of `ruby`'s looser `module` marker regardless of `CORE_PLUGINS` order |
+| Gradle build and settings script | `crates/plugins/gradle` | #707 | Build script: plugins applied with versions, group, version, Java/Kotlin toolchain, dependencies grouped by configuration, repositories. Settings script: root project name, included modules. Claims no extension of its own - `.gradle`/`.gradle.kts` already belong to `groovy`/`kotlin` - and specialises both of those plus `text`, so `most_specific` routes it correctly regardless of which of the two also recognised the same bytes |
 
 ## Folder plugins
 
