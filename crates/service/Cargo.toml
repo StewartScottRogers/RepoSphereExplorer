@@ -81,6 +81,7 @@ plugin-nginxconf = { path = "../plugins/nginxconf" }
 plugin-ninja = { path = "../plugins/ninja" }
 plugin-nix = { path = "../plugins/nix" }
 plugin-npmlock = { path = "../plugins/npmlock" }
+plugin-npmmanifest = { path = "../plugins/npmmanifest" }
 plugin-nuget = { path = "../plugins/nuget" }
 plugin-numpy = { path = "../plugins/numpy" }
 plugin-openapi = { path = "../plugins/openapi" }

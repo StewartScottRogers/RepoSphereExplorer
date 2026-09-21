@@ -3460,6 +3460,7 @@ dependencies = [
  "plugin-ninja",
  "plugin-nix",
  "plugin-npmlock",
+ "plugin-npmmanifest",
  "plugin-nuget",
  "plugin-numpy",
  "plugin-objective-c",
@@ -7521,6 +7522,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-npmmanifest"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "syntax",
+]
+
+[[package]]
 name = "plugin-nuget"
 version = "0.8.0"
 dependencies = [
@@ -9537,6 +9548,7 @@ dependencies = [
  "plugin-ninja",
  "plugin-nix",
  "plugin-npmlock",
+ "plugin-npmmanifest",
  "plugin-nuget",
  "plugin-numpy",
  "plugin-objective-c",
@@ -10812,6 +10824,7 @@ dependencies = [
  "plugin-ninja",
  "plugin-nix",
  "plugin-npmlock",
+ "plugin-npmmanifest",
  "plugin-nuget",
  "plugin-numpy",
  "plugin-objective-c",
