@@ -1317,6 +1317,14 @@ pub fn bind_reclaiming_stale(name: Name<'_>) -> io::Result<Listener> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PeerIdentity {
     /// A Unix effective user ID, from `SO_PEERCRED` or equivalent.
+    ///
+    /// Never constructed outside `cfg(unix)`: `owner_identity` and
+    /// `peer_identity` below return `Unknown` on every other platform, which
+    /// leaves this variant unconstructed there and fails `cargo clippy -D
+    /// warnings` on Windows. Kept unconditional rather than `cfg(unix)`-gated
+    /// itself, so `peer_is_owner` and its tests compare identities the same
+    /// way on every platform.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Uid(u32),
     /// No identity could be established for this connection.
     Unknown,
