@@ -589,18 +589,50 @@ pub const EMPTY_ROOT_DETAIL: &str = "Working copies cloned into it will appear h
 
 /// Resolves [`SOCKET_NAME`] to a platform-appropriate local socket name,
 /// preferring a namespaced name and falling back to a filesystem path where
-/// namespaced sockets are not supported.
+/// namespaced sockets are not supported. The session owner's identifier is
+/// folded in (GUIDANCE.md §2.1.1), so two accounts on one machine each get
+/// their own socket rather than racing for a fixed, machine-global name.
 ///
 /// # Errors
 /// Returns an error if the resolved name is not valid on this platform.
 pub fn socket_name() -> io::Result<Name<'static>> {
-    let chosen: &'static str = CHOSEN_SOCKET_NAME.get_or_init(|| SOCKET_NAME.to_owned());
+    let chosen: &'static str =
+        CHOSEN_SOCKET_NAME.get_or_init(|| named_for_user(&session_identifier()));
     if GenericNamespaced::is_supported() {
         chosen.to_ns_name::<GenericNamespaced>()
     } else {
         std::env::temp_dir()
             .join(chosen)
             .to_fs_name::<GenericFilePath>()
+    }
+}
+
+/// [`SOCKET_NAME`] with `identifier` worked in ahead of the extension, so
+/// it differs between accounts. A pure function over the identifier so the
+/// difference is testable without two real user accounts.
+fn named_for_user(identifier: &str) -> String {
+    let stem = SOCKET_NAME
+        .strip_suffix(".sock")
+        .expect("SOCKET_NAME ends in .sock");
+    format!("{stem}-{identifier}.sock")
+}
+
+/// An identifier for the account running this process, unique enough on one
+/// machine to keep two users' sockets apart. Not itself a security
+/// boundary - [`SOCKET_NAME`]'s permissions are - just a way to stop them
+/// colliding.
+fn session_identifier() -> String {
+    #[cfg(unix)]
+    {
+        rustix::process::geteuid().as_raw().to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        // Resolving a security identifier (SID) needs Win32 calls that this
+        // workspace's `unsafe_code = "forbid"` rules out (see
+        // `service::owner_identity`'s same note); the logon name from the
+        // environment is enough to tell two accounts' sockets apart.
+        std::env::var("USERNAME").unwrap_or_default()
     }
 }
 
@@ -717,8 +749,8 @@ mod tests {
         CertificateBlock, CertificateFinding, CertificateFindingKind, CertificateSummary,
         DirectoryEntry, EMPTY_ROOT_DETAIL, MAX_MESSAGE_BYTES, NameMatch, NotThereCause, PluginView,
         ReposRoot, RepositoryInfo, RepositoryKind, Request, Response, RootProblem, VERSION,
-        WorkingTreeSummary, classify_root_problem, empty_root_title, read_message, socket_name,
-        write_message,
+        WorkingTreeSummary, classify_root_problem, empty_root_title, named_for_user, read_message,
+        socket_name, write_message,
     };
     use std::io::{self, Read, Write};
     use std::path::Path;
@@ -1694,6 +1726,11 @@ mod tests {
     #[test]
     fn the_socket_name_is_valid_on_this_platform() {
         socket_name().expect("SOCKET_NAME resolves on the platform this test runs on");
+    }
+
+    #[test]
+    fn the_named_socket_differs_between_two_users() {
+        assert_ne!(named_for_user("1000"), named_for_user("1001"));
     }
 
     /// The other side of the same rule: what the writer refuses, it

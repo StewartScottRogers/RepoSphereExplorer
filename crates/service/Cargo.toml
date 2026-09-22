@@ -216,6 +216,13 @@ updater = { path = "../updater" }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }
 
+# Builds the security descriptor string (SDDL) naming the session owner that
+# restricts the Windows named pipe (GUIDANCE.md §2.1.1). `interprocess`
+# already depends on this to do the same internally; declared directly here
+# because deserializing a security descriptor takes a wide string.
+[target.'cfg(windows)'.dependencies]
+widestring = "1"
+
 [dev-dependencies]
 zip = { version = "8", default-features = false, features = ["deflate"] }
 

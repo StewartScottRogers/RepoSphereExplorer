@@ -1266,12 +1266,60 @@ pub fn handle_request(request: &Request) -> Response {
     }
 }
 
+/// Builds the listener options `bind` and `bind_reclaiming_stale` both
+/// create from: the Unix socket at mode `0600`, or the Windows named pipe
+/// carrying a discretionary access control list (DACL) limited to the
+/// session owner (GUIDANCE.md §2.1.1). One place, so neither caller can
+/// drift from the other's permissions.
+///
+/// Only the Windows half of this can fail - building the security
+/// descriptor is fallible where setting the Unix mode is not - so the
+/// `Result` this returns is unconditionally `Ok` everywhere this workspace
+/// tests: Linux and macOS.
+#[cfg_attr(not(windows), allow(clippy::unnecessary_wraps))]
+fn listener_options(name: Name<'_>) -> io::Result<ListenerOptions<'_>> {
+    let options = ListenerOptions::new().name(name);
+    #[cfg(unix)]
+    let options = {
+        use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
+        // Applied to the socket before `bind()`, so there is no window
+        // between the file appearing and its permissions taking effect.
+        options.mode(0o600)
+    };
+    #[cfg(windows)]
+    let options = {
+        use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
+        options.security_descriptor(owner_only_security_descriptor()?)
+    };
+    Ok(options)
+}
+
+/// A discretionary access control list (DACL) granting full access to
+/// whichever account owns the pipe, and nobody else.
+///
+/// Built from a security descriptor string (SDDL) rather than by looking up
+/// the session owner's security identifier (SID) directly: that lookup
+/// needs Win32 calls that this workspace's `unsafe_code = "forbid"` rules
+/// out (see `owner_identity`'s own note on the same limit). `OW` is the
+/// well-known "Owner Rights" SID, which Windows substitutes with the
+/// pipe's actual owner - the session user that created it - at each access
+/// check, so no lookup is needed here at all. `P` marks the DACL protected,
+/// so nothing is inherited in from a parent that could widen it.
+#[cfg(windows)]
+fn owner_only_security_descriptor()
+-> io::Result<interprocess::os::windows::security_descriptor::SecurityDescriptor> {
+    use interprocess::os::windows::security_descriptor::SecurityDescriptor;
+    use widestring::u16cstr;
+
+    SecurityDescriptor::deserialize(u16cstr!("D:P(A;;GA;;;OW)"))
+}
+
 /// Starts listening on the local socket identified by `name`.
 ///
 /// # Errors
 /// Returns an error if the socket is already in use or cannot be created.
 pub fn bind(name: Name<'_>) -> io::Result<Listener> {
-    ListenerOptions::new().name(name).create_sync()
+    listener_options(name)?.create_sync()
 }
 
 /// As [`bind`], but takes over a socket file that a service killed without
@@ -1298,10 +1346,7 @@ pub fn bind_reclaiming_stale(name: Name<'_>) -> io::Result<Listener> {
             if Stream::connect(name.borrow()).is_ok() {
                 return Err(err);
             }
-            ListenerOptions::new()
-                .name(name)
-                .try_overwrite(true)
-                .create_sync()
+            listener_options(name)?.try_overwrite(true).create_sync()
         }
         result => result,
     }
@@ -5033,6 +5078,54 @@ Mo8hvqlfr/IR
             "a socket a live service holds is left alone"
         );
         drop(live);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// GUIDANCE.md §2.1.1: the Unix socket is created at mode `0600`, not
+    /// whatever the umask would otherwise leave it at.
+    #[cfg(unix)]
+    #[test]
+    fn a_fresh_socket_is_created_at_mode_0600() {
+        use interprocess::local_socket::{GenericFilePath, ToFsName};
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(unique_socket_name());
+        let _ = std::fs::remove_file(&path);
+        let listener = super::bind(path.clone().to_fs_name::<GenericFilePath>().unwrap()).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "the socket must not be group- or world-accessible"
+        );
+
+        drop(listener);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Reclaiming a stale socket file must not widen its permissions back
+    /// to whatever the umask would give it.
+    #[cfg(unix)]
+    #[test]
+    fn a_reclaimed_socket_has_the_same_permissions_as_a_fresh_one() {
+        use interprocess::local_socket::{GenericFilePath, ToFsName};
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(unique_socket_name());
+        let _ = std::fs::remove_file(&path);
+        // A socket file with nobody listening: what a killed service leaves.
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+
+        let name = || path.clone().to_fs_name::<GenericFilePath>().unwrap();
+        let reclaimed = super::bind_reclaiming_stale(name()).expect("the stale file is taken over");
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "reclaiming must not widen the socket's permissions"
+        );
+
+        drop(reclaimed);
         let _ = std::fs::remove_file(&path);
     }
 }

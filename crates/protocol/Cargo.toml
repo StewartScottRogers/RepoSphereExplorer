@@ -12,5 +12,12 @@ interprocess = "2.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# The session owner's effective user ID, folded into the socket name so two
+# accounts on one machine do not race for it. The standard library has no
+# `getuid`; this crate wraps the syscall safely, without unsafe code in this
+# crate.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
 [lints]
 workspace = true
