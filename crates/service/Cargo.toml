@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-dirs = "6"
+dirs = "7"
 # Walks the Repos Directory for Request::FindNames the way git and ripgrep do,
 # applying .gitignore, .ignore and global excludes. Work order #536 calls for
 # it: reimplementing gitignore semantics correctly is a project of its own.
