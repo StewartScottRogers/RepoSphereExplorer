@@ -1339,6 +1339,12 @@ enum PeerIdentity {
     /// things: this one says "somebody else is checking", and refusing on
     /// it refused everybody. #713 shipped that refusal and the application
     /// could not reach its own service on Windows at all (#749).
+    ///
+    /// The mirror of `Uid`: only ever constructed under `cfg(not(unix))`,
+    /// so on Unix the variant is dead outside the tests that state the
+    /// rule. Each platform's `clippy` sees a different one of the two as
+    /// dead, which is its own small argument for #753.
+    #[cfg_attr(unix, allow(dead_code))]
     TransportRestricted,
     /// No identity could be established for this connection.
     Unknown,
