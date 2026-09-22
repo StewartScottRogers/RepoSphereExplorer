@@ -366,11 +366,16 @@ pub fn apply_atomic(bytes: &[u8], target_path: &Path) -> io::Result<()> {
 /// A freshly-written executable is a common target for antivirus real-time
 /// scanning, which briefly holds an exclusive lock on Windows; renaming
 /// over it right after `fs::write` can hit a transient "Access is denied"
-/// that clears within milliseconds. Observed in practice self-updating a
-/// real install, not a hypothetical.
+/// that clears once the scan finishes. Five attempts 100ms apart (half a
+/// second total) was tried first and observed live, not hypothetically:
+/// the nightly Distribution check installs a previous release, four
+/// executables written by `install.ps1` within milliseconds of each other,
+/// and immediately self-updates them, so the scanner is often still
+/// working through that batch when the first rename lands. Ten seconds
+/// gives it room to finish.
 fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
-    const ATTEMPTS: u32 = 5;
-    const DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+    const ATTEMPTS: u32 = 50;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(200);
     let mut last_err = None;
     for attempt in 0..ATTEMPTS {
         match fs::rename(from, to) {
