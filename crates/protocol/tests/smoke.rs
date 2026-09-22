@@ -43,6 +43,56 @@ fn stand_in_service(
     (socket, server)
 }
 
+/// Accepts one connection, reads the request, and closes without answering
+/// - a service that takes a request and then goes away.
+fn service_that_goes_away(test: &str) -> (String, thread::JoinHandle<()>) {
+    let socket = format!("rse-smoke-{test}-{}.sock", std::process::id());
+    let name = if GenericNamespaced::is_supported() {
+        socket.clone().to_ns_name::<GenericNamespaced>().unwrap()
+    } else {
+        std::env::temp_dir()
+            .join(&socket)
+            .to_fs_name::<GenericFilePath>()
+            .unwrap()
+    };
+    let listener = ListenerOptions::new().name(name).create_sync().unwrap();
+    let server = thread::spawn(move || {
+        let mut conn = listener.accept().unwrap();
+        let _: Result<Request, _> = protocol::read_message(&mut conn);
+        drop(conn);
+    });
+    (socket, server)
+}
+
+/// #749's acceptance check: what the client says when the service closes
+/// part-way through.
+///
+/// It used to be the io error's own "failed to fill whole buffer", which
+/// sent a reader looking at the wrong thing for an afternoon. The service
+/// had accepted the connection and then dropped it, which is exactly what a
+/// service refusing every peer looked like from the outside.
+#[test]
+fn says_the_service_went_away_rather_than_failed_to_fill_whole_buffer() {
+    let (socket, server) = service_that_goes_away("went-away");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_smoke"))
+        .args(["--socket", &socket, "/scratch", "marker.txt"])
+        .output()
+        .unwrap();
+
+    server.join().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "it must not report success");
+    assert!(
+        stderr.contains("closed it before finishing its answer"),
+        "it should say the service went away: {stderr}"
+    );
+    assert!(
+        !stderr.contains("failed to fill whole buffer"),
+        "and not leave the reader with the raw io error: {stderr}"
+    );
+}
+
 #[test]
 fn succeeds_when_the_service_lists_the_expected_entry() {
     let (socket, server) = stand_in_service("found", &["marker.txt", "other"]);

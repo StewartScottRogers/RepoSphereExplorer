@@ -44,6 +44,20 @@ fn main() -> ExitCode {
             eprintln!("the service answered with something other than a listing: {other:?}");
             ExitCode::FAILURE
         }
+        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+            // What a truncated reply used to say was "failed to fill whole
+            // buffer", which is the io error's own words for "the bytes
+            // stopped coming" and tells a reader nothing about where to
+            // look. It is worth naming: the service was there, took the
+            // request, and went away before finishing the answer - which is
+            // what a service refusing a connection after accepting it looks
+            // like from here, and is how #749 presented.
+            eprintln!(
+                "the service accepted the connection and then closed it \
+                 before finishing its answer"
+            );
+            ExitCode::FAILURE
+        }
         Err(err) => {
             eprintln!("no answer from the service: {err}");
             ExitCode::FAILURE

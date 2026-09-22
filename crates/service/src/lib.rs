@@ -5070,6 +5070,54 @@ Mo8hvqlfr/IR
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// #749's acceptance check: what a second service does when one is
+    /// already listening.
+    ///
+    /// The Unix test below covers a *stale* socket file, which is a
+    /// different thing and does not exist on Windows - where #749 was, and
+    /// where a named pipe accepts several server instances, so "somebody
+    /// else already has it" is not obviously an error at all. This one runs
+    /// everywhere and states the rule both platforms have to keep: the
+    /// second service is refused, and the first keeps its socket and its
+    /// ability to serve.
+    #[test]
+    fn a_second_service_is_refused_and_the_first_keeps_serving() {
+        let socket = format!("rse-second-{}.sock", std::process::id());
+        assert!(
+            protocol::use_private_socket(socket),
+            "this test binary sets the socket name first"
+        );
+        let name = || protocol::socket_name().expect("the platform has a socket name");
+
+        let first = super::bind_reclaiming_stale(name()).expect("the first service binds");
+
+        let second = super::bind_reclaiming_stale(name());
+        assert!(
+            second.is_err(),
+            "a second service must not take the socket from the first"
+        );
+
+        // And the first is still able to answer, rather than having been
+        // quietly broken by the attempt.
+        let client = std::thread::spawn(move || {
+            use interprocess::local_socket::traits::Stream as _;
+            let mut conn = interprocess::local_socket::Stream::connect(
+                protocol::socket_name().expect("a socket name"),
+            )
+            .expect("the first service is still listening");
+            protocol::write_message(
+                &mut conn,
+                &Request::ListDirectory {
+                    path: ".".to_owned(),
+                },
+            )
+            .expect("the request is sent");
+            protocol::read_message::<Response, _>(&mut conn).expect("an answer")
+        });
+        super::serve_one(&first).expect("the first service serves");
+        client.join().expect("the client finished");
+    }
+
     /// A socket file left by a service that was killed is taken over; one a
     /// running service holds is not.
     #[cfg(unix)]
