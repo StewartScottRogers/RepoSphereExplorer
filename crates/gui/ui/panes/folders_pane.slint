@@ -79,7 +79,16 @@ export component FoldersPane inherits PaneFrame {
     // each row rather than a number worked out in Rust: nothing on the
     // Rust side knows how wide this font renders a string, and
     // `VerticalLayout` already sizes itself to its widest child.
-    row-measure := VerticalLayout {
+    // In a zero-height box, because `PaneFrame` puts `@children` in a
+    // `VerticalLayout` and every child takes a share of it - `visible:
+    // false` hides an element without giving up its space. This one is as
+    // tall as the tree it copies, so it pushed the real tree down by that
+    // much, and by more as the tree grew: the pane was not level with the
+    // listing beside it, and how far out it was depended on how many
+    // folders were showing.
+    Rectangle {
+        height: 0px;
+        row-measure := VerticalLayout {
         visible: false;
         x: -10000px;
         for row[i] in rows: HorizontalLayout {
@@ -98,11 +107,24 @@ export component FoldersPane inherits PaneFrame {
                 text: row.name;
             }
         }
+        }
     }
     out property <length> fit-width: row-measure.preferred-width;
 
+    // The two panes stand side by side and their rows have to start on the
+    // same line, so this pane's top chrome has to be as tall as the
+    // listing's. The Contents pane's is a 22px filter field and a header of
+    // `header-height`; this pane's was one row of `row-height`, so the tree
+    // began twenty-two pixels above the listing and every row after it was
+    // out by the same amount. Reported by a reader.
+    //
+    // 22px rather than `row-height` because the filter field opposite it is
+    // a fixed 22px and does not scale with the zoom; matching it keeps the
+    // two panes level at every zoom rather than only at one.
+    property <length> header-height: 20px * Zoom.factor;
+
     all-repositories-row := Rectangle {
-        height: row-height;
+        height: 22px;
         background: all-repositories-selected
             ? selection-colour
             : (all-repositories-touch.has-hover ? Theme.hover : transparent);
@@ -140,6 +162,24 @@ export component FoldersPane inherits PaneFrame {
             width: 100%;
             height: 100%;
             clicked => { all-repositories-clicked(); }
+        }
+    }
+    // The listing's column header's opposite number. It names what the
+    // column holds, as that one does, and it is the second half of what
+    // makes the first tree row and the first listing row share a line.
+    Rectangle {
+        height: header-height;
+        background: Theme.panel;
+        HorizontalLayout {
+            padding-left: pad;
+            padding-right: 4px;
+            Text {
+                text: "Folder";
+                color: Theme.dim-text;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
         }
     }
     scroll := ScrollView {

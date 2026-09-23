@@ -499,3 +499,49 @@ fn tree_type_ahead_only_reaches_rows_that_are_drawn() {
          typed letter has nothing to jump to"
     );
 }
+
+/// The two panes stand side by side, so their rows have to start on the
+/// same line.
+///
+/// Reported by a reader: the Folders pane was not level with the listing at
+/// the top. The Contents pane's chrome is a twenty-two pixel filter field
+/// and a column header; this pane's was one "All repositories" row,
+/// twenty-two pixels short of it, so the tree began above the listing and
+/// every row after it was out by the same amount. Measured here rather than
+/// asserted against a constant, so the next thing added to either pane's
+/// chrome fails this instead of quietly moving one pane.
+#[test]
+fn the_tree_and_the_listing_start_on_the_same_line() {
+    i_slint_backend_testing::init_no_event_loop();
+    // Forty-five folders, because how far out the pane was depended on how
+    // many there were: the hidden row-measure copy is as tall as the tree it
+    // copies, so one folder put the pane twenty pixels out and a real Repos
+    // Directory put it nine hundred - far enough that "All repositories" sat
+    // level with the twenty-sixth row of the listing. A one-folder fixture
+    // would pass this test while the pane was still unusable.
+    let directory = scratch("panes-level-at-the-top");
+    for index in 0..45u32 {
+        std::fs::create_dir_all(directory.join(format!("folder-{index:02}")))
+            .expect("a folder to show");
+    }
+    std::fs::write(directory.join("one.txt"), "x").expect("a file to list");
+    let (ui, _app) = window_on(&directory);
+
+    let top_of = |id: &str| {
+        ElementHandle::find_by_element_id(&ui, id)
+            .map(|row| row.absolute_position().y)
+            .fold(f32::INFINITY, f32::min)
+    };
+    let tree = top_of("FoldersPane::tree-row");
+    let listing = top_of("ContentsPane::listing-row");
+
+    assert!(
+        tree.is_finite() && listing.is_finite(),
+        "both panes should be drawing rows: tree {tree}, listing {listing}"
+    );
+    assert!(
+        (tree - listing).abs() < 0.5,
+        "the first row of the tree and the first row of the listing should \
+         share a line: tree at {tree}, listing at {listing}"
+    );
+}
