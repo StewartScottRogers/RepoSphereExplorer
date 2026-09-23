@@ -5091,11 +5091,24 @@ Mo8hvqlfr/IR
 
         let first = super::bind_reclaiming_stale(name()).expect("the first service binds");
 
-        let second = super::bind_reclaiming_stale(name());
+        let refusal = super::bind_reclaiming_stale(name()).err().map(|e| e.kind());
         assert!(
-            second.is_err(),
+            refusal.is_some(),
             "a second service must not take the socket from the first"
         );
+        // That refusal is decided by *connecting* to the socket - a live
+        // one answers, a stale file does not - so where it went that way it
+        // has left a connection waiting with no request on it. The first
+        // service's next accept takes it and reads nothing, which is a
+        // defined outcome rather than a surprise, and draining it here is
+        // what lets the round trip below be the real one.
+        if refusal == Some(std::io::ErrorKind::AddrInUse) {
+            assert_eq!(
+                super::serve_one(&first).err().map(|e| e.kind()),
+                Some(std::io::ErrorKind::UnexpectedEof),
+                "the liveness probe is a connection carrying no request"
+            );
+        }
 
         // And the first is still able to answer, rather than having been
         // quietly broken by the attempt.
