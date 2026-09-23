@@ -2420,6 +2420,7 @@ public class OrderBook {
 
     #[test]
     fn creating_a_directory_over_an_existing_path_errors_via_handle_request() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let existing = dir.join("sub");
@@ -2450,6 +2451,7 @@ public class OrderBook {
 
     #[test]
     fn creating_a_file_over_an_existing_path_errors_via_handle_request() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let existing = dir.join("note.txt");
@@ -2549,6 +2551,7 @@ public class OrderBook {
 
     #[test]
     fn reports_an_error_for_a_missing_directory() {
+        let _journal = journal_to_themselves();
         let missing = std::env::temp_dir().join(unique_socket_name());
         let request = Request::ListDirectory {
             path: missing.to_string_lossy().into_owned(),
@@ -2988,6 +2991,7 @@ public class OrderBook {
 
     #[test]
     fn answers_an_extract_request_over_the_socket() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let archive_path = dir.join("test.zip");
@@ -4868,6 +4872,7 @@ public class OrderBook {
 
     #[test]
     fn an_empty_path_is_an_error_for_every_request_that_takes_one() {
+        let _journal = journal_to_themselves();
         let hostile = [
             Request::ListDirectory {
                 path: String::new(),
@@ -4916,6 +4921,7 @@ public class OrderBook {
 
     #[test]
     fn a_path_of_separators_alone_never_becomes_an_operation_on_the_filesystem_root() {
+        let _journal = journal_to_themselves();
         // Only the separators this platform actually has. A backslash is a
         // legal character in a Unix filename, so `\` there is not the root
         // at all - it is a relative name, and asking to create it would
@@ -4950,6 +4956,7 @@ public class OrderBook {
 
     #[test]
     fn a_relative_path_is_taken_as_written_rather_than_rejected() {
+        let _journal = journal_to_themselves();
         // The soft boundary of D8: the service resolves what it is given
         // against its own working directory and does not police it.
         let Response::Directory { entries } = handle_request(&Request::ListDirectory {
@@ -4967,6 +4974,7 @@ public class OrderBook {
 
     #[test]
     fn a_parent_traversal_out_of_a_folder_and_back_names_the_same_folder() {
+        let _journal = journal_to_themselves();
         // D8 makes the Repos Directory boundary soft - one configuration
         // point, not a rule spread through the navigation code - so `..`
         // is resolved rather than refused. Pinned so that stops being an
@@ -4990,6 +4998,7 @@ public class OrderBook {
 
     #[test]
     fn opening_a_path_that_is_not_there_is_an_error() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
 
         assert!(matches!(
@@ -5004,6 +5013,7 @@ public class OrderBook {
 
     #[test]
     fn an_undo_request_with_nothing_to_undo_answers_with_an_error_not_a_done() {
+        let _journal = journal_to_themselves();
         // A `Done` here would tell a reader their last operation had been
         // reversed when nothing had happened.
         assert!(matches!(
@@ -5014,6 +5024,7 @@ public class OrderBook {
 
     #[test]
     fn asking_for_the_repos_roots_always_offers_somewhere_to_open_at() {
+        let _journal = journal_to_themselves();
         // A first run has no stored roots, and the front ends still have
         // to open somewhere (D7).
         let Response::ReposRoots { default, .. } = handle_request(&Request::ReposRoots) else {
@@ -5025,6 +5036,7 @@ public class OrderBook {
 
     #[test]
     fn setting_a_repos_root_that_is_not_a_directory_is_refused_and_stores_nothing() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let file = dir.join("not-a-workspace.txt");
         fs::write(&file, "a file, not a folder").unwrap();
@@ -5046,6 +5058,7 @@ public class OrderBook {
 
     #[test]
     fn extracting_something_that_is_not_an_archive_leaves_no_destination_behind() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let prose = dir.join("prose.txt");
         fs::write(&prose, "this is not a zip file").unwrap();
@@ -5451,6 +5464,7 @@ Mo8hvqlfr/IR
 
     #[test]
     fn a_folder_that_is_not_a_working_copy_has_no_working_tree_status() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(format!("rse-no-working-tree-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
