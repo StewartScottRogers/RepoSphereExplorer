@@ -3497,6 +3497,7 @@ dependencies = [
  "plugin-presentation",
  "plugin-project-cargo",
  "plugin-project-node",
+ "plugin-project-python",
  "plugin-prolog",
  "plugin-properties",
  "plugin-protobuf",
@@ -7811,6 +7812,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-project-python"
+version = "0.8.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "plugin-prolog"
 version = "0.9.0"
 dependencies = [
@@ -9664,6 +9675,7 @@ dependencies = [
  "plugin-presentation",
  "plugin-project-cargo",
  "plugin-project-node",
+ "plugin-project-python",
  "plugin-prolog",
  "plugin-properties",
  "plugin-protobuf",
@@ -10949,6 +10961,7 @@ dependencies = [
  "plugin-presentation",
  "plugin-project-cargo",
  "plugin-project-node",
+ "plugin-project-python",
  "plugin-prolog",
  "plugin-properties",
  "plugin-protobuf",
