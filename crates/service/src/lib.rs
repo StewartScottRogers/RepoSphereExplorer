@@ -13,6 +13,7 @@ use std::fs;
 use std::io;
 use std::io::{Read, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 /// Number of bytes read from the start of a file when sniffing its type.
 ///
@@ -646,13 +647,61 @@ fn claimed_by_extension<'a>(
         .copied()
 }
 
+/// Wall-clock ceiling on one [`view_file`] call (GUIDANCE.md §2.1.4).
+///
+/// Ten seconds is well past the slowest sample this workspace ships -
+/// `list_directory` of 200 repositories finishes in under five, and every
+/// plugin's own fixture parses in milliseconds - while still short enough
+/// that a reader who selects the wrong file is not left staring at a pane
+/// that never answers.
+const PARSE_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Views the path through whichever registered plugin recognises it: the
 /// directory plugin if `path` is a directory, otherwise whichever content
 /// plugin's `sniff` matches.
 ///
+/// Abandoned if it runs past [`PARSE_TIME_LIMIT`]: a plugin that loops on a
+/// malformed file used to stop every front end until the service was
+/// killed by hand (#715). The read keeps running on its own thread past
+/// the deadline - Rust cannot stop a thread mid-flight without `unsafe`
+/// code, which this workspace forbids - but its result is now nobody's to
+/// see; the connection that asked has already been told the truth about
+/// how long it waited, and every other connection was free to be served
+/// while this one ran.
+///
 /// # Errors
 /// Returns an error if `path` cannot be read.
 pub fn view_file(path: &Path) -> io::Result<Response> {
+    view_file_within(path, PARSE_TIME_LIMIT)
+}
+
+/// As [`view_file`], abandoning the read once `limit` passes rather than
+/// always [`PARSE_TIME_LIMIT`] - split out so a test can use a limit
+/// measured in milliseconds instead of waiting out the real one.
+fn view_file_within(path: &Path, limit: std::time::Duration) -> io::Result<Response> {
+    let owned = path.to_path_buf();
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(view_file_uncapped(&owned));
+    });
+    match receiver.recv_timeout(limit) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(Response::Error {
+            message: format!(
+                "{} could not be read within {} seconds",
+                path.display(),
+                limit.as_secs_f64()
+            ),
+        }),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            unreachable!("the worker thread sends its result before its sender can drop")
+        }
+    }
+}
+
+/// [`view_file`]'s actual work, run on a worker thread so [`view_file`] can
+/// time it out.
+fn view_file_uncapped(path: &Path) -> io::Result<Response> {
     let metadata = fs::metadata(path)
         .map_err(|err| io::Error::new(err.kind(), format!("{}: {err}", path.display())))?;
     if metadata.is_dir() {
@@ -1456,15 +1505,17 @@ fn peer_identity(conn: &Stream) -> PeerIdentity {
     }
 }
 
-/// Accepts one connection on `listener`, answers exactly one request on it,
-/// then returns.
+/// Answers exactly one request on an already-accepted connection.
 ///
 /// The connecting peer is checked against `owner` before a single byte of
 /// the request is read: a peer that is not the owner gets its connection
 /// closed with nothing served, and the refusal is journaled. See
 /// [`peer_is_owner`].
-fn serve_one_as(listener: &Listener, owner: PeerIdentity) -> io::Result<()> {
-    let mut conn: Stream = listener.accept()?;
+///
+/// [`handle_request`] can run past [`PARSE_TIME_LIMIT`] on a [`Request`]
+/// that views a file (#715), but that only holds up this one connection:
+/// see [`run`] for what keeps a slow read here from holding up another.
+fn serve_connection(mut conn: Stream, owner: PeerIdentity) -> io::Result<()> {
     let peer = peer_identity(&conn);
     if !peer_is_owner(peer, owner) {
         journal(
@@ -1500,6 +1551,16 @@ fn serve_one_as(listener: &Listener, owner: PeerIdentity) -> io::Result<()> {
 /// Accepts one connection on `listener`, answers exactly one request on it,
 /// then returns.
 ///
+/// The connecting peer is checked against `owner` before a single byte of
+/// the request is read. See [`peer_is_owner`].
+fn serve_one_as(listener: &Listener, owner: PeerIdentity) -> io::Result<()> {
+    let conn: Stream = listener.accept()?;
+    serve_connection(conn, owner)
+}
+
+/// Accepts one connection on `listener`, answers exactly one request on it,
+/// then returns.
+///
 /// # Errors
 /// Returns an error if accepting the connection or the request/response
 /// round trip fails.
@@ -1507,15 +1568,31 @@ pub fn serve_one(listener: &Listener) -> io::Result<()> {
     serve_one_as(listener, owner_identity())
 }
 
-/// Runs the service loop: accepts connections and answers one request on
-/// each, forever.
+/// Runs the service loop: accepts connections forever, answering each on
+/// its own thread.
+///
+/// Serial acceptance used to mean a single file over [`PARSE_TIME_LIMIT`]
+/// blocked every other connection behind it in the accept queue, not only
+/// the one that asked for it (#715) - so each accepted connection is
+/// handed to its own thread and this loop goes straight back to
+/// `accept`. Nothing here is pooled or bounded: local socket connections
+/// are few, short-lived, and this is the concurrency the fault requires,
+/// not a speculative amount beyond it.
 ///
 /// # Errors
 /// Never returns `Ok`; this signature only exists so callers can use `?`.
 pub fn run(listener: &Listener) -> io::Result<()> {
+    let owner = owner_identity();
     loop {
-        if let Err(err) = serve_one(listener) {
-            eprintln!("connection error: {err}");
+        match listener.accept() {
+            Ok(conn) => {
+                std::thread::spawn(move || {
+                    if let Err(err) = serve_connection(conn, owner) {
+                        eprintln!("connection error: {err}");
+                    }
+                });
+            }
+            Err(err) => eprintln!("connection error: {err}"),
         }
     }
 }
@@ -1523,11 +1600,12 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, PeerIdentity, bind, copy,
+        CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, PathBuf, PeerIdentity, bind, copy,
         create_directory, create_file, delete, extract, find_certificates, find_names,
         folder_plugins_among, guarded, handle_request, journal_to, list_directory, most_specific,
-        open, peer_is_owner, rename, repos, serve_one, serve_one_as, sniff_among, undo, view_file,
-        with_source_text, working_tree_status, write_atomically, write_file,
+        open, peer_is_owner, rename, repos, run, serve_one, serve_one_as, sniff_among, undo,
+        view_file, view_file_within, with_source_text, working_tree_status, write_atomically,
+        write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -2684,6 +2762,114 @@ public class OrderBook {
         }
 
         fs::remove_file(&path).unwrap();
+    }
+
+    /// A scratch directory holding one named pipe: opening it for reading
+    /// blocks until something writes to it, which never happens here. The
+    /// deterministic way to make a read hang for exactly as long as a test
+    /// needs, with nothing sleeping and nothing racing a clock (#715).
+    #[cfg(unix)]
+    fn fifo_that_never_answers() -> PathBuf {
+        let dir = std::env::temp_dir().join(unique_socket_name());
+        fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("never-answers");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success(), "mkfifo {}", fifo.display());
+        fifo
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_parse_past_its_limit_is_abandoned_and_names_the_limit() {
+        let fifo = fifo_that_never_answers();
+        let limit = std::time::Duration::from_millis(200);
+
+        let started = std::time::Instant::now();
+        let response = view_file_within(&fifo, limit).unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "abandoned near the limit rather than left blocked on the read: {elapsed:?}"
+        );
+        match response {
+            Response::Error { message } => {
+                assert!(
+                    message.contains("0.2"),
+                    "the pane's message names the limit it gave up at: {message}"
+                );
+            }
+            other => panic!("expected the pane to say why, got {other:?}"),
+        }
+
+        fs::remove_dir_all(fifo.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_second_connection_is_served_while_the_first_is_over_its_limit() {
+        let (listener, name) = bind_unique();
+        std::thread::spawn(move || {
+            let _ = run(&listener);
+        });
+
+        let fifo = fifo_that_never_answers();
+        let stuck_path = fifo.to_string_lossy().into_owned();
+        let stuck_name = name.clone();
+        std::thread::spawn(move || {
+            let mut conn = connect(&stuck_name);
+            let _ = protocol::write_message(&mut conn, &Request::ViewFile { path: stuck_path });
+            // Reading the answer is what would block for PARSE_TIME_LIMIT;
+            // this thread is never joined, and nothing downstream of it is
+            // observed by this test.
+            let _: io::Result<Response> = protocol::read_message(&mut conn);
+        });
+        // Gives the stuck connection a moment to be accepted and start
+        // reading the fifo, so the assertion below exercises a connection
+        // that is genuinely mid-parse rather than one still queued to be
+        // accepted.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let started = std::time::Instant::now();
+        let mut conn = connect(&name);
+        protocol::write_message(&mut conn, &Request::ReposRoots).unwrap();
+        let response: Response = protocol::read_message(&mut conn).unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "a fast request answered in {elapsed:?} despite a slow one ahead of it"
+        );
+        assert!(matches!(response, Response::ReposRoots { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_service_keeps_serving_after_a_parse_is_abandoned() {
+        let (listener, name) = bind_unique();
+        std::thread::spawn(move || {
+            let _ = run(&listener);
+        });
+
+        let fifo = fifo_that_never_answers();
+        let stuck_path = fifo.to_string_lossy().into_owned();
+        let stuck_name = name.clone();
+        std::thread::spawn(move || {
+            let mut conn = connect(&stuck_name);
+            let _ = protocol::write_message(&mut conn, &Request::ViewFile { path: stuck_path });
+            let _: io::Result<Response> = protocol::read_message(&mut conn);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        for _ in 0..3 {
+            let mut conn = connect(&name);
+            protocol::write_message(&mut conn, &Request::ReposRoots).unwrap();
+            let response: Response = protocol::read_message(&mut conn).unwrap();
+            assert!(matches!(response, Response::ReposRoots { .. }));
+        }
     }
 
     #[test]
