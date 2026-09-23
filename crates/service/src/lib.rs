@@ -1,6 +1,7 @@
 //! The fat process: filesystem traversal, indexing, operations, and plugin cores.
 
 mod all_repositories;
+mod directory_scan;
 pub mod repos;
 
 use interprocess::local_socket::traits::Listener as _;
@@ -291,47 +292,63 @@ fn folder_plugins_among(
         .collect()
 }
 
-/// Lists the immediate contents of `path`, sorted by name without regard
-/// to case, so a capitalised entry sits among its neighbours rather than
-/// ahead of every lowercase one. Names differing only in case keep a
-/// stable order between them.
+/// Reads one directory entry's name, kind, size, modification time and
+/// (for a folder) repository description - the fields a listing row needs,
+/// shared by [`list_directory`]'s whole-directory read and
+/// `directory_scan`'s streamed one.
 ///
 /// # Errors
-/// Returns an error if `path` cannot be read as a directory.
-pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_dir = entry.file_type()?.is_dir();
-        let metadata = entry.metadata()?;
-        let size = metadata.len();
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_secs());
-        // What a directory *is* to this application: a working copy, or an
-        // ordinary folder that stays listed either way (GUIDANCE.md 2.5).
-        let repository = if is_dir {
-            repos::describe(&entry.path())
-        } else {
-            None
-        };
-        entries.push(DirectoryEntry {
-            name,
-            is_dir,
-            size,
-            modified,
-            repository,
-        });
-    }
+/// Returns an error if the entry's type or metadata cannot be read - most
+/// often a file removed between the directory read and this call.
+pub(crate) fn directory_entry_from(entry: &fs::DirEntry) -> io::Result<DirectoryEntry> {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let is_dir = entry.file_type()?.is_dir();
+    let metadata = entry.metadata()?;
+    let size = metadata.len();
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
+    // What a directory *is* to this application: a working copy, or an
+    // ordinary folder that stays listed either way (GUIDANCE.md 2.5).
+    let repository = if is_dir {
+        repos::describe(&entry.path())
+    } else {
+        None
+    };
+    Ok(DirectoryEntry {
+        name,
+        is_dir,
+        size,
+        modified,
+        repository,
+    })
+}
+
+/// Sorts `entries` by name without regard to case, so a capitalised entry
+/// sits among its neighbours rather than ahead of every lowercase one.
+/// Names differing only in case keep a stable order between them.
+pub(crate) fn sort_directory_entries(entries: &mut [DirectoryEntry]) {
     entries.sort_by(|a, b| {
         a.name
             .to_lowercase()
             .cmp(&b.name.to_lowercase())
             .then_with(|| a.name.cmp(&b.name))
     });
+}
+
+/// Lists the immediate contents of `path`, sorted by name (see
+/// [`sort_directory_entries`]).
+///
+/// # Errors
+/// Returns an error if `path` cannot be read as a directory.
+pub fn list_directory(path: &Path) -> io::Result<Vec<DirectoryEntry>> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(path)? {
+        entries.push(directory_entry_from(&entry?)?);
+    }
+    sort_directory_entries(&mut entries);
     Ok(entries)
 }
 
@@ -1345,9 +1362,13 @@ fn resolved_paths(paths: &[String]) -> io::Result<Vec<String>> {
 #[must_use]
 pub fn handle_request(request: &Request) -> Response {
     match request {
-        Request::ListDirectory { path } => {
-            match resolve(path).and_then(|path| list_directory(&path)) {
-                Ok(entries) => Response::Directory { entries },
+        Request::ListDirectory { path, refresh } => {
+            match resolve(path).and_then(|path| directory_scan::poll(&path, *refresh)) {
+                Ok((entries, true, None)) => Response::Directory { entries },
+                Ok((entries, true, Some(message))) => {
+                    Response::DirectoryFailed { entries, message }
+                }
+                Ok((entries, false, _)) => Response::DirectoryProgress { entries },
                 Err(err) => Response::Error {
                     message: err.to_string(),
                 },
@@ -1724,10 +1745,11 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 mod tests {
     use super::{
         CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, PeerIdentity, bind, copy,
-        create_directory, create_file, delete, extract, find_certificates, find_names,
-        folder_plugins_among, guarded, handle_request, journal_to, list_directory, most_specific,
-        open, peer_is_owner, rename, repos, resolve, serve_one, serve_one_as, sniff_among, undo,
-        view_file, with_source_text, working_tree_status, write_atomically, write_file,
+        create_directory, create_file, delete, directory_scan, extract, find_certificates,
+        find_names, folder_plugins_among, guarded, handle_request, journal_to, list_directory,
+        most_specific, open, peer_is_owner, rename, repos, resolve, serve_one, serve_one_as,
+        sniff_among, undo, view_file, with_source_text, working_tree_status, write_atomically,
+        write_file,
     };
     // Used only by tests that are themselves `cfg(unix)`, so on Windows
     // these are dead and `--all-targets` says so. Gated rather than dropped:
@@ -2666,6 +2688,7 @@ public class OrderBook {
         let missing = std::env::temp_dir().join(unique_socket_name());
         let request = Request::ListDirectory {
             path: missing.to_string_lossy().into_owned(),
+            refresh: true,
         };
 
         assert!(matches!(handle_request(&request), Response::Error { .. }));
@@ -2673,6 +2696,7 @@ public class OrderBook {
 
     #[test]
     fn answers_a_list_directory_request_over_the_socket() {
+        let _scan = directory_scan::serially();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("file.txt"), b"").unwrap();
@@ -2694,6 +2718,7 @@ public class OrderBook {
                 &mut conn,
                 &Request::ListDirectory {
                     path: dir_for_client.to_string_lossy().into_owned(),
+                    refresh: true,
                 },
             )
             .unwrap();
@@ -4987,6 +5012,7 @@ public class OrderBook {
         let hostile = [
             Request::ListDirectory {
                 path: String::new(),
+                refresh: true,
             },
             Request::ViewFile {
                 path: String::new(),
@@ -5086,6 +5112,7 @@ public class OrderBook {
         let hostile = [
             Request::ListDirectory {
                 path: bogus.clone(),
+                refresh: true,
             },
             Request::ViewFile {
                 path: bogus.clone(),
@@ -5182,10 +5209,12 @@ public class OrderBook {
     #[test]
     fn a_relative_path_is_taken_as_written_rather_than_rejected() {
         let _journal = journal_to_themselves();
+        let _scan = directory_scan::serially();
         // The soft boundary of D8: the service resolves what it is given
         // against its own working directory and does not police it.
         let Response::Directory { entries } = handle_request(&Request::ListDirectory {
             path: ".".to_owned(),
+            refresh: true,
         }) else {
             panic!("a relative path names a real directory");
         };
@@ -5720,6 +5749,7 @@ Mo8hvqlfr/IR
     /// ability to serve.
     #[test]
     fn a_second_service_is_refused_and_the_first_keeps_serving() {
+        let _scan = directory_scan::serially();
         let socket = format!("rse-second-{}.sock", std::process::id());
         assert!(
             protocol::use_private_socket(socket),
@@ -5760,6 +5790,7 @@ Mo8hvqlfr/IR
                 &mut conn,
                 &Request::ListDirectory {
                     path: ".".to_owned(),
+                    refresh: true,
                 },
             )
             .expect("the request is sent");

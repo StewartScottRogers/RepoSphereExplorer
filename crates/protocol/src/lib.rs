@@ -9,7 +9,7 @@ use std::path::Path;
 
 /// The protocol version this build speaks. Bump whenever [`Request`] or
 /// [`Response`] changes shape in a way that is not backward compatible.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// The name other processes use to find the service's local socket.
 pub const SOCKET_NAME: &str = "reposphereexplorer.sock";
@@ -37,10 +37,20 @@ pub const MAX_MESSAGE_DEPTH: usize = 127;
 /// A request sent from a front end to the service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
-    /// List the immediate contents of a directory.
+    /// List the immediate contents of a directory. The read streams
+    /// (GUIDANCE.md §3.3): one request can answer [`Response::Directory`],
+    /// [`Response::DirectoryProgress`] or [`Response::DirectoryFailed`].
     ListDirectory {
         /// Path to list, as given by the caller.
         path: String,
+        /// Whether to discard any read already under way for `path`, or
+        /// cached from one that finished, and start a new one. A front end
+        /// continuing to watch a [`Response::DirectoryProgress`] answer
+        /// asks `false`; a fresh navigation, or a reload after an
+        /// operation changed what `path` holds, asks `true` - a
+        /// directory's contents are current information, never cached for
+        /// a session the way [`Request::AllRepositories`]'s answer is.
+        refresh: bool,
     },
     /// View a single file's content through its recognised plugin.
     ViewFile {
@@ -358,10 +368,29 @@ pub struct PluginView {
 /// A response sent from the service back to a front end.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Response {
-    /// The requested directory's immediate entries.
+    /// The requested directory's immediate entries: the walk finished, and
+    /// this is every one of them.
     Directory {
         /// Entries in the directory, sorted by name.
         entries: Vec<DirectoryEntry>,
+    },
+    /// The walk over the requested directory is not finished. `entries` is
+    /// everything read so far, sorted by name; a repeat of the same
+    /// [`Request::ListDirectory`] continues it rather than starting over,
+    /// until a [`Self::Directory`] or [`Self::DirectoryFailed`] answer says
+    /// it is done (GUIDANCE.md §3.3).
+    DirectoryProgress {
+        /// Entries read so far, sorted by name.
+        entries: Vec<DirectoryEntry>,
+    },
+    /// The walk over the requested directory failed after reading some of
+    /// it. `entries` is what it managed to read before that, kept rather
+    /// than discarded.
+    DirectoryFailed {
+        /// Entries read before the failure, sorted by name.
+        entries: Vec<DirectoryEntry>,
+        /// A human-readable description of the failure.
+        message: String,
     },
     /// A file's content, as produced by the plugin that recognised it.
     FileView {
@@ -1240,6 +1269,7 @@ mod tests {
     fn a_length_prefix_split_across_reads_is_reassembled() {
         let frame = frame_of(&Request::ListDirectory {
             path: "/home/ada/repos".to_owned(),
+            refresh: true,
         });
 
         let decoded: Request = read_message(OneByteAtATime {
@@ -1250,7 +1280,8 @@ mod tests {
         assert_eq!(
             decoded,
             Request::ListDirectory {
-                path: "/home/ada/repos".to_owned()
+                path: "/home/ada/repos".to_owned(),
+                refresh: true,
             }
         );
     }
@@ -1330,6 +1361,7 @@ mod tests {
     fn a_stream_that_stops_mid_payload_ends_the_read() {
         let mut frame = frame_of(&Request::ListDirectory {
             path: "/home/ada/repos".to_owned(),
+            refresh: true,
         });
         frame.truncate(frame.len() - 3);
 
@@ -1394,6 +1426,7 @@ mod tests {
             &mut writer,
             &Request::ListDirectory {
                 path: "/home/ada/repos".to_owned(),
+                refresh: true,
             },
         )
         .unwrap_err();
@@ -1406,6 +1439,11 @@ mod tests {
         let requests = vec![
             Request::ListDirectory {
                 path: String::new(),
+                refresh: true,
+            },
+            Request::ListDirectory {
+                path: String::new(),
+                refresh: false,
             },
             Request::ViewFile {
                 path: "a.txt".to_owned(),
