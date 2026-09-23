@@ -28,6 +28,18 @@ const FIRST_BATCH: usize = 200;
 /// One directory read's state: what it has found so far, whether it has
 /// finished, and - if it stopped early having found something - why.
 struct Scan {
+    /// Which read this is, so a thread only ever writes into the read it
+    /// was spawned for.
+    ///
+    /// Matching on the path alone was not enough. Every ordinary folder
+    /// navigation polls with `refresh: true`, so walking away from a slow
+    /// folder and back again starts a second read of the *same* path while
+    /// the first thread is still going. Both matched `scan.path == path`,
+    /// so the abandoned thread went on pushing into the new read - two
+    /// independent walks interleaved into one listing - and whichever
+    /// finished first marked the other `done`, leaving a front end showing
+    /// a duplicated or truncated listing and reporting it as complete.
+    generation: u64,
     path: PathBuf,
     entries: Vec<DirectoryEntry>,
     done: bool,
@@ -38,6 +50,10 @@ struct Scan {
 /// matching [`crate::all_repositories`]'s single slot: correct for the one
 /// Contents pane a real session has open at once.
 static SCAN: OnceLock<Mutex<Option<Scan>>> = OnceLock::new();
+
+/// Hands out [`Scan::generation`]. Never reused within a run, so no
+/// abandoned thread can ever match a later read.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// What the read of `path` has found so far - entries sorted by name,
 /// whether the read has finished, and the reason if it stopped early having
@@ -71,7 +87,9 @@ pub(crate) fn poll(
     let start_new = refresh || guard.as_ref().is_none_or(|scan| scan.path != path);
     if start_new {
         let mut read_dir = fs::read_dir(path)?;
+        let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut scan = Scan {
+            generation,
             path: path.to_path_buf(),
             entries: Vec::new(),
             done: false,
@@ -81,7 +99,7 @@ pub(crate) fn poll(
         let finished = scan.done;
         *guard = Some(scan);
         if !finished {
-            spawn_scan(path.to_path_buf(), read_dir);
+            spawn_scan(generation, read_dir);
         }
     }
     Ok(guard.as_ref().map_or((Vec::new(), false, None), |scan| {
@@ -119,46 +137,46 @@ fn read_first_batch(read_dir: &mut fs::ReadDir, scan: &mut Scan) {
 
 /// Continues a read past its first batch on its own thread, publishing each
 /// further entry as it is found so a poll never waits for the rest.
-fn spawn_scan(path: PathBuf, read_dir: fs::ReadDir) {
+fn spawn_scan(generation: u64, read_dir: fs::ReadDir) {
     thread::spawn(move || {
         for entry in read_dir {
             match entry.and_then(|entry| directory_entry_from(&entry)) {
-                Ok(entry) => publish(&path, entry),
+                Ok(entry) => publish(generation, entry),
                 Err(err) => {
-                    mark_done(&path, Some(err.to_string()));
+                    mark_done(generation, Some(err.to_string()));
                     return;
                 }
             }
         }
-        mark_done(&path, None);
+        mark_done(generation, None);
     });
 }
 
-/// Records one found entry against the read for `path`, if that is still
-/// the one being asked about - a stale read, superseded by a fresh one for
-/// the same or a different path, has nowhere left to publish to and simply
-/// finishes unread.
-fn publish(path: &Path, entry: DirectoryEntry) {
+/// Records one found entry against the read `generation` belongs to, if
+/// that read is still the current one - a read superseded by a fresh one,
+/// of the same path or a different one, has nowhere left to publish to and
+/// simply finishes unread.
+fn publish(generation: u64, entry: DirectoryEntry) {
     let cell = SCAN.get_or_init(|| Mutex::new(None));
     let mut guard = cell
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(scan) = guard.as_mut()
-        && scan.path == path
+        && scan.generation == generation
     {
         scan.entries.push(entry);
     }
 }
 
-/// Marks the read for `path` finished, with `error` if it stopped early, if
-/// it is still the current one.
-fn mark_done(path: &Path, error: Option<String>) {
+/// Marks the read `generation` belongs to finished, with `error` if it
+/// stopped early, if it is still the current one.
+fn mark_done(generation: u64, error: Option<String>) {
     let cell = SCAN.get_or_init(|| Mutex::new(None));
     let mut guard = cell
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(scan) = guard.as_mut()
-        && scan.path == path
+        && scan.generation == generation
     {
         scan.done = true;
         scan.error = error;
@@ -307,5 +325,47 @@ mod tests {
         let missing = root.join("does-not-exist");
 
         assert!(poll(&missing, true).is_err());
+    }
+    /// The race the review of #766 found: leaving a slow folder and coming
+    /// back to it before its walk has finished.
+    ///
+    /// Every ordinary folder navigation polls with `refresh: true`, so this
+    /// is a second read of the *same* path while the first thread is still
+    /// running. Matching on the path alone, both threads wrote into
+    /// whichever `Scan` held that path, so the abandoned walk's entries
+    /// interleaved with the new one's - the same names twice - and whichever
+    /// thread finished first marked the other `done`, so a front end drew a
+    /// duplicated or truncated listing and was told it was complete.
+    #[test]
+    fn a_second_read_of_the_same_path_does_not_take_the_first_one_s_entries() {
+        let _serial = serially();
+        let root = scratch();
+        // More than FIRST_BATCH, so the first read certainly continues on a
+        // thread of its own rather than finishing inside the poll.
+        for index in 0..(super::FIRST_BATCH * 3) {
+            fs::write(root.join(format!("file-{index:04}.txt")), "x").unwrap();
+        }
+
+        // Start one read and leave it running.
+        let (first, first_done, _) = poll(&root, true).unwrap();
+        assert!(!first_done, "the fixture is big enough to keep reading");
+        assert_eq!(first.len(), super::FIRST_BATCH);
+
+        // Come back to the same folder, the way navigating back does.
+        let names = poll_to_completion(&root, true);
+
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "no name should appear twice: the abandoned walk must not              publish into the read that replaced it"
+        );
+        assert_eq!(
+            names.len(),
+            super::FIRST_BATCH * 3,
+            "and the listing is whole rather than cut short by the              abandoned walk finishing first and marking it done"
+        );
     }
 }
