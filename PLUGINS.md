@@ -214,10 +214,11 @@ GUIDANCE.md §3.5 and DECISIONS.md D12.
 | --- | --- | --- | --- |
 | Directory | `crates/plugins/directory` | — | The folder itself: contents, and the source control facts of a working copy |
 | Cargo project | `crates/plugins/project-cargo` | #308 | Workspace or package, name, version, edition, members, dependency counts |
+| Go project | `crates/plugins/project-go` | #712 | Module path, Go version and toolchain, direct requirement count, replaced requirements, vendoring, command count |
 | Node project | `crates/plugins/project-node` | #702 | Name, version, private flag, package manager from the lock file, whether `node_modules` is installed, dependency counts, scripts, `engines.node`, workspace members |
 | Python project | `crates/plugins/project-python` | #711 | Recognises `pyproject.toml`, `setup.py`, `setup.cfg` or `requirements.txt`; name, version, build backend, `requires-python`, dependency count and entry points from whichever manifest is richest, dependency manager from the lock file, whether a virtual environment is present, whether it is tested with `tox` |
 
-Go, .NET and Java project plugins are follow-up work, not rejected.
+.NET and Java project plugins are follow-up work, not rejected.
 
 ## Rejected / infeasible
 

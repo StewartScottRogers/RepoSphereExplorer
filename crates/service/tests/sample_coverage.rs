@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 const FOLDER_PLUGIN_SAMPLES: &[&str] = &[
     "directory",
     "project-cargo",
+    "project-go",
     "project-node",
     "project-python",
 ];
