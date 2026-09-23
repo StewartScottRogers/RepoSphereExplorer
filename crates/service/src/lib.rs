@@ -3,6 +3,7 @@
 mod all_repositories;
 mod directory_scan;
 pub mod repos;
+mod view_cache;
 
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::traits::StreamCommon as _;
@@ -692,26 +693,64 @@ pub fn view_file(path: &Path) -> io::Result<Response> {
     view_file_within(path, PARSE_TIME_LIMIT)
 }
 
+/// How often [`view_file_within`] checks whether a [`protocol::Request::Cancel`]
+/// has arrived for the path it is waiting on, rather than sleeping for the
+/// whole of `limit` or `recv_timeout`'s remainder in one call. Short enough
+/// that cancelling a parse is indistinguishable, to a reader, from it
+/// simply stopping.
+const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// As [`view_file`], abandoning the read once `limit` passes rather than
 /// always [`PARSE_TIME_LIMIT`] - split out so a test can use a limit
 /// measured in milliseconds instead of waiting out the real one.
+///
+/// Answers from [`view_cache`] when `path`'s current modification time and
+/// size are already cached, without spawning a worker thread at all. A miss
+/// registers `path` so a [`protocol::Request::Cancel`] naming it can be
+/// noticed - polled for on the same cadence this already checks `limit`
+/// with - and caches the plugin's answer once it arrives uncancelled
+/// (GUIDANCE.md §3.3).
 fn view_file_within(path: &Path, limit: std::time::Duration) -> io::Result<Response> {
+    let key = view_cache::key_for(path)?;
+    if let Some(cached) = view_cache::lookup(&key) {
+        return Ok(cached);
+    }
+
+    let registration = view_cache::begin(path);
     let owned = path.to_path_buf();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = sender.send(view_file_uncapped(&owned));
     });
-    match receiver.recv_timeout(limit) {
-        Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => Ok(Response::Error {
-            message: format!(
-                "{} could not be read within {} seconds",
-                path.display(),
-                limit.as_secs_f64()
-            ),
-        }),
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            unreachable!("the worker thread sends its result before its sender can drop")
+
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        if registration.cancelled() {
+            return Ok(Response::Error {
+                message: format!("{} was cancelled", path.display()),
+            });
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(Response::Error {
+                message: format!(
+                    "{} could not be read within {} seconds",
+                    path.display(),
+                    limit.as_secs_f64()
+                ),
+            });
+        }
+        match receiver.recv_timeout(remaining.min(CANCEL_POLL_INTERVAL)) {
+            Ok(result) => {
+                if let Ok(response @ Response::FileView { .. }) = &result {
+                    view_cache::store(key, response.clone());
+                }
+                return result;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                unreachable!("the worker thread sends its result before its sender can drop")
+            }
         }
     }
 }
@@ -1117,7 +1156,16 @@ fn write_atomically(path: &Path, content: &str) -> io::Result<()> {
     let temporary = PathBuf::from(temporary);
     fs::write(&temporary, content)?;
     match fs::rename(&temporary, path) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            // A rewrite that leaves the file's size and modification
+            // second unchanged would otherwise still match its old cache
+            // key (#718) - rare, but an editor saving back over a file it
+            // just showed is exactly the case where it would matter, so
+            // every path that replaces a file's bytes is made to forget it
+            // outright rather than trust the key alone.
+            view_cache::forget(path);
+            Ok(())
+        }
         Err(err) => {
             // Leave nothing behind if the rename is the part that failed.
             let _ = fs::remove_file(&temporary);
@@ -1458,7 +1506,17 @@ pub fn handle_request(request: &Request) -> Response {
                 message: "no Repos Directory is configured to search".to_owned(),
             },
         },
+        Request::Cancel { path } => cancel_view(path),
     }
+}
+
+/// Handles [`Request::Cancel`]: best-effort, so an unresolvable path is not
+/// an error, only nothing to cancel.
+fn cancel_view(path: &str) -> Response {
+    if let Ok(path) = resolve(path) {
+        view_cache::cancel(&path);
+    }
+    Response::Done
 }
 
 /// Builds the listener options `bind` and `bind_reclaiming_stale` both
@@ -1756,7 +1814,7 @@ mod tests {
     // deleting them built here and broke the Linux runner, which is the
     // fourth fault of that shape this week (#753).
     #[cfg(unix)]
-    use super::{PathBuf, run, view_file_within};
+    use super::{PathBuf, mpsc, run, view_cache, view_file_within};
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
     use plugin_api::PluginCore;
@@ -2123,6 +2181,78 @@ public class OrderBook {
                 assert_eq!(plugin, "text");
                 assert_eq!(data["content"], "hello\nworld\n");
             }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        fs::remove_file(&path).unwrap();
+    }
+
+    /// #718: a second view of a file whose modification time and size have
+    /// not changed must be served from the cache rather than reading it
+    /// again.
+    ///
+    /// Proved by taking away the file's own read permission between the two
+    /// calls without touching its size or modification time: a cache hit
+    /// needs neither, so it still answers with the first call's content; a
+    /// cache miss would instead fail to open the file and return an error.
+    #[cfg(unix)]
+    #[test]
+    fn an_unchanged_file_is_served_from_the_cache_without_reading_it_again() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // The cache is one slot for the whole process (see
+        // `view_cache::serially`'s own doc comment): a concurrent test
+        // filling it past its bound could otherwise evict this entry
+        // between the two calls below.
+        let _serial = view_cache::serially();
+        let path = std::env::temp_dir().join(unique_socket_name());
+        fs::write(&path, "cached content").unwrap();
+
+        let first = view_file(&path).unwrap();
+        match &first {
+            Response::FileView { data, .. } => assert_eq!(data["content"], "cached content"),
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        let mut unreadable = fs::metadata(&path).unwrap().permissions();
+        unreadable.set_mode(0o000);
+        fs::set_permissions(&path, unreadable).unwrap();
+
+        let second = view_file(&path);
+
+        // Restore permissions before the assertion below can fail the test
+        // and skip cleanup, leaving an unreadable file behind.
+        let mut restored = fs::metadata(&path).unwrap().permissions();
+        restored.set_mode(0o644);
+        fs::set_permissions(&path, restored).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            second.unwrap(),
+            first,
+            "an unchanged file must be served from the cache"
+        );
+    }
+
+    /// #718: editing a file changes what a later view of it must answer,
+    /// even though the cache exists precisely so an *unchanged* file does
+    /// not have to be read again.
+    #[test]
+    fn touching_the_file_invalidates_its_cached_view() {
+        let path = std::env::temp_dir().join(unique_socket_name());
+        fs::write(&path, "before").unwrap();
+
+        let first = view_file(&path).unwrap();
+        match &first {
+            Response::FileView { data, .. } => assert_eq!(data["content"], "before"),
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        write_file(&path, "after").unwrap();
+        let second = view_file(&path).unwrap();
+
+        match second {
+            Response::FileView { data, .. } => assert_eq!(data["content"], "after"),
             other => panic!("unexpected response: {other:?}"),
         }
 
@@ -3065,6 +3195,112 @@ public class OrderBook {
             let response: Response = protocol::read_message(&mut conn).unwrap();
             assert!(matches!(response, Response::ReposRoots { .. }));
         }
+    }
+
+    /// #718: a [`Request::Cancel`] for a path still being parsed makes the
+    /// connection that asked for it answer right away, rather than only
+    /// once the plugin finishes or [`PARSE_TIME_LIMIT`] runs out - the same
+    /// proof [`a_parse_past_its_limit_is_abandoned_and_names_the_limit`]
+    /// gives for the clock, given here for an explicit cancel instead.
+    #[cfg(unix)]
+    #[test]
+    fn a_cancelled_parse_returns_promptly_without_waiting_out_the_limit() {
+        let (listener, name) = bind_unique();
+        std::thread::spawn(move || {
+            let _ = run(&listener);
+        });
+
+        let fifo = fifo_that_never_answers();
+        let stuck_path = fifo.to_string_lossy().into_owned();
+        let stuck_name = name.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut conn = connect(&stuck_name);
+            protocol::write_message(&mut conn, &Request::ViewFile { path: stuck_path }).unwrap();
+            let started = std::time::Instant::now();
+            let response: io::Result<Response> = protocol::read_message(&mut conn);
+            let _ = done_tx.send((started.elapsed(), response));
+        });
+        // Gives the parse a moment to register itself before it is
+        // cancelled, so this exercises a parse genuinely under way rather
+        // than one still queued to be accepted.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let mut cancel_conn = connect(&name);
+        protocol::write_message(
+            &mut cancel_conn,
+            &Request::Cancel {
+                path: fifo.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap();
+        let acknowledged: Response = protocol::read_message(&mut cancel_conn).unwrap();
+        assert!(matches!(acknowledged, Response::Done));
+
+        let (elapsed, response) = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "a cancelled parse kept its connection waiting for {elapsed:?}"
+        );
+        match response.unwrap() {
+            Response::Error { message } => {
+                assert!(message.contains("cancelled"), "{message}");
+            }
+            other => panic!("expected a cancellation error, got {other:?}"),
+        }
+
+        fs::remove_dir_all(fifo.parent().unwrap()).unwrap();
+    }
+
+    /// #718: a cancelled parse must not leave anything in the cache, even
+    /// once its orphaned worker thread eventually finishes reading -
+    /// requirement 4 of the work order. Proved by unblocking the fifo only
+    /// after cancelling: if the (wrongly) finished read were cached, a
+    /// fresh request for the same path would answer instantly from it
+    /// instead of hanging on the now-exhausted fifo, which is exactly what
+    /// this gives it every opportunity to do and then checks did not
+    /// happen.
+    #[cfg(unix)]
+    #[test]
+    fn a_cancelled_parse_does_not_populate_the_cache() {
+        let fifo = fifo_that_never_answers();
+        let key = view_cache::key_for(&fifo).unwrap();
+
+        let writer_path = fifo.clone();
+        let writer = std::thread::spawn(move || {
+            // Gives view_file_within time to register the parse and start
+            // waiting before the fifo is unblocked, and again to notice the
+            // cancellation before the write lands - the write is what lets
+            // the orphaned worker thread finish at all.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            fs::write(&writer_path, b"unblocked after cancel").unwrap();
+        });
+        let cancel_path = fifo.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            view_cache::cancel(&cancel_path);
+        });
+
+        let response = view_file_within(&fifo, std::time::Duration::from_secs(5)).unwrap();
+        canceller.join().unwrap();
+        writer.join().unwrap();
+        match response {
+            Response::Error { message } => assert!(message.contains("cancelled"), "{message}"),
+            other => panic!("expected a cancellation error, got {other:?}"),
+        }
+
+        // The orphaned worker thread's read unblocked when the fifo was
+        // written to; give it time to finish and (if this were broken)
+        // reach the cache.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            view_cache::lookup(&key).is_none(),
+            "a cancelled parse must not be cached"
+        );
+
+        fs::remove_dir_all(fifo.parent().unwrap()).unwrap();
     }
 
     #[test]

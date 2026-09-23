@@ -9,7 +9,7 @@ use std::path::Path;
 
 /// The protocol version this build speaks. Bump whenever [`Request`] or
 /// [`Response`] changes shape in a way that is not backward compatible.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 
 /// The name other processes use to find the service's local socket.
 pub const SOCKET_NAME: &str = "reposphereexplorer.sock";
@@ -173,6 +173,23 @@ pub enum Request {
     ///
     /// The reply is [`Response::Certificates`].
     FindCertificates,
+    /// Gives up on a [`Request::ViewFile`] for `path` that this front end
+    /// no longer wants answered - moving the selection on before a slow
+    /// parse or thumbnail finished, most often (#718).
+    ///
+    /// The service does not stop the worker thread already reading `path`,
+    /// since Rust cannot do that without `unsafe` code, which this
+    /// workspace forbids - but it does stop *waiting* on it: the
+    /// [`Request::ViewFile`] connection this cancels answers immediately
+    /// with [`Response::Error`] rather than the plugin's eventual result,
+    /// and that result, whenever it arrives, is discarded rather than
+    /// cached.
+    ///
+    /// The reply is [`Response::Done`].
+    Cancel {
+        /// The path a pending [`Request::ViewFile`] was asked about.
+        path: String,
+    },
 }
 
 /// One entry returned by [`Request::ListDirectory`].
@@ -845,6 +862,19 @@ mod tests {
     fn round_trips_a_create_file_request_through_the_wire_format() {
         let request = Request::CreateFile {
             path: "new_file.txt".to_owned(),
+        };
+
+        let mut buf = Vec::new();
+        write_message(&mut buf, &request).unwrap();
+
+        let decoded: Request = read_message(buf.as_slice()).unwrap();
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn round_trips_a_cancel_request_through_the_wire_format() {
+        let request = Request::Cancel {
+            path: "/repos/alpha/big-file.bin".to_owned(),
         };
 
         let mut buf = Vec::new();

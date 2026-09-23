@@ -2493,7 +2493,25 @@ impl App {
         }
     }
 
+    /// Cancels the file view the service may still be parsing, if one is
+    /// pending, telling the service itself rather than only dropping this
+    /// front end's own receiver (#718): without this, moving through a
+    /// folder of large files with the arrow key left one queued to parse
+    /// for every row passed over, since only the reply the front end had
+    /// stopped waiting for was ever discarded. Returns whether anything was
+    /// pending to cancel.
+    fn cancel_pending_file(&mut self) -> bool {
+        let cancelled = self.pending_file.take().is_some();
+        if cancelled && let Some(path) = self.pending_file_path.take() {
+            let _ = spawn_request(Request::Cancel {
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+        cancelled
+    }
+
     fn load_file_view(&mut self) {
+        self.cancel_pending_file();
         if let Some(found) = &self.found {
             let Some(found_match) = found.matches.get(self.content_selected) else {
                 return;
@@ -3535,8 +3553,10 @@ impl App {
         };
     }
 
-    /// Cancels any pending request; a late result is simply discarded when
-    /// it arrives, since its receiver is dropped.
+    /// Cancels any pending request. A pending file view is genuinely
+    /// cancelled - the service is told to stop too (#718); every other
+    /// pending request's late result is simply discarded when it arrives,
+    /// since its receiver is dropped.
     pub fn cancel_pending(&mut self) {
         if self.editing_file.is_some() {
             self.cancel_file_edit();
@@ -3567,7 +3587,7 @@ impl App {
             return;
         }
         let cancelled = self.pending_contents.take().is_some()
-            | self.pending_file.take().is_some()
+            | self.cancel_pending_file()
             | self.pending_operation.take().is_some();
         self.mode = Mode::Normal;
         if cancelled {
@@ -7029,6 +7049,49 @@ mod tests {
         );
         app.select_content(1);
         app
+    }
+
+    /// #718: holding Down through a folder used to queue a parse for every
+    /// row passed over, since only this front end's own receiver for the
+    /// abandoned row was ever dropped - the service kept working on it
+    /// regardless. Moving the selection on before the first row's view
+    /// answers must replace the pending request rather than merely losing
+    /// track of it.
+    #[test]
+    fn selecting_a_new_row_before_the_previous_view_answered_replaces_the_pending_request() {
+        let mut app = app_with_four_rows();
+        let first_path = app.pending_file_path.clone();
+        assert!(
+            first_path.is_some(),
+            "selecting a row starts a pending file view"
+        );
+
+        app.select_content(2);
+
+        assert_ne!(
+            app.pending_file_path, first_path,
+            "the new selection's path replaces the abandoned one's"
+        );
+        assert!(
+            app.pending_file.is_some(),
+            "the new selection still has its own pending file view"
+        );
+    }
+
+    #[test]
+    fn cancel_pending_file_reports_whether_anything_was_pending() {
+        let mut app = App::new(std::env::temp_dir());
+        assert!(!app.cancel_pending_file(), "nothing was pending yet");
+
+        let mut app = app_with_four_rows();
+        assert!(app.pending_file.is_some());
+
+        assert!(
+            app.cancel_pending_file(),
+            "a pending file view was cancelled"
+        );
+        assert!(app.pending_file.is_none());
+        assert!(app.pending_file_path.is_none());
     }
 
     #[test]
