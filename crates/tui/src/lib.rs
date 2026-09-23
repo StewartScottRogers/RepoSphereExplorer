@@ -649,6 +649,8 @@ still looking..."
 ",
             ),
         Response::Directory { .. }
+        | Response::DirectoryProgress { .. }
+        | Response::DirectoryFailed { .. }
         | Response::FileView { .. }
         | Response::Error { .. }
         | Response::Done => String::new(),
@@ -702,7 +704,8 @@ mod tests {
             assert_eq!(
                 request,
                 Request::ListDirectory {
-                    path: "some/path".to_owned()
+                    path: "some/path".to_owned(),
+                    refresh: true,
                 }
             );
             let response = Response::Directory {
@@ -721,6 +724,7 @@ mod tests {
             name.as_str().to_ns_name::<GenericNamespaced>().unwrap(),
             &Request::ListDirectory {
                 path: "some/path".to_owned(),
+                refresh: true,
             },
         )
         .unwrap();

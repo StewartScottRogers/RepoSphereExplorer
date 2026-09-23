@@ -110,7 +110,8 @@ fn succeeds_when_the_service_lists_the_expected_entry() {
     assert_eq!(
         server.join().unwrap(),
         Request::ListDirectory {
-            path: "/scratch".to_owned()
+            path: "/scratch".to_owned(),
+            refresh: true,
         }
     );
 }

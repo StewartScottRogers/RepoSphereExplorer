@@ -67,18 +67,31 @@ fn main() -> ExitCode {
 
 fn list(directory: &str) -> std::io::Result<Response> {
     let deadline = Instant::now() + WAIT_FOR_SERVICE;
-    let mut conn = loop {
-        match Stream::connect(protocol::socket_name()?) {
-            Ok(conn) => break conn,
-            Err(err) if Instant::now() >= deadline => return Err(err),
-            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+    // The listing streams (#717): a `DirectoryProgress` answer is not yet
+    // the whole thing, so this reconnects and asks again - `refresh: false`
+    // after the first request, continuing the same read rather than
+    // restarting it - until a terminal answer arrives.
+    let mut refresh = true;
+    loop {
+        let mut conn = loop {
+            match Stream::connect(protocol::socket_name()?) {
+                Ok(conn) => break conn,
+                Err(err) if Instant::now() >= deadline => return Err(err),
+                Err(_) => std::thread::sleep(Duration::from_millis(200)),
+            }
+        };
+        protocol::write_message(
+            &mut conn,
+            &Request::ListDirectory {
+                path: directory.to_owned(),
+                refresh,
+            },
+        )?;
+        match protocol::read_message(&mut conn)? {
+            Response::DirectoryProgress { .. } => {
+                refresh = false;
+            }
+            other => return Ok(other),
         }
-    };
-    protocol::write_message(
-        &mut conn,
-        &Request::ListDirectory {
-            path: directory.to_owned(),
-        },
-    )?;
-    protocol::read_message(&mut conn)
+    }
 }

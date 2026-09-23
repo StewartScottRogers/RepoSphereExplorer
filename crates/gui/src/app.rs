@@ -504,6 +504,8 @@ fn file_text_of(file_view: Option<&Response>, file_view_index: usize) -> String 
         Some(Response::Error { message }) => message.clone(),
         Some(
             Response::Directory { .. }
+            | Response::DirectoryProgress { .. }
+            | Response::DirectoryFailed { .. }
             | Response::Done
             | Response::ReposRoots { .. }
             | Response::Names { .. }
@@ -2172,6 +2174,19 @@ enum MessageButton {
     ClearFilter,
 }
 
+/// Whether the outstanding Contents listing has already drawn at least one
+/// [`Response::DirectoryProgress`] batch (#717) - not a `bool`, since `App`
+/// already carries its third (`clippy::struct_excessive_bools`). The first
+/// batch of a fresh listing resets the cursor to the top, the statuses and
+/// (unless a reload of the same folder) the filter, the way a new folder
+/// always has; a later batch of one already streaming in instead keeps the
+/// reader's row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContentsListing {
+    Fresh,
+    Streaming,
+}
+
 /// The three-pane explorer's state.
 pub struct App {
     root: FolderNode,
@@ -2246,6 +2261,7 @@ pub struct App {
     message_focus: usize,
     focus: Pane,
     pending_contents: Option<(Vec<usize>, Receiver<io::Result<Response>>)>,
+    contents_listing: ContentsListing,
     pending_file: Option<Receiver<io::Result<Response>>>,
     /// The file the outstanding preview was asked for, and the file the
     /// pane is showing now. Compared so that re-reading the file already
@@ -2377,6 +2393,7 @@ impl App {
             message_focus: 0,
             focus: Pane::Folders,
             pending_contents: None,
+            contents_listing: ContentsListing::Fresh,
             pending_file: None,
             pending_file_path: None,
             pending_find: None,
@@ -2435,8 +2452,10 @@ impl App {
             .map_or_else(|| self.root.path.clone(), |node| node.path.clone());
         let request = Request::ListDirectory {
             path: path.to_string_lossy().into_owned(),
+            refresh: true,
         };
         self.pending_contents = Some((indices, spawn_request(request)));
+        self.contents_listing = ContentsListing::Fresh;
         self.status = Some(format!("loading {}...", path.display()));
     }
 
@@ -2871,7 +2890,11 @@ impl App {
             self.root_problem = None;
             self.listing_message_ticks = 0;
         }
-        if let Ok(Response::Directory { entries }) = &result
+        if let Ok(
+            Response::Directory { entries }
+            | Response::DirectoryProgress { entries }
+            | Response::DirectoryFailed { entries, .. },
+        ) = &result
             && let Some(node) = self.root.node_at_mut(indices)
         {
             node.set_children_from(entries);
@@ -2887,39 +2910,49 @@ impl App {
         if self.tree_selected_indices() != indices {
             return;
         }
+        // The first batch of a fresh listing resets the cursor to the top,
+        // the statuses and (unless a reload of the same folder) the
+        // filter, the way a new folder always has. A later batch of a
+        // listing already streaming in (#717) instead keeps the reader's
+        // row - found again by name, since sorting a longer list can move
+        // it - so a listing that arrives in pieces never reorders under
+        // whoever is already reading it.
+        let fresh = self.contents_listing == ContentsListing::Fresh;
+        if !fresh && self.reselect.is_none() {
+            self.reselect = self
+                .contents
+                .get(self.content_selected)
+                .map(|entry| entry.name.clone());
+        }
         match result {
             Ok(Response::Directory { entries }) => {
-                // A new listing, even of the same folder, starts its
-                // statuses again: what was known belonged to the rows it
-                // replaces.
-                self.row_statuses.clear();
-                self.pending_statuses.clear();
-                self.all_contents = entries;
-                self.sort_contents();
-                // The filter (#582) is a view of the folder on screen, so a
-                // navigation to a different one drops it; a reload of this
-                // same folder - after an operation, a save, or a manual
-                // refresh - keeps it.
-                if !same_folder_reload {
-                    self.filter = Filter::default();
-                }
-                self.recompute_contents();
-                // A listing arriving after an operation is the same folder
-                // reloaded, so put the selection back on the entry that
-                // operation produced rather than dropping it to the top.
-                self.content_selected = self
-                    .reselect
-                    .take()
-                    .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
-                    .unwrap_or(0);
-                self.anchor = self.content_selected;
-                self.selection.clear();
-                if !self.contents.is_empty() {
-                    self.selection.insert(self.content_selected);
-                }
-                self.load_file_view();
+                self.apply_contents_entries(entries, fresh, same_folder_reload);
+                self.contents_listing = ContentsListing::Fresh;
             }
-            Ok(Response::Error { message }) => self.fail_contents_listing(indices, message),
+            Ok(Response::DirectoryProgress { entries }) => {
+                self.apply_contents_entries(entries, fresh, same_folder_reload);
+                self.contents_listing = ContentsListing::Streaming;
+                let path = self.selected_dir_path();
+                let request = Request::ListDirectory {
+                    path: path.to_string_lossy().into_owned(),
+                    refresh: false,
+                };
+                self.pending_contents = Some((indices.to_vec(), spawn_request(request)));
+                self.status = Some(format!(
+                    "reading {}… {} found so far",
+                    path.display(),
+                    self.all_contents.len()
+                ));
+            }
+            Ok(Response::DirectoryFailed { entries, message }) => {
+                self.apply_contents_entries(entries, fresh, same_folder_reload);
+                self.contents_listing = ContentsListing::Fresh;
+                self.status = Some(message);
+            }
+            Ok(Response::Error { message }) => {
+                self.contents_listing = ContentsListing::Fresh;
+                self.fail_contents_listing(indices, message);
+            }
             Ok(
                 Response::FileView { .. }
                 | Response::Done
@@ -2929,13 +2962,58 @@ impl App {
                 | Response::AllRepositories { .. }
                 | Response::Certificates { .. },
             ) => {
+                self.contents_listing = ContentsListing::Fresh;
                 self.status = Some("expected a directory listing".to_owned());
             }
             Err(err) => {
+                self.contents_listing = ContentsListing::Fresh;
                 let message = err.to_string();
                 self.fail_contents_listing(indices, message);
             }
         }
+    }
+
+    /// Applies one [`Response::Directory`], [`Response::DirectoryProgress`]
+    /// or [`Response::DirectoryFailed`] batch of `entries` to the Contents
+    /// pane (#717). `fresh` and `same_folder_reload` together decide
+    /// whether the filter and statuses reset - see the call site in
+    /// [`Self::apply_contents_result`].
+    fn apply_contents_entries(
+        &mut self,
+        entries: Vec<DirectoryEntry>,
+        fresh: bool,
+        same_folder_reload: bool,
+    ) {
+        if fresh {
+            // A new listing, even of the same folder, starts its statuses
+            // again: what was known belonged to the rows it replaces.
+            self.row_statuses.clear();
+            self.pending_statuses.clear();
+        }
+        self.all_contents = entries;
+        self.sort_contents();
+        // The filter (#582) is a view of the folder on screen, so a
+        // navigation to a different one drops it; a reload of this same
+        // folder - after an operation, a save, or a manual refresh - keeps
+        // it, and so does a later batch of a listing already streaming in.
+        if fresh && !same_folder_reload {
+            self.filter = Filter::default();
+        }
+        self.recompute_contents();
+        // A listing arriving after an operation is the same folder
+        // reloaded, so put the selection back on the entry that operation
+        // produced rather than dropping it to the top.
+        self.content_selected = self
+            .reselect
+            .take()
+            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .unwrap_or(0);
+        self.anchor = self.content_selected;
+        self.selection.clear();
+        if !self.contents.is_empty() {
+            self.selection.insert(self.content_selected);
+        }
+        self.load_file_view();
     }
 
     /// A directory listing failed: for the Repos Directory's own root,
@@ -8413,6 +8491,102 @@ third",
 
         assert!(app.pending_contents.is_none());
         assert_eq!(app.content_labels(), vec!["only.txt"]);
+    }
+
+    /// #717's acceptance check: a first partial reply draws rows before the
+    /// walk finishes, and says, while it is still running, that it is.
+    #[test]
+    fn tick_draws_a_partial_listing_and_asks_for_more() {
+        let mut app = App::new(std::env::temp_dir());
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(Response::DirectoryProgress {
+            entries: entries(&[("a.txt", false), ("b.txt", false)]),
+        }))
+        .unwrap();
+        app.pending_contents = Some((vec![], rx));
+
+        app.tick();
+
+        assert_eq!(
+            app.content_labels(),
+            vec!["a.txt", "b.txt"],
+            "the rows read so far are drawn, not withheld until the walk finishes"
+        );
+        assert!(
+            app.pending_contents.is_some(),
+            "a partial reply is followed by another request rather than left outstanding"
+        );
+        assert!(
+            app.status_text().contains("found so far"),
+            "a climbing count must not read like a finished one: {}",
+            app.status_text()
+        );
+    }
+
+    /// #717's acceptance check: a listing that arrives in pieces ends in
+    /// the same order as one that arrived whole, and does not reorder the
+    /// row the reader has already selected out from under them.
+    #[test]
+    fn a_later_batch_of_a_streaming_listing_keeps_the_readers_row_and_sorts_correctly() {
+        let mut app = App::new(std::env::temp_dir());
+        let (tx1, rx1) = std::sync::mpsc::channel();
+        tx1.send(Ok(Response::DirectoryProgress {
+            entries: entries(&[("a.txt", false), ("z.txt", false)]),
+        }))
+        .unwrap();
+        app.pending_contents = Some((vec![], rx1));
+        app.tick();
+        app.content_selected = app
+            .contents
+            .iter()
+            .position(|entry| entry.name == "z.txt")
+            .unwrap();
+
+        let (tx2, rx2) = std::sync::mpsc::channel();
+        tx2.send(Ok(Response::Directory {
+            entries: entries(&[("a.txt", false), ("m.txt", false), ("z.txt", false)]),
+        }))
+        .unwrap();
+        app.pending_contents = Some((vec![], rx2));
+        app.tick();
+
+        assert_eq!(
+            app.content_labels(),
+            vec!["a.txt", "m.txt", "z.txt"],
+            "the finished listing is in the same order one that arrived whole would be"
+        );
+        assert_eq!(
+            app.contents[app.content_selected].name, "z.txt",
+            "a row inserted ahead of the selection must not move the cursor off it"
+        );
+        assert!(app.pending_contents.is_none(), "the stream has finished");
+    }
+
+    /// #717's acceptance check: a walk that fails part-way keeps what it
+    /// read and says what went wrong, rather than discarding it.
+    #[test]
+    fn a_failed_walk_keeps_what_it_read_and_says_why() {
+        let mut app = App::new(std::env::temp_dir());
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(Response::DirectoryFailed {
+            entries: entries(&[("a.txt", false)]),
+            message: "the drive went away".to_owned(),
+        }))
+        .unwrap();
+        app.pending_contents = Some((vec![], rx));
+
+        app.tick();
+
+        assert_eq!(
+            app.content_labels(),
+            vec!["a.txt"],
+            "what was already read is kept"
+        );
+        assert_eq!(app.status_text(), "the drive went away");
+        assert!(
+            app.pending_contents.is_none(),
+            "a failed walk does not retry itself"
+        );
     }
 
     #[test]
