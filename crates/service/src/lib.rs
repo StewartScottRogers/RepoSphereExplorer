@@ -1618,6 +1618,12 @@ mod tests {
         open, peer_is_owner, rename, repos, serve_one, serve_one_as, sniff_among, undo, view_file,
         with_source_text, working_tree_status, write_atomically, write_file,
     };
+    // Used only by tests that are themselves `cfg(unix)`, so on Windows
+    // these are dead and `--all-targets` says so. Gated rather than dropped:
+    // deleting them built here and broke the Linux runner, which is the
+    // fourth fault of that shape this week (#753).
+    #[cfg(unix)]
+    use super::{PathBuf, run, view_file_within};
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
     use plugin_api::PluginCore;
