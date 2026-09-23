@@ -906,27 +906,39 @@ enum Undoable {
     Restore { path: PathBuf, content: String },
 }
 
-thread_local! {
-    /// The steps [`Request::Undo`] would take. GUIDANCE.md §2 keeps
-    /// business rules out of the front ends, so the service remembers what
-    /// the last operation was and how to reverse it; a front end only asks.
-    ///
-    /// One *operation* deep, per D6, which settles "undo of the immediately
-    /// preceding operation" and "batch operations" in the same breath: a
-    /// paste of three files is one thing the reader did, so it is one thing
-    /// Ctrl+Z puts back. Several steps, reversed in reverse order, rather
-    /// than several undos.
-    ///
-    /// Thread-local because the service answers every request on one thread
-    /// ([`run`] loops over [`serve_one`]), which also keeps the tests from
-    /// treading on each other's steps.
-    static UNDO: std::cell::RefCell<Vec<Undoable>> = const { std::cell::RefCell::new(Vec::new()) };
+/// The steps [`Request::Undo`] would take. GUIDANCE.md §2 keeps business
+/// rules out of the front ends, so the service remembers what the last
+/// operation was and how to reverse it; a front end only asks.
+///
+/// One *operation* deep, per D6, which settles "undo of the immediately
+/// preceding operation" and "batch operations" in the same breath: a paste
+/// of three files is one thing the reader did, so it is one thing Ctrl+Z
+/// puts back. Several steps, reversed in reverse order, rather than several
+/// undos.
+///
+/// Shared across threads, not thread-local. It was thread-local while the
+/// service answered every request on one thread, and #715 gave every
+/// connection a thread of its own: the rename wrote its step on one thread
+/// and the `Undo` that followed arrived on another, found nothing, and said
+/// there was nothing to undo. The operation worked and the memory of it did
+/// not, which a reader would have met as "Ctrl+Z does nothing, every time".
+///
+/// What that arrangement also bought was test isolation, and this does not:
+/// tests that leave a step behind take [`journal_to_themselves`] so they do
+/// not tread on each other.
+static UNDO: std::sync::Mutex<Vec<Undoable>> = std::sync::Mutex::new(Vec::new());
+
+/// The journal, with a poisoned lock tolerated: one test panicking while
+/// holding it must not turn every later undo into a panic of its own.
+fn undo_journal() -> std::sync::MutexGuard<'static, Vec<Undoable>> {
+    UNDO.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Records `steps` as what would undo the operation just performed. An
 /// empty list clears the record, for an operation that cannot be undone.
 fn remember_undo(steps: Vec<Undoable>) {
-    UNDO.with_borrow_mut(|slot| *slot = steps);
+    *undo_journal() = steps;
 }
 
 /// Records an undo step only if `result` succeeded; a failed operation
@@ -942,7 +954,7 @@ fn remember_if_done(result: &io::Result<()>, step: Undoable) {
 /// # Errors
 /// Returns an error if there is nothing to undo, or if reversing it fails.
 pub fn undo() -> io::Result<()> {
-    let steps = UNDO.with_borrow_mut(std::mem::take);
+    let steps = std::mem::take(&mut *undo_journal());
     if steps.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -1600,12 +1612,11 @@ pub fn run(listener: &Listener) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, PathBuf, PeerIdentity, bind, copy,
+        CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, PeerIdentity, bind, copy,
         create_directory, create_file, delete, extract, find_certificates, find_names,
         folder_plugins_among, guarded, handle_request, journal_to, list_directory, most_specific,
-        open, peer_is_owner, rename, repos, run, serve_one, serve_one_as, sniff_among, undo,
-        view_file, view_file_within, with_source_text, working_tree_status, write_atomically,
-        write_file,
+        open, peer_is_owner, rename, repos, serve_one, serve_one_as, sniff_among, undo, view_file,
+        with_source_text, working_tree_status, write_atomically, write_file,
     };
     use interprocess::local_socket::traits::Stream as _;
     use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName};
@@ -2049,6 +2060,7 @@ public class OrderBook {
 
     #[test]
     fn renames_a_real_file() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let from = dir.join("old.txt");
@@ -2065,6 +2077,7 @@ public class OrderBook {
 
     #[test]
     fn copies_a_real_file_leaving_the_source_in_place() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let from = dir.join("source.txt");
@@ -2081,6 +2094,7 @@ public class OrderBook {
 
     #[test]
     fn refuses_to_rename_onto_an_existing_path() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let from = dir.join("old.txt");
@@ -2099,6 +2113,7 @@ public class OrderBook {
 
     #[test]
     fn refuses_to_copy_onto_an_existing_path() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let from = dir.join("source.txt");
@@ -2116,6 +2131,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_a_path_to_its_own_name_is_a_no_op() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("unchanged.txt");
@@ -2130,6 +2146,7 @@ public class OrderBook {
 
     #[test]
     fn writing_replaces_a_file_s_text_and_the_edit_can_be_undone() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("notes.txt");
@@ -2150,6 +2167,7 @@ public class OrderBook {
 
     #[test]
     fn writing_refuses_a_path_that_is_not_an_existing_file() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
 
@@ -2162,6 +2180,7 @@ public class OrderBook {
 
     #[test]
     fn a_failed_write_leaves_no_temporary_file_beside_the_original() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let absent = dir.join("absent.txt");
@@ -2183,6 +2202,7 @@ public class OrderBook {
     /// is one operation and one undo puts all of it back.
     #[test]
     fn one_undo_reverses_a_whole_batch_rename() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let names = ["one", "two", "three"];
@@ -2227,6 +2247,7 @@ public class OrderBook {
     /// operation reports a failure.
     #[test]
     fn a_batch_that_fails_part_way_can_still_be_undone() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let first = dir.join("first.txt");
@@ -2267,6 +2288,7 @@ public class OrderBook {
 
     #[test]
     fn undo_puts_a_renamed_file_back() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let from = dir.join("before.txt");
@@ -2284,6 +2306,7 @@ public class OrderBook {
 
     #[test]
     fn undo_removes_what_a_copy_created_and_leaves_the_source() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let from = dir.join("source.txt");
@@ -2305,6 +2328,7 @@ public class OrderBook {
 
     #[test]
     fn undo_removes_a_newly_created_folder() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let created = dir.join("New folder");
@@ -2319,6 +2343,7 @@ public class OrderBook {
 
     #[test]
     fn undo_goes_only_one_step_and_says_so_when_there_is_nothing_left() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         create_directory(&dir.join("one")).unwrap();
@@ -2337,6 +2362,7 @@ public class OrderBook {
 
     #[test]
     fn a_delete_leaves_nothing_to_undo() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let doomed = dir.join("doomed.txt");
@@ -2358,6 +2384,7 @@ public class OrderBook {
 
     #[test]
     fn a_failed_operation_leaves_the_previous_undo_step_alone() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let created = dir.join("kept");
@@ -2403,6 +2430,7 @@ public class OrderBook {
 
     #[test]
     fn creates_a_new_file() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let new_file = dir.join("note.txt");
@@ -2455,6 +2483,7 @@ public class OrderBook {
 
     #[test]
     fn extracts_an_archive_via_the_archive_plugins_operation() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let archive_path = dir.join("test.zip");
@@ -2620,6 +2649,27 @@ public class OrderBook {
         });
         serve_one(&listener).unwrap();
         client.join().unwrap()
+    }
+
+    /// One undo journal, one test at a time.
+    ///
+    /// The journal is service-wide state - "the last operation the reader
+    /// did" - and since #715 gave every connection its own thread it has to
+    /// be shared rather than thread-local. That costs the isolation the
+    /// thread-local gave these tests for free: run in parallel, one test's
+    /// step becomes the next one's "previous operation". Every test that
+    /// leaves a step behind, or asserts on what is in the journal, takes
+    /// this first.
+    static JOURNAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Takes [`JOURNAL`], tolerating a previous test having panicked while
+    /// holding it, and empties the journal so the test starts from nothing.
+    fn journal_to_themselves() -> std::sync::MutexGuard<'static, ()> {
+        let guard = JOURNAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        super::remember_undo(Vec::new());
+        guard
     }
 
     #[test]
@@ -3156,6 +3206,7 @@ public class OrderBook {
 
     #[test]
     fn an_unrelated_earlier_match_is_not_promoted_by_setting_the_general_one_aside() {
+        let _journal = journal_to_themselves();
         // Merely dropping the refined plugin sent a Kubernetes manifest to
         // `sql`, which reads `---` as a comment: with `yaml` gone, `sql`
         // was simply first. The specialisation has to survive, not just
@@ -3214,6 +3265,7 @@ public class OrderBook {
 
     #[test]
     fn undo_with_an_empty_journal_points_at_the_recycle_bin_rather_than_failing_silently() {
+        let _journal = journal_to_themselves();
         // Nothing has happened on this thread, so this is the cold start a
         // reader meets when they press Ctrl+Z first thing.
         let err = undo().unwrap_err();
@@ -3227,6 +3279,7 @@ public class OrderBook {
 
     #[test]
     fn undoing_twice_does_not_reach_back_past_the_last_operation() {
+        let _journal = journal_to_themselves();
         // D6: one operation deep. The second Ctrl+Z must not quietly take
         // apart work the reader did before the one they meant to undo.
         let dir = scratch();
@@ -3261,6 +3314,7 @@ public class OrderBook {
     /// nothing at all.
     #[test]
     fn a_batch_refused_at_its_first_step_leaves_the_previous_undo_step_alone() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let created = dir.join("kept");
         create_directory(&created).unwrap();
@@ -3293,6 +3347,7 @@ public class OrderBook {
 
     #[test]
     fn a_batch_refused_at_its_middle_step_undoes_the_one_that_landed() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         for name in ["one", "two", "three"] {
             fs::write(dir.join(format!("{name}.txt")), name).unwrap();
@@ -3335,6 +3390,7 @@ public class OrderBook {
 
     #[test]
     fn a_batch_refused_at_its_last_step_undoes_both_that_landed() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         for name in ["one", "two", "three"] {
             fs::write(dir.join(format!("{name}.txt")), name).unwrap();
@@ -3368,6 +3424,7 @@ public class OrderBook {
 
     #[test]
     fn a_batch_undoes_its_steps_newest_first_so_a_chain_comes_apart() {
+        let _journal = journal_to_themselves();
         // Two renames in a chain: `a` becomes `b`, then that `b` becomes
         // `c`. Reversed oldest-first, the first step would look for a `b`
         // that is now `c` and fail; reversed newest-first it unwinds.
@@ -3406,6 +3463,7 @@ public class OrderBook {
     /// undone and permanently so.
     #[test]
     fn an_undo_that_fails_part_way_keeps_the_steps_it_has_not_taken() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let names = ["one", "two", "three"];
         let pairs: Vec<(String, String)> = names
@@ -3446,6 +3504,7 @@ public class OrderBook {
 
     #[test]
     fn undoing_a_rename_whose_file_has_since_gone_reports_it_rather_than_pretending() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let from = dir.join("before.txt");
         let to = dir.join("after.txt");
@@ -3467,6 +3526,7 @@ public class OrderBook {
 
     #[test]
     fn undoing_a_rename_refuses_to_replace_something_put_back_at_the_old_name() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let from = dir.join("before.txt");
         let to = dir.join("after.txt");
@@ -3489,6 +3549,7 @@ public class OrderBook {
 
     #[test]
     fn undoing_an_edit_writes_the_old_text_back_even_where_the_file_has_gone() {
+        let _journal = journal_to_themselves();
         // Pins what `Undoable::Restore` does when the file it describes is
         // no longer there: it recreates it. The old text is the reader's
         // work, and the alternative is losing it to a deletion made
@@ -3513,6 +3574,7 @@ public class OrderBook {
 
     #[test]
     fn a_delete_that_fails_still_clears_the_journal_rather_than_undoing_something_else() {
+        let _journal = journal_to_themselves();
         // Deliberate, and the comment on `delete` says why: the service
         // cannot pull anything back out of the recycle bin, so a stale
         // step here would put back the wrong thing.
@@ -3535,6 +3597,7 @@ public class OrderBook {
 
     #[test]
     fn a_delete_that_stops_part_way_leaves_nothing_to_undo() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let doomed = dir.join("doomed.txt");
         fs::write(&doomed, "content").unwrap();
@@ -3558,6 +3621,7 @@ public class OrderBook {
 
     #[test]
     fn an_extract_of_something_that_is_not_an_archive_leaves_the_previous_undo_step_alone() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let created = dir.join("kept");
         create_directory(&created).unwrap();
@@ -3591,6 +3655,7 @@ public class OrderBook {
     /// what undo promised.
     #[test]
     fn undoing_an_extract_must_not_remove_what_was_already_in_the_destination() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let archive_path = dir.join("test.zip");
         write_zip(&archive_path, "inside.txt", b"payload");
@@ -3615,6 +3680,7 @@ public class OrderBook {
 
     #[test]
     fn a_refused_write_leaves_the_previous_undo_step_alone() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let created = dir.join("kept");
         create_directory(&created).unwrap();
@@ -3630,6 +3696,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_a_file_to_another_case_of_its_own_name_is_the_rename_it_reads_as() {
+        let _journal = journal_to_themselves();
         // The pre-filled rename prompt makes "readme.txt" -> "README.txt"
         // an ordinary thing to type. On a case-insensitive filesystem the
         // destination "already exists" - it is the same file - so this is
@@ -3653,6 +3720,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_onto_a_sibling_that_differs_only_in_case_does_not_destroy_it() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let keep = dir.join("keep.txt");
         let moving = dir.join("moving.txt");
@@ -3684,6 +3752,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_onto_an_existing_directory_is_refused_rather_than_attempted() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let from = dir.join("note.txt");
         let occupied = dir.join("occupied");
@@ -3705,6 +3774,7 @@ public class OrderBook {
 
     #[test]
     fn copying_onto_an_existing_directory_is_refused_rather_than_attempted() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let from = dir.join("note.txt");
         let occupied = dir.join("occupied");
@@ -3721,6 +3791,7 @@ public class OrderBook {
 
     #[test]
     fn copying_a_file_onto_itself_is_refused_rather_than_emptying_it() {
+        let _journal = journal_to_themselves();
         // `fs::copy` with the same source and destination truncates the
         // file to nothing on some platforms, so the refusal is the whole
         // protection here.
@@ -3738,6 +3809,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_into_a_folder_that_does_not_exist_leaves_the_source_where_it_was() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let from = dir.join("note.txt");
         fs::write(&from, "content").unwrap();
@@ -3756,6 +3828,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_a_source_that_is_not_there_reports_not_found_and_creates_nothing() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
 
         let err = rename(&one(&dir.join("gone.txt"), &dir.join("wherever.txt"))).unwrap_err();
@@ -3768,6 +3841,7 @@ public class OrderBook {
 
     #[test]
     fn a_refusal_names_the_path_that_is_in_the_way() {
+        let _journal = journal_to_themselves();
         // The front ends show this message verbatim; a reader cannot act
         // on "already exists" without being told what does.
         let dir = scratch();
@@ -3788,6 +3862,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_a_folder_onto_an_occupied_name_leaves_both_folders_alone() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let from = dir.join("source");
         let occupied = dir.join("occupied");
@@ -3821,6 +3896,7 @@ public class OrderBook {
 
     #[test]
     fn a_link_pointing_nowhere_still_occupies_the_name_it_sits_at() {
+        let _journal = journal_to_themselves();
         // `refuse_if_exists` asks `symlink_metadata` rather than
         // `metadata` for exactly this: a link whose target has gone is
         // still a thing at that path, and renaming onto it would destroy
@@ -3870,6 +3946,7 @@ public class OrderBook {
 
     #[test]
     fn a_zero_byte_write_empties_the_file_and_the_old_text_still_comes_back() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let path = dir.join("notes.txt");
         fs::write(&path, "work worth keeping").unwrap();
@@ -3896,6 +3973,7 @@ public class OrderBook {
 
     #[test]
     fn a_write_over_a_read_only_file_leaves_it_wholly_old_or_wholly_new_and_no_temporary() {
+        let _journal = journal_to_themselves();
         // Which of the two depends on the platform - replacing a file is a
         // directory operation on Unix and a file operation on Windows -
         // but the guarantee `write_atomically` exists for holds either
@@ -3966,6 +4044,7 @@ public class OrderBook {
     /// the edit does not bring it back.
     #[test]
     fn a_save_must_not_destroy_a_sibling_named_after_its_temporary_file() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let path = dir.join("notes.txt");
         fs::write(&path, "before").unwrap();
@@ -3985,6 +4064,7 @@ public class OrderBook {
 
     #[test]
     fn writing_a_file_that_is_not_valid_text_is_refused_before_its_bytes_are_touched() {
+        let _journal = journal_to_themselves();
         // The old text is read first so the edit can be undone. A file
         // that is not text has no old text to read, and going ahead would
         // write an edit that could never be taken back.
@@ -4003,6 +4083,7 @@ public class OrderBook {
 
     #[test]
     fn writing_to_a_path_whose_parent_does_not_exist_is_refused() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
 
         let err = write_file(&dir.join("no-such-folder").join("notes.txt"), "text").unwrap_err();
@@ -4015,6 +4096,7 @@ public class OrderBook {
 
     #[test]
     fn a_write_far_larger_than_a_buffer_lands_whole_and_undoes_whole() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let path = dir.join("big.txt");
         let before = "old line\n".repeat(20_000);
@@ -4979,6 +5061,7 @@ public class OrderBook {
 
     #[test]
     fn renaming_a_file_into_a_subfolder_is_a_move_and_undoes_as_one() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let sub = dir.join("sub");
         fs::create_dir_all(&sub).unwrap();
@@ -5003,6 +5086,7 @@ public class OrderBook {
     /// that the journal records paths rather than the destination.
     #[test]
     fn undoing_an_extract_into_a_new_folder_removes_the_folder() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let archive_path = dir.join("test.zip");
         write_zip(&archive_path, "inside.txt", b"payload");
@@ -5026,6 +5110,7 @@ public class OrderBook {
     /// nothing it can put back either, and says so.
     #[test]
     fn an_extract_that_only_overwrote_files_leaves_nothing_to_undo_rather_than_the_step_before() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let earlier = dir.join("earlier");
         create_directory(&earlier).unwrap();
