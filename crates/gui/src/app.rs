@@ -303,6 +303,7 @@ pub fn present_graphic(plugin: &str, data: &serde_json::Value) -> Option<Graphic
 /// that recognises it contributes its own lines.
 const FOLDER_PRESENTATION_PLUGINS: &[&dyn FolderPresentation] = &[
     &plugin_project_cargo::CargoProjectPresentation,
+    &plugin_project_go::GoProjectPresentation,
     &plugin_project_node::NodeProjectPresentation,
     &plugin_project_python::PythonProjectPresentation,
 ];

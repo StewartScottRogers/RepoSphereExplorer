@@ -3496,6 +3496,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
+ "plugin-project-go",
  "plugin-project-node",
  "plugin-project-python",
  "plugin-prolog",
@@ -7803,6 +7804,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-project-go"
+version = "0.9.0"
+dependencies = [
+ "plugin-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "plugin-project-node"
 version = "0.9.0"
 dependencies = [
@@ -7813,7 +7823,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-project-python"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "plugin-api",
  "serde",
@@ -9674,6 +9684,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
+ "plugin-project-go",
  "plugin-project-node",
  "plugin-project-python",
  "plugin-prolog",
@@ -10960,6 +10971,7 @@ dependencies = [
  "plugin-powershell",
  "plugin-presentation",
  "plugin-project-cargo",
+ "plugin-project-go",
  "plugin-project-node",
  "plugin-project-python",
  "plugin-prolog",
