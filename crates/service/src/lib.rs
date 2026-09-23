@@ -1363,7 +1363,35 @@ pub fn bind_reclaiming_stale(name: Name<'_>) -> io::Result<Listener> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PeerIdentity {
     /// A Unix effective user ID, from `SO_PEERCRED` or equivalent.
+    ///
+    /// Only ever constructed under `cfg(unix)`, so on Windows the variant is
+    /// dead outside the tests that state the rule. Kept rather than made
+    /// conditional: the rule below is one rule on every platform, and a
+    /// `cfg` on the variant would fork it into two (rule 3 - the allow is
+    /// here, and this is why).
+    #[cfg_attr(not(unix), allow(dead_code))]
     Uid(u32),
+    /// The transport itself decides who may connect, so reaching this
+    /// service is the authorisation.
+    ///
+    /// Windows, where `interprocess` reports only a process identifier and
+    /// resolving the security identifier (SID) behind it needs Win32 calls
+    /// this workspace's `unsafe_code = "forbid"` rules out. The control
+    /// there is the named pipe's own discretionary access control list
+    /// (DACL), which #714 gives it; until #714 lands the pipe is open to
+    /// any local account, exactly as it was before any of this existed.
+    ///
+    /// Named rather than left as `Unknown` because the two mean opposite
+    /// things: this one says "somebody else is checking", and refusing on
+    /// it refused everybody. #713 shipped that refusal and the application
+    /// could not reach its own service on Windows at all (#749).
+    ///
+    /// The mirror of `Uid`: only ever constructed under `cfg(not(unix))`,
+    /// so on Unix the variant is dead outside the tests that state the
+    /// rule. Each platform's `clippy` sees a different one of the two as
+    /// dead, which is its own small argument for #753.
+    #[cfg_attr(unix, allow(dead_code))]
+    TransportRestricted,
     /// No identity could be established for this connection.
     Unknown,
 }
@@ -1372,7 +1400,14 @@ enum PeerIdentity {
 /// same identity as `owner`. A pure function over two identifiers, so it is
 /// testable without a second user account.
 fn peer_is_owner(peer: PeerIdentity, owner: PeerIdentity) -> bool {
-    matches!((peer, owner), (PeerIdentity::Uid(a), PeerIdentity::Uid(b)) if a == b)
+    match (peer, owner) {
+        (PeerIdentity::Uid(a), PeerIdentity::Uid(b)) => a == b,
+        // Both sides have to agree that the transport is the control, so a
+        // peer of unknown identity cannot be served by a service that knows
+        // its own.
+        (PeerIdentity::TransportRestricted, PeerIdentity::TransportRestricted) => true,
+        _ => false,
+    }
 }
 
 /// This service's own identity: the session owner every peer is checked
@@ -1388,11 +1423,15 @@ fn owner_identity() -> PeerIdentity {
         // a process ID on Windows, not the security identifier (SID)
         // GUIDANCE.md §2.1.2 asks for, and resolving a SID from a process ID
         // means calling Win32 directly, which this workspace's
-        // `unsafe_code = "forbid"` rules out. `Unknown` refuses every
-        // connection here rather than serving one nobody has verified - the
-        // fallback the work order that added this check sanctions for a
-        // platform that genuinely cannot answer.
-        PeerIdentity::Unknown
+        // `unsafe_code = "forbid"` rules out.
+        //
+        // So the check here is the named pipe's own access list rather than
+        // a comparison this process can make, and #714 is what gives the
+        // pipe that list. Refusing instead - which is what #713 shipped -
+        // refuses every connection, including the front end's own, and left
+        // the application unable to reach its service on Windows at all
+        // (#749). Unix is unaffected and keeps the real comparison.
+        PeerIdentity::TransportRestricted
     }
 }
 
@@ -1409,8 +1448,10 @@ fn peer_identity(conn: &Stream) -> PeerIdentity {
     }
     #[cfg(not(unix))]
     {
+        // As `owner_identity`: nothing this process can read off the
+        // connection identifies the peer, so the transport is what decides.
         let _ = creds;
-        PeerIdentity::Unknown
+        PeerIdentity::TransportRestricted
     }
 }
 
@@ -2515,6 +2556,30 @@ public class OrderBook {
         assert!(!peer_is_owner(
             PeerIdentity::Uid(501),
             PeerIdentity::Uid(1000)
+        ));
+    }
+
+    /// The fault #713 shipped: on a platform that cannot name its peer, the
+    /// service refused everybody, including the front end that started it.
+    #[test]
+    fn peer_is_owner_serves_when_the_transport_is_the_control() {
+        assert!(peer_is_owner(
+            PeerIdentity::TransportRestricted,
+            PeerIdentity::TransportRestricted
+        ));
+    }
+
+    /// But only when both sides agree on that. A service that knows its own
+    /// identity does not serve a peer it cannot name.
+    #[test]
+    fn peer_is_owner_refuses_a_transport_peer_against_a_known_owner() {
+        assert!(!peer_is_owner(
+            PeerIdentity::TransportRestricted,
+            PeerIdentity::Uid(501)
+        ));
+        assert!(!peer_is_owner(
+            PeerIdentity::Uid(501),
+            PeerIdentity::TransportRestricted
         ));
     }
 
@@ -5072,6 +5137,67 @@ Mo8hvqlfr/IR
             }
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #749's acceptance check: what a second service does when one is
+    /// already listening.
+    ///
+    /// The Unix test below covers a *stale* socket file, which is a
+    /// different thing and does not exist on Windows - where #749 was, and
+    /// where a named pipe accepts several server instances, so "somebody
+    /// else already has it" is not obviously an error at all. This one runs
+    /// everywhere and states the rule both platforms have to keep: the
+    /// second service is refused, and the first keeps its socket and its
+    /// ability to serve.
+    #[test]
+    fn a_second_service_is_refused_and_the_first_keeps_serving() {
+        let socket = format!("rse-second-{}.sock", std::process::id());
+        assert!(
+            protocol::use_private_socket(socket),
+            "this test binary sets the socket name first"
+        );
+        let name = || protocol::socket_name().expect("the platform has a socket name");
+
+        let first = super::bind_reclaiming_stale(name()).expect("the first service binds");
+
+        let refusal = super::bind_reclaiming_stale(name()).err().map(|e| e.kind());
+        assert!(
+            refusal.is_some(),
+            "a second service must not take the socket from the first"
+        );
+        // That refusal is decided by *connecting* to the socket - a live
+        // one answers, a stale file does not - so where it went that way it
+        // has left a connection waiting with no request on it. The first
+        // service's next accept takes it and reads nothing, which is a
+        // defined outcome rather than a surprise, and draining it here is
+        // what lets the round trip below be the real one.
+        if refusal == Some(std::io::ErrorKind::AddrInUse) {
+            assert_eq!(
+                super::serve_one(&first).err().map(|e| e.kind()),
+                Some(std::io::ErrorKind::UnexpectedEof),
+                "the liveness probe is a connection carrying no request"
+            );
+        }
+
+        // And the first is still able to answer, rather than having been
+        // quietly broken by the attempt.
+        let client = std::thread::spawn(move || {
+            use interprocess::local_socket::traits::Stream as _;
+            let mut conn = interprocess::local_socket::Stream::connect(
+                protocol::socket_name().expect("a socket name"),
+            )
+            .expect("the first service is still listening");
+            protocol::write_message(
+                &mut conn,
+                &Request::ListDirectory {
+                    path: ".".to_owned(),
+                },
+            )
+            .expect("the request is sent");
+            protocol::read_message::<Response, _>(&mut conn).expect("an answer")
+        });
+        super::serve_one(&first).expect("the first service serves");
+        client.join().expect("the client finished");
     }
 
     /// A socket file left by a service that was killed is taken over; one a
