@@ -1251,35 +1251,144 @@ pub fn working_tree_status(path: &Path) -> Option<WorkingTreeSummary> {
     })
 }
 
+/// `path` with `.` and `..` components resolved lexically, without
+/// touching the filesystem - the same idiom `plugin_directory::repository`
+/// uses for a `commondir` written as a relative traversal.
+fn normalize_dots(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => result.push(other),
+        }
+    }
+    result
+}
+
+/// Resolves `raw` once, at the edge, before any decision is made about it
+/// (GUIDANCE.md §2.1): `.` and `..` collapse lexically first, then every
+/// existing ancestor is canonicalized, so a symbolic link or junction
+/// anywhere along the way resolves to what it actually points at. A leaf
+/// that is not there yet - a new file's name, a rename's destination, a
+/// folder an extraction is about to create - cannot have a link target of
+/// its own, so resolution stops following the filesystem once it reaches
+/// the nearest ancestor that exists and keeps what is left over literal.
+///
+/// This does not enforce the Repos Directory boundary: D8 keeps that
+/// boundary soft, so a resolved path outside it is still allowed, only now
+/// knowingly.
+///
+/// # Errors
+/// Returns an error, with a reason a reader can act on rather than a raw
+/// operating system one, when not even the nearest existing ancestor can
+/// be found.
+fn resolve(raw: &str) -> io::Result<PathBuf> {
+    let normalized = normalize_dots(Path::new(raw));
+    let mut existing = if normalized.as_os_str().is_empty() && !raw.is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    };
+    let mut remainder = Vec::new();
+    loop {
+        if let Ok(mut resolved) = existing.canonicalize() {
+            for component in remainder.into_iter().rev() {
+                resolved.push(component);
+            }
+            return Ok(resolved);
+        }
+        let Some(name) = existing.file_name().map(std::ffi::OsStr::to_owned) else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{raw} could not be resolved"),
+            ));
+        };
+        remainder.push(name);
+        existing.pop();
+    }
+}
+
+/// As [`resolve`], for both sides of one [`Request::Rename`] or
+/// [`Request::Copy`] pair.
+fn resolved_pair(from: &str, to: &str) -> io::Result<(String, String)> {
+    Ok((
+        resolve(from)?.display().to_string(),
+        resolve(to)?.display().to_string(),
+    ))
+}
+
+/// As [`resolved_pair`], for every pair in a [`Request::Rename`] or
+/// [`Request::Copy`].
+fn resolved_pairs(items: &[(String, String)]) -> io::Result<Vec<(String, String)>> {
+    items
+        .iter()
+        .map(|(from, to)| resolved_pair(from, to))
+        .collect()
+}
+
+/// As [`resolve`], for every path in a [`Request::Delete`].
+fn resolved_paths(paths: &[String]) -> io::Result<Vec<String>> {
+    paths
+        .iter()
+        .map(|path| Ok(resolve(path)?.display().to_string()))
+        .collect()
+}
+
 /// Computes the response for one request.
+///
+/// Every path a caller supplies arrives through [`resolve`] before this
+/// makes or delegates any decision about it: one place, so a variant added
+/// later cannot skip it.
 #[must_use]
 pub fn handle_request(request: &Request) -> Response {
     match request {
-        Request::ListDirectory { path } => match list_directory(Path::new(path)) {
-            Ok(entries) => Response::Directory { entries },
+        Request::ListDirectory { path } => {
+            match resolve(path).and_then(|path| list_directory(&path)) {
+                Ok(entries) => Response::Directory { entries },
+                Err(err) => Response::Error {
+                    message: err.to_string(),
+                },
+            }
+        }
+        Request::ViewFile { path } => resolve(path)
+            .and_then(|path| view_file(&path))
+            .unwrap_or_else(|err| Response::Error {
+                message: err.to_string(),
+            }),
+        Request::Open { path } => match resolve(path) {
+            Ok(path) => open(&path),
             Err(err) => Response::Error {
                 message: err.to_string(),
             },
         },
-        Request::ViewFile { path } => {
-            view_file(Path::new(path)).unwrap_or_else(|err| Response::Error {
-                message: err.to_string(),
-            })
+        Request::Rename { items } => {
+            respond_to_operation(resolved_pairs(items).and_then(|items| rename(&items)))
         }
-        Request::Open { path } => open(Path::new(path)),
-        Request::Rename { items } => respond_to_operation(rename(items)),
-        Request::Copy { items } => respond_to_operation(copy(items)),
-        Request::Delete { paths } => respond_to_operation(delete(paths)),
+        Request::Copy { items } => {
+            respond_to_operation(resolved_pairs(items).and_then(|items| copy(&items)))
+        }
+        Request::Delete { paths } => {
+            respond_to_operation(resolved_paths(paths).and_then(|paths| delete(&paths)))
+        }
         Request::Extract {
             archive,
             destination,
-        } => respond_to_operation(extract(Path::new(archive), Path::new(destination))),
+        } => respond_to_operation((|| {
+            let archive = resolve(archive)?;
+            let destination = resolve(destination)?;
+            extract(&archive, &destination)
+        })()),
         Request::CreateDirectory { path } => {
-            respond_to_operation(create_directory(Path::new(path)))
+            respond_to_operation(resolve(path).and_then(|path| create_directory(&path)))
         }
-        Request::CreateFile { path } => respond_to_operation(create_file(Path::new(path))),
+        Request::CreateFile { path } => {
+            respond_to_operation(resolve(path).and_then(|path| create_file(&path)))
+        }
         Request::WriteFile { path, content } => {
-            respond_to_operation(write_file(Path::new(path), content))
+            respond_to_operation(resolve(path).and_then(|path| write_file(&path, content)))
         }
         Request::Undo => respond_to_operation(undo()),
         Request::ReposRoots => Response::ReposRoots {
@@ -1288,7 +1397,9 @@ pub fn handle_request(request: &Request) -> Response {
         },
         Request::WorkingTreeStatus { path } => Response::WorkingTree {
             path: path.clone(),
-            status: working_tree_status(Path::new(path)),
+            status: resolve(path)
+                .ok()
+                .and_then(|path| working_tree_status(&path)),
         },
         Request::FindNames { query, limit } => match repos::active_root() {
             Some(root) => {
@@ -1307,14 +1418,14 @@ pub fn handle_request(request: &Request) -> Response {
                 message: "no Repos Directory is configured to search".to_owned(),
             },
         },
-        Request::SetReposRoot { path } => {
-            let target = Path::new(path);
-            let outcome = repos::set_active_root(target);
+        Request::SetReposRoot { path } => respond_to_operation(resolve(path).and_then(|target| {
+            let outcome = repos::set_active_root(&target);
             journal("set-repos-root", &[target.display().to_string()], &outcome);
-            respond_to_operation(outcome)
-        }
+            outcome
+        })),
         Request::AllRepositories { root, refresh } => {
-            let (entries, done) = all_repositories::poll(Path::new(root), *refresh);
+            let resolved = resolve(root).unwrap_or_else(|_| PathBuf::from(root));
+            let (entries, done) = all_repositories::poll(&resolved, *refresh);
             Response::AllRepositories { entries, done }
         }
         Request::FindCertificates => match repos::active_root() {
@@ -1615,8 +1726,8 @@ mod tests {
         CORE_PLUGINS, FolderCore, MAX_SOURCE_BYTES, Path, PeerIdentity, bind, copy,
         create_directory, create_file, delete, extract, find_certificates, find_names,
         folder_plugins_among, guarded, handle_request, journal_to, list_directory, most_specific,
-        open, peer_is_owner, rename, repos, serve_one, serve_one_as, sniff_among, undo, view_file,
-        with_source_text, working_tree_status, write_atomically, write_file,
+        open, peer_is_owner, rename, repos, resolve, serve_one, serve_one_as, sniff_among, undo,
+        view_file, with_source_text, working_tree_status, write_atomically, write_file,
     };
     // Used only by tests that are themselves `cfg(unix)`, so on Windows
     // these are dead and `--all-targets` says so. Gated rather than dropped:
@@ -4917,6 +5028,120 @@ public class OrderBook {
                 "an empty path is not a path: {request:?}"
             );
         }
+    }
+
+    #[test]
+    fn resolve_collapses_a_parent_traversal_lexically_before_touching_the_filesystem() {
+        let dir = scratch();
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let roundabout = sub.join("..").join("sub");
+
+        let resolved = resolve(&roundabout.to_string_lossy()).unwrap();
+
+        assert_eq!(resolved, sub.canonicalize().unwrap());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_follows_a_symbolic_link_to_its_target() {
+        let dir = scratch();
+        let real = dir.join("real");
+        fs::create_dir_all(&real).unwrap();
+        let file = real.join("marker.txt");
+        fs::write(&file, "content").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let resolved = resolve(&link.join("marker.txt").to_string_lossy()).unwrap();
+
+        assert_eq!(resolved, file.canonicalize().unwrap());
+        assert!(
+            !resolved.starts_with(&link),
+            "the resolved path names the real directory, not the link: {}",
+            resolved.display()
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_refuses_a_path_with_no_existing_ancestor_at_all() {
+        let err = resolve("this-name-names-nothing-anywhere-nearby").unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("this-name-names-nothing-anywhere-nearby"),
+            "the reason names the path a reader gave, not a raw operating system error: {err}"
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_path_is_refused_with_a_reason_a_reader_can_act_on_for_every_request_that_takes_one()
+     {
+        let _journal = journal_to_themselves();
+        let bogus = "this-name-names-nothing-anywhere-nearby".to_owned();
+        let hostile = [
+            Request::ListDirectory {
+                path: bogus.clone(),
+            },
+            Request::ViewFile {
+                path: bogus.clone(),
+            },
+            Request::Open {
+                path: bogus.clone(),
+            },
+            Request::CreateDirectory {
+                path: bogus.clone(),
+            },
+            Request::CreateFile {
+                path: bogus.clone(),
+            },
+            Request::WriteFile {
+                path: bogus.clone(),
+                content: "text".to_owned(),
+            },
+            Request::Rename {
+                items: vec![(bogus.clone(), bogus.clone())],
+            },
+            Request::Copy {
+                items: vec![(bogus.clone(), bogus.clone())],
+            },
+            Request::Delete {
+                paths: vec![bogus.clone()],
+            },
+            Request::Extract {
+                archive: bogus.clone(),
+                destination: bogus.clone(),
+            },
+            Request::SetReposRoot {
+                path: bogus.clone(),
+            },
+        ];
+
+        for request in hostile {
+            let Response::Error { message } = handle_request(&request) else {
+                panic!("an unresolvable path is refused: {request:?}");
+            };
+            assert!(
+                message.contains(&bogus),
+                "the reason names the path a reader gave, not an operating system errno: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_working_tree_status_request_for_an_unresolvable_path_has_no_status_rather_than_a_panic() {
+        let _journal = journal_to_themselves();
+        let Response::WorkingTree { status, .. } = handle_request(&Request::WorkingTreeStatus {
+            path: "this-name-names-nothing-anywhere-nearby".to_owned(),
+        }) else {
+            panic!("a working tree status request has exactly one kind of answer");
+        };
+
+        assert!(status.is_none());
     }
 
     #[test]
