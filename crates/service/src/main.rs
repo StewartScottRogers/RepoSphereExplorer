@@ -3,8 +3,16 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    if std::env::args().any(|arg| arg == updater::VERIFY_FLAG) {
+        return ExitCode::SUCCESS;
+    }
     if std::env::args().any(|arg| arg == "--self-update") {
         return self_update();
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(notice) = updater::startup_notice(&exe)
+    {
+        eprintln!("{notice}");
     }
 
     match run() {
@@ -37,6 +45,10 @@ fn self_update() -> ExitCode {
         }
         Ok(updater::Outcome::InsideAppImage { appimage }) => {
             println!("{}", updater::appimage_advice("service", &appimage));
+            ExitCode::SUCCESS
+        }
+        Ok(updater::Outcome::RolledBack { attempted, to }) => {
+            println!("service: update to v{attempted} did not start; rolled back to v{to}");
             ExitCode::SUCCESS
         }
         Err(err) => {

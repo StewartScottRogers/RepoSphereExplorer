@@ -17,8 +17,16 @@ const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(2);
 const SERVICE_START_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> ExitCode {
+    if env::args().any(|arg| arg == updater::VERIFY_FLAG) {
+        return ExitCode::SUCCESS;
+    }
     if env::args().any(|arg| arg == "--self-update") {
         return self_update();
+    }
+    if let Ok(exe) = env::current_exe()
+        && let Some(notice) = updater::startup_notice(&exe)
+    {
+        eprintln!("{notice}");
     }
 
     if let Some(message) = tui::no_terminal_attached_message(io::stdout().is_tty()) {
@@ -144,6 +152,10 @@ fn self_update() -> ExitCode {
         }
         Ok(updater::Outcome::InsideAppImage { appimage }) => {
             println!("{}", updater::appimage_advice("tui", &appimage));
+            ExitCode::SUCCESS
+        }
+        Ok(updater::Outcome::RolledBack { attempted, to }) => {
+            println!("tui: update to v{attempted} did not start; rolled back to v{to}");
             ExitCode::SUCCESS
         }
         Err(err) => {

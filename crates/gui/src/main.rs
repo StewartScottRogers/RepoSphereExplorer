@@ -22,6 +22,9 @@ const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(2);
 const SERVICE_START_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if env::args().any(|arg| arg == updater::VERIFY_FLAG) {
+        return Ok(());
+    }
     if env::args().any(|arg| arg == "--self-update") {
         return self_update();
     }
@@ -31,6 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
         return Ok(());
+    }
+    if let Ok(exe) = env::current_exe()
+        && let Some(notice) = updater::startup_notice(&exe)
+    {
+        eprintln!("{notice}");
     }
 
     let explicit = env::args().nth(1).map(PathBuf::from);
@@ -151,6 +159,10 @@ fn self_update() -> Result<(), Box<dyn std::error::Error>> {
         }
         Ok(updater::Outcome::InsideAppImage { appimage }) => {
             println!("{}", updater::appimage_advice("gui", &appimage));
+            Ok(())
+        }
+        Ok(updater::Outcome::RolledBack { attempted, to }) => {
+            println!("gui: update to v{attempted} did not start; rolled back to v{to}");
             Ok(())
         }
         Err(err) => Err(err.into()),
