@@ -88,6 +88,22 @@
   }
   .stat .value { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
   .stat .label { font-size: .8rem; color: var(--text-dim); }
+  .trends {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .trend {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: .5rem;
+    padding: 1rem;
+    color: var(--accent-2);
+  }
+  .trend-label { font-size: .8rem; color: var(--text-dim); margin-bottom: .4rem; }
+  .trend svg { display: block; width: 100%; }
+  .trend-value { font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-top: .4rem; }
   footer { text-align: center; padding: 2rem; color: var(--text-dim); font-size: .85rem; }
   a.cta { color: var(--accent-2); }
 </style>
@@ -167,6 +183,9 @@
       <div class="stat"><div class="value">&hellip;</div><div class="label">loading</div></div>
     </div>
     <p class="note" id="stats-updated"></p>
+    <div class="trends" id="trends-grid">
+      <p class="note">Trends loading&hellip;</p>
+    </div>
   </section>
 </main>
 <footer>
@@ -251,6 +270,69 @@
     .catch(function () {
       document.getElementById("stats-grid").innerHTML =
         '<p class="note">Stats haven\'t been generated yet &mdash; check back after tonight\'s regeneration.</p>';
+    });
+
+  // A gap in the series - a run that could not gather a measure - stays a
+  // gap here too: the line breaks rather than joining across it, so a
+  // missing point is never drawn as if it interpolated smoothly.
+  function sparkline(history, key) {
+    var width = 220, height = 48, pad = 4;
+    var values = history.map(function (e) { return e[key]; });
+    var known = values.filter(function (v) { return typeof v === "number"; });
+    if (known.length === 0) return null;
+    var min = Math.min.apply(null, known);
+    var max = Math.max.apply(null, known);
+    var range = max - min || 1;
+    var stepX = values.length > 1 ? (width - pad * 2) / (values.length - 1) : 0;
+
+    var segments = [];
+    var current = [];
+    values.forEach(function (v, i) {
+      if (typeof v !== "number") {
+        if (current.length) segments.push(current);
+        current = [];
+        return;
+      }
+      var x = pad + i * stepX;
+      var y = height - pad - ((v - min) / range) * (height - pad * 2);
+      current.push(x.toFixed(1) + "," + y.toFixed(1));
+    });
+    if (current.length) segments.push(current);
+
+    var polylines = segments.map(function (points) {
+      return '<polyline points="' + points.join(" ") +
+        '" fill="none" stroke="currentColor" stroke-width="2" />';
+    }).join("");
+    return {
+      svg: '<svg viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none">' + polylines + '</svg>',
+      last: known[known.length - 1]
+    };
+  }
+
+  fetch("stats-history.json", { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("no history yet"); return r.json(); })
+    .then(function (history) {
+      if (!Array.isArray(history) || history.length === 0) throw new Error("empty history");
+      var grid = document.getElementById("trends-grid");
+      grid.innerHTML = "";
+      [
+        ["commits", "Commits"],
+        ["contributors", "Contributors"],
+        ["ci_duration_seconds", "Pipeline duration (seconds)"]
+      ].forEach(function (pair) {
+        var drawn = sparkline(history, pair[0]);
+        if (!drawn) return;
+        var cell = document.createElement("div");
+        cell.className = "trend";
+        cell.innerHTML = '<div class="trend-label">' + pair[1] + '</div>' + drawn.svg +
+          '<div class="trend-value">' + drawn.last + '</div>';
+        grid.appendChild(cell);
+      });
+      if (!grid.children.length) throw new Error("nothing to draw yet");
+    })
+    .catch(function () {
+      document.getElementById("trends-grid").innerHTML =
+        '<p class="note">Trends need at least one run\'s history &mdash; check back after tonight\'s regeneration.</p>';
     });
 })();
 </script>

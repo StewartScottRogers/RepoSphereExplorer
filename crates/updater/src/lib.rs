@@ -20,6 +20,10 @@ use std::io;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
+/// The development-statistics time series behind the site's trend
+/// charts (GUIDANCE.md §4.4), gathered by the `gather_stats` binary.
+pub mod stats;
+
 /// The public key this build trusts. The matching private key is held only
 /// as a GitHub Actions secret and never appears in this repository;
 /// `cargo run -p updater --bin keygen` generates a new pair when rotation
