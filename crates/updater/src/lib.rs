@@ -550,8 +550,10 @@ pub fn apply_supervised(
     fs::rename(target_path, &previous_path)?;
     if let Err(err) = apply_atomic(bytes, target_path) {
         // Best-effort: the kept binary's own error, if restoring it also
-        // fails, would only bury the more informative one above.
-        let _ = fs::rename(&previous_path, target_path);
+        // fails, would only bury the more informative one above. Retried
+        // for the same reason as the rollback below - a scanner holding the
+        // file for a moment must not cost the reader their binary.
+        let _ = rename_with_retry(&previous_path, target_path);
         return Err(err.into());
     }
     if verify(target_path) {
@@ -562,7 +564,12 @@ pub fn apply_supervised(
             to: to_version.to_owned(),
         });
     }
-    fs::rename(&previous_path, target_path)?;
+    // Retried, as the forward rename is. This is the rollback: the file
+    // being replaced has just been written *and* just been run, which is
+    // precisely when a Windows scanner is most likely to be holding it.
+    // Failing here leaves the reader with no binary at all at the path they
+    // launch, which is worse than the update that prompted the rollback.
+    rename_with_retry(&previous_path, target_path)?;
     save_state(
         target_path,
         &UpdateState {
