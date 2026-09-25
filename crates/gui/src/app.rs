@@ -2325,6 +2325,27 @@ pub struct App {
     pinned: HashMap<PinId, PinnedWindow>,
     /// The next id [`Self::pin_current`] hands out.
     next_pin_id: u64,
+    /// The host operating system, `std::env::consts::OS` in production.
+    /// Drives GUIDANCE.md §2.3's macOS behaviour profile: Command as the
+    /// primary modifier in place of Control ([`Self::mac_profile`], synced
+    /// into the window's `mac-profile` property), and the Trash wording on
+    /// a delete confirmation (#721). Overridable only for tests, via
+    /// [`Self::set_os_for_test`] - the same shape as `handle_return_for_os`
+    /// already used for Return's own macOS behaviour.
+    os: &'static str,
+    /// Space's quick look (#721, GUIDANCE.md §2.3). A struct of its own
+    /// rather than a fourth bool on `App` itself (rule 3:
+    /// `clippy::struct_excessive_bools`), the same reason `Filter` keeps
+    /// `link_focused` apart.
+    quick_look: QuickLook,
+}
+
+/// Whether Space's quick look (#721) is open over the selected contents
+/// row - see the field comment on [`App::quick_look`] for why this is a
+/// struct rather than a bare bool there.
+#[derive(Default)]
+struct QuickLook {
+    open: bool,
 }
 
 /// Strips Windows' `\\?\` verbatim prefix from a canonicalized path.
@@ -2415,9 +2436,28 @@ impl App {
             pending_certificates: None,
             pinned: HashMap::new(),
             next_pin_id: 0,
+            os: std::env::consts::OS,
+            quick_look: QuickLook::default(),
         };
         app.load_contents_for_selected();
         app
+    }
+
+    /// Overrides the host OS [`Self::new`] detected, so GUIDANCE.md §2.3's
+    /// macOS behaviour profile (#721) is exercisable from `cargo test` on
+    /// any host, including the Linux CI runner that gates merges. Test-only.
+    pub fn set_os_for_test(&mut self, os: &'static str) {
+        self.os = os;
+    }
+
+    /// Whether GUIDANCE.md §2.3's macOS behaviour profile is active:
+    /// Command in place of Control for every binding in
+    /// [`crate::shortcuts::BINDINGS`] that holds one, and Trash named in
+    /// the delete confirmation. Synced into the window's `mac-profile`
+    /// property, which `ui/app.slint`'s `key-scope` reads (#721).
+    #[must_use]
+    pub fn mac_profile(&self) -> bool {
+        self.os == "macos"
     }
 
     fn selected_dir_path(&self) -> PathBuf {
@@ -3454,6 +3494,11 @@ impl App {
             Mode::Normal if self.filter.link_focused && text == " " => {
                 self.activate_focused_status_link();
             }
+            // Space opens or closes a quick look of the selected entry
+            // (#721, GUIDANCE.md §2.3) - on every platform, not only
+            // macOS, where it is merely the reader's expectation rather
+            // than optional.
+            Mode::Normal if text == " " => self.toggle_quick_look(),
             // Explorer's type-ahead: a typed letter jumps to a name, it is
             // not a command. Rename, copy and extract are on F2, Ctrl+C and
             // the context menu.
@@ -5038,6 +5083,41 @@ impl App {
             && self.all_repositories.is_none()
     }
 
+    /// Whether Space's quick look (#721) is open over the selected
+    /// contents row.
+    #[must_use]
+    pub const fn quick_look_open(&self) -> bool {
+        self.quick_look.open
+    }
+
+    /// The selected contents row's name, for the quick look overlay
+    /// (#721) to show. Empty while nothing is selected.
+    #[must_use]
+    pub fn quick_look_name(&self) -> String {
+        self.contents
+            .get(self.content_selected)
+            .map_or_else(String::new, |entry| entry.name.clone())
+    }
+
+    /// Space in normal mode, with neither the filter nor the status
+    /// link holding the keyboard (#721): opens a quick look of the
+    /// selected entry, or closes one already open. Guarded by
+    /// [`Self::pane_command_allowed`], the same as `request_delete` and
+    /// the other commands a prompt or the editor must not compete with.
+    fn toggle_quick_look(&mut self) {
+        if !self.pane_command_allowed() {
+            return;
+        }
+        self.quick_look.open = !self.quick_look.open;
+    }
+
+    /// Escape while the quick look (#721) is open: closes it
+    /// unconditionally, the same as Escape closing the keyboard
+    /// shortcuts sheet.
+    pub fn close_quick_look(&mut self) {
+        self.quick_look.open = false;
+    }
+
     /// Whether Up has anywhere to go, so the button can be drawn refused
     /// at the top of a tree the way Back and Forward already are.
     #[must_use]
@@ -6348,6 +6428,9 @@ impl App {
     #[must_use]
     pub fn status_text(&self) -> String {
         match &self.mode {
+            Mode::ConfirmDelete { name, .. } if self.mac_profile() => {
+                format!("Move {name} to Trash? y/n")
+            }
             Mode::ConfirmDelete { name, .. } => format!("Delete {name}? y/n"),
             Mode::RenameInput { input, .. } => format!("Rename to: {input}_  (Enter/Esc)"),
             Mode::CopyInput { input, .. } => format!("Copy to: {input}_  (Enter/Esc)"),
@@ -6378,6 +6461,9 @@ impl App {
     #[must_use]
     pub fn prompt_text(&self) -> String {
         match &self.mode {
+            Mode::ConfirmDelete { name, .. } if self.mac_profile() => {
+                format!("Move {name} to Trash?  (y / n)")
+            }
             Mode::ConfirmDelete { name, .. } => format!("Delete {name}?  (y / n)"),
             Mode::RenameInput { input, .. } => format!("Rename to:  {input}"),
             Mode::CopyInput { input, .. } => format!("Copy to:  {input}"),
@@ -7413,6 +7499,83 @@ mod tests {
         app.request_delete();
 
         assert_eq!(app.prompt_text(), "Delete b.txt?  (y / n)");
+    }
+
+    // ---- the macOS behaviour profile (#721) ------------------------------
+
+    #[test]
+    fn deleting_names_trash_on_macos() {
+        let mut app = app_with_four_rows();
+        app.set_os_for_test("macos");
+
+        app.request_delete();
+
+        assert_eq!(app.prompt_text(), "Move b.txt to Trash?  (y / n)");
+        assert_eq!(app.status_text(), "Move b.txt to Trash? y/n");
+    }
+
+    #[test]
+    fn deleting_still_names_delete_off_macos() {
+        let mut app = app_with_four_rows();
+        app.set_os_for_test("windows");
+
+        app.request_delete();
+
+        assert_eq!(app.prompt_text(), "Delete b.txt?  (y / n)");
+        assert_eq!(app.status_text(), "Delete b.txt? y/n");
+    }
+
+    #[test]
+    fn space_opens_and_closes_the_quick_look() {
+        let mut app = app_with_four_rows();
+        assert!(!app.quick_look_open());
+
+        app.handle_key_text(" ");
+        assert!(app.quick_look_open());
+        assert_eq!(app.quick_look_name(), "b.txt");
+
+        app.handle_key_text(" ");
+        assert!(!app.quick_look_open());
+    }
+
+    #[test]
+    fn escape_closes_the_quick_look() {
+        let mut app = app_with_four_rows();
+        app.handle_key_text(" ");
+        assert!(app.quick_look_open());
+
+        app.close_quick_look();
+
+        assert!(!app.quick_look_open());
+    }
+
+    #[test]
+    fn space_does_not_open_the_quick_look_while_the_filter_has_the_keyboard() {
+        let mut app = app_with_four_rows();
+        app.begin_filter();
+
+        app.handle_key_text(" ");
+
+        assert!(
+            !app.quick_look_open(),
+            "space should narrow the filter, not open the quick look"
+        );
+        assert_eq!(app.filter_text(), " ");
+    }
+
+    #[test]
+    fn space_does_not_open_the_quick_look_while_the_status_link_has_the_keyboard() {
+        let mut app = app_listing_checkouts(&["alpha", "beta"]);
+        app.select_content(0);
+        app.focus_status_link();
+        assert!(app.status_link_focused());
+
+        app.handle_key_text(" ");
+
+        assert!(
+            !app.quick_look_open(),
+            "space should activate the focused link, not open the quick look"
+        );
     }
 
     #[test]

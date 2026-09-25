@@ -231,13 +231,17 @@ impl Binding {
         self.key.dispatch_text()
     }
 
-    /// The modifier keys held for this binding, each to be dispatched as
-    /// its own `KeyPressed`/`KeyReleased` pair around the key itself.
+    /// The modifier keys held for this binding under `os`, each to be
+    /// dispatched as its own `KeyPressed`/`KeyReleased` pair around the key
+    /// itself. The one place the macOS behaviour profile (#721,
+    /// GUIDANCE.md §2.3) is decided for a binding's own Control-or-Command
+    /// modifier: `Key::Meta` when `os == "macos"`, `Key::Control`
+    /// everywhere else. Alt and Shift do not vary by platform.
     #[must_use]
-    pub fn modifiers(&self) -> Vec<Key> {
+    pub fn modifiers(&self, os: &str) -> Vec<Key> {
         let mut keys = Vec::new();
         if self.control {
-            keys.push(Key::Control);
+            keys.push(primary_modifier_key(os));
         }
         if self.alt {
             keys.push(Key::Alt);
@@ -246,6 +250,20 @@ impl Binding {
             keys.push(Key::Shift);
         }
         keys
+    }
+}
+
+/// The physical key that holds down a binding's `control: true` modifier
+/// under `os` - `Key::Meta` (Command) on macOS, `Key::Control` (Ctrl)
+/// everywhere else. The single decision the macOS behaviour profile
+/// (#721, GUIDANCE.md §2.3) comes down to; [`Binding::modifiers`] is its
+/// only caller, so nothing else re-derives it.
+#[must_use]
+fn primary_modifier_key(os: &str) -> Key {
+    if os == "macos" {
+        Key::Meta
+    } else {
+        Key::Control
     }
 }
 
@@ -716,6 +734,42 @@ mod tests {
                 );
             }
             previous = Some(heading);
+        }
+    }
+
+    /// The macOS behaviour profile (#721, GUIDANCE.md §2.3): every binding
+    /// that holds Control resolves to Command (`Key::Meta`) on macOS, and
+    /// to Control everywhere else - proved for every such row in the
+    /// table, not just one, since a binding added later without this
+    /// resolved would go unnoticed otherwise.
+    #[test]
+    fn every_control_binding_resolves_to_command_on_macos_and_control_elsewhere() {
+        for binding in BINDINGS.iter().filter(|b| b.control) {
+            let mac = binding.modifiers("macos");
+            assert!(
+                mac.contains(&Key::Meta),
+                "{} should hold Command on macOS",
+                binding.description
+            );
+            assert!(
+                !mac.contains(&Key::Control),
+                "{} should not hold Control on macOS",
+                binding.description
+            );
+
+            for other in ["windows", "linux"] {
+                let resolved = binding.modifiers(other);
+                assert!(
+                    resolved.contains(&Key::Control),
+                    "{} should hold Control on {other}",
+                    binding.description
+                );
+                assert!(
+                    !resolved.contains(&Key::Meta),
+                    "{} should not hold Command on {other}",
+                    binding.description
+                );
+            }
         }
     }
 }
