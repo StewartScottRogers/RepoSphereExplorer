@@ -29,6 +29,18 @@ pub fn ensure_service() {
             )),
             "the socket was chosen before this harness could make it private"
         );
+        // Same reasoning as the socket above: the Repos Directory list a
+        // test confirms through the application is stored at a fixed,
+        // machine-wide path by default (`service::repos::config_path`), and
+        // a suite that wrote there for real would corrupt whoever's
+        // settings are really stored there and race any other test binary
+        // doing the same at once.
+        assert!(
+            service::repos::use_private_config_dir(
+                std::env::temp_dir().join(format!("rse-test-config-{}", std::process::id()))
+            ),
+            "the config directory was chosen before this harness could make it private"
+        );
         let name = protocol::socket_name().expect("the platform has a socket name");
         let listener = service::bind(name).expect("a private socket is free to bind");
         std::thread::spawn(move || {
