@@ -27,7 +27,32 @@ const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 /// settings and the journal beside it. Listed as a deferred rename in
 /// `README.md`.
 fn config_path() -> Option<PathBuf> {
-    dirs::data_local_dir().map(|dir| dir.join("RepoSphereExplorer").join("repos.json"))
+    let dir = CHOSEN_CONFIG_DIR
+        .get()
+        .cloned()
+        .or_else(dirs::data_local_dir)?;
+    Some(dir.join("RepoSphereExplorer").join("repos.json"))
+}
+
+/// The directory this process reads and writes `repos.json` under, once
+/// [`use_private_config_dir`] has settled it.
+static CHOSEN_CONFIG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Makes this process store the Repos Directory list under `dir` instead of
+/// the platform's real, machine-wide data-local directory.
+///
+/// For tests that start a service in-process and confirm a Repos Directory
+/// change for real: the list [`set_active_root`] writes is stored per
+/// machine, not per test, so a test that changed it without redirecting
+/// this would corrupt whoever else's roots are stored there and race with
+/// any other test binary doing the same at once - the same problem
+/// `protocol::use_private_socket` exists to avoid for the socket.
+///
+/// Returns `false` if a directory was already settled, by an earlier call
+/// or by [`config_path`] having been used already.
+#[must_use]
+pub fn use_private_config_dir(dir: PathBuf) -> bool {
+    CHOSEN_CONFIG_DIR.set(dir).is_ok()
 }
 
 /// The Repos Directory this platform suggests when nothing is configured:
