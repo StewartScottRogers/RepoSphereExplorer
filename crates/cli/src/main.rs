@@ -24,6 +24,11 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // Ahead of `Cli::parse()`: a trial launch after a self-update passes
+    // this flag, which is not one of this placeholder's own subcommands.
+    if std::env::args().any(|arg| arg == updater::VERIFY_FLAG) {
+        return ExitCode::SUCCESS;
+    }
     let cli = Cli::parse();
     match cli.command {
         Command::Explore { target } => {
@@ -50,6 +55,12 @@ fn self_update() -> ExitCode {
             println!(
                 "{}",
                 updater::appimage_advice("repo_sphere_explorer", &appimage)
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(updater::Outcome::RolledBack { attempted, to }) => {
+            println!(
+                "repo_sphere_explorer: update to v{attempted} did not start; rolled back to v{to}"
             );
             ExitCode::SUCCESS
         }

@@ -1,11 +1,15 @@
 //! In-app updater: fetches, signature-verifies, and atomically applies
 //! release binaries.
 //!
-//! Automatic relaunch after an update, and a rollback path if the new
-//! binary fails to start, are deferred: this covers §4.2's non-negotiable
-//! part (nothing is applied unless it verifies against the embedded public
-//! key) and stages the replacement atomically, but does not yet supervise
-//! the *next* launch to confirm it succeeded.
+//! §4.2's non-negotiable part - nothing is applied unless it verifies
+//! against the embedded public key - and the atomic staging of a
+//! replacement are covered directly. [`apply_supervised`] adds the
+//! rollback path: the binary it replaces is kept until a trial launch,
+//! run with [`VERIFY_FLAG`], proves the new one starts; a binary that
+//! does not is rolled back to the one that did, and [`startup_notice`]
+//! has something to say about it on the next ordinary launch. Automatic
+//! relaunch of the reader's own session into the new version is still
+//! deferred.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -36,6 +40,13 @@ pub const RELEASES_URL: &str =
 
 /// The file name the `AppImage` is published under.
 pub const APPIMAGE_NAME: &str = "ReposExplorer-x86_64.AppImage";
+
+/// The flag that tells a front end to prove it can start, then exit at
+/// once, rather than actually running: opening no window, starting no
+/// service, connecting to none. A trial launch after an update passes this
+/// so [`apply_supervised`] can tell a binary that starts from one that
+/// cannot, the same shape as the graphical front end's own renderer probe.
+pub const VERIFY_FLAG: &str = "--self-update-verify";
 
 /// The `AppImage` this process is running inside, if it is running inside one.
 ///
@@ -175,6 +186,14 @@ pub enum Outcome {
     InsideAppImage {
         /// The `AppImage` file this process is running from.
         appimage: String,
+    },
+    /// A newer binary was staged but did not prove it starts, so the
+    /// binary that was running before is back in place.
+    RolledBack {
+        /// The version that was staged and failed to start.
+        attempted: String,
+        /// The version now running again.
+        to: String,
     },
 }
 
@@ -336,6 +355,22 @@ pub fn verify_bytes(asset: &TargetAsset, bytes: &[u8]) -> Result<(), UpdateError
     Ok(())
 }
 
+/// A file that travels beside `target_path`, named after it: `.<name>.update`
+/// for a stage-in-progress temporary file, `.<name>.previous` for a kept
+/// binary, `.<name>.state` for what [`apply_supervised`] remembers between
+/// runs. Sharing one scheme keeps all three in the same directory as the
+/// binary they belong to, so a rename between them is same-filesystem.
+fn sibling_path(target_path: &Path, suffix: &str) -> std::path::PathBuf {
+    let dir = target_path.parent().unwrap_or_else(|| Path::new("."));
+    dir.join(format!(
+        ".{}.{suffix}",
+        target_path.file_name().map_or_else(
+            || "binary".into(),
+            |name| name.to_string_lossy().into_owned()
+        )
+    ))
+}
+
 /// Replaces the file at `target_path` with `bytes`, atomically: writes to a
 /// temporary file in the same directory (so the rename is same-filesystem),
 /// marks it executable on Unix, then renames it over `target_path`.
@@ -344,14 +379,7 @@ pub fn verify_bytes(asset: &TargetAsset, bytes: &[u8]) -> Result<(), UpdateError
 /// Returns an error if writing the temporary file, setting its permissions,
 /// or renaming it fails.
 pub fn apply_atomic(bytes: &[u8], target_path: &Path) -> io::Result<()> {
-    let dir = target_path.parent().unwrap_or_else(|| Path::new("."));
-    let temp_path = dir.join(format!(
-        ".{}.update",
-        target_path.file_name().map_or_else(
-            || "binary".into(),
-            |name| name.to_string_lossy().into_owned()
-        )
-    ));
+    let temp_path = sibling_path(target_path, "update");
     fs::write(&temp_path, bytes)?;
     set_executable(&temp_path)?;
     // Windows will not let a running image be written over, so a binary
@@ -453,6 +481,139 @@ fn set_executable(path: &Path) -> io::Result<()> {
 #[allow(clippy::unnecessary_wraps)]
 fn set_executable(_path: &Path) -> io::Result<()> {
     Ok(())
+}
+
+/// What a binary remembers about its own updates between runs, kept beside
+/// it at `.<name>.state`: a version that failed a trial launch, not offered
+/// again until a different one is published, and a rollback still waiting
+/// to be reported on the next ordinary start.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct UpdateState {
+    declined_version: Option<String>,
+    pending_notice: Option<PendingNotice>,
+}
+
+/// A rollback that happened during an update, not yet reported to the
+/// reader.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingNotice {
+    /// The version that was staged and failed to start.
+    attempted: String,
+    /// The version now running again.
+    running: String,
+}
+
+fn load_state(target_path: &Path) -> UpdateState {
+    fs::read(sibling_path(target_path, "state"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Best-effort: a state file that cannot be written leaves a reader with a
+/// correctly-installed binary and only the bookkeeping missing, which must
+/// never be the failure that undoes an update that otherwise succeeded.
+fn save_state(target_path: &Path, state: &UpdateState) {
+    if let Ok(json) = serde_json::to_vec(state) {
+        let _ = fs::write(sibling_path(target_path, "state"), json);
+    }
+}
+
+/// Removes the state file entirely, for when there is nothing left worth
+/// remembering - an update that started clean must not leave a `.state`
+/// file behind any more than [`apply_atomic`] leaves its staging file.
+fn clear_state(target_path: &Path) {
+    let _ = fs::remove_file(sibling_path(target_path, "state"));
+}
+
+/// Applies `bytes` to `target_path`, keeping the binary that was there
+/// until `verify` proves the new one starts. A binary that does not is
+/// rolled back to the one that did; [`startup_notice`] reports that on the
+/// next ordinary launch, and the version that failed is recorded so
+/// [`check_and_update`] does not offer it again immediately.
+///
+/// `from_version` and `to_version` name the outgoing and incoming release,
+/// carried through to the returned [`Outcome`] and, on a rollback, into the
+/// state a later [`startup_notice`] reads.
+///
+/// # Errors
+/// Returns an error if the existing binary cannot be kept aside, if writing
+/// the new bytes or restoring the kept ones fails.
+pub fn apply_supervised(
+    bytes: &[u8],
+    target_path: &Path,
+    from_version: &str,
+    to_version: &str,
+    mut verify: impl FnMut(&Path) -> bool,
+) -> Result<Outcome, UpdateError> {
+    let previous_path = sibling_path(target_path, "previous");
+    fs::rename(target_path, &previous_path)?;
+    if let Err(err) = apply_atomic(bytes, target_path) {
+        // Best-effort: the kept binary's own error, if restoring it also
+        // fails, would only bury the more informative one above. Retried
+        // for the same reason as the rollback below - a scanner holding the
+        // file for a moment must not cost the reader their binary.
+        let _ = rename_with_retry(&previous_path, target_path);
+        return Err(err.into());
+    }
+    if verify(target_path) {
+        let _ = fs::remove_file(&previous_path);
+        clear_state(target_path);
+        return Ok(Outcome::Updated {
+            from: from_version.to_owned(),
+            to: to_version.to_owned(),
+        });
+    }
+    // Retried, as the forward rename is. This is the rollback: the file
+    // being replaced has just been written *and* just been run, which is
+    // precisely when a Windows scanner is most likely to be holding it.
+    // Failing here leaves the reader with no binary at all at the path they
+    // launch, which is worse than the update that prompted the rollback.
+    rename_with_retry(&previous_path, target_path)?;
+    save_state(
+        target_path,
+        &UpdateState {
+            declined_version: Some(to_version.to_owned()),
+            pending_notice: Some(PendingNotice {
+                attempted: to_version.to_owned(),
+                running: from_version.to_owned(),
+            }),
+        },
+    );
+    Ok(Outcome::RolledBack {
+        attempted: to_version.to_owned(),
+        to: from_version.to_owned(),
+    })
+}
+
+/// What to tell the reader on an ordinary launch of the binary at
+/// `target_path`, if the last update attempt was rolled back - and only
+/// once: reading this clears it, so a front end that calls it at the top of
+/// `main` reports the rollback on the very next start and stays quiet after
+/// that.
+#[must_use]
+pub fn startup_notice(target_path: &Path) -> Option<String> {
+    let mut state = load_state(target_path);
+    let notice = state.pending_notice.take()?;
+    save_state(target_path, &state);
+    Some(format!(
+        "the update to v{} did not start and was rolled back; v{} is running",
+        notice.attempted, notice.running
+    ))
+}
+
+/// Runs `path` with [`VERIFY_FLAG`] and reports whether it started: whether
+/// the process could even be spawned, and exited successfully. What real
+/// callers of [`apply_supervised`] pass as `verify`, the same shape as the
+/// graphical front end's own renderer probe (`gui::renderer::probe_in_child`).
+fn proves_it_starts(path: &Path) -> bool {
+    std::process::Command::new(path)
+        .arg(VERIFY_FLAG)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// A release version split into its numbers and whatever follows them.
@@ -578,22 +739,35 @@ pub fn check_and_update(
                 version: current_version.to_owned(),
             });
         }
+        Decision::Install(_)
+            if load_state(exe_path).declined_version.as_deref()
+                == Some(manifest.version.as_str()) =>
+        {
+            // Already tried and rolled back; offering it again on every
+            // launch until a different release is published would put the
+            // reader in the loop point 4 of #719 rules out.
+            return Ok(Outcome::UpToDate {
+                version: current_version.to_owned(),
+            });
+        }
         Decision::Install(asset) => asset,
     };
     let bytes = download_and_verify(asset)?;
-    apply_atomic(&bytes, exe_path)?;
-    Ok(Outcome::Updated {
-        from: current_version.to_owned(),
-        to: manifest.version,
-    })
+    apply_supervised(
+        &bytes,
+        exe_path,
+        current_version,
+        &manifest.version,
+        proves_it_starts,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         Decision, Manifest, Outcome, PUBLIC_KEY, TargetAsset, UpdateError, apply_atomic,
-        check_and_update, current_target, decide, fetch_manifest, hex_decode, hex_encode, is_newer,
-        sha256_hex, verify_bytes, verify_digest,
+        apply_supervised, check_and_update, current_target, decide, fetch_manifest, hex_decode,
+        hex_encode, is_newer, sha256_hex, startup_notice, verify_bytes, verify_digest,
     };
     use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
     use sha2::{Digest, Sha256};
@@ -1519,5 +1693,131 @@ mod tests {
             "and what is at the path afterwards is the new one"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- the supervised apply and its rollback (#719) -------------------
+
+    #[test]
+    fn apply_supervised_commits_when_the_new_binary_proves_it_starts() {
+        let dir = scratch_dir("supervised-commit");
+        let target = dir.join("binary");
+        std::fs::write(&target, b"old build").unwrap();
+
+        let outcome = apply_supervised(b"new build", &target, "0.6.0", "0.7.0", |_| true).unwrap();
+
+        assert_eq!(
+            outcome,
+            Outcome::Updated {
+                from: "0.6.0".to_owned(),
+                to: "0.7.0".to_owned(),
+            }
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"new build");
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            left,
+            vec![std::ffi::OsString::from("binary")],
+            "nothing kept once the new binary proved it starts: {left:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_supervised_rolls_back_when_the_new_binary_does_not_prove_it_starts() {
+        let dir = scratch_dir("supervised-rollback");
+        let target = dir.join("binary");
+        std::fs::write(&target, b"old build").unwrap();
+
+        let outcome =
+            apply_supervised(b"broken build", &target, "0.6.0", "0.7.0", |_| false).unwrap();
+
+        assert_eq!(
+            outcome,
+            Outcome::RolledBack {
+                attempted: "0.7.0".to_owned(),
+                to: "0.6.0".to_owned(),
+            }
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"old build",
+            "the binary that used to run must be back in place"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_rollback_is_reported_once_on_the_next_start_and_then_falls_silent() {
+        let dir = scratch_dir("supervised-notice");
+        let target = dir.join("binary");
+        std::fs::write(&target, b"old build").unwrap();
+        apply_supervised(b"broken build", &target, "0.6.0", "0.7.0", |_| false).unwrap();
+
+        let notice = startup_notice(&target).expect("a rollback just happened");
+        assert!(
+            notice.contains("0.7.0"),
+            "names the attempted version: {notice}"
+        );
+        assert!(
+            notice.contains("0.6.0"),
+            "names the version now running: {notice}"
+        );
+
+        assert!(
+            startup_notice(&target).is_none(),
+            "reported once, not on every start"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_successful_update_clears_any_earlier_rollback_notice() {
+        let dir = scratch_dir("supervised-clears-notice");
+        let target = dir.join("binary");
+        std::fs::write(&target, b"old build").unwrap();
+        apply_supervised(b"broken build", &target, "0.6.0", "0.7.0", |_| false).unwrap();
+        assert!(super::load_state(&target).pending_notice.is_some());
+
+        apply_supervised(b"good build", &target, "0.6.0", "0.7.1", |_| true).unwrap();
+
+        assert!(
+            startup_notice(&target).is_none(),
+            "a later successful update leaves nothing stale to report"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_rolled_back_version_is_recorded_so_it_is_not_offered_again_immediately() {
+        let dir = scratch_dir("supervised-declines");
+        let target = dir.join("binary");
+        std::fs::write(&target, b"old build").unwrap();
+
+        apply_supervised(b"broken build", &target, "0.6.0", "0.7.0", |_| false).unwrap();
+
+        assert_eq!(
+            super::load_state(&target).declined_version.as_deref(),
+            Some("0.7.0"),
+            "the version that failed to start must be remembered, not retried on every launch"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_first_apply_with_nothing_previously_installed_still_rolls_back_cleanly() {
+        // check_and_update always has a running exe to keep, but
+        // apply_supervised's own contract only needs a file at target_path -
+        // this pins that a target that does not yet exist errors rather than
+        // panicking, since there is nothing to roll back to.
+        let dir = scratch_dir("supervised-no-target");
+        let target = dir.join("binary");
+
+        let err = apply_supervised(b"new build", &target, "0.6.0", "0.7.0", |_| true).unwrap_err();
+
+        assert!(matches!(err, UpdateError::Io(_)), "was {err:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
