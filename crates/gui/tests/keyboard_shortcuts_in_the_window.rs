@@ -5,12 +5,18 @@
 //! markup, given the wrong modifiers, or pointed at the wrong callback,
 //! fails here rather than only in the reference sheet nobody reads until
 //! the key stops working.
+//!
+//! #721 adds GUIDANCE.md §2.3's macOS behaviour profile - Command in place
+//! of Control - so every window built here is given an explicit `os`
+//! rather than the host's own, and the walk below runs once per
+//! non-macOS profile so a change here cannot silently stop proving
+//! Windows and Linux unchanged (its own acceptance check).
 
 use gui::app::App;
 use gui::shortcuts::{self, Fires};
 use gui::{MainWindow, sync_ui};
 use slint::ComponentHandle;
-use slint::platform::WindowEvent;
+use slint::platform::{Key, WindowEvent};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -25,12 +31,14 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// A shown window on a real `App`, with the keyboard in its window-level
-/// scope - no callback is wired, since this test asks only whether a key
+/// A shown window on a real `App` built under `os`'s behaviour profile
+/// (#721) - no callback is wired, since this test asks only whether a key
 /// reaches the right one, not what the application then does with it.
-fn window(name: &str) -> (MainWindow, Rc<RefCell<App>>) {
+fn window(name: &str, os: &'static str) -> (MainWindow, Rc<RefCell<App>>) {
     let dir = scratch(name);
-    let app = Rc::new(RefCell::new(App::new(dir)));
+    let mut app = App::new(dir);
+    app.set_os_for_test(os);
+    let app = Rc::new(RefCell::new(app));
     let ui = MainWindow::new().expect("the window should build");
     sync_ui(&ui, &app.borrow());
     ui.show().expect("the window should show");
@@ -39,13 +47,12 @@ fn window(name: &str) -> (MainWindow, Rc<RefCell<App>>) {
     (ui, app)
 }
 
-/// Dispatches `binding`'s modifiers, then its key, then releases both in
+/// Dispatches `modifiers`, then `binding`'s own key, then releases both in
 /// reverse - real `WindowEvent`s, the way a keyboard actually reports a
 /// chord, rather than a direct call to a Slint callback.
-fn press(ui: &MainWindow, binding: &shortcuts::Binding) {
+fn press_with(ui: &MainWindow, binding: &shortcuts::Binding, modifiers: &[Key]) {
     let window = ui.window();
-    let modifiers = binding.modifiers();
-    for key in &modifiers {
+    for key in modifiers {
         window.dispatch_event(WindowEvent::KeyPressed {
             text: char::from(*key).into(),
         });
@@ -58,6 +65,12 @@ fn press(ui: &MainWindow, binding: &shortcuts::Binding) {
             text: char::from(*key).into(),
         });
     }
+}
+
+/// [`press_with`], with `binding`'s own modifiers resolved for `os`
+/// (#721) - Command in place of Control under the macOS profile.
+fn press(ui: &MainWindow, binding: &shortcuts::Binding, os: &str) {
+    press_with(ui, binding, &binding.modifiers(os));
 }
 
 /// Installs a spy on exactly the one callback `fires` names, so pressing a
@@ -131,24 +144,133 @@ fn install_spy(ui: &MainWindow, fires: Fires, log: &Rc<RefCell<Vec<String>>>) {
     }
 }
 
-#[test]
-fn every_table_binding_reaches_the_callback_it_names() {
-    i_slint_backend_testing::init_no_event_loop();
-    let (ui, _app) = window("bindings");
+/// The full table walk under one behaviour profile: every binding's keys,
+/// resolved for `os`, reach exactly the callback it names.
+fn assert_every_binding_reaches_its_callback(os: &'static str) {
+    let (ui, _app) = window(&format!("bindings-{os}"), os);
 
     for binding in shortcuts::BINDINGS {
         let log = Rc::new(RefCell::new(Vec::new()));
         install_spy(&ui, binding.fires, &log);
 
-        press(&ui, binding);
+        // Delete's own row holds no modifier in the table - plain Delete
+        // is what every profile fires on save one, the macOS profile,
+        // where Trash (#721 item D) asks for Command too. That is a
+        // narrower rule than the table's generic Control-or-Command
+        // resolution (#721 item A), so it is dispatched here rather than
+        // folded into `Binding::modifiers`.
+        if os == "macos" && matches!(binding.fires, Fires::DeleteRequested) {
+            press_with(&ui, binding, &[Key::Meta]);
+        } else {
+            press(&ui, binding, os);
+        }
 
         assert_eq!(
             *log.borrow(),
             vec![binding.fires.label()],
-            "{} ({}) should fire {}",
-            binding.label(false),
+            "on {os}: {} ({}) should fire {}",
+            binding.label(os == "macos"),
             binding.description,
             binding.fires.label()
         );
+    }
+}
+
+#[test]
+fn every_table_binding_reaches_the_callback_it_names_on_macos() {
+    i_slint_backend_testing::init_no_event_loop();
+    assert_every_binding_reaches_its_callback("macos");
+}
+
+/// #721's fourth acceptance check: Windows' bindings are unchanged by the
+/// macOS profile - the same walk as the macOS run above, still on Control.
+#[test]
+fn every_table_binding_reaches_the_callback_it_names_on_windows() {
+    i_slint_backend_testing::init_no_event_loop();
+    assert_every_binding_reaches_its_callback("windows");
+}
+
+/// #721's fourth acceptance check: Linux's bindings are unchanged by the
+/// macOS profile - the same walk as the macOS run above, still on Control.
+#[test]
+fn every_table_binding_reaches_the_callback_it_names_on_linux() {
+    i_slint_backend_testing::init_no_event_loop();
+    assert_every_binding_reaches_its_callback("linux");
+}
+
+/// #721's second acceptance check: a Command chord fires under the macOS
+/// profile, and the identical physical chord does not fire under the
+/// other two - proved for a representative Control binding (Undo) rather
+/// than the whole table, which the walks above already cover on their own
+/// modifier.
+#[test]
+fn a_command_chord_fires_undo_only_under_the_macos_profile() {
+    i_slint_backend_testing::init_no_event_loop();
+    let undo = shortcuts::BINDINGS
+        .iter()
+        .find(|b| matches!(b.fires, Fires::UndoRequested) && b.control)
+        .expect("Undo holds Control/Command in the table");
+
+    for os in ["windows", "linux", "macos"] {
+        let (ui, _app) = window(&format!("command-chord-{os}"), os);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        install_spy(&ui, undo.fires, &log);
+
+        press_with(&ui, undo, &[Key::Meta]);
+
+        if os == "macos" {
+            assert_eq!(
+                *log.borrow(),
+                vec![undo.fires.label()],
+                "Cmd+Z should fire Undo under the macOS profile"
+            );
+        } else {
+            assert!(
+                log.borrow().is_empty(),
+                "Cmd+Z should not fire Undo under the {os} profile, only Ctrl+Z should"
+            );
+        }
+    }
+}
+
+/// #721 item 3: Cmd+Delete moves to Trash under the macOS profile - bare
+/// Delete, which every other profile still fires on, is refused there,
+/// and only the Command chord reaches `delete-requested()`.
+#[test]
+fn delete_requires_command_under_the_macos_profile_only() {
+    i_slint_backend_testing::init_no_event_loop();
+    let delete = shortcuts::BINDINGS
+        .iter()
+        .find(|b| matches!(b.fires, Fires::DeleteRequested))
+        .expect("Delete is in the table");
+
+    for os in ["windows", "linux", "macos"] {
+        let (ui, _app) = window(&format!("delete-{os}"), os);
+        let log = Rc::new(RefCell::new(Vec::new()));
+        install_spy(&ui, Fires::DeleteRequested, &log);
+
+        press_with(&ui, delete, &[]);
+        if os == "macos" {
+            assert!(
+                log.borrow().is_empty(),
+                "bare Delete should not fire delete-requested under the macOS profile"
+            );
+        } else {
+            assert_eq!(
+                *log.borrow(),
+                vec![Fires::DeleteRequested.label()],
+                "bare Delete should still fire delete-requested on {os}"
+            );
+        }
+
+        log.borrow_mut().clear();
+        press_with(&ui, delete, &[Key::Meta]);
+        if os == "macos" {
+            assert_eq!(
+                *log.borrow(),
+                vec![Fires::DeleteRequested.label()],
+                "Cmd+Delete should fire delete-requested under the macOS profile"
+            );
+        }
     }
 }

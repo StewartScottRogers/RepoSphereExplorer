@@ -1739,6 +1739,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
 
     on_event!(on_cancel_requested, cancel_pending);
     on_event!(on_delete_requested, request_delete);
+    on_event!(on_quick_look_close_requested, close_quick_look);
     on_event!(on_return_pressed, handle_return);
     on_event!(on_backspace_pressed, backspace);
     on_event!(on_parent_requested, navigate_to_parent);
@@ -1803,7 +1804,16 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     on_event!(on_select_all_requested, select_all);
     on_event!(on_file_readme_open_requested, open_readme);
     on_event!(on_undo_requested, undo);
+    on_event!(on_new_folder_requested, request_new_folder);
+    on_event!(on_new_file_requested, request_new_file);
+    wire_window_chrome(ui, app);
+}
 
+/// Wires File > Exit, Help > About and File > Repos Directory... - three
+/// commands with no `App` state in common, split out of `wire_commands`
+/// only because #721's quick-look wiring pushed it over
+/// `clippy::too_many_lines`.
+fn wire_window_chrome(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     ui.on_quit_requested(|| {
         // The menu's File > Exit; the window's own close button goes through
         // Slint rather than here.
@@ -1839,8 +1849,6 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             }
         });
     }
-    on_event!(on_new_folder_requested, request_new_folder);
-    on_event!(on_new_file_requested, request_new_file);
 }
 
 /// Runs `command`, detached: the caller outlives nothing it should not, and
@@ -2390,6 +2398,12 @@ pub fn sync_ui(ui: &MainWindow, app: &App) {
     ui.set_location_icon(icon_image(app::icon_for("", true), true, None));
     sync_tools(ui, app);
     sync_certificates(ui, app);
+    // #721: GUIDANCE.md §2.3's macOS behaviour profile - Command in place
+    // of Control for `key-scope`'s bindings, and the Trash-named delete
+    // confirmation, both decided in Rust and read here as one flag.
+    ui.set_mac_profile(app.mac_profile());
+    ui.set_quick_look_open(app.quick_look_open());
+    ui.set_quick_look_name(app.quick_look_name().into());
 }
 
 /// Copies the tool slot's picker state (#616) into `ui`'s bound properties:

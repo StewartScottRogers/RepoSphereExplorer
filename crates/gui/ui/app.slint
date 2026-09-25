@@ -59,6 +59,17 @@ export component MainWindow inherits Window {
     callback zoom-out-requested();
     callback zoom-reset-requested();
 
+    // #721: GUIDANCE.md §2.3's macOS behaviour profile - Command in
+    // place of Control for `key-scope`'s bindings below, decided once in
+    // Rust (`App::mac_profile`) and read here as one flag.
+    in property <bool> mac-profile: false;
+    // #721: Space's quick look over the selected contents row, toggled
+    // in `App::handle_key_text` and shown as a modest overlay near the
+    // bottom of this file.
+    in property <bool> quick-look-open: false;
+    in property <string> quick-look-name;
+    callback quick-look-close-requested();
+
     in property <[FolderRow]> folder-rows;
     in property <int> folder-selected;
     in property <[ContentRow]> content-rows;
@@ -446,6 +457,15 @@ export component MainWindow inherits Window {
     property <length> menu-item-h: 24px * Zoom.factor;
     callback edge-requested(int);
 
+    // #721: the one place `key-scope` below decides whether a binding's
+    // Control is held as Control or as Command - GUIDANCE.md §2.3's
+    // macOS behaviour profile. Every Ctrl-or-Cmd condition asks this
+    // rather than reading `event.modifiers.control` itself, so the
+    // profile is one function, not a `cfg!` in each of them.
+    pure function primary-modifier(control: bool, meta: bool) -> bool {
+        mac-profile ? meta : control
+    }
+
     forward-focus: key-scope;
 
     // The editing surface takes the keyboard when it opens, and its
@@ -478,29 +498,41 @@ export component MainWindow inherits Window {
                 }
                 return accept;
             }
-            if (event.text == Key.F1 || (event.modifiers.control && (event.text == "/"))) {
+            // Space's quick look (#721, GUIDANCE.md §2.3) takes the
+            // keyboard the same way, once it is open: Escape closes it,
+            // and Space forwards to `key-text` so `App::handle_key_text`'s
+            // own toggle closes it too - the same key that opened it.
+            if (root.quick-look-open) {
+                if (event.text == Key.Escape) {
+                    quick-look-close-requested();
+                } else if (event.text == " ") {
+                    key-text(event.text);
+                }
+                return accept;
+            }
+            if (event.text == Key.F1 || (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "/"))) {
                 root.shortcuts-open = true;
                 return accept;
             }
             // Zoom (#586) works over every pane, editing included, the same
             // as F1 above - a reader part-way through typing a file should
             // still be able to make the text bigger.
-            if (event.modifiers.control && (event.text == "+" || event.text == "=")) {
+            if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "+" || event.text == "=")) {
                 zoom-in-requested();
                 return accept;
             }
-            if (event.modifiers.control && event.text == "-") {
+            if (primary-modifier(event.modifiers.control, event.modifiers.meta) && event.text == "-") {
                 zoom-out-requested();
                 return accept;
             }
-            if (event.modifiers.control && event.text == "0") {
+            if (primary-modifier(event.modifiers.control, event.modifiers.meta) && event.text == "0") {
                 zoom-reset-requested();
                 return accept;
             }
             // Ctrl+Shift+U (#629) toggles the changed-only filter from
             // anywhere in the window, editing included, the same as F1
             // and Zoom above.
-            if (event.modifiers.control && event.modifiers.shift && (event.text == "u" || event.text == "U")) {
+            if (primary-modifier(event.modifiers.control, event.modifiers.meta) && event.modifiers.shift && (event.text == "u" || event.text == "U")) {
                 changed-filter-toggled();
                 return accept;
             }
@@ -517,9 +549,9 @@ export component MainWindow inherits Window {
             if (editing-file && focus-pane == 2) {
                 if (event.text == Key.Escape) {
                     cancel-requested();
-                } else if (event.modifiers.control && (event.text == "s" || event.text == "S")) {
+                } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "s" || event.text == "S")) {
                     save-requested();
-                } else if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
+                } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "z" || event.text == "Z")) {
                     undo-requested();
                 } else if (event.text == Key.F5) {
                     refresh-requested();
@@ -528,7 +560,12 @@ export component MainWindow inherits Window {
             }
             if (event.text == Key.Escape) {
                 cancel-requested();
-            } else if (event.text == Key.Delete) {
+            } else if (event.text == Key.Delete && (!root.mac-profile || event.modifiers.meta)) {
+                // Plain Delete moves to Trash on Windows and Linux; the
+                // macOS behaviour profile (#721, GUIDANCE.md §2.3) asks
+                // Cmd+Delete instead, matching that platform's own file
+                // manager - `App::status_text`/`prompt_text` name Trash
+                // there too.
                 delete-requested();
             } else if (event.text == Key.Return) {
                 return-pressed();
@@ -547,36 +584,36 @@ export component MainWindow inherits Window {
                 status-link-focus-requested();
             } else if (event.text == Key.UpArrow && event.modifiers.alt) {
                 parent-requested();
-            } else if (event.modifiers.control && event.modifiers.shift && (event.text == "f" || event.text == "F")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && event.modifiers.shift && (event.text == "f" || event.text == "F")) {
                 find-requested();
-            } else if (event.modifiers.control && (event.text == "f" || event.text == "F")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "f" || event.text == "F")) {
                 filter-focus-requested();
-            } else if (event.modifiers.control && (event.text == "p" || event.text == "P")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "p" || event.text == "P")) {
                 switcher-open-requested();
-            } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
                 new-folder-requested();
-            } else if (event.modifiers.control && (event.text == "n" || event.text == "N")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "n" || event.text == "N")) {
                 new-file-requested();
             } else if (event.modifiers.alt && event.text == Key.LeftArrow) {
                 back-requested();
             } else if (event.modifiers.alt && event.text == Key.RightArrow) {
                 forward-requested();
-            } else if (event.modifiers.control && (event.text == "z" || event.text == "Z")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "z" || event.text == "Z")) {
                 undo-requested();
-            } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "a" || event.text == "A")) {
                 select-all-requested();
-            } else if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "c" || event.text == "C")) {
                 clipboard-copy-requested();
-            } else if (event.modifiers.control && (event.text == "x" || event.text == "X")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "x" || event.text == "X")) {
                 clipboard-cut-requested();
-            } else if (event.modifiers.control && (event.text == "v" || event.text == "V")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "v" || event.text == "V")) {
                 clipboard-paste-requested();
             } else if (event.text == Key.F4
-                || (event.modifiers.control && (event.text == "l" || event.text == "L"))) {
+                || (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "l" || event.text == "L"))) {
                 path-edit-requested();
-            } else if (event.modifiers.control && (event.text == "s" || event.text == "S")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "s" || event.text == "S")) {
                 save-requested();
-            } else if (event.modifiers.control && (event.text == "e" || event.text == "E")) {
+            } else if (primary-modifier(event.modifiers.control, event.modifiers.meta) && (event.text == "e" || event.text == "E")) {
                 edit-requested();
             } else if (event.text == Key.F5) {
                 refresh-requested();
@@ -1441,6 +1478,58 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Space's quick look (#721, GUIDANCE.md §2.3): a modest overlay
+        // naming the selected entry, closed the same way it opened
+        // (Space) or by Escape - the toggle itself is `App`'s
+        // (`handle_key_text`/`quick_look_open`), this only shows what is
+        // already open. An overlay `Rectangle` for the same reason the
+        // shortcuts sheet above is one, rather than a `PopupWindow`.
+        if quick-look-open: Rectangle {
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.55);
+
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => { quick-look-close-requested(); }
+            }
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 320px;
+                height: 140px;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    clicked => { }
+                }
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    alignment: center;
+                    Text {
+                        text: quick-look-name;
+                        color: Palette.foreground;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "Space or Esc to close";
+                        color: Theme.dim-text;
+                        horizontal-alignment: center;
                     }
                 }
             }
