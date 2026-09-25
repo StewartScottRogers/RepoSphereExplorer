@@ -1144,7 +1144,25 @@ impl App {
         self.load_contents_for_selected();
     }
 
+    /// Cancels the file view the service may still be parsing, if one is
+    /// pending, telling the service itself rather than only dropping this
+    /// front end's own receiver (#718): without this, moving through a
+    /// folder of large files with the arrow key left one queued to parse
+    /// for every row passed over, since only the reply the front end had
+    /// stopped waiting for was ever discarded. Returns whether anything was
+    /// pending to cancel.
+    fn cancel_pending_file(&mut self) -> bool {
+        let cancelled = self.pending_file.take().is_some();
+        if cancelled && let Some(path) = self.pending_file_path.take() {
+            let _ = spawn_request(Request::Cancel {
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+        cancelled
+    }
+
     fn load_file_view(&mut self) {
+        self.cancel_pending_file();
         let Some(entry) = self.contents.get(self.contents_selected) else {
             self.file_view = None;
             self.pending_file = None;
@@ -2831,7 +2849,7 @@ impl App {
             return;
         }
         let cancelled = self.pending_contents.take().is_some()
-            | self.pending_file.take().is_some()
+            | self.cancel_pending_file()
             | self.pending_operation.take().is_some()
             | self.pending_open.take().is_some();
         self.pending_reselect = None;
@@ -7699,6 +7717,52 @@ mod tests {
             ),
             other => panic!("a failed request must still leave something to show: {other:?}"),
         }
+    }
+
+    /// #718: holding Down through a folder used to queue a parse for every
+    /// row passed over, since only this front end's own receiver for the
+    /// abandoned row was ever dropped - the service kept working on it
+    /// regardless. Moving the selection on before the first row's view
+    /// answers must replace the pending request rather than merely losing
+    /// track of it.
+    #[test]
+    fn moving_the_selection_before_the_previous_view_answered_replaces_the_pending_request() {
+        let root = notional_root("cancel-on-move");
+        let mut app = app_showing(&root, &[("a.txt", false), ("b.txt", false)]);
+        app.load_file_view();
+        let first_path = app.pending_file_path.clone();
+        assert!(
+            first_path.is_some(),
+            "selecting a row starts a pending file view"
+        );
+
+        app.move_down_in_contents();
+
+        assert_ne!(
+            app.pending_file_path, first_path,
+            "the new selection's path replaces the abandoned one's"
+        );
+        assert!(
+            app.pending_file.is_some(),
+            "the new selection still has its own pending file view"
+        );
+    }
+
+    #[test]
+    fn cancel_pending_file_reports_whether_anything_was_pending() {
+        let root = notional_root("cancel-pending-file");
+        let mut app = app_showing(&root, &[("a.txt", false)]);
+        assert!(!app.cancel_pending_file(), "nothing was pending yet");
+
+        app.load_file_view();
+        assert!(app.pending_file.is_some());
+
+        assert!(
+            app.cancel_pending_file(),
+            "a pending file view was cancelled"
+        );
+        assert!(app.pending_file.is_none());
+        assert!(app.pending_file_path.is_none());
     }
 
     #[test]
