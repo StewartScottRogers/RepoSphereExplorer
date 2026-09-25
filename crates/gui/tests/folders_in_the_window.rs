@@ -7,9 +7,10 @@
 //! which focus scope holds the keyboard when they press an arrow key,
 //! and whether a pixel in the tree reaches the row it is drawn on.
 //!
-//! `main`'s `wire_rows`, `wire_commands` and `wire_editor` are private,
-//! so the wiring below is a copy of them. That is a hole worth naming: a
-//! defect in `main`'s own wiring cannot be seen from here.
+//! The window below is wired with `gui::wire_callbacks` - the same
+//! function `main` calls - rather than a copy of `wire_rows`,
+//! `wire_commands` and `wire_editor`, so a defect in the wiring a reader
+//! actually runs is visible from here too.
 //!
 //! The application talks to the service over its socket, and `App` has no
 //! public way to be handed a listing, so this file starts a service in a
