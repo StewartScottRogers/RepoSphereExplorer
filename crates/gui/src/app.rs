@@ -3119,7 +3119,48 @@ impl App {
     }
 
     /// Asks for confirmation before deleting the selected contents row.
+    ///
+    /// A y/n confirmation cannot be answered while the editor holds the
+    /// keyboard - `CodeEditor` takes it the moment it opens, and treats
+    /// `y`/`n` as ordinary typing (#726). So a delete that names the very
+    /// file open in the editor - reachable only through a mouse route
+    /// such as the row menu or File > Delete, never the Delete key - is
+    /// answered immediately here instead of through [`Mode::ConfirmDelete`]:
+    /// refused, the way #619 refuses to close a pinned window over
+    /// unsaved changes, or carried out at once with the editor closed
+    /// behind it.
     pub fn request_delete(&mut self) {
+        if let Some(edit) = &self.editing_file {
+            if !matches!(self.mode, Mode::Normal)
+                || self.found.is_some()
+                || self.all_repositories.is_some()
+            {
+                return;
+            }
+            let single_selection = self.selected_indices().len() == 1;
+            let Some((path, name)) = single_selection
+                .then(|| self.selected_entry_path())
+                .flatten()
+                .filter(|(path, _)| *path == edit.path)
+            else {
+                // Any other pane command stays blocked while an editor is
+                // open, for the reason `pane_command_allowed` documents.
+                return;
+            };
+            if self.edit_modified() {
+                self.report(
+                    "unsaved changes: save them, or discard the edit, before deleting this file",
+                );
+                return;
+            }
+            self.editing_file = None;
+            self.report(&format!("{name} was deleted, so its editor closed"));
+            self.pending_operation = Some(spawn_request(Request::Delete {
+                paths: vec![path.to_string_lossy().into_owned()],
+            }));
+            self.same_folder_reload = true;
+            return;
+        }
         // A prompt already on screen owns the keyboard. Delete inside a
         // rename box is a reader clearing the pre-filled name, not asking
         // to delete anything - and arming a confirmation there left the
@@ -7523,6 +7564,79 @@ mod tests {
 
         assert_eq!(app.prompt_text(), "Delete b.txt?  (y / n)");
         assert_eq!(app.status_text(), "Delete b.txt? y/n");
+    }
+
+    // ---- deleting the file open in the editor (#726) ---------------------
+
+    #[test]
+    fn deleting_the_file_open_in_the_editor_with_no_changes_closes_it() {
+        let mut app = app_with_editable_file();
+        app.begin_file_edit();
+        assert!(!app.edit_modified());
+
+        app.request_delete();
+
+        assert!(!app.editing_file(), "the editor should have closed");
+        assert!(
+            app.pending_operation.is_some(),
+            "the delete should have been sent, not merely armed"
+        );
+        assert!(
+            app.status_text().contains("was deleted"),
+            "the status bar should say why the editor closed; it said {:?}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn deleting_the_file_open_in_the_editor_with_unsaved_changes_is_refused() {
+        let mut app = app_with_editable_file();
+        app.begin_file_edit();
+        let mut clipboard = NoClipboard;
+        app.edit_key(&mut clipboard, "x", false, false, 20);
+        assert!(app.edit_modified());
+
+        app.request_delete();
+
+        assert!(
+            app.editing_file(),
+            "the editor should still be open: nothing must be lost"
+        );
+        assert!(
+            app.pending_operation.is_none(),
+            "nothing should have been deleted"
+        );
+        assert!(
+            app.status_text().contains("unsaved changes"),
+            "the status bar should refuse and say why; it said {:?}",
+            app.status_text()
+        );
+    }
+
+    #[test]
+    fn deleting_an_unrelated_row_stays_blocked_while_the_editor_is_open() {
+        // `pane_command_allowed`'s documented reason still holds for every
+        // other row: a confirmation armed behind the editor cannot be
+        // answered, so only the file the editor itself has open gets the
+        // special case above.
+        let mut app = app_with_four_rows();
+        app.select_content(0);
+        app.set_file_view(
+            "text",
+            serde_json::json!({ "content": "a", "truncated": false }),
+        );
+        app.begin_file_edit();
+        app.select_content(1);
+
+        app.request_delete();
+
+        assert!(app.pending_operation.is_none());
+        assert_eq!(
+            app.prompt_text(),
+            "",
+            "no confirmation should have been armed either - it would sit \
+             behind the editor's keyboard, unanswerable"
+        );
     }
 
     #[test]
