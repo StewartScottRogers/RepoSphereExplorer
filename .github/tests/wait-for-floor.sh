@@ -198,8 +198,13 @@ for path in sys.argv[1:]:
     if path.endswith("factory-shift.yml"):
         check("always waits for an open pull request", waits == "yes")
     else:
-        check("waits only when the event is building a work order",
+        # Both build paths wait, and only those: an issue labelled
+        # `work-order`, and an `@claude` mention, which arrives as an
+        # `issue_comment` on something that is not a pull request.
+        check("waits when a work-order issue builds",
               "github.event_name == 'issues'" in waits)
+        check("waits when an @claude mention on an issue builds",
+              "issue_comment" in waits and "issue.pull_request" in waits)
 PY
 if [ "$?" != 0 ]; then failed=1; fi
 
