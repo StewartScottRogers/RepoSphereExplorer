@@ -588,8 +588,14 @@ update manifest.
 
 ### 4.2 Auto-update, by many means
 
-In-app updater plus package managers: winget, Homebrew tap, Scoop,
-`cargo install`. Non-negotiable: **every update is signature-verified before it
+In-app updater plus package managers: winget, a Homebrew cask, Scoop,
+`cargo install`. A cask installed by address rather than a tap: a tap is a
+second repository holding a second copy of the index, kept in step with this
+one by hand, and the reader on macOS already gets new versions from the
+in-app updater above. The cost is real and stated - `brew upgrade` does not
+carry a cask installed that way - and it is the updater's job here, not
+Homebrew's. This said "Homebrew tap" until #720 built the cask instead
+(CLAUDE.md: change the guidance first). Non-negotiable: **every update is signature-verified before it
 is applied** (minisign or cosign, keys held as repository secrets), or the
 updater becomes a malware delivery channel. Updates stage and apply atomically,
 with a rollback path if the new binary fails to start.
