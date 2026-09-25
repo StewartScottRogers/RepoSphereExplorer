@@ -55,6 +55,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          # A shift always builds, and always branches from main, so it always
+          # waits. Its `0 3 * * *` schedule is the path that had no guard at
+          # all: day-shift checks before dispatching and the self-chain waits,
+          # but a scheduled run checked nothing and started a second shift
+          # beside an open pull request.
+          WAIT_FOR_PULL_REQUESTS: "yes"
       # The same native libraries ci.yml installs before it builds. Without
       # them `gui` does not compile, so the agent cannot run the checks its
       # work order names: shift 35177959275 spent its 150 turns on

@@ -51,6 +51,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          # Only a run that is going to *build* waits for open pull requests,
+          # because a shift branches from main and would conflict with one
+          # still open. A run answering a review or a comment must not wait:
+          # the pull request it is about cannot land until it has answered,
+          # so waiting for it would be waiting for itself.
+          WAIT_FOR_PULL_REQUESTS: ${{ github.event_name == 'issues' && 'yes' || 'no' }}
       # The same native libraries ci.yml installs before it builds. Without
       # them `gui` does not compile, so the agent cannot run the checks its
       # work order names: shift 35177959275 spent its 150 turns on

@@ -42,6 +42,10 @@ check() { # description, expected, actual
 stub="${work}/stub.sh"
 cat > "${stub}" <<STUB
 gh() {
+  if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
+    printf '%s' "\${PR_COUNT:-0}"
+    return 0
+  fi
   if [ "\$1" = "run" ] && [ "\$2" = "list" ]; then
     local workflow=""
     while [ "\$#" -gt 0 ]; do
@@ -79,6 +83,8 @@ run() { # run_id, JSON for claude.yml, JSON for factory-shift.yml, clears-at
   CLAUDE_JSON="$2" SHIFT_JSON="$3" SHIFT_CLEAR_JSON="[]" SHIFT_CLEARS_AT="${4:-1000000}" \
     WORK="${work}" REPO=o/r RUN_ID="$1" POLL_SECONDS=0 MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}" \
     GH_TOKEN="${GH_TOKEN_FOR_RUN-stub-token}" \
+    PR_COUNT="${PR_COUNT:-0}" \
+    WAIT_FOR_PULL_REQUESTS="${WAIT_FOR_PULL_REQUESTS:-yes}" \
     bash "${stub}" > "${work}/log" 2>&1
   echo "$?"
 }
@@ -122,6 +128,31 @@ check "and says which environment variable is missing" "1" \
   "$(grep -c "::error::Neither GH_TOKEN nor GITHUB_TOKEN" "${work}/log")"
 check "does not claim the floor was clear" "0" "$(grep -c "goes now" "${work}/log")"
 
+# A shift branches from main as it is when it starts, so one that starts
+# beside an open pull request produces a branch without it and then
+# conflicts with it. `day-shift.yml` checks before dispatching and the
+# shift's self-chain waits, but `factory-shift.yml`'s own `0 3 * * *`
+# schedule checked nothing: on 2026-09-24 the 08:04 scheduled shift opened
+# #769 while #768 had been open since the night before.
+echo "== an open pull request holds a build back, even on a clear floor =="
+check "waits rather than starting a second shift" "1" \
+  "$(MAX_ATTEMPTS=2 PR_COUNT=1 run 20 '[]' '[]')"
+check "says what it is waiting for" "yes" \
+  "$(grep -q "pull request(s) are open" "${work}/log" && echo yes || echo no)"
+check "and never claims the floor was clear to go" "0" \
+  "$(grep -c "goes now" "${work}/log")"
+
+echo "== with nothing open, a build goes as before =="
+check "exits 0" "0" "$(PR_COUNT=0 run 20 '[]' '[]')"
+
+# A run answering a review must not wait for the pull request it is
+# reviewing: that pull request cannot land until the review is answered, so
+# waiting for it would be waiting for itself.
+echo "== a run that is not building never waits for a pull request =="
+check "exits 0 even with one open" "0" \
+  "$(PR_COUNT=1 WAIT_FOR_PULL_REQUESTS=no run 20 '[]' '[]')"
+check "and says it went" "1" "$(grep -c "goes now" "${work}/log")"
+
 echo "== gives up loudly rather than waiting forever =="
 result="$(MAX_ATTEMPTS=2 run 20 '[]' "${run_in_progress}" 99)"
 check "exits non-zero" "1" "${result}"
@@ -158,6 +189,17 @@ for path in sys.argv[1:]:
     permissions = document.get("permissions", {})
     check("can read Actions runs to see the rest of the floor",
           permissions.get("actions") in ("read", "write"))
+
+    # A shift always builds and must always wait. claude.yml both builds
+    # (an `issues` event carrying the work-order label) and answers reviews
+    # and comments, and only the first may wait - the second would be
+    # waiting for the pull request it is about to answer.
+    waits = str(env.get("WAIT_FOR_PULL_REQUESTS", ""))
+    if path.endswith("factory-shift.yml"):
+        check("always waits for an open pull request", waits == "yes")
+    else:
+        check("waits only when the event is building a work order",
+              "github.event_name == 'issues'" in waits)
 PY
 if [ "$?" != 0 ]; then failed=1; fi
 
