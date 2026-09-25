@@ -711,8 +711,24 @@ const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 /// with - and caches the plugin's answer once it arrives uncancelled
 /// (GUIDANCE.md §3.3).
 fn view_file_within(path: &Path, limit: std::time::Duration) -> io::Result<Response> {
+    // A folder's view is never cached, only a file's.
+    //
+    // GUIDANCE.md §3.3 asks for parses and thumbnails to be cached by
+    // (path, modification time, size), and a file's content is exactly what
+    // that key describes. A folder's view is not a parse of the folder: it
+    // is what the folder plugins read live from it - the branch, the
+    // remote, the working tree, the last activity. Switching branch
+    // rewrites `.git/HEAD` and changes neither the modification time nor
+    // the size of the folder itself, so a cached folder view survives the
+    // very change it is meant to report, and Refresh went on showing the
+    // branch the reader had left (the review of #768, and the contract
+    // `assert_refresh` has asserted since #675).
+    //
+    // Reading it live every time is also what rule 8 means by detect
+    // rather than drive.
+    let cacheable = !fs::metadata(path).is_ok_and(|entry| entry.is_dir());
     let key = view_cache::key_for(path)?;
-    if let Some(cached) = view_cache::lookup(&key) {
+    if cacheable && let Some(cached) = view_cache::lookup(&key) {
         return Ok(cached);
     }
 
@@ -742,7 +758,7 @@ fn view_file_within(path: &Path, limit: std::time::Duration) -> io::Result<Respo
         }
         match receiver.recv_timeout(remaining.min(CANCEL_POLL_INTERVAL)) {
             Ok(result) => {
-                if let Ok(response @ Response::FileView { .. }) = &result {
+                if cacheable && let Ok(response @ Response::FileView { .. }) = &result {
                     view_cache::store(key, response.clone());
                 }
                 return result;
@@ -5971,6 +5987,45 @@ Mo8hvqlfr/IR
             }
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A folder's view is read live, not served from the cache (#768).
+    ///
+    /// Switching branch rewrites `.git/HEAD` and changes neither the
+    /// modification time nor the size of the repository folder itself, so a
+    /// view cached by (path, modification time, size) survives the very
+    /// change it exists to report: Refresh went on showing the branch the
+    /// reader had left. A file's parse is cached, because its content is
+    /// what that key describes; a folder's facts are read from it every
+    /// time.
+    #[test]
+    fn a_repository_s_branch_is_read_again_rather_than_served_from_the_cache() {
+        let _journal = journal_to_themselves();
+        let root = scratch();
+        let made = std::process::Command::new("git")
+            .args(["init", "--quiet", "--initial-branch", "main", "."])
+            .current_dir(&root)
+            .status()
+            .expect("git should be on PATH");
+        assert!(made.success(), "git init should make the fixture");
+
+        let says_branch = |name: &str| {
+            let response = super::view_file(&root).expect("the folder has a view");
+            format!("{response:?}").contains(name)
+        };
+
+        assert!(says_branch("main"), "the fixture starts on main");
+
+        // What a branch switch does to the folder: `.git/HEAD` is rewritten
+        // and the folder's own metadata is untouched, which is exactly why
+        // the cache key could not see it.
+        std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/other\n")
+            .expect("HEAD is rewritten");
+
+        assert!(
+            says_branch("other"),
+            "the branch must be read again, not served from the cache"
+        );
     }
 
     /// #749's acceptance check: what a second service does when one is
