@@ -14,7 +14,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::io::Read as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The public key this build trusts. The matching private key is held only
 /// as a GitHub Actions secret and never appears in this repository;
@@ -354,11 +354,64 @@ pub fn apply_atomic(bytes: &[u8], target_path: &Path) -> io::Result<()> {
     ));
     fs::write(&temp_path, bytes)?;
     set_executable(&temp_path)?;
+    // Windows will not let a running image be written over, so a binary
+    // updating itself could never finish: `--self-update` reported
+    // "update failed: Access is denied. (os error 5)" every time, and the
+    // retry below just retried a permanent error. It *will* let a running
+    // image be renamed, so the old one is moved aside first and the new one
+    // takes its place.
+    let aside = move_aside(target_path)?;
     let result = rename_with_retry(&temp_path, target_path);
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
+    match (&result, aside) {
+        (Ok(()), Some(aside)) => {
+            // Still running, so this fails now and the file is left for the
+            // next start to clear. Harmless either way: it is not on the
+            // path anything looks at.
+            let _ = fs::remove_file(aside);
+        }
+        (Err(_), Some(aside)) => {
+            // Put the reader's working binary back rather than leaving them
+            // with neither.
+            let _ = fs::rename(&aside, target_path);
+            let _ = fs::remove_file(&temp_path);
+        }
+        (Err(_), None) => {
+            let _ = fs::remove_file(&temp_path);
+        }
+        (Ok(()), None) => {}
     }
     result
+}
+
+/// Moves an existing `target_path` out of the way, returning where it went.
+///
+/// `None` when there was nothing there to move. The name is deliberately
+/// beside the original rather than in a temporary directory, so the rename
+/// stays on one filesystem and cannot half-succeed.
+fn move_aside(target_path: &Path) -> io::Result<Option<PathBuf>> {
+    // Only a regular file is moved. Anything else there - a directory, most
+    // likely somebody's mistake - is left exactly where it is, so the
+    // rename below fails and the caller is told, rather than having their
+    // directory quietly carried off to one side.
+    if !target_path.is_file() {
+        return Ok(None);
+    }
+    let aside = target_path.with_file_name(format!(
+        ".{}.replaced",
+        target_path.file_name().map_or_else(
+            || "binary".into(),
+            |name| name.to_string_lossy().into_owned()
+        )
+    ));
+    // A previous update's copy, left because that binary was still running.
+    let _ = fs::remove_file(&aside);
+    match fs::rename(target_path, &aside) {
+        Ok(()) => Ok(Some(aside)),
+        // Nothing to move after all - something removed it between the
+        // check and the rename.
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 /// Retries `fs::rename` a few times with a short backoff before giving up.
@@ -1385,5 +1438,86 @@ mod tests {
             decide(&manifest, "tui", current_target(), "0.6.0"),
             Ok(Decision::UpToDate)
         ));
+    }
+    /// Not a test of anything on its own: somewhere for
+    /// `a_binary_is_replaced_while_it_is_running` to point a copy of this
+    /// binary, so the copy stays running - and its image stays mapped -
+    /// while its file is replaced underneath it. It returns at once unless
+    /// the environment asks it to wait.
+    #[test]
+    fn stays_running_when_asked() {
+        if std::env::var_os("RSE_UPDATER_STAY_RUNNING").is_some() {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        }
+    }
+
+    /// The fault that broke self-update on Windows (#750): a binary cannot
+    /// replace its own file while it is running.
+    ///
+    /// `--self-update` reported "update failed: Access is denied. (os error
+    /// 5)" on every Windows run since at least 16 September, and the nightly
+    /// distribution check went red with it. The retry loop made it look
+    /// transient; it never was. Windows refuses to write over a running
+    /// image and permits renaming one, so the old binary is moved aside
+    /// first.
+    ///
+    /// Driven against a *running* process rather than an idle file, because
+    /// an idle file could always be replaced and would have passed
+    /// throughout.
+    #[test]
+    fn a_binary_is_replaced_while_it_is_running() {
+        let dir = std::env::temp_dir().join(format!(
+            "rse-updater-running-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A real executable to run: this test binary itself, copied. Asked
+        // to run a filter that matches nothing, so it starts, does nothing
+        // and waits on nothing - what matters is that the image is mapped
+        // while the replacement happens.
+        let running = dir.join(if cfg!(windows) {
+            "victim.exe"
+        } else {
+            "victim"
+        });
+        std::fs::copy(std::env::current_exe().unwrap(), &running).unwrap();
+        super::set_executable(&running).unwrap();
+
+        let mut child = std::process::Command::new(&running)
+            .args(["--exact", "tests::stays_running_when_asked", "--nocapture"])
+            .env("RSE_UPDATER_STAY_RUNNING", "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the copied binary runs");
+
+        // Long enough to be genuinely running, because an image that is
+        // not mapped yet proves nothing - which is exactly how the first
+        // version of this test passed against the very fault it exists for.
+        // The copy waits thirty seconds, so this is not a race.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the copy must still be running while its file is replaced"
+        );
+
+        let replaced = super::apply_atomic(b"the new binary", &running);
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(
+            replaced.is_ok(),
+            "a running binary must still be replaceable: {replaced:?}"
+        );
+        assert_eq!(
+            std::fs::read(&running).unwrap(),
+            b"the new binary",
+            "and what is at the path afterwards is the new one"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
