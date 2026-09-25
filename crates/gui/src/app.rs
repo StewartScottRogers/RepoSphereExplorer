@@ -2928,15 +2928,19 @@ impl App {
                 .contains(&self.filter.text.to_lowercase())
     }
 
-    /// Puts the selection back on the first row after a filter (#582)
-    /// changes what the pane is showing: the entry the old index pointed
-    /// to may now be a different row, or gone.
-    fn reset_selection_after_filter(&mut self) {
-        self.content_selected = 0;
-        self.anchor = 0;
+    /// Puts the selection back on `previous` after a filter (#582) changes
+    /// what the pane is showing, the same by-name re-find
+    /// [`Self::sort_by_column`] uses: the old index may now point at a
+    /// different row. Falls back to the first row when `previous` is gone
+    /// - filtered out, or there was no earlier selection.
+    fn reset_selection_after_filter(&mut self, previous: Option<&str>) {
+        self.content_selected = previous
+            .and_then(|name| self.contents.iter().position(|entry| entry.name == name))
+            .unwrap_or(0);
+        self.anchor = self.content_selected;
         self.selection.clear();
         if !self.contents.is_empty() {
-            self.selection.insert(0);
+            self.selection.insert(self.content_selected);
         }
         self.load_file_view();
     }
@@ -3436,9 +3440,13 @@ impl App {
     /// keyboard; a no-op otherwise.
     pub fn backspace(&mut self) {
         if matches!(self.mode, Mode::Normal) && self.filter.focused {
+            let selected = self
+                .contents
+                .get(self.content_selected)
+                .map(|entry| entry.name.clone());
             self.filter.text.pop();
             self.recompute_contents();
-            self.reset_selection_after_filter();
+            self.reset_selection_after_filter(selected.as_deref());
             return;
         }
         if matches!(self.mode, Mode::Switcher { .. }) {
@@ -3560,9 +3568,13 @@ impl App {
         if !typeable(c) {
             return;
         }
+        let selected = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
         self.filter.text.push(c);
         self.recompute_contents();
-        self.reset_selection_after_filter();
+        self.reset_selection_after_filter(selected.as_deref());
     }
 
     /// Whether the selected contents row previewed as an archive. The
@@ -5696,18 +5708,28 @@ impl App {
         if !matches!(self.mode, Mode::Normal) || self.found.is_some() {
             return;
         }
+        let selected = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
         self.filter.changed_only = true;
         self.focus = Pane::Contents;
         self.recompute_contents();
-        self.reset_selection_after_filter();
+        self.reset_selection_after_filter(selected.as_deref());
     }
 
     /// "clear", or Escape in the Contents pane: drops every active filter
-    /// (#582) and restores the listing the service last sent.
+    /// (#582) and restores the listing the service last sent. The
+    /// selection stays on the same entry, the way clearing an accidental
+    /// keystroke should - not back at the top of the full listing.
     pub fn clear_filters(&mut self) {
+        let selected = self
+            .contents
+            .get(self.content_selected)
+            .map(|entry| entry.name.clone());
         self.filter = Filter::default();
         self.recompute_contents();
-        self.reset_selection_after_filter();
+        self.reset_selection_after_filter(selected.as_deref());
     }
 
     /// Whether a filter (#582) is narrowing the Contents pane, or has the
@@ -11842,6 +11864,56 @@ third",
 
         app.clear_filters();
         assert_eq!(app.content_rows().len(), 3);
+    }
+
+    #[test]
+    fn clearing_a_filter_keeps_the_same_entry_selected_not_the_first_row() {
+        // "zebra.txt" sorts last, so a reset to row 0 would land back on
+        // "alpha.txt" - the bug this proves against, since narrowing to a
+        // set that still contains zebra.txt and then clearing the filter
+        // should leave the reader where they were, by identity.
+        let mut app = App::new(std::env::temp_dir());
+        app.apply_contents_result(
+            &[],
+            Ok(Response::Directory {
+                entries: entries(&[
+                    ("alpha.txt", false),
+                    ("boron.txt", false),
+                    ("zebra.txt", false),
+                ]),
+            }),
+        );
+        let zebra = app
+            .content_rows()
+            .iter()
+            .position(|row| row.name == "zebra.txt")
+            .expect("zebra.txt is listed");
+        app.select_content(zebra);
+
+        app.begin_filter();
+        app.handle_key_text("a");
+        assert_eq!(
+            app.content_rows()
+                .into_iter()
+                .map(|row| row.name)
+                .collect::<Vec<_>>(),
+            vec!["alpha.txt".to_owned(), "zebra.txt".to_owned()],
+            "the filter should narrow to the two names holding an 'a', \
+             excluding boron.txt"
+        );
+        assert_eq!(
+            app.content_rows()[app.content_selected()].name,
+            "zebra.txt",
+            "narrowing the filter should not move the selection off zebra.txt"
+        );
+
+        app.clear_filters();
+        assert_eq!(
+            app.content_rows()[app.content_selected()].name,
+            "zebra.txt",
+            "clearing the filter should leave the reader on the entry they \
+             had selected, not reset to the first row of the full listing"
+        );
     }
 
     #[test]
