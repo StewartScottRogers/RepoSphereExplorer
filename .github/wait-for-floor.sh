@@ -59,6 +59,35 @@ print(json.dumps(merged))
 ' "$@"
 }
 
+# How many pull requests are open and waiting to land. A shift branches from
+# `main` as it is when the shift starts, so starting one while a pull request
+# is still open produces a branch without it that then conflicts with it -
+# which is why `day-shift.yml` refuses to dispatch while one is open, and why
+# the shift's own self-chain waits.
+#
+# Neither guard covers `factory-shift.yml`'s own `0 3 * * *` schedule, and a
+# scheduled run checks nothing: on 2026-09-24 the 08:04 scheduled shift opened
+# #769 while #768 had been open since the night before. `claude.yml`'s
+# label-triggered path has never had such a guard at all. Both call this
+# script, so the rule lives here once.
+#
+# A listing that cannot be made is not an empty floor, for the same reason as
+# below.
+open_pull_requests() {
+  local count
+  if ! count=$(gh pr list --repo "${REPO}" --label auto-merge --state open     --json number --jq 'length'); then
+    echo "::error::Could not list open pull requests; refusing to treat that as none."
+    return 1
+  fi
+  case "${count}" in
+    ''|*[!0-9]*)
+      echo "::error::Asked how many pull requests are open and got '${count}'."
+      return 1
+      ;;
+  esac
+  printf '%s' "${count}"
+}
+
 wait_for_floor() {
   : "${REPO:?}" "${RUN_ID:?}"
   # `gh` needs a token: Actions does not put one in the environment on its
@@ -92,6 +121,19 @@ wait_for_floor() {
 
     ahead=$(runs_across_the_floor "${pages[@]}" | oldest_unfinished_run_ahead_of_us)
     if [ -z "${ahead}" ]; then
+      # Nothing is building. One more question before going: is anything
+      # waiting to land? Skipped where the caller is not a build - a review
+      # answering a comment has nothing to branch from and must not wait for
+      # the pull request it is reviewing.
+      if [ "${WAIT_FOR_PULL_REQUESTS:-yes}" = "yes" ]; then
+        local open
+        open=$(open_pull_requests) || return 1
+        if [ "${open}" -gt 0 ]; then
+          echo "Floor is clear but ${open} pull request(s) are open; waiting (attempt ${attempt}/${max_attempts})..."
+          sleep "${poll_seconds}"
+          continue
+        fi
+      fi
       echo "Floor is clear: run ${RUN_ID} goes now."
       return 0
     fi

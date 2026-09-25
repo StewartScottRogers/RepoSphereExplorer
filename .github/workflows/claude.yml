@@ -51,6 +51,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          # Only a run that is going to *build* waits for open pull
+          # requests, because it branches from main and would conflict with
+          # one still open. A run answering a review, or a comment on a pull
+          # request, must not wait: that pull request cannot land until it
+          # has been answered, so waiting for it would be waiting for itself.
+          #
+          # Two triggers build, not one (GUIDANCE.md §1, Assembly): an issue
+          # labelled `work-order`, and an `@claude` mention. The mention
+          # arrives as `issue_comment`, the same event as a comment on a pull
+          # request under review - and `github.event.issue.pull_request` is
+          # what tells them apart, present only when the comment is on a pull
+          # request. Keying on `event_name` alone left the mention path
+          # exactly as unguarded as before.
+          WAIT_FOR_PULL_REQUESTS: >-
+            ${{ (github.event_name == 'issues'
+                 || (github.event_name == 'issue_comment'
+                     && !github.event.issue.pull_request))
+                && 'yes' || 'no' }}
       # The same native libraries ci.yml installs before it builds. Without
       # them `gui` does not compile, so the agent cannot run the checks its
       # work order names: shift 35177959275 spent its 150 turns on
