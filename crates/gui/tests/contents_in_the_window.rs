@@ -7,9 +7,10 @@
 //! listing, scrolled, clicked, sorted and typed at, with the application
 //! behind it deciding what the click meant.
 //!
-//! `main`'s `wire_rows`, `wire_commands` and `wire_content_operations` are
-//! private, so the wiring below is a copy of them. That is a hole worth
-//! naming: a defect in `main`'s own wiring cannot be seen from here.
+//! The window below is wired with `gui::wire_callbacks` - the same
+//! function `main` calls - rather than a copy of `wire_rows`,
+//! `wire_commands` and `wire_content_operations`, so a defect in the
+//! wiring a reader actually runs is visible from here too.
 
 use gui::app::App;
 use gui::{ContentRow, MainWindow, Theme, sync_ui};

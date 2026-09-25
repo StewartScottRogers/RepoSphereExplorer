@@ -694,6 +694,49 @@ pub fn name_the_window() -> Result<(), slint::PlatformError> {
     slint::set_xdg_app_id(XDG_APP_ID)
 }
 
+thread_local! {
+    /// A suite's record of which window-level command each of its
+    /// keystrokes reached, or `None` when nobody is recording. Kept as a
+    /// thread-local rather than threaded through every wiring closure's
+    /// signature, so production callers pay nothing: `note_command_for_test`
+    /// is a single `if let Some` against `None` when no suite has called
+    /// [`begin_command_log_for_test`].
+    static COMMAND_LOG: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// Starts recording the name of every window-level command
+/// [`wire_callbacks`] dispatches, for a suite asking not just what a
+/// keystroke did but which handler it reached - see
+/// `crates/gui/tests/editor_keyboard.rs`.
+pub fn begin_command_log_for_test() {
+    COMMAND_LOG.with(|log| *log.borrow_mut() = Some(Vec::new()));
+}
+
+/// The commands recorded since [`begin_command_log_for_test`], in order.
+#[must_use]
+pub fn command_log_for_test() -> Vec<String> {
+    COMMAND_LOG.with(|log| log.borrow().clone().unwrap_or_default())
+}
+
+/// Clears the recorded commands without ending the recording.
+pub fn clear_command_log_for_test() {
+    COMMAND_LOG.with(|log| {
+        if let Some(commands) = log.borrow_mut().as_mut() {
+            commands.clear();
+        }
+    });
+}
+
+/// Notes that `command` reached its window-level handler, when a suite is
+/// recording; a no-op otherwise, which is every reader's run.
+fn note_command_for_test(command: impl Into<String>) {
+    COMMAND_LOG.with(|log| {
+        if let Some(commands) = log.borrow_mut().as_mut() {
+            commands.push(command.into());
+        }
+    });
+}
+
 /// Wires every callback the window has to the application behind it.
 ///
 /// In the library rather than in `main` so that a test can wire a real
@@ -1686,11 +1729,23 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
                 }
             });
         }};
+        ($setter:ident, $method:ident, $name:literal) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move |delta| {
+                note_command_for_test(format!("{} {delta}", $name));
+                let mut app = app.borrow_mut();
+                app.$method(delta);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
     }
 
-    on_delta_event!(on_selection_moved, move_selection);
+    on_delta_event!(on_selection_moved, move_selection, "move");
     on_delta_event!(on_selection_extended, extend_selection_by);
-    on_delta_event!(on_pane_cycled, cycle_focus);
+    on_delta_event!(on_pane_cycled, cycle_focus, "cycle");
     on_delta_event!(on_content_sort_requested, sort_by_column);
     on_delta_event!(on_breadcrumb_requested, navigate_to_breadcrumb);
     on_delta_event!(on_message_focus_requested, move_message_focus);
@@ -1700,6 +1755,7 @@ fn wire_rows(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         let app = app.clone();
         let ui_weak = ui.as_weak();
         ui.on_edge_requested(move |last| {
+            note_command_for_test(format!("edge {last}"));
             let mut app = app.borrow_mut();
             app.select_edge(last != 0);
             if let Some(ui) = ui_weak.upgrade() {
@@ -1735,20 +1791,32 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
                 }
             });
         }};
+        ($setter:ident, $method:ident, $name:literal) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                note_command_for_test($name);
+                let mut app = app.borrow_mut();
+                app.$method();
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
     }
 
-    on_event!(on_cancel_requested, cancel_pending);
-    on_event!(on_delete_requested, request_delete);
+    on_event!(on_cancel_requested, cancel_pending, "cancel");
+    on_event!(on_delete_requested, request_delete, "delete");
     on_event!(on_quick_look_close_requested, close_quick_look);
-    on_event!(on_return_pressed, handle_return);
-    on_event!(on_backspace_pressed, backspace);
-    on_event!(on_parent_requested, navigate_to_parent);
-    on_event!(on_back_requested, go_back);
-    on_event!(on_forward_requested, go_forward);
+    on_event!(on_return_pressed, handle_return, "return");
+    on_event!(on_backspace_pressed, backspace, "backspace");
+    on_event!(on_parent_requested, navigate_to_parent, "parent");
+    on_event!(on_back_requested, go_back, "back");
+    on_event!(on_forward_requested, go_forward, "forward");
     on_event!(on_find_requested, begin_find);
     wire_filter_actions(ui, app);
-    on_event!(on_clipboard_copy_requested, copy_to_clipboard);
-    on_event!(on_clipboard_cut_requested, cut_to_clipboard);
+    on_event!(on_clipboard_copy_requested, copy_to_clipboard, "copy");
+    on_event!(on_clipboard_cut_requested, cut_to_clipboard, "cut");
     {
         let app = app.clone();
         let ui_weak = ui.as_weak();
@@ -1770,6 +1838,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         let ui_weak = ui.as_weak();
         let mut clipboard = clipboard();
         ui.on_clipboard_paste_requested(move || {
+            note_command_for_test("paste");
             let mut app = app.borrow_mut();
             app.paste(&mut clipboard);
             if let Some(ui) = ui_weak.upgrade() {
@@ -1777,9 +1846,9 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             }
         });
     }
-    on_event!(on_refresh_requested, refresh);
-    on_event!(on_path_edit_requested, begin_path_edit);
-    on_event!(on_edit_requested, begin_file_edit);
+    on_event!(on_refresh_requested, refresh, "refresh");
+    on_event!(on_path_edit_requested, begin_path_edit, "path-edit");
+    on_event!(on_edit_requested, begin_file_edit, "edit");
 
     {
         // Save takes the editor's current text from the UI first: the user
@@ -1787,6 +1856,7 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
         let app = app.clone();
         let ui_weak = ui.as_weak();
         ui.on_save_requested(move || {
+            note_command_for_test("save");
             let mut app = app.borrow_mut();
             if let Some(ui) = ui_weak.upgrade() {
                 // Only the plain box holds text the application has not
@@ -1801,11 +1871,11 @@ fn wire_commands(ui: &MainWindow, app: &Rc<RefCell<App>>) {
             }
         });
     }
-    on_event!(on_select_all_requested, select_all);
+    on_event!(on_select_all_requested, select_all, "select-all");
     on_event!(on_file_readme_open_requested, open_readme);
-    on_event!(on_undo_requested, undo);
-    on_event!(on_new_folder_requested, request_new_folder);
-    on_event!(on_new_file_requested, request_new_file);
+    on_event!(on_undo_requested, undo, "undo");
+    on_event!(on_new_folder_requested, request_new_folder, "new-folder");
+    on_event!(on_new_file_requested, request_new_file, "new-file");
     wire_window_chrome(ui, app);
 }
 
@@ -1966,9 +2036,21 @@ fn wire_content_operations(ui: &MainWindow, app: &Rc<RefCell<App>>) {
                 }
             });
         }};
+        ($setter:ident, $method:ident, $name:literal) => {{
+            let app = app.clone();
+            let ui_weak = ui.as_weak();
+            ui.$setter(move || {
+                note_command_for_test($name);
+                let mut app = app.borrow_mut();
+                app.$method();
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_ui(&ui, &app);
+                }
+            });
+        }};
     }
 
-    on_event!(on_content_rename_requested, request_rename);
+    on_event!(on_content_rename_requested, request_rename, "rename");
     on_event!(on_content_copy_requested, request_copy);
     on_event!(on_content_delete_requested, request_delete);
     on_event!(on_content_extract_requested, request_extract);
@@ -1987,6 +2069,7 @@ fn wire_content_operations(ui: &MainWindow, app: &Rc<RefCell<App>>) {
     let text_app = app.clone();
     let text_ui = ui.as_weak();
     ui.on_key_text(move |text| {
+        note_command_for_test(format!("type-ahead {text}"));
         let mut app = text_app.borrow_mut();
         app.handle_key_text(&text);
         if let Some(ui) = text_ui.upgrade() {
@@ -2475,8 +2558,30 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
 
 #[cfg(test)]
 mod tests {
-    use super::GeometryTracker;
+    use super::{
+        GeometryTracker, begin_command_log_for_test, clear_command_log_for_test,
+        command_log_for_test, note_command_for_test,
+    };
     use crate::settings::WindowGeometry;
+
+    #[test]
+    fn a_noted_command_is_recorded_only_once_a_suite_asked_for_it() {
+        // A window that never began recording - every reader's run - pays
+        // nothing: `note_command_for_test` is a no-op until a suite calls
+        // `begin_command_log_for_test`.
+        note_command_for_test("before recording began");
+        assert!(command_log_for_test().is_empty());
+
+        begin_command_log_for_test();
+        note_command_for_test("cancel");
+        note_command_for_test("save");
+        assert_eq!(command_log_for_test(), vec!["cancel", "save"]);
+
+        clear_command_log_for_test();
+        assert!(command_log_for_test().is_empty());
+        note_command_for_test("undo");
+        assert_eq!(command_log_for_test(), vec!["undo"]);
+    }
 
     const fn geometry(x: f32, maximized: bool) -> WindowGeometry {
         WindowGeometry {

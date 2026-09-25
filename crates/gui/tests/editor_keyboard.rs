@@ -8,22 +8,20 @@
 //! works while a file is open is settled entirely by the join between
 //! the two, and nothing in this crate has looked at the join.
 //!
-//! So: a real `MainWindow`, a real `App`, `wire_editor` for the
-//! surface's callbacks and a local copy of `main`'s window wiring for
-//! the rest, and then real `WindowEvent`s. Every window command is
-//! recorded, so a failure can say not just what happened but which
-//! handler made it happen.
+//! So: a real `MainWindow`, a real `App`, and `gui::wire_callbacks` - the
+//! same function `main` calls - rather than a copy of it. A copy would
+//! prove nothing about what a reader gets (rule 14): what a failure needs
+//! to say is not just what happened but which handler made it happen, so
+//! `gui::begin_command_log_for_test` records the name of every
+//! window-level command `wire_callbacks` itself dispatches.
 
 use gui::app::App;
-use gui::{MainWindow, sync_ui, wire_editor};
+use gui::{MainWindow, sync_ui};
 use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-
-/// What the window's own focus scope was asked to do, in order.
-type Log = Rc<RefCell<Vec<String>>>;
 
 /// A directory of this test's own.
 fn scratch(name: &str) -> PathBuf {
@@ -33,95 +31,8 @@ fn scratch(name: &str) -> PathBuf {
     directory
 }
 
-/// Wires the window's own commands the way `main`'s `wire_commands`
-/// does, and records every one of them.
-///
-/// A copy rather than a call because `wire_commands` lives in the
-/// binary; the three that matter here - cancel, save, undo - do the same
-/// thing to the same `App`, so what a test sees is what a reader gets.
-fn wire_window(ui: &MainWindow, app: &Rc<RefCell<App>>) -> Log {
-    let log: Log = Rc::new(RefCell::new(Vec::new()));
-
-    macro_rules! record {
-        ($setter:ident, $name:literal) => {{
-            let log = Rc::clone(&log);
-            ui.$setter(move || log.borrow_mut().push($name.to_owned()));
-        }};
-    }
-    macro_rules! record_and_do {
-        ($setter:ident, $name:literal, $method:ident) => {{
-            let log = Rc::clone(&log);
-            let app = Rc::clone(app);
-            let ui_weak = ui.as_weak();
-            ui.$setter(move || {
-                log.borrow_mut().push($name.to_owned());
-                let mut app = app.borrow_mut();
-                app.$method();
-                if let Some(ui) = ui_weak.upgrade() {
-                    sync_ui(&ui, &app);
-                }
-            });
-        }};
-    }
-
-    record_and_do!(on_cancel_requested, "cancel", cancel_pending);
-    record_and_do!(on_undo_requested, "undo", undo);
-    record_and_do!(on_edit_requested, "edit", begin_file_edit);
-    record_and_do!(on_refresh_requested, "refresh", refresh);
-    record!(on_delete_requested, "delete");
-    record!(on_content_rename_requested, "rename");
-    record!(on_new_file_requested, "new-file");
-    record!(on_new_folder_requested, "new-folder");
-    record!(on_back_requested, "back");
-    record!(on_forward_requested, "forward");
-    record!(on_parent_requested, "parent");
-    record!(on_path_edit_requested, "path-edit");
-    record!(on_return_pressed, "return");
-    record!(on_backspace_pressed, "backspace");
-    record!(on_select_all_requested, "select-all");
-    record!(on_clipboard_copy_requested, "copy");
-    record!(on_clipboard_cut_requested, "cut");
-    record!(on_clipboard_paste_requested, "paste");
-
-    {
-        // Save, exactly as `main` wires it.
-        let log = Rc::clone(&log);
-        let app = Rc::clone(app);
-        let ui_weak = ui.as_weak();
-        ui.on_save_requested(move || {
-            log.borrow_mut().push("save".to_owned());
-            let mut app = app.borrow_mut();
-            if let Some(ui) = ui_weak.upgrade() {
-                app.set_edit_text(&ui.get_edit_text());
-            }
-            app.save_file_edit();
-            if let Some(ui) = ui_weak.upgrade() {
-                sync_ui(&ui, &app);
-            }
-        });
-    }
-    {
-        let log = Rc::clone(&log);
-        ui.on_selection_moved(move |delta| log.borrow_mut().push(format!("move {delta}")));
-    }
-    {
-        let log = Rc::clone(&log);
-        ui.on_pane_cycled(move |delta| log.borrow_mut().push(format!("cycle {delta}")));
-    }
-    {
-        let log = Rc::clone(&log);
-        ui.on_edge_requested(move |last| log.borrow_mut().push(format!("edge {last}")));
-    }
-    {
-        let log = Rc::clone(&log);
-        ui.on_key_text(move |text| log.borrow_mut().push(format!("type-ahead {text}")));
-    }
-
-    log
-}
-
 /// The window with `demo.rs` selected but the editor closed.
-fn browsing(name: &str, text: &str) -> (MainWindow, Rc<RefCell<App>>, Log) {
+fn browsing(name: &str, text: &str) -> (MainWindow, Rc<RefCell<App>>) {
     let directory = scratch(name);
     std::fs::write(directory.join("demo.rs"), text).expect("the fixture is written");
 
@@ -136,18 +47,18 @@ fn browsing(name: &str, text: &str) -> (MainWindow, Rc<RefCell<App>>, Log) {
     }
 
     let ui = MainWindow::new().expect("the window should build");
-    wire_editor(&ui, &app);
-    let log = wire_window(&ui, &app);
+    gui::begin_command_log_for_test();
+    gui::wire_callbacks(&ui, &app);
     sync_ui(&ui, &app.borrow());
     ui.show().expect("the window should show");
     ui.window()
         .dispatch_event(WindowEvent::WindowActiveChanged(true));
-    (ui, app, log)
+    (ui, app)
 }
 
 /// The same window, with the file open in the editor.
-fn editing(name: &str, text: &str) -> (MainWindow, Rc<RefCell<App>>, Log) {
-    let (ui, app, log) = browsing(name, text);
+fn editing(name: &str, text: &str) -> (MainWindow, Rc<RefCell<App>>) {
+    let (ui, app) = browsing(name, text);
     {
         let mut app = app.borrow_mut();
         app.begin_file_edit();
@@ -157,7 +68,7 @@ fn editing(name: &str, text: &str) -> (MainWindow, Rc<RefCell<App>>, Log) {
         );
     }
     sync_ui(&ui, &app.borrow());
-    (ui, app, log)
+    (ui, app)
 }
 
 /// A real keystroke, through the window, with no modifier held.
@@ -239,10 +150,6 @@ fn click_pane_command(ui: &MainWindow, label: &str) {
     click_at(ui, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
 
-fn commands(log: &Log) -> Vec<String> {
-    log.borrow().clone()
-}
-
 // -- 1. Escape ------------------------------------------------------------
 
 /// Escape is the way out of an editor, and the window is what knows it:
@@ -253,7 +160,7 @@ fn commands(log: &Log) -> Vec<String> {
 #[test]
 fn escape_while_editing_discards_the_edit() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("escape", "fn main() {}\n");
+    let (ui, app) = editing("escape", "fn main() {}\n");
 
     press(&ui, "x");
     assert_eq!(app.borrow().edit_text(), "xfn main() {}\n", "typing works");
@@ -266,7 +173,7 @@ fn escape_while_editing_discards_the_edit() {
          saw the key: the editing surface accepts every key, and the \
          editor itself does nothing with Escape, so the keystroke is \
          dropped between them. The window was asked for {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -275,14 +182,14 @@ fn escape_while_editing_discards_the_edit() {
 #[test]
 fn escape_while_editing_reaches_the_windows_focus_scope() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, _app, log) = editing("escape-reaches", "fn main() {}\n");
+    let (ui, _app) = editing("escape-reaches", "fn main() {}\n");
 
     press_key(&ui, Key::Escape);
 
     assert!(
-        commands(&log).contains(&"cancel".to_owned()),
+        gui::command_log_for_test().contains(&"cancel".to_owned()),
         "the window's key handler never ran for Escape; it saw {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -291,14 +198,14 @@ fn escape_while_editing_reaches_the_windows_focus_scope() {
 #[test]
 fn escape_without_the_editor_reaches_the_window() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, _app, log) = browsing("escape-closed", "fn main() {}\n");
+    let (ui, _app) = browsing("escape-closed", "fn main() {}\n");
 
     press_key(&ui, Key::Escape);
 
     assert!(
-        commands(&log).contains(&"cancel".to_owned()),
+        gui::command_log_for_test().contains(&"cancel".to_owned()),
         "with no editor open Escape reaches the window: {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -310,7 +217,7 @@ fn escape_without_the_editor_reaches_the_window() {
 #[test]
 fn the_contents_panes_shortcuts_stay_out_of_the_editors_way() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, _app, log) = editing("contents-keys", "fn main() {}\n");
+    let (ui, _app) = editing("contents-keys", "fn main() {}\n");
 
     press_key(&ui, Key::F2);
     press_control(&ui, "n");
@@ -318,10 +225,10 @@ fn the_contents_panes_shortcuts_stay_out_of_the_editors_way() {
     press_key(&ui, Key::DownArrow);
 
     assert!(
-        commands(&log).is_empty(),
+        gui::command_log_for_test().is_empty(),
         "F2, Ctrl+N, Alt+Left and the arrows must not move the Contents \
          pane while a file is open in the editor, but the window saw {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -332,17 +239,17 @@ fn the_contents_panes_shortcuts_stay_out_of_the_editors_way() {
 #[test]
 fn ctrl_s_while_editing_saves_the_file() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("ctrl-s", "fn main() {}\n");
+    let (ui, app) = editing("ctrl-s", "fn main() {}\n");
 
     press(&ui, "x");
     press_control(&ui, "s");
 
     assert!(
-        commands(&log).contains(&"save".to_owned()),
+        gui::command_log_for_test().contains(&"save".to_owned()),
         "Ctrl+S has to save. The editing surface accepted the key and did \
          nothing with it, so the window's Save never ran. The window was \
          asked for {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
     assert!(!app.borrow().editing_file(), "and saving closes the editor");
 }
@@ -351,14 +258,14 @@ fn ctrl_s_while_editing_saves_the_file() {
 #[test]
 fn f5_while_editing_still_refreshes() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, _app, log) = editing("f5", "fn main() {}\n");
+    let (ui, _app) = editing("f5", "fn main() {}\n");
 
     press_key(&ui, Key::F5);
 
     assert!(
-        commands(&log).contains(&"refresh".to_owned()),
+        gui::command_log_for_test().contains(&"refresh".to_owned()),
         "F5 is not an editor key; it should reach the window. It saw {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -371,7 +278,7 @@ fn f5_while_editing_still_refreshes() {
 #[test]
 fn ctrl_z_while_editing_undoes_the_typing() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("ctrl-z", "fn main() {}\n");
+    let (ui, app) = editing("ctrl-z", "fn main() {}\n");
 
     press(&ui, "x");
     assert_eq!(app.borrow().edit_text(), "xfn main() {}\n");
@@ -384,10 +291,10 @@ fn ctrl_z_while_editing_undoes_the_typing() {
         "Ctrl+Z undoes the letter that was typed"
     );
     assert!(
-        !commands(&log).contains(&"undo".to_owned()),
+        !gui::command_log_for_test().contains(&"undo".to_owned()),
         "and it must not reach the window's Undo, which undoes a file \
          operation on disk. The window was asked for {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
     assert_ne!(
         app.borrow().status_text(),
@@ -401,7 +308,7 @@ fn ctrl_z_while_editing_undoes_the_typing() {
 #[test]
 fn ctrl_y_while_editing_redoes_the_typing() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, _log) = editing("ctrl-y", "fn main() {}\n");
+    let (ui, app) = editing("ctrl-y", "fn main() {}\n");
 
     press(&ui, "x");
     press_control(&ui, "z");
@@ -418,14 +325,14 @@ fn ctrl_y_while_editing_redoes_the_typing() {
 #[test]
 fn ctrl_z_without_the_editor_undoes_a_file_operation() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, _app, log) = browsing("ctrl-z-closed", "fn main() {}\n");
+    let (ui, _app) = browsing("ctrl-z-closed", "fn main() {}\n");
 
     press_control(&ui, "z");
 
     assert!(
-        commands(&log).contains(&"undo".to_owned()),
+        gui::command_log_for_test().contains(&"undo".to_owned()),
         "with no editor open Ctrl+Z is the window's undo: {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -436,7 +343,7 @@ fn ctrl_z_without_the_editor_undoes_a_file_operation() {
 #[test]
 fn save_from_the_panes_own_row_writes_the_file() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("row-save", "fn main() {}\n");
+    let (ui, app) = editing("row-save", "fn main() {}\n");
 
     press(&ui, "x");
     assert!(ui.get_edit_modified(), "the row's Save is enabled now");
@@ -446,10 +353,10 @@ fn save_from_the_panes_own_row_writes_the_file() {
     click_command(&ui, "Save *");
 
     assert!(
-        commands(&log).contains(&"save".to_owned()),
+        gui::command_log_for_test().contains(&"save".to_owned()),
         "the pane's Save asks the same of the window as the File menu's \
          does; it asked {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
     assert!(!app.borrow().editing_file(), "and the editor closed");
     assert_eq!(app.borrow().status_text(), "saving...");
@@ -460,16 +367,16 @@ fn save_from_the_panes_own_row_writes_the_file() {
 #[test]
 fn save_from_the_file_menu_writes_the_file() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("file-menu-save", "fn main() {}\n");
+    let (ui, app) = editing("file-menu-save", "fn main() {}\n");
 
     press(&ui, "x");
     click_command(&ui, "File");
     click_command(&ui, "Save");
 
     assert!(
-        commands(&log).contains(&"save".to_owned()),
+        gui::command_log_for_test().contains(&"save".to_owned()),
         "the File menu's Save ran; it saw {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
     assert!(!app.borrow().editing_file());
     assert_eq!(app.borrow().status_text(), "saving...");
@@ -479,7 +386,7 @@ fn save_from_the_file_menu_writes_the_file() {
 #[test]
 fn close_from_the_panes_own_row_discards_the_edit() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, _log) = editing("row-close", "fn main() {}\n");
+    let (ui, app) = editing("row-close", "fn main() {}\n");
 
     press(&ui, "x");
     click_command(&ui, "Close");
@@ -493,7 +400,7 @@ fn close_from_the_panes_own_row_discards_the_edit() {
 #[test]
 fn undo_from_the_panes_own_row_undoes_the_typing() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("row-undo", "fn main() {}\n");
+    let (ui, app) = editing("row-undo", "fn main() {}\n");
 
     press(&ui, "x");
     click_pane_command(&ui, "Undo");
@@ -504,9 +411,9 @@ fn undo_from_the_panes_own_row_undoes_the_typing() {
         "the row's Undo took the letter back"
     );
     assert!(
-        !commands(&log).contains(&"undo".to_owned()),
+        !gui::command_log_for_test().contains(&"undo".to_owned()),
         "and it went to the editor's own undo, not the window's: {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -516,15 +423,15 @@ fn undo_from_the_panes_own_row_undoes_the_typing() {
 #[test]
 fn undo_from_the_windows_toolbar_undoes_the_typing_while_editing() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("toolbar-undo", "fn main() {}\n");
+    let (ui, app) = editing("toolbar-undo", "fn main() {}\n");
 
     press(&ui, "x");
     click_command(&ui, "Undo");
 
     assert!(
-        commands(&log).contains(&"undo".to_owned()),
+        gui::command_log_for_test().contains(&"undo".to_owned()),
         "the toolbar's Undo is the window's; it saw {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
     assert_eq!(
         app.borrow().edit_text(),
@@ -550,7 +457,7 @@ fn undo_from_the_windows_toolbar_undoes_the_typing_while_editing() {
 #[test]
 fn a_page_is_what_the_editor_actually_shows() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, _app, _log) = editing("page", "fn main() {}\n");
+    let (ui, _app) = editing("page", "fn main() {}\n");
 
     let body = i_slint_backend_testing::ElementHandle::find_by_element_id(&ui, "CodeEditor::body")
         .next()
@@ -580,39 +487,39 @@ fn a_page_is_what_the_editor_actually_shows() {
 #[test]
 fn after_a_save_the_keyboard_comes_back_to_the_window() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("after-save", "fn main() {}\n");
+    let (ui, app) = editing("after-save", "fn main() {}\n");
 
     press(&ui, "x");
     click_command(&ui, "Save *");
     assert!(!app.borrow().editing_file(), "the editor is gone");
-    log.borrow_mut().clear();
+    gui::clear_command_log_for_test();
 
     press_key(&ui, Key::DownArrow);
 
     assert!(
-        commands(&log).contains(&"move 1".to_owned()),
+        gui::command_log_for_test().contains(&"move 1".to_owned()),
         "after the editor closes the window's own focus scope has to hold \
          the keyboard again, or every shortcut is dead until a pane is \
          clicked. The window saw {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
 #[test]
 fn after_a_close_the_keyboard_comes_back_to_the_window() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, log) = editing("after-close", "fn main() {}\n");
+    let (ui, app) = editing("after-close", "fn main() {}\n");
 
     click_command(&ui, "Close");
     assert!(!app.borrow().editing_file());
-    log.borrow_mut().clear();
+    gui::clear_command_log_for_test();
 
     press_key(&ui, Key::DownArrow);
 
     assert!(
-        commands(&log).contains(&"move 1".to_owned()),
+        gui::command_log_for_test().contains(&"move 1".to_owned()),
         "closing the editor gives the keyboard back to the window; it saw {:?}",
-        commands(&log)
+        gui::command_log_for_test()
     );
 }
 
@@ -622,7 +529,7 @@ fn after_a_close_the_keyboard_comes_back_to_the_window() {
 #[test]
 fn the_editor_takes_the_keyboard_again_when_it_is_reopened() {
     i_slint_backend_testing::init_no_event_loop();
-    let (ui, app, _log) = editing("reopen", "fn main() {}\n");
+    let (ui, app) = editing("reopen", "fn main() {}\n");
 
     click_command(&ui, "Close");
     app.borrow_mut().begin_file_edit();
