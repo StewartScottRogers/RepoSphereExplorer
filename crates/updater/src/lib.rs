@@ -446,7 +446,19 @@ fn move_aside(target_path: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
-/// Retries `fs::rename` a few times with a short backoff before giving up.
+/// How many times [`rename_with_retry`] retries a locked rename, and how
+/// long it waits between attempts.
+///
+/// Sized for a batch, not a single file: self-updating installs four
+/// executables in a row, and Windows Defender's real-time scan can still be
+/// holding an earlier one when the next rename runs. The previous budget (5
+/// attempts, 100ms apart - half a second) was sized for one freshly-written
+/// file and missed that case in a real nightly run, failing every self-update
+/// on Windows for six days (#750) with "Access is denied (os error 5)".
+const RENAME_RETRY_ATTEMPTS: u32 = 51;
+const RENAME_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Retries `fs::rename` with a short backoff before giving up.
 ///
 /// A freshly-written executable is a common target for antivirus real-time
 /// scanning, which briefly holds an exclusive lock on Windows; renaming
@@ -454,16 +466,14 @@ fn move_aside(target_path: &Path) -> io::Result<Option<PathBuf>> {
 /// that clears within milliseconds. Observed in practice self-updating a
 /// real install, not a hypothetical.
 fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
-    const ATTEMPTS: u32 = 5;
-    const DELAY: std::time::Duration = std::time::Duration::from_millis(100);
     let mut last_err = None;
-    for attempt in 0..ATTEMPTS {
+    for attempt in 0..RENAME_RETRY_ATTEMPTS {
         match fs::rename(from, to) {
             Ok(()) => return Ok(()),
             Err(err) => {
                 last_err = Some(err);
-                if attempt + 1 < ATTEMPTS {
-                    std::thread::sleep(DELAY);
+                if attempt + 1 < RENAME_RETRY_ATTEMPTS {
+                    std::thread::sleep(RENAME_RETRY_DELAY);
                 }
             }
         }
@@ -826,6 +836,21 @@ mod tests {
         );
         // Deterministic: hashing the same bytes again gives the same digest.
         assert_eq!(digest, sha256_hex(b"some bytes"));
+    }
+
+    #[test]
+    fn rename_retry_worst_case_covers_a_batch_of_four_locked_files() {
+        // The nightly Distribution check failed for six days (#750) with
+        // "Access is denied" self-updating the second of four installed
+        // binaries: a 500ms worst-case budget cleared one antivirus lock but
+        // not the next one in the same batch. This pins the budget at ten
+        // seconds so a future change cannot quietly narrow it back down.
+        let worst_case =
+            super::RENAME_RETRY_DELAY * (super::RENAME_RETRY_ATTEMPTS.saturating_sub(1));
+        assert!(
+            worst_case >= std::time::Duration::from_secs(10),
+            "worst case {worst_case:?} is too short for a batch of four freshly-written executables"
+        );
     }
 
     #[test]
