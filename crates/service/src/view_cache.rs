@@ -223,7 +223,7 @@ pub(crate) fn serially() -> std::sync::MutexGuard<'static, ()> {
 /// order starts from nothing rather than whatever earlier tests, run in the
 /// same process, happened to leave behind.
 #[cfg(test)]
-fn clear() {
+pub(crate) fn clear() {
     cache()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
