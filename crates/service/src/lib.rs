@@ -2045,6 +2045,7 @@ public class OrderBook {
 
     #[test]
     fn a_panicking_plugin_yields_an_error_naming_the_file_and_the_plugin() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("trips-a-parser.bin");
@@ -2087,6 +2088,7 @@ public class OrderBook {
 
     #[test]
     fn the_service_keeps_working_after_a_plugin_panics() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("after.txt");
@@ -2187,6 +2189,7 @@ public class OrderBook {
 
     #[test]
     fn views_a_text_file_through_the_text_plugin() {
+        let _journal = journal_to_themselves();
         let path = std::env::temp_dir().join(unique_socket_name());
         fs::write(&path, "hello\nworld\n").unwrap();
 
@@ -2215,12 +2218,14 @@ public class OrderBook {
     #[test]
     fn an_unchanged_file_is_served_from_the_cache_without_reading_it_again() {
         use std::os::unix::fs::PermissionsExt;
+        let _journal = journal_to_themselves();
 
         // The cache is one slot for the whole process (see
         // `view_cache::serially`'s own doc comment): a concurrent test
         // filling it past its bound could otherwise evict this entry
-        // between the two calls below.
-        let _serial = view_cache::serially();
+        // between the two calls below. `journal_to_themselves` above holds
+        // that lock already - taking it a second time on one thread would
+        // deadlock, since the mutex is not reentrant.
         let path = std::env::temp_dir().join(unique_socket_name());
         fs::write(&path, "cached content").unwrap();
 
@@ -2255,6 +2260,7 @@ public class OrderBook {
     /// not have to be read again.
     #[test]
     fn touching_the_file_invalidates_its_cached_view() {
+        let _journal = journal_to_themselves();
         let path = std::env::temp_dir().join(unique_socket_name());
         fs::write(&path, "before").unwrap();
 
@@ -2277,6 +2283,7 @@ public class OrderBook {
 
     #[test]
     fn views_a_directory_through_the_directory_plugin() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("note.txt"), b"hi").unwrap();
@@ -2748,6 +2755,7 @@ public class OrderBook {
 
     #[test]
     fn deletes_exactly_the_given_files_and_directories() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(dir.join("sub")).unwrap();
         let file = dir.join("a.txt");
@@ -2795,6 +2803,7 @@ public class OrderBook {
 
     #[test]
     fn journal_to_appends_a_line_describing_the_outcome() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let journal_path = dir.join("journal.jsonl");
@@ -2955,12 +2964,24 @@ public class OrderBook {
 
     /// Takes [`JOURNAL`], tolerating a previous test having panicked while
     /// holding it, and empties the journal so the test starts from nothing.
-    fn journal_to_themselves() -> std::sync::MutexGuard<'static, ()> {
-        let guard = JOURNAL
+    fn journal_to_themselves() -> (
+        std::sync::MutexGuard<'static, ()>,
+        std::sync::MutexGuard<'static, ()>,
+    ) {
+        let journal = JOURNAL
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The view cache is the service's other piece of shared state, and
+        // #718 added it after this guard was written, with a lock of its
+        // own. Clearing it from here without holding *that* lock only moved
+        // the race: `view_cache`'s own tests were then reset mid-run by a
+        // test over here. Two locks are no exclusion at all, so this takes
+        // both - always journal first, and `view_cache`'s tests take only
+        // theirs, so there is no cycle to deadlock on.
+        let cache = super::view_cache::serially();
         super::remember_undo(Vec::new());
-        guard
+        super::view_cache::clear();
+        (journal, cache)
     }
 
     #[test]
@@ -3027,6 +3048,7 @@ public class OrderBook {
 
     #[test]
     fn a_peer_that_is_not_the_owner_is_refused_before_any_request_is_handled() {
+        let _journal = journal_to_themselves();
         let (listener, name) = bind_unique();
         let path = std::env::temp_dir().join(unique_socket_name());
         fs::write(&path, "still here").unwrap();
@@ -3087,6 +3109,7 @@ public class OrderBook {
 
     #[test]
     fn answers_a_view_file_request_over_the_socket() {
+        let _journal = journal_to_themselves();
         let path = std::env::temp_dir().join(unique_socket_name());
         fs::write(&path, "hello over the wire").unwrap();
 
@@ -3125,6 +3148,7 @@ public class OrderBook {
     #[cfg(unix)]
     #[test]
     fn a_parse_past_its_limit_is_abandoned_and_names_the_limit() {
+        let _journal = journal_to_themselves();
         let fifo = fifo_that_never_answers();
         let limit = std::time::Duration::from_millis(200);
 
@@ -3281,6 +3305,7 @@ public class OrderBook {
     #[cfg(unix)]
     #[test]
     fn a_cancelled_parse_does_not_populate_the_cache() {
+        let _journal = journal_to_themselves();
         let fifo = fifo_that_never_answers();
         let key = view_cache::key_for(&fifo).unwrap();
 
@@ -3321,6 +3346,7 @@ public class OrderBook {
 
     #[test]
     fn answers_a_rename_request_over_the_socket() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let from = dir.join("old.txt");
@@ -3359,6 +3385,7 @@ public class OrderBook {
 
     #[test]
     fn answers_a_delete_request_over_the_socket() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         fs::create_dir_all(&dir).unwrap();
         let doomed = dir.join("doomed.txt");
@@ -3408,6 +3435,7 @@ public class OrderBook {
 
     #[test]
     fn answers_an_error_over_the_socket_for_a_failed_operation() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(unique_socket_name());
         let from = dir.join("missing.txt");
         let to = dir.join("wherever.txt");
@@ -3489,6 +3517,7 @@ public class OrderBook {
 
     #[test]
     fn this_repository_is_a_working_copy_and_a_cargo_workspace_at_once() {
+        let _journal = journal_to_themselves();
         // The case the whole design exists for. The folder answers as the
         // directory plugin, and carries the Cargo project beside it -
         // neither description replacing the other.
@@ -3509,6 +3538,7 @@ public class OrderBook {
 
     #[test]
     fn a_folder_that_is_no_kind_of_project_carries_nothing_extra() {
+        let _journal = journal_to_themselves();
         let dir = std::env::temp_dir().join(format!("rse-plain-folder-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("notes.txt"), b"nothing to build here").unwrap();
@@ -3525,6 +3555,7 @@ public class OrderBook {
 
     #[test]
     fn a_file_never_carries_folder_views() {
+        let _journal = journal_to_themselves();
         let file = std::env::temp_dir().join(format!("rse-plain-file-{}.txt", std::process::id()));
         std::fs::write(&file, b"a file has exactly one type").unwrap();
 
@@ -4410,6 +4441,7 @@ public class OrderBook {
 
     #[test]
     fn write_atomically_onto_a_directory_fails_and_takes_its_temporary_with_it() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let occupied = dir.join("a-folder");
         fs::create_dir_all(&occupied).unwrap();
@@ -4771,6 +4803,7 @@ public class OrderBook {
 
     #[test]
     fn a_name_that_is_not_valid_unicode_is_listed_but_cannot_be_acted_on() {
+        let _journal = journal_to_themselves();
         // The wire carries names as `String`, so this one is lossy by the
         // time a front end sees it. The listing is honest about the file
         // being there; the name it hands back no longer reaches it, which
@@ -4802,6 +4835,7 @@ public class OrderBook {
 
     #[test]
     fn a_name_far_longer_than_any_filesystem_allows_is_an_error_not_a_panic() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let absurd = dir.join("n".repeat(400));
 
@@ -4816,6 +4850,7 @@ public class OrderBook {
 
     #[test]
     fn viewing_a_file_that_is_not_there_is_an_error_rather_than_an_empty_view() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let path = dir.join("gone.txt");
 
@@ -4832,6 +4867,7 @@ public class OrderBook {
 
     #[test]
     fn a_folder_removed_after_being_viewed_names_itself_in_the_error() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         let alpha = dir.join("alpha");
         fs::create_dir(&alpha).unwrap();
@@ -4851,6 +4887,7 @@ public class OrderBook {
 
     #[test]
     fn an_empty_file_is_viewed_without_any_plugin_reading_past_its_end() {
+        let _journal = journal_to_themselves();
         // Nothing to sniff is the smallest hostile input there is, and
         // every one of the registered plugins is offered it.
         let dir = scratch();
@@ -5079,6 +5116,7 @@ public class OrderBook {
 
     #[test]
     fn a_folder_plugin_that_cannot_read_its_manifest_costs_only_its_own_lines() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         fs::write(dir.join("Cargo.toml"), "this is not TOML at all {{{").unwrap();
         fs::write(dir.join("notes.txt"), "content").unwrap();
@@ -5100,6 +5138,7 @@ public class OrderBook {
 
     #[test]
     fn a_folder_that_is_a_project_is_described_as_both_at_once() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         fs::write(
             dir.join("Cargo.toml"),
@@ -5123,6 +5162,7 @@ public class OrderBook {
 
     #[test]
     fn a_folder_that_is_a_node_project_is_described_as_both_at_once() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         fs::write(dir.join("package.json"), "{\"name\": \"widgets\"}").unwrap();
 
@@ -5142,6 +5182,7 @@ public class OrderBook {
 
     #[test]
     fn a_folder_that_is_a_python_project_is_described_as_both_at_once() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         fs::write(
             dir.join("pyproject.toml"),
@@ -5165,6 +5206,7 @@ public class OrderBook {
 
     #[test]
     fn a_folder_that_is_a_go_module_is_described_as_both_at_once() {
+        let _journal = journal_to_themselves();
         let dir = scratch();
         fs::write(
             dir.join("go.mod"),
@@ -5188,6 +5230,7 @@ public class OrderBook {
 
     #[test]
     fn a_cargo_and_a_go_project_at_once_both_contribute() {
+        let _journal = journal_to_themselves();
         // The rule this whole registry exists for (D12): every folder
         // plugin that recognises a folder contributes, and none of them
         // replaces what another already reported.
@@ -5217,6 +5260,7 @@ public class OrderBook {
 
     #[test]
     fn a_node_and_a_cargo_project_at_once_both_contribute() {
+        let _journal = journal_to_themselves();
         // A folder is several things at once (D12): a monorepo root can
         // hold both a `package.json` for its tooling and a `Cargo.toml`
         // for a Rust component, and neither should crowd the other out.
