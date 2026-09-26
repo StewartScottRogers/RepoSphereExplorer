@@ -2217,14 +2217,15 @@ public class OrderBook {
     #[cfg(unix)]
     #[test]
     fn an_unchanged_file_is_served_from_the_cache_without_reading_it_again() {
-        let _journal = journal_to_themselves();
         use std::os::unix::fs::PermissionsExt;
+        let _journal = journal_to_themselves();
 
         // The cache is one slot for the whole process (see
         // `view_cache::serially`'s own doc comment): a concurrent test
         // filling it past its bound could otherwise evict this entry
-        // between the two calls below.
-        let _serial = view_cache::serially();
+        // between the two calls below. `journal_to_themselves` above holds
+        // that lock already - taking it a second time on one thread would
+        // deadlock, since the mutex is not reentrant.
         let path = std::env::temp_dir().join(unique_socket_name());
         fs::write(&path, "cached content").unwrap();
 
