@@ -713,6 +713,89 @@ mod tests {
     }
 
     #[test]
+    fn manifest_priority_matches_the_order_the_doc_comment_states() {
+        assert_eq!(
+            super::MANIFESTS,
+            &[
+                "pyproject.toml",
+                "setup.cfg",
+                "requirements.txt",
+                "setup.py"
+            ],
+            "MANIFESTS and the order its doc comment states must not drift apart"
+        );
+    }
+
+    #[test]
+    fn a_pyproject_toml_beside_a_setup_cfg_is_reported_from_the_pyproject_toml() {
+        let dir = folder_with(
+            "pyproject-and-setup-cfg",
+            &[
+                (
+                    "pyproject.toml",
+                    "[project]\nname = \"from-pyproject\"\nversion = \"1.0.0\"\n",
+                ),
+                (
+                    "setup.cfg",
+                    "[metadata]\nname = from-setup-cfg\nversion = 0.1.0\n",
+                ),
+            ],
+        );
+
+        let view = view_of(&dir);
+
+        assert_eq!(view.name.as_deref(), Some("from-pyproject"));
+        assert_eq!(view.version.as_deref(), Some("1.0.0"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_pyproject_toml_beside_a_requirements_txt_is_reported_from_the_pyproject_toml() {
+        let dir = folder_with(
+            "pyproject-and-requirements",
+            &[
+                (
+                    "pyproject.toml",
+                    "[project]\nname = \"from-pyproject\"\ndependencies = [\"click>=8\"]\n",
+                ),
+                (
+                    "requirements.txt",
+                    "click>=8\nrequests>=2\npyyaml\nflask\nnumpy\n",
+                ),
+            ],
+        );
+
+        let view = view_of(&dir);
+
+        assert_eq!(view.name.as_deref(), Some("from-pyproject"));
+        assert_eq!(view.dependencies, 1);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_setup_cfg_beside_a_setup_py_is_reported_from_the_setup_cfg() {
+        let dir = folder_with(
+            "setup-cfg-and-setup-py",
+            &[
+                (
+                    "setup.cfg",
+                    "[metadata]\nname = from-setup-cfg\nversion = 0.1.0\n",
+                ),
+                ("setup.py", "from setuptools import setup\nsetup()\n"),
+            ],
+        );
+
+        let view = view_of(&dir);
+
+        assert_eq!(view.name.as_deref(), Some("from-setup-cfg"));
+        assert_eq!(view.version.as_deref(), Some("0.1.0"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_manifest_that_is_not_toml_is_an_error_rather_than_a_guess() {
         let dir = folder_with(
             "broken",
