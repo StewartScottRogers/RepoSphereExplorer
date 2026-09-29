@@ -13,7 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The same arrow 59 the Parquet and Arrow plugins already pull in, and
 # the one orc-rust itself is built against.
-arrow = { version = "59", default-features = false, features = ["prettyprint"] }
+arrow = { version = "60", default-features = false, features = ["prettyprint"] }
 orc-rust = "0.9"
 
 [lints]
