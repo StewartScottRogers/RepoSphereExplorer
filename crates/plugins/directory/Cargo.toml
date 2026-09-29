@@ -20,7 +20,7 @@ sha1 = "0.11"
 gix-config = { version = "0.60", default-features = false }
 gix-hash = { version = "0.26", default-features = false, features = ["sha1"] }
 gix-odb = { version = "0.84", default-features = false, features = ["sha1"] }
-gix-ref = { version = "0.67", default-features = false, features = ["sha1"] }
+gix-ref = { version = "0.68", default-features = false, features = ["sha1"] }
 gix-revwalk = { version = "0.35", default-features = false, features = ["sha1"] }
 plugin-api = { path = "../../plugin-api" }
 serde = { version = "1", features = ["derive"] }
