@@ -11,6 +11,7 @@ use crate::{relative_to, repos};
 use protocol::AllRepositoryEntry;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 
@@ -25,6 +26,20 @@ const EXCLUDED: [&str; 4] = ["node_modules", "target", "bin", "obj"];
 /// One background scan's state: what it was asked to look below, what it
 /// has found so far, and whether it has finished.
 struct Scan {
+    /// Which scan this is, so a thread only ever writes into the scan it
+    /// was spawned for.
+    ///
+    /// Matching on the root alone was not enough. Ordinary folder
+    /// navigation polls with `refresh: true`, so closing and reopening the
+    /// All Repositories view while the first scan is still walking a
+    /// large tree starts a second scan of the *same* root while the first
+    /// thread is still going. Both matched `scan.root == root`, so the
+    /// abandoned thread went on pushing into the scan that had replaced
+    /// it - the same repositories arriving twice from two independent
+    /// walks - and whichever thread finished first marked the other
+    /// `done`, leaving a front end showing a duplicated or truncated
+    /// listing and reporting it as complete.
+    generation: u64,
     root: PathBuf,
     entries: Vec<AllRepositoryEntry>,
     done: bool,
@@ -34,6 +49,10 @@ struct Scan {
 /// time: a second `root` (or a refresh) replaces it rather than running
 /// beside it.
 static SCAN: OnceLock<Mutex<Option<Scan>>> = OnceLock::new();
+
+/// Hands out [`Scan::generation`]. Never reused within a run, so no
+/// abandoned thread can ever match a later scan.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// What the background scan below `root` has found so far, starting one if
 /// none is under way or cached for `root`, or `refresh` asks for a fresh
@@ -46,12 +65,14 @@ pub(crate) fn poll(root: &Path, refresh: bool) -> (Vec<AllRepositoryEntry>, bool
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let start_new = refresh || guard.as_ref().is_none_or(|scan| scan.root != root);
     if start_new {
+        let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
         *guard = Some(Scan {
+            generation,
             root: root.to_path_buf(),
             entries: Vec::new(),
             done: false,
         });
-        spawn_scan(root.to_path_buf());
+        spawn_scan(generation, root.to_path_buf());
     }
     guard.as_ref().map_or((Vec::new(), false), |scan| {
         (scan.entries.clone(), scan.done)
@@ -60,37 +81,38 @@ pub(crate) fn poll(root: &Path, refresh: bool) -> (Vec<AllRepositoryEntry>, bool
 
 /// Runs one scan of `root` on its own thread, publishing what it finds as it
 /// goes so a poll never waits for the whole tree.
-fn spawn_scan(root: PathBuf) {
+fn spawn_scan(generation: u64, root: PathBuf) {
     thread::spawn(move || {
-        walk(&root, &root, 0, &mut |entry| publish(&root, entry));
-        mark_done(&root);
+        walk(&root, &root, 0, &mut |entry| publish(generation, entry));
+        mark_done(generation);
     });
 }
 
-/// Records one found entry against the scan for `root`, if that is still
-/// the scan being asked about - a stale scan, superseded by a refresh or a
-/// different root, has nowhere left to publish to and simply finishes
-/// unread.
-fn publish(root: &Path, entry: AllRepositoryEntry) {
+/// Records one found entry against the scan `generation` belongs to, if
+/// that scan is still the current one - a scan superseded by a fresh one,
+/// of the same root or a different one, has nowhere left to publish to and
+/// simply finishes unread.
+fn publish(generation: u64, entry: AllRepositoryEntry) {
     let cell = SCAN.get_or_init(|| Mutex::new(None));
     let mut guard = cell
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(scan) = guard.as_mut()
-        && scan.root == root
+        && scan.generation == generation
     {
         scan.entries.push(entry);
     }
 }
 
-/// Marks the scan for `root` finished, if it is still the current one.
-fn mark_done(root: &Path) {
+/// Marks the scan `generation` belongs to finished, if it is still the
+/// current one.
+fn mark_done(generation: u64) {
     let cell = SCAN.get_or_init(|| Mutex::new(None));
     let mut guard = cell
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(scan) = guard.as_mut()
-        && scan.root == root
+        && scan.generation == generation
     {
         scan.done = true;
     }
@@ -337,5 +359,56 @@ mod tests {
             .map(|entry| entry.name)
             .collect();
         assert_eq!(names, vec!["one".to_owned(), "two".to_owned()]);
+    }
+
+    /// The race named in #767: closing and reopening the All Repositories
+    /// view (or asking it to refresh) while the previous scan is still
+    /// walking a large tree.
+    ///
+    /// Every such poll asks with `refresh: true`, so this is a second scan
+    /// of the *same* root while the first thread is still running. Matching
+    /// on the root alone, both threads wrote into whichever `Scan` held
+    /// that root, so the abandoned walk's entries interleaved with the new
+    /// one's - the same repositories twice - and whichever thread finished
+    /// first marked the other `done`, so a front end drew a duplicated or
+    /// truncated listing and was told it was complete.
+    #[test]
+    fn a_second_scan_of_the_same_root_does_not_take_the_first_one_s_entries() {
+        let _serial = serially();
+        let root = scratch();
+        // Enough repositories that the first scan is still walking the
+        // tree when the second one starts.
+        for index in 0..600 {
+            checkout(&root, &format!("repo-{index:04}"));
+        }
+
+        // Start one scan and leave it running.
+        let (_, first_done) = poll(&root, true);
+        assert!(!first_done, "the fixture is big enough to keep walking");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Come back to the same root, the way reopening the view does.
+        let _ = poll(&root, true);
+
+        let names: Vec<String> = scan_to_completion(&root)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "no repository should appear twice: the abandoned scan must not \
+             publish into the scan that replaced it"
+        );
+        assert_eq!(
+            names.len(),
+            600,
+            "and the listing is whole rather than cut short by the \
+             abandoned scan finishing first and marking it done"
+        );
     }
 }
